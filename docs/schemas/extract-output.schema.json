@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CalcOutput",
+  "description": "NDJSON output for math expression evaluation and field extraction.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "expression": {
+      "description": "The input expression that was evaluated.",
+      "type": "string"
+    },
+    "result": {
+      "description": "Computed result as a string.",
+      "type": "string"
+    },
+    "elapsed_ms": {
+      "description": "Operation duration in milliseconds.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "type",
+    "expression",
+    "result",
+    "elapsed_ms"
+  ]
+}

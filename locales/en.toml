@@ -1,0 +1,28 @@
+_version = 1
+
+error.not-found = "file not found: %{path}"
+error.permission-denied = "permission denied: %{path}"
+error.disk-full = "no space left on device"
+error.workspace-jail = "path escapes workspace boundary: %{path}"
+error.symlink-blocked = "symlink target outside workspace: %{path}"
+error.state-drift = "checksum mismatch: expected %{expected}, found %{actual}"
+error.immutable = "file is immutable: %{path}"
+error.cross-device = "cannot rename across filesystem boundaries: %{path}"
+error.fifo-detected = "named pipe cannot be atomically written: %{path}"
+error.device-file = "block or character device cannot be written: %{path}"
+error.invalid-input = "invalid input: %{reason}"
+
+suggestion.not-found = "verify the file path exists and is spelled correctly"
+suggestion.permission-denied = "check file permissions or run with appropriate privileges"
+suggestion.disk-full = "free disk space and retry the operation"
+suggestion.workspace-jail = "use --workspace to set the correct project root"
+suggestion.symlink-blocked = "use --follow-symlinks or resolve the symlink manually"
+suggestion.state-drift = "re-read the file to get the current checksum and retry"
+suggestion.immutable = "remove the immutable flag with chattr -i"
+suggestion.cross-device = "use copy followed by delete instead of move"
+suggestion.fifo-detected = "use a regular file instead of a named pipe"
+suggestion.device-file = "use a regular file instead of a device node"
+
+warn.hardlink-detected = "target has %{nlink} hard links: backup uses copy to avoid shared-inode corruption"
+warn.skipping-non-file = "skipping non-file path: %{path}"
+warn.backup-cleanup = "failed to remove old backup: %{path}"

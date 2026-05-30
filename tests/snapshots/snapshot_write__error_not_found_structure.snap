@@ -1,0 +1,15 @@
+---
+source: tests/snapshot_write.rs
+assertion_line: 68
+expression: event
+---
+{
+  "error": true,
+  "code": "FILE_NOT_FOUND",
+  "exit": 4,
+  "message": "[redacted]",
+  "path": "[redacted]",
+  "error_class": "permanent",
+  "retryable": false,
+  "suggestion": "[redacted]"
+}

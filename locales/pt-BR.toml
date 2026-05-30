@@ -1,0 +1,28 @@
+_version = 1
+
+error.not-found = "arquivo não encontrado: %{path}"
+error.permission-denied = "permissão negada: %{path}"
+error.disk-full = "sem espaço disponível no dispositivo"
+error.workspace-jail = "caminho escapa do limite do workspace: %{path}"
+error.symlink-blocked = "alvo do symlink fora do workspace: %{path}"
+error.state-drift = "checksum incompatível: esperado %{expected}, encontrado %{actual}"
+error.immutable = "arquivo imutável: %{path}"
+error.cross-device = "não é possível renomear entre sistemas de arquivos: %{path}"
+error.fifo-detected = "named pipe não pode ser escrito atomicamente: %{path}"
+error.device-file = "dispositivo de bloco ou caractere não pode ser escrito: %{path}"
+error.invalid-input = "entrada inválida: %{reason}"
+
+suggestion.not-found = "verifique se o caminho do arquivo existe e está escrito corretamente"
+suggestion.permission-denied = "verifique as permissões do arquivo ou execute com privilégios apropriados"
+suggestion.disk-full = "libere espaço em disco e repita a operação"
+suggestion.workspace-jail = "use --workspace para definir a raiz correta do projeto"
+suggestion.symlink-blocked = "use --follow-symlinks ou resolva o symlink manualmente"
+suggestion.state-drift = "releia o arquivo para obter o checksum atual e repita"
+suggestion.immutable = "remova a flag de imutabilidade com chattr -i"
+suggestion.cross-device = "use copy seguido de delete em vez de move"
+suggestion.fifo-detected = "use um arquivo regular em vez de um named pipe"
+suggestion.device-file = "use um arquivo regular em vez de um nó de dispositivo"
+
+warn.hardlink-detected = "alvo tem %{nlink} hard links: backup usa cópia para evitar corrupção de inode compartilhado"
+warn.skipping-non-file = "ignorando caminho que não é arquivo: %{path}"
+warn.backup-cleanup = "falha ao remover backup antigo: %{path}"

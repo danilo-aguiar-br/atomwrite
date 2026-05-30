@@ -1,0 +1,378 @@
+[Read in English](README.md)
+
+
+# atomwrite
+
+> Operações atômicas de arquivo para agentes LLM -- um CLI, zero corrupção
+
+[![Crates.io](https://img.shields.io/crates/v/atomwrite)](https://crates.io/crates/atomwrite)
+[![License](https://img.shields.io/crates/l/atomwrite)](LICENSE)
+[![CI](https://github.com/comandoaguiar/atomwrite/actions/workflows/ci.yml/badge.svg)](https://github.com/comandoaguiar/atomwrite/actions)
+
+
+## O Que É
+- Um único binário Rust que resolve toda operação de arquivo que um agente LLM precisa
+- Ler, escrever, editar, buscar, substituir, diff, copiar, mover, deletar, transformar, scoping, backup, rollback, apply -- tudo em uma ferramenta
+- Toda escrita é atômica: tempfile, fsync, rename, fsync do diretório
+- Toda resposta é NDJSON: um objeto JSON por linha, legível por máquina
+- Todo arquivo recebe checksum BLAKE3: detecta drift, verifica integridade, habilita locking otimista
+
+
+## Por Que
+- Agentes LLM usam dezenas de comandos shell para manipular arquivos
+- Uma única falha de energia ou crash no meio da escrita corrompe o arquivo
+- Parsear saída não estruturada de CLI desperdiça tokens e causa alucinações
+- Agentes precisam de checksums para detectar edições concorrentes mas raramente os calculam
+- atomwrite resolve os quatro problemas com um único `cargo install`
+
+
+## Superpoderes
+### Escritas Atômicas
+- Usa tempfile + fsync + rename + fsync do diretório em toda escrita
+- Garante tudo-ou-nada: o arquivo nunca fica meio escrito
+- Sobrevive a queda de energia, OOM kill e SIGKILL
+
+### Saída NDJSON
+- stdout é SEMPRE JSON estruturado, um objeto por linha
+- Todo objeto carrega um campo discriminador `"type"`
+- Agentes parseiam a saída sem regex ou scraping frágil de texto
+- Erros também emitem JSON com `error: true` no stdout
+
+### Checksums BLAKE3
+- Toda resposta de `read` e `write` inclui um hash BLAKE3
+- Use `--expect-checksum` para locking otimista em edições concorrentes
+- Detecte drift de estado antes de aplicar mudanças
+
+### Busca Paralela
+- Construída sobre o motor do ripgrep para busca em conteúdo de arquivos
+- Respeita `.gitignore` automaticamente
+- Retorna matches estruturados com arquivo, linha, coluna e contexto
+
+### Transformações por AST
+- Busca e reescrita estrutural com ast-grep
+- Cobre 306 linguagens de programação
+- Refatore código pela árvore sintática, não por regex frágil
+
+### Operações em Lote
+- Execute múltiplas operações de write, replace ou delete a partir de um manifesto NDJSON
+- Todas as operações compartilham as mesmas garantias atômicas
+- Uma chamada CLI substitui centenas de invocações individuais
+
+
+## Início Rápido
+```bash
+cargo install atomwrite
+
+# Escrever arquivo atomicamente via stdin
+echo "hello world" | atomwrite write src/hello.txt
+
+# Ler com checksum
+atomwrite read src/hello.txt
+
+# Buscar em um diretório
+atomwrite search 'hello' src/
+
+# Substituir texto com escritas atômicas
+atomwrite replace 'hello' 'world' src/
+
+# Avaliar expressões matemáticas e conversões de unidade
+atomwrite calc "2 hours + 30 minutes to seconds"
+```
+
+
+## Instalação
+### Pelo crates.io
+```bash
+cargo install atomwrite
+```
+
+### A partir do código-fonte
+```bash
+git clone https://github.com/comandoaguiar/atomwrite.git
+cd atomwrite
+cargo build --release
+```
+
+### Completions de Shell
+```bash
+# Bash
+atomwrite completions bash > ~/.local/share/bash-completion/completions/atomwrite
+
+# Zsh
+atomwrite completions zsh > ~/.zfunc/_atomwrite
+
+# Fish
+atomwrite completions fish > ~/.config/fish/completions/atomwrite.fish
+```
+
+
+## Uso
+- Toda saída vai para stdout como NDJSON
+- Todos os logs vão para stderr (apenas com `--verbose`)
+- Use `--workspace <DIR>` para restringir operações a uma raiz de projeto
+- Use `--dry-run` antes de operações destrutivas
+- Use `--expect-checksum <HASH>` para locking otimista
+- Use `--lang <LOCALE>` para substituir o idioma de exibição (en, pt-BR)
+- Pipe stdin para os comandos `write` e `batch`
+
+
+## Comandos
+
+### read
+- Lê um ou mais arquivos com metadados, tamanho, permissões e checksum BLAKE3
+- Use `--stat` para retornar apenas metadados sem conteúdo
+```bash
+atomwrite read src/main.rs
+```
+
+### write
+- Cria ou sobrescreve um arquivo atomicamente a partir do stdin
+- Retorna o checksum BLAKE3 do conteúdo escrito
+- Use `--line-ending lf|crlf|cr|auto` para normalizar line endings (padrão: auto preserva o original)
+```bash
+echo "fn main() {}" | atomwrite write src/main.rs
+```
+
+### edit
+- Edita cirurgicamente um arquivo por número de linha, marcador de texto ou match exato
+- Suporta operações de inserção, substituição e deleção
+- Use `--expect-checksum` para prevenir conflitos de edição concorrente
+- Use `--fuzzy auto|off|aggressive` para matching fuzzy de texto
+- Use `--line-ending lf|crlf|cr|auto` para normalizar line endings
+```bash
+echo "new content" | atomwrite edit src/main.rs --after-line 5
+```
+
+### search
+- Busca conteúdo de arquivos em paralelo usando o motor ripgrep
+- Retorna matches estruturados com arquivo, linha, coluna e contexto
+- Sai com código 1 quando zero matches são encontrados (não é um erro)
+```bash
+atomwrite search 'TODO' src/ --include '*.rs'
+```
+
+### replace
+- Substitui texto em arquivos com escritas atômicas
+- Suporta padrões regex e strings literais
+- Use `--dry-run` para pré-visualizar mudanças
+```bash
+atomwrite replace 'old_name' 'new_name' src/ --include '*.rs'
+```
+
+### hash
+- Calcula checksums BLAKE3 para um ou mais arquivos
+```bash
+atomwrite hash src/main.rs src/lib.rs
+```
+
+### delete
+- Deleta arquivos com backup opcional antes da remoção
+- Use `--backup` para criar uma cópia `.bak` antes
+```bash
+atomwrite delete src/temp.rs --backup
+```
+
+### count
+- Conta linhas em arquivos ou conta arquivos por extensão em um diretório
+```bash
+atomwrite count src/ --by-extension
+```
+
+### diff
+- Compara dois arquivos com saída unified, stat ou apenas mudanças
+```bash
+atomwrite diff src/old.rs src/new.rs --unified
+```
+
+### move
+- Move ou renomeia arquivos atomicamente
+- Faz fallback para copy+delete em movimentações entre dispositivos
+```bash
+atomwrite move src/old.rs src/new.rs
+```
+
+### copy
+- Copia arquivos com verificação de checksum BLAKE3 após a cópia
+```bash
+atomwrite copy src/template.rs src/new_module.rs
+```
+
+### list
+- Lista estrutura de arquivos do projeto com metadados
+- Respeita `.gitignore` por padrão
+```bash
+atomwrite list src/ --depth 2
+```
+
+### extract
+- Extrai campos de entrada NDJSON ou colunas de texto do stdin
+```bash
+atomwrite search 'TODO' src/ | atomwrite extract path line
+```
+
+### calc
+- Avalia expressões matemáticas e conversões de unidade
+- Usa fend para aritmética de precisão arbitrária
+```bash
+atomwrite calc "2 GiB to bytes"
+atomwrite calc "sqrt(144) + 3^2"
+```
+
+### regex
+- Gera padrões regex a partir de strings de exemplo
+- Usa grex para inferência automática
+```bash
+atomwrite regex "2024-01-15" "2025-12-31" "2026-06-01"
+```
+
+### transform
+- Busca e reescrita estrutural por AST com ast-grep
+- Cobre 306 linguagens de programação
+- Use `--rewrite` para aplicar transformações
+```bash
+atomwrite transform -p 'println!($$$ARGS)' -l rust src/
+atomwrite transform -p 'println!($$$ARGS)' -r 'tracing::info!($$$ARGS)' -l rust src/
+```
+
+### scope
+- Scoping gramatical: seleciona categorias AST e aplica ações
+- Use `--query` para queries preparadas (fn, comments, strings, struct, etc.)
+- Use `--pattern` para padrões AST customizados
+- Use `--delete` para remover conteúdo ou `--action upper|lower|titlecase|squeeze`
+- Cobre Rust, Python, JavaScript, TypeScript e Go
+```bash
+atomwrite scope src/ --lang rust --query comments --delete
+atomwrite scope src/ --lang rust --query fn --action upper --dry-run
+```
+
+### backup
+- Cria backups com timestamp de arquivos com checksums BLAKE3
+- Use `--retention N` para controlar quantos backups manter
+```bash
+atomwrite backup src/config.toml
+atomwrite backup src/main.rs src/lib.rs --retention 3
+```
+
+### rollback
+- Restaura um arquivo a partir de um backup anterior
+- Use `--verify` para verificar checksum BLAKE3 após restauração
+```bash
+atomwrite rollback src/config.toml
+atomwrite rollback src/config.toml --timestamp 20260530_120000
+```
+
+### apply
+- Aplica um patch do stdin (unified diff, blocos SEARCH/REPLACE ou substituição completa)
+- Detecta formato automaticamente ou use `--format` para especificar
+```bash
+echo "novo conteudo" | atomwrite apply src/file.txt --format full
+git diff src/file.txt | atomwrite apply src/file.txt --format unified
+```
+
+### batch
+- Executa múltiplas operações a partir de um manifesto NDJSON no stdin
+- Suporta operações de write, replace, delete, edit, hash, move e copy
+- Use `--transaction` para execução tudo-ou-nada com rollback automático
+```bash
+cat manifest.ndjson | atomwrite batch
+cat manifest.ndjson | atomwrite batch --transaction
+```
+
+### completions
+- Gera scripts de completion de shell para bash, zsh, fish, elvish ou PowerShell
+```bash
+atomwrite completions bash
+```
+
+
+## Variáveis de Ambiente
+- `NO_COLOR`: desabilita saída colorida quando definida com qualquer valor
+- `RUST_LOG`: controla verbosidade dos logs (ex: `RUST_LOG=debug`)
+- `ATOMWRITE_LANG`: substitui o locale para mensagens traduzidas (ex: `en`, `pt-BR`)
+
+
+## Códigos de Saída
+- `0`: sucesso
+- `1`: nenhum match encontrado (search, não é um erro)
+- `4`: arquivo não encontrado
+- `13`: permissão negada
+- `28`: disco cheio (sem espaço restante no dispositivo)
+- `30`: cota excedida
+- `65`: entrada inválida (argumentos incorretos ou dados malformados)
+- `73`: rename entre dispositivos (fronteira de filesystem)
+- `74`: erro de I/O
+- `78`: configuração inválida
+- `82`: drift de estado (checksum não confere, lock otimista falhou)
+- `126`: jail de workspace violada (caminho escapa do workspace)
+- `127`: symlink bloqueado (alvo do symlink fora do workspace)
+- `85`: FIFO detectado (named pipe não pode ser escrito atomicamente)
+- `86`: arquivo de dispositivo detectado (bloco ou caractere)
+- `128`: arquivo imutável (não pode modificar)
+- `130`: interrompido por SIGINT
+- `141`: pipe quebrado (SIGPIPE)
+- `143`: terminado por SIGTERM
+- `255`: erro interno
+
+
+## Tratamento de Erros
+- Todos os erros emitem um objeto JSON no stdout com `error: true`
+- Campos do erro: `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`
+- Classes de erro: `permanent`, `transient`, `conflict`, `precondition_failed`
+- Erros transient e conflict definem `retryable: true`
+- O campo `suggestion` fornece orientação de recuperação acionável para agentes
+
+
+## Performance
+- Binário estático único sem dependências de runtime
+- Builds release usam LTO, codegen unit único e stripping de símbolos
+- Leitura de arquivos via memory-map com `memmap2` para arquivos grandes
+- Busca paralela via rayon e o motor ripgrep
+- Latência típica de operação de arquivo: abaixo de 5 ms para arquivos pequenos
+
+
+## FAQ de Solução de Problemas
+
+### atomwrite write trava sem saída
+- Certifique-se de estar fazendo pipe de conteúdo para stdin
+- `write` lê do stdin e aguarda EOF
+- Exemplo: `echo "content" | atomwrite write file.txt`
+
+### search retorna código de saída 1
+- Código de saída 1 significa zero matches encontrados
+- Este é o comportamento esperado, não um erro
+- Verifique o padrão e o caminho alvo
+
+### rename entre dispositivos falha com exit 73
+- A origem e o destino estão em filesystems diferentes
+- atomwrite faz fallback para copy+delete no `move` entre dispositivos
+- Use `copy` seguido de `delete` como alternativa
+
+### checksum não confere com exit 82
+- Outro processo modificou o arquivo entre read e write
+- Releia o arquivo para obter o checksum atual
+- Repita a operação com o `--expect-checksum` atualizado
+
+### jail de workspace violada com exit 126
+- O caminho alvo resolve para fora do limite do `--workspace`
+- Verifique se o caminho não contém travessias `..` ou symlinks escapando do workspace
+
+
+## Arquitetura
+- Veja [ARCHITECTURE.pt-BR.md](ARCHITECTURE.pt-BR.md) para mapa de módulos, fluxo de dados e decisões de projeto
+
+
+## Contribuindo
+- Veja [CONTRIBUTING.pt-BR.md](CONTRIBUTING.pt-BR.md) para setup de desenvolvimento e diretrizes
+
+
+## Segurança
+- Veja [SECURITY.pt-BR.md](SECURITY.pt-BR.md) para reporte de vulnerabilidades
+
+
+## Changelog
+- Veja [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md) para histórico de releases
+
+
+## Licença
+- Licenciado sob MIT OR Apache-2.0
+- Veja [LICENSE-MIT](LICENSE-MIT) e [LICENSE-APACHE](LICENSE-APACHE) para detalhes

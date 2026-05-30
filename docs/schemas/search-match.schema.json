@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SearchMatch",
+  "description": "NDJSON event for a single search match within a file.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "path": {
+      "description": "Path of the file containing the match.",
+      "type": "string"
+    },
+    "line_number": {
+      "description": "1-based line number of the match.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "lines": {
+      "description": "Matched line content.",
+      "type": "string"
+    },
+    "byte_offset": {
+      "description": "Byte offset of the match from the start of the file.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "submatches": {
+      "description": "Individual capture groups within the matched line.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Submatch"
+      }
+    }
+  },
+  "required": [
+    "type",
+    "path",
+    "line_number",
+    "lines",
+    "byte_offset",
+    "submatches"
+  ],
+  "$defs": {
+    "Submatch": {
+      "description": "A single regex capture within a matched line.",
+      "type": "object",
+      "properties": {
+        "match": {
+          "description": "The matched text.",
+          "type": "string"
+        },
+        "start": {
+          "description": "Byte offset of the match start within the line.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "end": {
+          "description": "Byte offset of the match end within the line.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "match",
+        "start",
+        "end"
+      ]
+    }
+  }
+}

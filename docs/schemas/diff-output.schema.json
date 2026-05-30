@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DryRunPlan",
+  "description": "NDJSON output for dry-run and diff preview operations.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "operation": {
+      "description": "Name of the planned operation.",
+      "type": "string"
+    },
+    "path": {
+      "description": "Path that would be affected.",
+      "type": "string"
+    },
+    "would_modify": {
+      "description": "Whether the operation would modify the file.",
+      "type": "boolean"
+    },
+    "details": {
+      "description": "Additional details about the planned change.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "type",
+    "operation",
+    "path",
+    "would_modify"
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReplaceResult",
+  "description": "NDJSON output for a per-file replace operation.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "path": {
+      "description": "Path of the modified file.",
+      "type": "string"
+    },
+    "replacements": {
+      "description": "Number of replacements performed.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "bytes_before": {
+      "description": "File size in bytes before replacement.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "bytes_after": {
+      "description": "File size in bytes after replacement.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "checksum_before": {
+      "description": "BLAKE3 checksum before replacement.",
+      "type": "string"
+    },
+    "checksum_after": {
+      "description": "BLAKE3 checksum after replacement.",
+      "type": "string"
+    },
+    "elapsed_ms": {
+      "description": "Operation duration in milliseconds.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "type",
+    "path",
+    "replacements",
+    "bytes_before",
+    "bytes_after",
+    "checksum_before",
+    "checksum_after",
+    "elapsed_ms"
+  ]
+}

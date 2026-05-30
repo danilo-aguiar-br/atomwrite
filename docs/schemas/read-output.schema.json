@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReadOutput",
+  "description": "NDJSON output for read operations with metadata and optional content.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "path": {
+      "description": "Absolute path of the file.",
+      "type": "string"
+    },
+    "content": {
+      "description": "File content, omitted in stat-only mode or for binary files.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lines": {
+      "description": "Total number of lines in the file.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "bytes": {
+      "description": "File size in bytes.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "checksum": {
+      "description": "BLAKE3 checksum of the file contents.",
+      "type": "string"
+    },
+    "permissions": {
+      "description": "Filesystem permissions string.",
+      "type": "string"
+    },
+    "modified": {
+      "description": "Last modification timestamp.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "File kind (file, directory, symlink).",
+      "type": "string"
+    },
+    "binary": {
+      "description": "Whether the file was detected as binary.",
+      "type": "boolean"
+    },
+    "range": {
+      "description": "Line range returned when a subset was requested.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LineRange"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "verified": {
+      "description": "Checksum verification result, if --verify-checksum was used.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "type",
+    "path",
+    "lines",
+    "bytes",
+    "checksum",
+    "permissions",
+    "modified",
+    "kind",
+    "binary"
+  ],
+  "$defs": {
+    "LineRange": {
+      "description": "Inclusive 1-based line range for partial file reads.",
+      "type": "object",
+      "properties": {
+        "start": {
+          "description": "First line number returned (1-based).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "end": {
+          "description": "Last line number returned (1-based).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ]
+    }
+  }
+}

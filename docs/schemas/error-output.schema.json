@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ErrorOutput",
+  "description": "Serializable error envelope emitted as a single NDJSON line",
+  "type": "object",
+  "required": ["error", "code", "exit", "message", "error_class", "retryable"],
+  "properties": {
+    "error": {
+      "type": "boolean",
+      "const": true
+    },
+    "code": {
+      "type": "string",
+      "enum": [
+        "FILE_NOT_FOUND",
+        "INVALID_INPUT",
+        "PERMISSION_DENIED",
+        "DISK_FULL",
+        "QUOTA_EXCEEDED",
+        "CROSS_DEVICE",
+        "IO_ERROR",
+        "CONFIG_INVALID",
+        "STATE_DRIFT",
+        "WORKSPACE_JAIL",
+        "SYMLINK_BLOCKED",
+        "IMMUTABLE_FILE",
+        "BINARY_FILE",
+        "NO_MATCHES",
+        "INTERNAL_ERROR"
+      ]
+    },
+    "exit": {
+      "type": "integer",
+      "description": "Suggested process exit code"
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable error message"
+    },
+    "path": {
+      "type": ["string", "null"],
+      "description": "Filesystem path related to the error, if applicable"
+    },
+    "error_class": {
+      "type": "string",
+      "enum": ["permanent", "transient", "conflict", "precondition_failed"]
+    },
+    "retryable": {
+      "type": "boolean",
+      "description": "Whether a retry may resolve this error"
+    },
+    "suggestion": {
+      "type": ["string", "null"],
+      "description": "Optional actionable suggestion for the caller"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+# atomwrite
+
+> Atomic file operations for LLM agents -- one CLI, zero corruption
+
+atomwrite is a Rust CLI that provides 22 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations.
+
+## Primary Documentation
+- [README](https://github.com/comandoaguiar/atomwrite/blob/main/README.md): Installation, usage, all 22 commands, exit codes, error handling
+- [AGENTS.md](https://github.com/comandoaguiar/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget
+- [INTEGRATIONS](https://github.com/comandoaguiar/atomwrite/blob/main/INTEGRATIONS.md): Compatible agents and integration examples
+- [CHANGELOG](https://github.com/comandoaguiar/atomwrite/blob/main/CHANGELOG.md): Release history and version changes
+- [CONTRIBUTING](https://github.com/comandoaguiar/atomwrite/blob/main/CONTRIBUTING.md): Development setup, PR process, testing guidelines
+- [SECURITY](https://github.com/comandoaguiar/atomwrite/blob/main/SECURITY.md): Vulnerability reporting and security policy
+- [Crates.io](https://crates.io/crates/atomwrite): Package registry listing
+- [Repository](https://github.com/comandoaguiar/atomwrite): Source code and issue tracker

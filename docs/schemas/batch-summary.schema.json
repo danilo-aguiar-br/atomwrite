@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BatchSummary",
+  "description": "Aggregate summary emitted at the end of a batch run.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "operations": {
+      "description": "Total operations in the manifest.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "succeeded": {
+      "description": "Number of operations that succeeded.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "failed": {
+      "description": "Number of operations that failed.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "dry_run": {
+      "description": "Whether this was a dry-run execution.",
+      "type": "boolean"
+    },
+    "elapsed_ms": {
+      "description": "Total batch duration in milliseconds.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "transaction": {
+      "description": "Whether transaction mode was active.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "committed": {
+      "description": "Whether the transaction was committed (all operations succeeded).",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "type",
+    "operations",
+    "succeeded",
+    "failed",
+    "dry_run",
+    "elapsed_ms"
+  ]
+}

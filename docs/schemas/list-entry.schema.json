@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ListEntry",
+  "description": "NDJSON output for a single entry in a directory listing.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "path": {
+      "description": "Path of the entry.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "Entry kind (file, dir, symlink).",
+      "type": "string"
+    },
+    "size": {
+      "description": "File size in bytes, present when --long is used.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "modified": {
+      "description": "Last modification timestamp, present when --long is used.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "type",
+    "path",
+    "kind"
+  ]
+}

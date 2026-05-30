@@ -1,0 +1,15 @@
+---
+source: tests/snapshot_write.rs
+assertion_line: 124
+expression: event
+---
+{
+  "type": "replaced",
+  "path": "[redacted]",
+  "replacements": 1,
+  "bytes_before": 15,
+  "bytes_after": 15,
+  "checksum_before": "[redacted]",
+  "checksum_after": "[redacted]",
+  "elapsed_ms": "[redacted]"
+}

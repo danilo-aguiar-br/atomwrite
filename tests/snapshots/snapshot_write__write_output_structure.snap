@@ -1,0 +1,17 @@
+---
+source: tests/snapshot_write.rs
+assertion_line: 24
+expression: event
+---
+{
+  "type": "write",
+  "status": "success",
+  "path": "[redacted]",
+  "bytes_written": 17,
+  "checksum": "[redacted]",
+  "elapsed_ms": "[redacted]",
+  "platform": {
+    "fsync": "sync_data",
+    "dir_fsync": "sync_all"
+  }
+}

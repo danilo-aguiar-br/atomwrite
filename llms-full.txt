@@ -1,0 +1,142 @@
+# atomwrite
+
+> Atomic file operations for LLM agents -- one CLI, zero corruption
+
+atomwrite is a Rust CLI that provides 22 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
+
+
+## Installation
+
+```bash
+cargo install atomwrite
+```
+
+
+## 22 Subcommands
+- `read` -- read files with metadata, checksum, optional content
+- `write` -- create or overwrite files atomically via stdin
+- `edit` -- surgically edit by line number, text marker, or exact match
+- `search` -- search file contents in parallel (ripgrep engine)
+- `replace` -- replace text across files with atomic writes
+- `hash` -- calculate BLAKE3 checksums
+- `delete` -- delete files with optional backup
+- `count` -- count lines, files by extension
+- `diff` -- compare two files (unified, stat, or changes)
+- `move` -- move or rename files atomically
+- `copy` -- copy files with checksum verification
+- `list` -- list project file structure with metadata
+- `extract` -- extract fields from NDJSON or text columns
+- `calc` -- evaluate math expressions and unit conversions (fend)
+- `regex` -- generate regex from examples (grex)
+- `transform` -- structural AST search and rewrite (ast-grep, 306 languages)
+- `batch` -- execute multiple operations from NDJSON manifest
+- `completions` -- generate shell completions
+- `scope` -- grammatical scoping: select AST categories (comments, functions, strings, etc.) and apply actions (delete, upper, lower, titlecase, squeeze, replace)
+- `backup` -- create timestamped file backups with BLAKE3 checksums and configurable retention
+- `rollback` -- restore files from previous backups with optional BLAKE3 verification
+- `apply` -- apply patches from stdin with auto-detection of format (unified diff, SEARCH/REPLACE blocks, markdown-fenced diff, full file replacement)
+
+
+## Output Contract
+- stdout: ALWAYS NDJSON structured (one JSON object per line)
+- stderr: logs only (tracing format, only with --verbose)
+- Every object has a `"type"` discriminator field
+- Flush after each line
+- Errors emit JSON on stdout with `error: true`
+- Error fields: code, exit, message, path, error_class, retryable, suggestion
+
+
+## Key Flags
+- `--workspace <DIR>` -- restrict operations to project root
+- `--dry-run` -- preview changes without writing
+- `--expect-checksum <HASH>` -- optimistic locking for concurrent edits
+- `--verbose` -- enable tracing logs on stderr
+- `--include <PATTERN>` / `-g <PATTERN>` -- filter files by glob pattern (search, replace)
+- `--stat` -- skip file content in read responses (metadata only)
+- `--backup` -- create backup before delete
+- `--format <FORMAT>` -- output format for diff (unified, stat, changes)
+- `--lang <LANG>` -- language for AST transform
+- `--rewrite <PATTERN>` -- rewrite pattern for AST transform
+- `--line-ending lf|crlf|cr|auto` -- normalize line endings on write and edit
+- `--lang <LOCALE>` (global) -- override display locale (en, pt-BR) for translated messages
+
+
+## Exit Codes
+- 0: success
+- 1: no matches (search)
+- 4: file not found
+- 13: permission denied
+- 28: disk full
+- 30: quota exceeded
+- 65: invalid input
+- 73: cross-device rename
+- 74: I/O error
+- 78: config invalid
+- 82: state drift (checksum mismatch)
+- 85: FIFO detected
+- 86: device file detected
+- 126: workspace jail violated
+- 127: symlink blocked
+- 128: file immutable
+- 130: SIGINT
+- 141: SIGPIPE
+- 143: SIGTERM
+- 255: internal error
+
+
+## Environment Variables
+- `NO_COLOR` -- disable colored output
+- `RUST_LOG` -- control log verbosity
+- `ATOMWRITE_LANG` -- override locale for translated messages (en, pt-BR)
+
+
+## Usage Examples
+
+```bash
+# Write atomically
+echo "content" | atomwrite write src/file.rs
+
+# Read with checksum
+atomwrite read src/file.rs
+
+# Search in parallel
+atomwrite search 'TODO' src/ --include '*.rs'
+
+# Replace across files
+atomwrite replace 'old_name' 'new_name' src/
+
+# AST transform
+atomwrite transform -p 'println!($$$ARGS)' -r 'tracing::info!($$$ARGS)' -l rust src/
+
+# Batch operations
+cat manifest.ndjson | atomwrite batch
+
+# Math and units
+atomwrite calc "2 GiB to bytes"
+
+# Generate regex
+atomwrite regex "2024-01-15" "2025-12-31"
+
+# Scope: delete all comments in a Rust file
+atomwrite scope src/main.rs --lang rust --category comments --action delete
+
+# Backup a file before risky edits
+atomwrite backup src/config.rs
+
+# Rollback to previous backup
+atomwrite rollback src/config.rs
+
+# Apply a unified diff from stdin
+cat patch.diff | atomwrite apply src/file.rs
+```
+
+
+## Primary Documentation
+- [README](https://github.com/comandoaguiar/atomwrite/blob/main/README.md): Full documentation with all 22 commands and examples
+- [AGENTS.md](https://github.com/comandoaguiar/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget
+- [INTEGRATIONS](https://github.com/comandoaguiar/atomwrite/blob/main/INTEGRATIONS.md): Compatible agents and integration examples
+- [CHANGELOG](https://github.com/comandoaguiar/atomwrite/blob/main/CHANGELOG.md): Release history
+- [CONTRIBUTING](https://github.com/comandoaguiar/atomwrite/blob/main/CONTRIBUTING.md): Development setup and guidelines
+- [SECURITY](https://github.com/comandoaguiar/atomwrite/blob/main/SECURITY.md): Vulnerability reporting
+- [Crates.io](https://crates.io/crates/atomwrite): Package registry
+- [Repository](https://github.com/comandoaguiar/atomwrite): Source code

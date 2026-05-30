@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RegexOutput",
+  "description": "NDJSON output for regex generation from examples.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "regex": {
+      "description": "Generated regular expression.",
+      "type": "string"
+    },
+    "examples": {
+      "description": "Number of input examples used.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "anchored": {
+      "description": "Whether the regex includes anchors.",
+      "type": "boolean"
+    },
+    "elapsed_ms": {
+      "description": "Operation duration in milliseconds.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "type",
+    "regex",
+    "examples",
+    "anchored",
+    "elapsed_ms"
+  ]
+}

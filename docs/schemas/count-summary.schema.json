@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Summary",
+  "description": "Aggregate summary emitted at the end of multi-file operations.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "files_visited": {
+      "description": "Total files examined.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "files_matched": {
+      "description": "Files with at least one match.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "files_modified": {
+      "description": "Files actually modified (replace/transform only).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "files_skipped": {
+      "description": "Files skipped due to binary detection or size limits.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "total_matches": {
+      "description": "Total matches found across all files.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "total_replacements": {
+      "description": "Total replacements performed across all files.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "elapsed_ms": {
+      "description": "Operation duration in milliseconds.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "type",
+    "files_visited",
+    "files_matched",
+    "elapsed_ms"
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EditOutput",
+  "description": "NDJSON output for a surgical edit operation.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "path": {
+      "description": "Path of the edited file.",
+      "type": "string"
+    },
+    "edits": {
+      "description": "Number of edit operations applied.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "mode": {
+      "description": "Edit mode used (e.g. \"after_line\", \"range\", \"old_new\", \"exact\").",
+      "type": "string"
+    },
+    "bytes_before": {
+      "description": "File size in bytes before editing.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "bytes_after": {
+      "description": "File size in bytes after editing.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "checksum_before": {
+      "description": "BLAKE3 checksum before editing.",
+      "type": "string"
+    },
+    "checksum_after": {
+      "description": "BLAKE3 checksum after editing.",
+      "type": "string"
+    },
+    "lines_before": {
+      "description": "Line count before editing.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "lines_after": {
+      "description": "Line count after editing.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "elapsed_ms": {
+      "description": "Operation duration in milliseconds.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "fuzzy": {
+      "description": "Whether fuzzy matching was used (only present in --old/--new mode).",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "strategy": {
+      "description": "Fuzzy strategy that succeeded (only present when fuzzy=true).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "strategies_tried": {
+      "description": "Number of strategies tried before success (only present in --old/--new mode).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "similarity": {
+      "description": "Similarity score of the fuzzy match, 0.0-1.0 (only present for block_anchor strategy).",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    }
+  },
+  "required": [
+    "type",
+    "path",
+    "edits",
+    "mode",
+    "bytes_before",
+    "bytes_after",
+    "checksum_before",
+    "checksum_after",
+    "lines_before",
+    "lines_after",
+    "elapsed_ms"
+  ]
+}
