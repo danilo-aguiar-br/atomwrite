@@ -132,11 +132,11 @@ cat patch.diff | atomwrite apply src/file.rs
 
 
 ## Primary Documentation
-- [README](https://github.com/comandoaguiar/atomwrite/blob/main/README.md): Full documentation with all 22 commands and examples
-- [AGENTS.md](https://github.com/comandoaguiar/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget
-- [INTEGRATIONS](https://github.com/comandoaguiar/atomwrite/blob/main/INTEGRATIONS.md): Compatible agents and integration examples
-- [CHANGELOG](https://github.com/comandoaguiar/atomwrite/blob/main/CHANGELOG.md): Release history
-- [CONTRIBUTING](https://github.com/comandoaguiar/atomwrite/blob/main/CONTRIBUTING.md): Development setup and guidelines
-- [SECURITY](https://github.com/comandoaguiar/atomwrite/blob/main/SECURITY.md): Vulnerability reporting
+- [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.md): Full documentation with all 22 commands and examples
+- [AGENTS.md](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget
+- [INTEGRATIONS](https://github.com/daniloaguiarbr/atomwrite/blob/main/INTEGRATIONS.md): Compatible agents and integration examples
+- [CHANGELOG](https://github.com/daniloaguiarbr/atomwrite/blob/main/CHANGELOG.md): Release history
+- [CONTRIBUTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/CONTRIBUTING.md): Development setup and guidelines
+- [SECURITY](https://github.com/daniloaguiarbr/atomwrite/blob/main/SECURITY.md): Vulnerability reporting
 - [Crates.io](https://crates.io/crates/atomwrite): Package registry
-- [Repository](https://github.com/comandoaguiar/atomwrite): Source code
+- [Repository](https://github.com/daniloaguiarbr/atomwrite): Source code

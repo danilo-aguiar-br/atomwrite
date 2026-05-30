@@ -7,7 +7,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/atomwrite)](https://crates.io/crates/atomwrite)
 [![License](https://img.shields.io/crates/l/atomwrite)](LICENSE)
-[![CI](https://github.com/comandoaguiar/atomwrite/actions/workflows/ci.yml/badge.svg)](https://github.com/comandoaguiar/atomwrite/actions)
+[![CI](https://github.com/daniloaguiarbr/atomwrite/actions/workflows/ci.yml/badge.svg)](https://github.com/daniloaguiarbr/atomwrite/actions)
 
 
 ## What Is It
@@ -96,7 +96,7 @@ cargo install atomwrite
 
 ### From source
 ```bash
-git clone https://github.com/comandoaguiar/atomwrite.git
+git clone https://github.com/daniloaguiarbr/atomwrite.git
 cd atomwrite
 cargo build --release
 ```

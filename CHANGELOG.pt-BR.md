@@ -88,5 +88,5 @@
 - Perfil release com LTO, codegen unit único, stripping de símbolos e panic=abort
 
 
-[Unreleased]: https://github.com/comandoaguiar/atomwrite/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/comandoaguiar/atomwrite/releases/tag/v0.1.0
+[Unreleased]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/daniloaguiarbr/atomwrite/releases/tag/v0.1.0

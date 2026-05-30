@@ -26,7 +26,7 @@
 
 ### Build
 ```bash
-git clone https://github.com/comandoaguiar/atomwrite.git
+git clone https://github.com/daniloaguiarbr/atomwrite.git
 cd atomwrite
 cargo build
 ```
