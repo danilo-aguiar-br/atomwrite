@@ -56,6 +56,10 @@ pub struct GlobalArgs {
     #[arg(long, global = true, value_enum, default_value_t = ColorChoice::Auto, help = "Control colored output")]
     pub color: ColorChoice,
 
+    /// Disable colored output (equivalent to --color never).
+    #[arg(long, global = true, help = "Disable colored output")]
+    pub no_color: bool,
+
     /// Disable .gitignore filtering.
     #[arg(long, global = true, help = "Do not respect .gitignore files")]
     pub no_gitignore: bool,
@@ -68,12 +72,13 @@ pub struct GlobalArgs {
     #[arg(long, global = true, help = "Follow symbolic links")]
     pub follow_symlinks: bool,
 
-    /// Number of parallel threads (0 = all cores).
+    /// Number of parallel threads (0 = all cores). Env: `RAYON_NUM_THREADS`.
+    // rayon respects RAYON_NUM_THREADS natively when --threads is not passed.
     #[arg(
         short = 'j',
         long,
         global = true,
-        help = "Number of parallel threads (0 = all cores)"
+        help = "Number of parallel threads (0 = all cores). Env: RAYON_NUM_THREADS"
     )]
     pub threads: Option<usize>,
 
@@ -93,6 +98,10 @@ pub struct GlobalArgs {
     )]
     pub json_schema: bool,
 
+    /// Accepted for compatibility but ignored — output is always NDJSON.
+    #[arg(long, global = true, hide = true)]
+    pub json: bool,
+
     /// Override locale for translated messages (e.g. en, pt-BR).
     #[arg(
         long,
@@ -104,16 +113,23 @@ pub struct GlobalArgs {
 }
 
 impl GlobalArgs {
-    /// Return the workspace root, defaulting to the current directory.
+    /// Return the workspace root as an absolute path, defaulting to the current directory.
     ///
     /// # Errors
     ///
     /// Returns an error if the current directory cannot be determined.
     pub fn resolve_workspace(&self) -> Result<PathBuf> {
-        match &self.workspace {
-            Some(p) => Ok(p.clone()),
+        let base = match &self.workspace {
+            Some(p) => p.clone(),
             None => std::env::current_dir()
-                .map_err(|e| anyhow::anyhow!("cannot resolve workspace: {e}")),
+                .map_err(|e| anyhow::anyhow!("cannot resolve workspace: {e}"))?,
+        };
+        if base.is_relative() {
+            let cwd = std::env::current_dir()
+                .map_err(|e| anyhow::anyhow!("cannot resolve workspace: {e}"))?;
+            Ok(cwd.join(base))
+        } else {
+            Ok(base)
         }
     }
 

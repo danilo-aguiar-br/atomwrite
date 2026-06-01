@@ -163,3 +163,30 @@ fn transform_multiple_replacements_in_file() {
     let content = std::fs::read_to_string(dir.path().join("multi.rs")).expect("read");
     assert!(!content.contains("dbg!"));
 }
+
+#[test]
+fn transform_language_flag_works() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "test.rs", "fn main() { dbg!(42); }\n");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "transform",
+            "-p",
+            "dbg!($$$A)",
+            "-r",
+            "$$$A",
+            "--language",
+            "rust",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit: {:?}", output.status);
+
+    let content = std::fs::read_to_string(dir.path().join("test.rs")).expect("read");
+    assert!(!content.contains("dbg!"));
+}

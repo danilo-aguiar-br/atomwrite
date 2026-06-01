@@ -39,6 +39,7 @@
 ### Utilitários
 - `src/binary_detect.rs` -- heurística de null-byte para detecção de conteúdo binário
 - `src/line_endings.rs` -- detecção e normalização de LF/CRLF/CR
+- `src/lang_utils.rs` -- inicialização de locale e helpers de i18n para rust-i18n
 
 ### Handlers de Subcomandos
 - `src/commands/` -- 22 implementações de subcomandos, cada um em seu módulo

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Batch execution of multiple operations from an NDJSON manifest.
+//! Workload: I/O-bound (NDJSON parse + multi-file atomic writes).
 
-use std::io::{BufRead, Read, Write};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -14,15 +15,19 @@ use crate::checksum;
 use crate::cli::GlobalArgs;
 use crate::ndjson_types::{BatchOpResult, BatchSummary};
 use crate::output::NdjsonWriter;
+use crate::signal::ShutdownSignal;
 
-#[derive(Debug, Deserialize)]
+/// A single operation in a batch NDJSON manifest.
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct BatchOp {
+pub struct BatchOp {
     op: String,
     #[serde(default)]
     target: Option<String>,
     #[serde(default)]
     path: Option<String>,
+    #[serde(default, alias = "from", alias = "src")]
+    source: Option<String>,
     #[serde(default)]
     content: Option<String>,
     #[serde(default)]
@@ -37,11 +42,28 @@ struct BatchOp {
     new: Option<String>,
 }
 
+impl BatchOp {
+    fn resolve_file_path(&self) -> anyhow::Result<&str> {
+        self.target
+            .as_deref()
+            .or(self.path.as_deref())
+            .ok_or_else(|| anyhow::anyhow!("operation requires 'target' or 'path' field"))
+    }
+}
+
 /// NDJSON event emitted when a transaction is rolled back.
 #[derive(Debug, Serialize)]
 struct RollbackEvent {
     r#type: &'static str,
     operations_reverted: u64,
+}
+
+/// Emit the JSON Schema for the batch input manifest format.
+pub fn emit_input_schema(writer: &mut NdjsonWriter<impl Write>) -> Result<()> {
+    let schema = schemars::schema_for!(BatchOp);
+    let schema_value = serde_json::to_value(&schema)?;
+    writer.write_event(&schema_value)?;
+    Ok(())
 }
 
 /// Execute multiple operations from an NDJSON manifest in batch mode.
@@ -50,31 +72,52 @@ struct RollbackEvent {
 ///
 /// Returns `AtomwriteError::Io` if reading stdin or writing results fails.
 /// Returns `AtomwriteError::InvalidInput` if the manifest contains invalid operations.
+#[tracing::instrument(skip_all, fields(command = "batch"))]
 pub fn cmd_batch(
     global: &GlobalArgs,
     stdin: impl Read,
     writer: &mut NdjsonWriter<impl Write>,
     dry_run: bool,
     transaction: bool,
+    shutdown: &ShutdownSignal,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
 
-    let reader = std::io::BufReader::new(stdin);
+    let mut reader = std::io::BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
     let mut ops: Vec<BatchOp> = Vec::with_capacity(16);
+    let mut line_buf = String::new();
+    let mut idx = 0usize;
 
-    for (idx, line) in reader.lines().enumerate() {
-        let line = line.with_context(|| format!("failed to read stdin line {}", idx + 1))?;
-        let trimmed = line.trim();
+    loop {
+        let n = crate::output::read_limited_line(
+            &mut reader,
+            &mut line_buf,
+            crate::constants::MAX_NDJSON_LINE_SIZE,
+        )
+        .with_context(|| format!("failed to read stdin line {}", idx + 1))?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = line_buf.trim();
         if trimmed.is_empty() {
+            idx += 1;
             continue;
         }
-        let op: BatchOp = serde_json::from_str(trimmed).map_err(|e| {
-            crate::error::AtomwriteError::InvalidInput {
-                reason: format!("invalid batch operation at line {}: {e}", idx + 1),
+        let jd = &mut serde_json::Deserializer::from_str(trimmed);
+        let op: BatchOp = serde_path_to_error::deserialize(jd).map_err(|e| {
+            if e.inner().classify() == serde_json::error::Category::Io {
+                crate::error::AtomwriteError::Io {
+                    source: std::io::Error::other(e.to_string()),
+                }
+            } else {
+                crate::error::AtomwriteError::InvalidInput {
+                    reason: format!("invalid batch operation at line {}: {e}", idx + 1),
+                }
             }
         })?;
         ops.push(op);
+        idx += 1;
     }
 
     if ops.is_empty() {
@@ -99,6 +142,15 @@ pub fn cmd_batch(
     let mut failed: u64 = 0;
 
     for (idx, op) in ops.iter().enumerate() {
+        if shutdown.is_shutdown() {
+            tracing::info!(
+                completed = idx,
+                total = ops.len(),
+                "batch interrupted by signal"
+            );
+            break;
+        }
+
         let op_start = Instant::now();
         let result = execute_op(op, idx, &workspace, global, dry_run);
 
@@ -142,8 +194,8 @@ pub fn cmd_batch(
                             );
                         }
                         Err(rb_err) => {
-                            tracing::error!("rollback failed: {rb_err:#}");
-                            std::process::exit(crate::constants::EXIT_TRANSACTION_ROLLBACK_FAILED);
+                            tracing::error!(error = %rb_err, "rollback failed");
+                            bail!("transaction rollback failed: {rb_err:#}");
                         }
                     }
                 }
@@ -173,9 +225,12 @@ pub fn cmd_batch(
 
 /// Collect validated paths of existing files that operations will mutate.
 fn collect_target_paths(ops: &[BatchOp], workspace: &std::path::Path) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
+    let mut paths = Vec::with_capacity(ops.len());
     for op in ops {
-        for candidate in [op.target.as_ref(), op.path.as_ref()].iter().flatten() {
+        for candidate in [op.target.as_ref(), op.path.as_ref(), op.source.as_ref()]
+            .iter()
+            .flatten()
+        {
             let p = std::path::Path::new(candidate.as_str());
             if let Ok(validated) = crate::path_safety::validate_path(p, workspace) {
                 if validated.is_file() {
@@ -212,26 +267,24 @@ fn execute_op(
     op: &BatchOp,
     _idx: usize,
     workspace: &std::path::Path,
-    _global: &GlobalArgs,
+    global: &GlobalArgs,
     dry_run: bool,
 ) -> Result<String> {
+    let max_size = global.effective_max_filesize();
     match op.op.as_str() {
         "write" => execute_write(op, workspace, dry_run),
-        "replace" => execute_replace(op, workspace, dry_run),
-        "delete" => execute_delete(op, workspace, dry_run),
-        "edit" => execute_edit(op, workspace, dry_run),
-        "hash" => execute_hash(op, workspace),
+        "replace" => execute_replace(op, workspace, dry_run, max_size),
+        "delete" => execute_delete(op, workspace, dry_run, max_size),
+        "edit" => execute_edit(op, workspace, dry_run, max_size),
+        "hash" => execute_hash(op, workspace, max_size),
         "move" => execute_move(op, workspace, dry_run),
-        "copy" => execute_copy(op, workspace, dry_run),
+        "copy" => execute_copy(op, workspace, dry_run, max_size),
         _ => bail!("unsupported batch operation: {}", op.op),
     }
 }
 
 fn execute_write(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Result<String> {
-    let target = op
-        .target
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("write operation requires 'target' field"))?;
+    let target = op.resolve_file_path()?;
     let content = op
         .content
         .as_deref()
@@ -254,11 +307,13 @@ fn execute_write(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Re
     ))
 }
 
-fn execute_replace(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Result<String> {
-    let path_str =
-        op.path.as_deref().or(op.target.as_deref()).ok_or_else(|| {
-            anyhow::anyhow!("replace operation requires 'path' or 'target' field")
-        })?;
+fn execute_replace(
+    op: &BatchOp,
+    workspace: &std::path::Path,
+    dry_run: bool,
+    max_size: u64,
+) -> Result<String> {
+    let path_str = op.resolve_file_path()?;
     let pattern =
         op.pattern.as_deref().or(op.old.as_deref()).ok_or_else(|| {
             anyhow::anyhow!("replace operation requires 'pattern' or 'old' field")
@@ -273,7 +328,7 @@ fn execute_replace(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> 
 
     let path = std::path::Path::new(path_str);
     let validated = crate::path_safety::validate_path(path, workspace)?;
-    let content = std::fs::read_to_string(&validated)
+    let content = crate::file_io::read_file_string(&validated, max_size)
         .with_context(|| format!("cannot read {}", validated.display()))?;
 
     let new_content = content.replace(pattern, replacement);
@@ -299,11 +354,13 @@ fn execute_replace(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> 
     ))
 }
 
-fn execute_delete(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Result<String> {
-    let target = op
-        .target
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("delete operation requires 'target' field"))?;
+fn execute_delete(
+    op: &BatchOp,
+    workspace: &std::path::Path,
+    dry_run: bool,
+    max_size: u64,
+) -> Result<String> {
+    let target = op.resolve_file_path()?;
 
     let path = std::path::Path::new(target);
     let validated = crate::path_safety::validate_path(path, workspace)?;
@@ -324,14 +381,15 @@ fn execute_delete(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> R
             .with_context(|| format!("cannot backup {target}"))?;
     }
 
-    let checksum = checksum::hash_file(&validated)?;
+    let checksum = checksum::hash_file(&validated, max_size)?;
     std::fs::remove_file(&validated).with_context(|| format!("cannot delete {target}"))?;
 
     if let Some(parent) = validated.parent() {
         if let Err(e) = crate::platform::fsync_dir(parent) {
             tracing::warn!(
-                "fsync_dir after batch delete failed for {}: {e}",
-                parent.display()
+                path = %parent.display(),
+                error = %e,
+                "fsync_dir after batch delete failed"
             );
         }
     }
@@ -339,11 +397,13 @@ fn execute_delete(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> R
     Ok(format!("deleted {target}, checksum_before={checksum}"))
 }
 
-fn execute_edit(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Result<String> {
-    let path_str = op
-        .target
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("edit operation requires 'target' field"))?;
+fn execute_edit(
+    op: &BatchOp,
+    workspace: &std::path::Path,
+    dry_run: bool,
+    max_size: u64,
+) -> Result<String> {
+    let path_str = op.resolve_file_path()?;
     let old = op
         .old
         .as_deref()
@@ -352,7 +412,7 @@ fn execute_edit(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Res
 
     let path = std::path::Path::new(path_str);
     let validated = crate::path_safety::validate_path(path, workspace)?;
-    let content = std::fs::read_to_string(&validated)
+    let content = crate::file_io::read_file_string(&validated, max_size)
         .with_context(|| format!("cannot read {}", validated.display()))?;
 
     if !content.contains(old) {
@@ -379,26 +439,24 @@ fn execute_edit(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Res
     ))
 }
 
-fn execute_hash(op: &BatchOp, workspace: &std::path::Path) -> Result<String> {
-    let path_str = op
-        .target
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("hash operation requires 'target' field"))?;
+fn execute_hash(op: &BatchOp, workspace: &std::path::Path, max_size: u64) -> Result<String> {
+    let path_str = op.resolve_file_path()?;
     let path = std::path::Path::new(path_str);
     let validated = crate::path_safety::validate_path(path, workspace)?;
-    let hash = checksum::hash_file(&validated)?;
+    let hash = checksum::hash_file(&validated, max_size)?;
     Ok(format!("hash={hash}"))
 }
 
 fn execute_move(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Result<String> {
     let source_str = op
+        .source
+        .as_deref()
+        .or(op.path.as_deref())
+        .ok_or_else(|| anyhow::anyhow!("move operation requires 'source' field"))?;
+    let dest_str = op
         .target
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("move operation requires 'target' (source path)"))?;
-    let dest_str = op
-        .path
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("move operation requires 'path' (destination path)"))?;
+        .ok_or_else(|| anyhow::anyhow!("move operation requires 'target' (destination) field"))?;
 
     let source = crate::path_safety::validate_path(std::path::Path::new(source_str), workspace)?;
     let dest = crate::path_safety::validate_path(std::path::Path::new(dest_str), workspace)?;
@@ -428,15 +486,21 @@ fn execute_move(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Res
     Ok(format!("moved {source_str} to {dest_str}"))
 }
 
-fn execute_copy(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Result<String> {
+fn execute_copy(
+    op: &BatchOp,
+    workspace: &std::path::Path,
+    dry_run: bool,
+    max_size: u64,
+) -> Result<String> {
     let source_str = op
+        .source
+        .as_deref()
+        .or(op.path.as_deref())
+        .ok_or_else(|| anyhow::anyhow!("copy operation requires 'source' field"))?;
+    let dest_str = op
         .target
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("copy operation requires 'target' (source path)"))?;
-    let dest_str = op
-        .path
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("copy operation requires 'path' (destination path)"))?;
+        .ok_or_else(|| anyhow::anyhow!("copy operation requires 'target' (destination) field"))?;
 
     let source = crate::path_safety::validate_path(std::path::Path::new(source_str), workspace)?;
     let dest = crate::path_safety::validate_path(std::path::Path::new(dest_str), workspace)?;
@@ -449,8 +513,8 @@ fn execute_copy(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Res
         return Ok(format!("would copy {source_str} to {dest_str}"));
     }
 
-    let content =
-        std::fs::read(&source).with_context(|| format!("cannot read {}", source.display()))?;
+    let content = crate::file_io::read_file_bytes(&source, max_size)
+        .with_context(|| format!("cannot read {}", source.display()))?;
     let opts = AtomicWriteOptions {
         backup: op.backup,
         ..Default::default()

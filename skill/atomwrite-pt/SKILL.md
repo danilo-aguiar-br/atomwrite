@@ -7,6 +7,7 @@ description: |
 ---
 
 
+# atomwrite
 ## Identidade Principal
 ### OBRIGATÓRIO
 - stdout é SEMPRE NDJSON (um objeto JSON por linha)
@@ -15,6 +16,7 @@ description: |
 - Checksum BLAKE3 presente em toda resposta de write e read
 - Passar `--workspace <DIR>` para definir a raiz do jail em todas as operações de caminho
 - Todos os caminhos são resolvidos relativos à raiz do workspace
+- A flag `--json` é aceita mas ignorada (saída é SEMPRE NDJSON por design)
 ### PROIBIDO
 - NUNCA parsear stderr como dados estruturados
 - NUNCA assumir que exit 1 é erro (search usa exit 1 para zero resultados)
@@ -28,6 +30,10 @@ description: |
 - USAR `--backup --retention N` para sobrescritas destrutivas
 - USAR `--expect-checksum <BLAKE3>` para locking otimista (detecção de state drift)
 - USAR `--dry-run` antes de escritas destrutivas para pré-visualizar a operação
+- USAR `--append` para anexar conteúdo ao final do arquivo existente
+- USAR `--prepend` para inserir conteúdo no início do arquivo existente
+- USAR `--max-size <BYTES>` para limitar tamanho do stdin aceito
+- USAR `--line-ending lf|crlf|cr|auto` para normalizar quebras de linha (padrão: auto)
 - Resposta inclui `checksum` (BLAKE3) e `bytes_written`
 ### PROIBIDO
 - NUNCA escrever sem `--workspace`
@@ -42,7 +48,13 @@ cat new_config.toml | atomwrite --workspace . write --backup --retention 3 confi
 ```
 ### Padrão Correto — Locking Otimista
 ```bash
-echo "updated" | atomwrite --workspace . write --expect-checksum abc123 config.toml
+CS=$(atomwrite --workspace . read src/main.rs | jaq -r '.checksum')
+echo "updated" | atomwrite --workspace . write --expect-checksum "$CS" src/main.rs
+```
+### Padrão Correto — Append e Prepend
+```bash
+echo "// nova linha" | atomwrite --workspace . write --append src/main.rs
+echo "// header" | atomwrite --workspace . write --prepend src/main.rs
 ```
 
 
@@ -51,6 +63,10 @@ echo "updated" | atomwrite --workspace . write --expect-checksum abc123 config.t
 - USAR `read` para conteúdo de arquivo com metadados
 - USAR `read --stat` para metadados apenas (sem corpo)
 - USAR `read --lines 1:50` para leituras parciais por intervalo de linhas
+- USAR `read --line N` para ler uma única linha com contexto opcional via `--context N`
+- USAR `read --head N` para ler as primeiras N linhas
+- USAR `read --tail N` para ler as últimas N linhas
+- USAR `read --format raw` para conteúdo puro sem envelope JSON
 - USAR `read --verify-checksum <BLAKE3>` para verificação de integridade
 - Resposta inclui `checksum`, `size`, `lines`
 ### Padrão Correto — Leitura
@@ -60,6 +76,12 @@ atomwrite --workspace . read src/main.rs
 ### Padrão Correto — Leitura Parcial
 ```bash
 atomwrite --workspace . read --lines 1:50 src/main.rs
+atomwrite --workspace . read --head 20 src/main.rs
+atomwrite --workspace . read --tail 10 src/main.rs
+```
+### Padrão Correto — Linha com Contexto
+```bash
+atomwrite --workspace . read --line 42 --context 5 src/main.rs
 ```
 ### Padrão Correto — Apenas Metadados
 ```bash
@@ -72,13 +94,19 @@ atomwrite --workspace . read --stat src/main.rs
 - USAR `search` para busca paralela via ripgrep em arquivos
 - Exit code 1 significa zero resultados encontrados (NÃO é um erro)
 - USAR `--include '*.rs'` para filtrar por extensão de arquivo
+- USAR `--exclude '*.log'` para excluir arquivos por padrão glob
 - USAR `--context N` para linhas de contexto ao redor de cada match
 - USAR `--fixed` (`-F`) para busca literal (sem regex)
+- USAR `--regex` (`-e`) para forçar modo regex explicitamente
+- USAR `--word` (`-w`) para correspondência por limite de palavra
+- USAR `--case-insensitive` (`-i`) para busca sem distinção de maiúsculas
+- USAR `--smart-case` (`-S`) para insensitive quando padrão é minúsculo
 - USAR `--count` (`-c`) para contar matches por arquivo em vez de listar
 - USAR `--files` (`-l`) para listar apenas nomes de arquivos com matches
 - USAR `--max-count N` (`-m`) para limitar matches por arquivo
+- USAR `--multiline` (`-U`) para habilitar correspondência multilinha
 - USAR `--invert` para retornar linhas que NÃO casam com o padrão
-- USAR `--sort path` para ordenar resultados por caminho de arquivo
+- USAR `--sort path|modified|created|none` para ordenar resultados
 - Resposta é NDJSON com um objeto por match
 ### PROIBIDO
 - NUNCA tratar exit code 1 como falha em search
@@ -90,6 +118,10 @@ atomwrite --workspace . search 'TODO|FIXME' src/ --include '*.rs'
 ```bash
 atomwrite --workspace . search 'unsafe' src/ --context 3
 ```
+### Padrão Correto — Contagem por Arquivo
+```bash
+atomwrite --workspace . search 'unwrap' src/ --count --sort path
+```
 
 
 ## Operações de Substituição
@@ -98,6 +130,13 @@ atomwrite --workspace . search 'unsafe' src/ --context 3
 - SEMPRE usar `--dry-run` primeiro para substituições destrutivas
 - USAR `--regex` para padrões baseados em regex
 - USAR `--word` para correspondência por limite de palavra
+- USAR `--literal` (`-F`) para tratar padrão como string literal
+- USAR `--include '*.rs'` para filtrar arquivos por extensão
+- USAR `--exclude '*.log'` para excluir arquivos por padrão glob
+- USAR `--preview` para mostrar diff sem escrever
+- USAR `--max-replacements N` (`-n`) para limitar substituições por arquivo
+- USAR `--expect-checksum <BLAKE3>` para locking otimista
+- USAR `--backup` para criar backup antes de modificar
 - Resposta inclui `matches`, `files_modified`, checksums por arquivo
 ### PROIBIDO
 - NUNCA executar replace sem `--dry-run` primeiro
@@ -115,20 +154,43 @@ atomwrite --workspace . replace --regex 'v\d+\.\d+' 'v2.0' src/ --include '*.tom
 ## Operações de Edição
 ### OBRIGATÓRIO
 - USAR `edit` para modificações cirúrgicas por número de linha ou marcador de texto
-- USAR `--old "texto" --new "texto"` para substituição exata dentro de um arquivo
+- USAR `--old "texto" --new "texto"` para substituição exata (repetível para múltiplas)
 - USAR `--after-line N` para inserir conteúdo após uma linha específica
 - USAR `--before-line N` para inserir conteúdo antes de uma linha específica
 - USAR `--range N:M` para substituir um intervalo de linhas
+- USAR `--delete-range N:M` para deletar um intervalo de linhas
+- USAR `--after-match "texto"` para inserir conteúdo após primeiro match do texto
+- USAR `--before-match "texto"` para inserir conteúdo antes do primeiro match
+- USAR `--between "inicio" "fim"` para substituir conteúdo entre dois marcadores
 - USAR `--fuzzy auto|off|aggressive` para controlar correspondência aproximada de texto
-- USAR `--multi` para aplicar múltiplas edições em uma única chamada
+- USAR `--multi` para aplicar múltiplas edições de uma vez (lê NDJSON do stdin)
+- USAR `--expect-checksum <BLAKE3>` para locking otimista
+- USAR `--line-ending lf|crlf|cr|auto` para normalizar quebras de linha
 - Enviar novo conteúdo via stdin ao usar `--range`, `--after-line` ou `--before-line`
 ### Padrão Correto — Edição por Texto
 ```bash
 atomwrite --workspace . edit src/main.rs --old "old_text" --new "new_text"
 ```
+### Padrão Correto — Múltiplas Substituições
+```bash
+atomwrite --workspace . edit src/main.rs --old "foo" --new "bar" --old "baz" --new "qux"
+```
 ### Padrão Correto — Inserir Após Linha
 ```bash
 echo "new_line_content" | atomwrite --workspace . edit src/main.rs --after-line 10
+```
+### Padrão Correto — Deletar Intervalo
+```bash
+atomwrite --workspace . edit src/main.rs --delete-range 5:10
+```
+### Padrão Correto — Substituir Entre Marcadores
+```bash
+echo "novo bloco" | atomwrite --workspace . edit src/main.rs --between "// START" "// END"
+```
+### Padrão Correto — Múltiplas Edições via NDJSON
+```bash
+echo '{"old":"foo","new":"bar"}
+{"old":"baz","new":"qux"}' | atomwrite --workspace . edit --multi src/main.rs
 ```
 
 
@@ -140,6 +202,9 @@ echo "new_line_content" | atomwrite --workspace . edit src/main.rs --after-line 
 - USAR `$$$ARGS` para capturas de múltiplos nós AST (variádico)
 - 306 linguagens suportadas via ast-grep
 - USAR `--dry-run` para pré-visualizar transformações
+- USAR `--backup` para criar backup antes de modificar
+- USAR `--include` e `--exclude` para filtrar arquivos por extensão
+- Ambos `--pattern` e `--rewrite` são OBRIGATÓRIOS (sem modo somente busca)
 ### Padrão Correto — Transformação
 ```bash
 atomwrite --workspace . transform -p 'console.log($$$A)' -r 'logger.info($$$A)' -l js src/
@@ -154,23 +219,80 @@ atomwrite --workspace . transform --dry-run -p 'old_fn($$$A)' -r 'new_fn($$$A)' 
 ```
 
 
+## Operações de Scoping Gramatical
+### OBRIGATÓRIO
+- USAR `scope` para selecionar categorias AST e aplicar ações no código
+- SEMPRE especificar `--lang` para a linguagem alvo
+- USAR `--query` para queries preparadas por linguagem (ver lista abaixo)
+- USAR `--pattern` para padrões AST customizados
+- USAR `--delete` para remover conteúdo correspondente
+- USAR `--action upper|lower|titlecase|squeeze` para transformações de texto
+- USAR `--replace-with "texto"` para substituição customizada
+- USAR `--include '*.rs'` para filtrar arquivos por extensão
+- USAR `--exclude '*.log'` para excluir arquivos por padrão glob
+- USAR `--backup` para criar backup antes de modificar
+- USAR `--dry-run` para pré-visualizar mudanças
+### Queries Preparadas — Rust
+- `comments`, `doc-comment`, `strings`
+- `fn`, `pub-fn`, `async-fn`, `unsafe-fn`, `test-fn`
+- `struct`, `pub-struct`, `enum`, `pub-enum`
+- `trait`, `impl`, `mod`, `use`
+- `closure`, `unsafe`, `attribute`, `derive`
+- `return`, `match`, `if-let`, `while-let`
+- `for`, `loop`, `const`, `static`
+- `type-alias`, `macro-rules`
+### Queries Preparadas — Python
+- `comments`, `strings`
+- `class`, `def`, `async-def`, `lambda`
+- `import`, `from-import`
+- `with`, `for`, `while`
+- `decorator`, `try-except`
+### Queries Preparadas — JavaScript e TypeScript
+- `comments`, `strings`
+- `fn`, `arrow-fn`, `async-fn`
+- `class`, `import`, `export`
+- `try-catch`, `const`, `let`
+### Queries Preparadas — Go
+- `fn`, `struct`, `interface`
+- `goroutine`, `defer`, `import`
+- `const`, `var`
+### Padrão Correto — Scoping
+```bash
+atomwrite --workspace . scope src/ --lang rust --query comments --delete --dry-run
+atomwrite --workspace . scope src/ --lang rust --query fn --action upper --dry-run
+atomwrite --workspace . scope src/ --lang python --query def --action lower
+```
+
+
 ## Operações em Lote
 ### OBRIGATÓRIO
 - USAR `batch` para múltiplas operações em uma única chamada
 - Entrada é NDJSON via stdin (um objeto JSON por linha)
 - Cada linha requer um campo `op`: `write`, `replace`, `delete`, `edit`, `move`, `copy`, `hash`
+- Para `move` e `copy`: usar campo `source` (origem) e `target` (destino)
+- USAR `--file <PATH>` para ler manifesto de arquivo em vez de stdin
 - USAR `--dry-run` para pré-visualizar o lote inteiro
 - USAR `--transaction` para garantir atomicidade do lote inteiro (falha em uma op reverte todas)
+- USAR `--input-schema` para obter o JSON Schema do formato de entrada
 - Resposta é NDJSON com um resultado por operação
-### Padrão Correto — Lote
+### Padrão Correto — Lote com Write e Delete
 ```bash
 echo '{"op":"write","target":"a.txt","content":"hello"}
-{"op":"replace","path":"b.txt","pattern":"old","replacement":"new"}
 {"op":"delete","target":"tmp.log"}' | atomwrite --workspace . batch
 ```
-### Padrão Correto — Lote Dry Run
+### Padrão Correto — Lote com Move e Copy
 ```bash
-cat ops.ndjson | atomwrite --workspace . batch --dry-run
+echo '{"op":"move","source":"src/old.rs","target":"src/new.rs"}
+{"op":"copy","source":"src/template.rs","target":"src/module.rs"}' | atomwrite --workspace . batch
+```
+### Padrão Correto — Lote Transacional
+```bash
+cat ops.ndjson | atomwrite --workspace . batch --transaction --dry-run
+cat ops.ndjson | atomwrite --workspace . batch --transaction
+```
+### Padrão Correto — Lote de Arquivo
+```bash
+atomwrite --workspace . batch --file ops.ndjson --transaction
 ```
 
 
@@ -178,11 +300,16 @@ cat ops.ndjson | atomwrite --workspace . batch --dry-run
 ### OBRIGATÓRIO
 - USAR `hash` para checksums BLAKE3 independentes
 - Aceita um ou mais caminhos de arquivo
+- USAR `--verify <BLAKE3>` para verificar checksum contra hash esperado
+- USAR `--stdin` para hashear conteúdo do stdin
+- USAR `--recursive` (`-r`) para hashear diretórios recursivamente
 - Resposta inclui `path` e `checksum` por arquivo
 ### Padrão Correto — Hash
 ```bash
 atomwrite --workspace . hash src/main.rs
 atomwrite --workspace . hash src/*.rs
+atomwrite --workspace . hash --verify abc123 src/main.rs
+echo "content" | atomwrite hash --stdin
 ```
 
 
@@ -190,20 +317,31 @@ atomwrite --workspace . hash src/*.rs
 ### OBRIGATÓRIO
 - USAR `delete` para remoção atômica de arquivos
 - USAR `--backup --retention N` para manter backups antes da remoção
+- USAR `--recursive` (`-r`) para remover diretórios recursivamente
+- USAR `--include '*.log'` para filtrar por extensão
+- USAR `--exclude '*.rs'` para excluir por extensão
+- USAR `--yes` (`-y`) para pular confirmação
 - USAR `--dry-run` para pré-visualizar
 ### Padrão Correto — Remoção
 ```bash
 atomwrite --workspace . delete --backup --retention 1 tmp/scratch.rs
+atomwrite --workspace . delete --recursive --include '*.log' --dry-run logs/
 ```
 
 
 ## Operações de Diff
 ### OBRIGATÓRIO
-- USAR `diff` para comparar dois arquivos ou um arquivo contra stdin
+- USAR `diff` para comparar dois arquivos
+- USAR `--unified` para formato unified diff
+- USAR `--stat` para mostrar apenas estatísticas resumidas
+- USAR `--context N` (`-C`) para linhas de contexto no diff (padrão: 3)
+- USAR `--algorithm myers|patience|lcs` para escolher algoritmo de diff (padrão: patience)
 - Resposta inclui hunks de diff estruturados em NDJSON
 ### Padrão Correto — Diff
 ```bash
 atomwrite --workspace . diff src/old.rs src/new.rs
+atomwrite --workspace . diff --stat src/old.rs src/new.rs
+atomwrite --workspace . diff --unified --context 5 src/old.rs src/new.rs
 ```
 
 
@@ -212,13 +350,19 @@ atomwrite --workspace . diff src/old.rs src/new.rs
 - USAR `move` para renomear/mover atomicamente dentro do workspace
 - USAR `copy` para cópia atômica com verificação de checksum
 - Ambos respeitam o jail do workspace
+- USAR `--force` para sobrescrever destino se existir
+- USAR `--dry-run` para pré-visualizar
+- USAR `--backup` para criar backup do destino se existir
+- `copy` aceita `--recursive` para copiar diretórios e `--preserve` para manter timestamps
 ### Padrão Correto — Mover
 ```bash
 atomwrite --workspace . move src/old.rs src/new.rs
+atomwrite --workspace . move --force src/old.rs src/existing.rs
 ```
 ### Padrão Correto — Copiar
 ```bash
 atomwrite --workspace . copy src/template.rs src/new_module.rs
+atomwrite --workspace . copy --recursive --preserve src/dir/ dest/dir/
 ```
 
 
@@ -226,22 +370,32 @@ atomwrite --workspace . copy src/template.rs src/new_module.rs
 ### OBRIGATÓRIO
 - USAR `list` para listagem de diretórios e arquivos
 - USAR `--include '*.rs'` para filtrar por extensão
+- USAR `--exclude '*.log'` para excluir por extensão
 - USAR `--long` para saída em formato detalhado com metadados
 - USAR `--depth N` para limitar profundidade de diretório
+- USAR `--count-by-ext` para contagem agrupada por extensão
+- USAR `--all` para incluir arquivos ocultos
 ### Padrão Correto — Listagem
 ```bash
 atomwrite --workspace . list --include '*.rs' src/
 atomwrite --workspace . list --long --depth 2 src/
+atomwrite --workspace . list --count-by-ext src/
+atomwrite --workspace . list --all --long src/
 ```
 
 
 ## Operações de Contagem
 ### OBRIGATÓRIO
 - USAR `count` para contagem de arquivos e linhas
+- USAR `--by-extension` para agrupar contagens por extensão de arquivo
+- USAR `--by-size` com `--top N` para listar maiores arquivos
+- USAR `--include` e `--exclude` para filtrar
 - Resposta inclui `files`, `lines`, `bytes`
 ### Padrão Correto — Contagem
 ```bash
 atomwrite --workspace . count --include '*.rs' src/
+atomwrite --workspace . count --by-extension src/
+atomwrite --workspace . count --by-size --top 20 src/
 ```
 
 
@@ -249,6 +403,7 @@ atomwrite --workspace . count --include '*.rs' src/
 ### OBRIGATÓRIO
 - USAR `extract` para extração de campos NDJSON de entrada via pipe
 - Passar `path` e `line_number` como argumentos posicionais para selecionar campos específicos
+- USAR `--delimiter <SEP>` para modo texto com separador customizado
 ### Padrão Correto — Extração
 ```bash
 atomwrite --workspace . search 'TODO' src/ | atomwrite extract path line_number
@@ -259,6 +414,7 @@ atomwrite --workspace . search 'TODO' src/ | atomwrite extract path line_number
 ### OBRIGATÓRIO
 - USAR `calc` para expressões matemáticas e conversões de unidade
 - SEMPRE colocar a expressão entre aspas
+- USAR `--stdin` para ler expressões do stdin (uma por linha)
 - Sem necessidade de `--workspace` (operação stateless)
 ### Padrão Correto — Cálculo
 ```bash
@@ -272,43 +428,35 @@ atomwrite calc "sqrt(144) + 2^10"
 ### OBRIGATÓRIO
 - USAR `regex` para gerar regex a partir de exemplos
 - Passar 3+ exemplos para padrões mais precisos
-- USAR `--digits` para generalização com `\d`
-- USAR `--words` para generalização com `\w`
+- USAR `--digits` (`-d`) para generalização com `\d`
+- USAR `--words` (`-w`) para generalização com `\w`
+- USAR `--spaces` (`-s`) para generalização com `\s`
+- USAR `--repetitions` (`-r`) para detectar repetições
+- USAR `--case-insensitive` (`-i`) para correspondência case-insensitive
+- USAR `--no-anchors` para remover `^` e `$` do resultado
+- USAR `--stdin` para ler exemplos do stdin (um por linha)
 - Sem necessidade de `--workspace` (operação stateless)
 ### Padrão Correto — Regex
 ```bash
 atomwrite regex "192.168.1.1" "10.0.0.255" --digits
 atomwrite regex "v1.0.0" "v2.1.3" "v10.0.1" --digits
+atomwrite regex -d -w -s -r "exemplo1" "exemplo2"
 ```
 
-
-## Operações de Scoping Gramatical
-### OBRIGATÓRIO
-- USAR `scope` para selecionar categorias AST e aplicar ações no código
-- SEMPRE especificar `--lang` para a linguagem alvo (rust, python, js, ts, go)
-- USAR `--query` para queries preparadas (comments, fn, class, struct, etc.)
-- USAR `--pattern` para padrões AST customizados
-- USAR `--delete` para remover conteúdo correspondente
-- USAR `--action upper|lower|titlecase|squeeze` para transformações de texto
-- USAR `--replace-with "texto"` para substituição customizada
-- USAR `--dry-run` para pré-visualizar mudanças
-### Padrão Correto — Scoping
-```bash
-atomwrite --workspace . scope src/ --lang rust --query comments --delete
-atomwrite --workspace . scope src/ --lang rust --query fn --action upper --dry-run
-atomwrite --workspace . scope src/ --lang python --query def --action lower
-```
 
 ## Operações de Backup
 ### OBRIGATÓRIO
 - USAR `backup` para criar backups com timestamp e checksums BLAKE3
 - USAR `--retention N` para controlar quantos backups manter (padrão: 5)
+- USAR `--output-dir <DIR>` para direcionar backups a diretório específico
 - USAR `--dry-run` para pré-visualizar
 ### Padrão Correto — Backup
 ```bash
 atomwrite --workspace . backup src/config.toml
 atomwrite --workspace . backup src/main.rs src/lib.rs --retention 3
+atomwrite --workspace . backup src/main.rs --output-dir /tmp/backups/
 ```
+
 
 ## Operações de Rollback
 ### OBRIGATÓRIO
@@ -323,6 +471,7 @@ atomwrite --workspace . rollback src/config.toml
 atomwrite --workspace . rollback src/config.toml --timestamp 20260530_120000 --verify
 ```
 
+
 ## Operações de Apply (Patch)
 ### OBRIGATÓRIO
 - USAR `apply` para aplicar patches do stdin em um arquivo alvo
@@ -336,6 +485,7 @@ echo "novo conteudo" | atomwrite --workspace . apply src/file.txt --format full
 git diff src/file.txt | atomwrite --workspace . apply src/file.txt
 ```
 
+
 ## Completions
 ### OBRIGATÓRIO
 - USAR `completions` para gerar completions de shell
@@ -344,6 +494,31 @@ git diff src/file.txt | atomwrite --workspace . apply src/file.txt
 ```bash
 atomwrite completions bash > ~/.local/share/bash-completion/completions/atomwrite
 atomwrite completions zsh > ~/.zfunc/_atomwrite
+```
+
+
+## Pipelines Comuns
+### Padrão Correto — Locking Otimista (Read, Modify, Write)
+```bash
+CS=$(atomwrite --workspace . read src/config.rs | jaq -r '.checksum')
+echo "new content" | atomwrite --workspace . write --expect-checksum "$CS" src/config.rs
+```
+### Padrão Correto — Buscar e Extrair Campos
+```bash
+atomwrite --workspace . search 'TODO' src/ --include '*.rs' | atomwrite extract path line_number
+```
+### Padrão Correto — Hash para Auditoria
+```bash
+atomwrite --workspace . hash src/main.rs src/lib.rs | jaq -r '.checksum'
+```
+### Padrão Correto — Diff Estruturado
+```bash
+atomwrite --workspace . diff src/old.rs src/new.rs | jaq '.type'
+```
+### Padrão Correto — Lote Transacional com Verificação
+```bash
+cat ops.ndjson | atomwrite --workspace . batch --transaction --dry-run
+cat ops.ndjson | atomwrite --workspace . batch --transaction
 ```
 
 
@@ -381,10 +556,10 @@ fi
 - `74` — erro de I/O (falha genérica de filesystem)
 - `78` — configuração inválida (configuração malformada)
 - `82` — state drift (checksum mismatch, locking otimista falhou)
-- `126` — violação do jail do workspace (caminho escapa à raiz do workspace)
-- `127` — symlink bloqueado (alvo do symlink fora do workspace)
 - `85` — FIFO detectado (named pipe não pode ser escrito atomicamente)
 - `86` — arquivo de dispositivo detectado (bloco ou caractere)
+- `126` — violação do jail do workspace (caminho escapa à raiz do workspace)
+- `127` — symlink bloqueado (alvo do symlink fora do workspace)
 - `128` — imutável (arquivo marcado como imutável)
 - `130` — SIGINT (interrompido pelo usuário)
 - `141` — SIGPIPE (pipe quebrado)
@@ -407,12 +582,17 @@ fi
 ## Flags Globais
 ### OBRIGATÓRIO — Referência
 - `--workspace <DIR>` — definir raiz do jail do workspace (OBRIGATÓRIO para operações de arquivo)
+- `--max-filesize <BYTES>` — tamanho máximo de arquivo aceito em bytes (padrão: 1 GiB)
+- `--threads <N>` / `-j` — número de threads paralelos (0 = todos os cores, env: `RAYON_NUM_THREADS`)
 - `--json-schema` — imprimir o schema JSON de saída para qualquer subcomando
-- `--dry-run` — pré-visualizar operação sem escrever
-- `--backup` — criar backup antes de operação destrutiva
-- `--retention <N>` — número de backups a reter (usado com `--backup`)
-- `--verbose` / `-v` — aumentar verbosidade de log no stderr
-- `--quiet` / `-q` — suprimir logs no stderr
+- `--json` — aceita por compatibilidade mas ignorada (saída é SEMPRE NDJSON)
+- `--color auto|always|never` — controlar saída colorida
+- `--no-color` — desabilitar saída colorida (equivalente a `--color never`)
+- `--no-gitignore` — não respeitar arquivos `.gitignore`
+- `--hidden` — incluir arquivos e diretórios ocultos
+- `--follow-symlinks` — seguir links simbólicos durante travessia
+- `--verbose` / `-v` — aumentar verbosidade de log no stderr (-v info, -vv debug, -vvv trace)
+- `--quiet` / `-q` — diminuir verbosidade (-q error, -qq off)
 - `--lang <LOCALE>` — substituir locale de exibição (en, pt-BR) via env `ATOMWRITE_LANG`
 
 

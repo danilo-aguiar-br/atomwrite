@@ -14,11 +14,11 @@
 
 
 ## Current Stats
-- 54 Rust files across `src/` and `tests/`
-- 5923 lines of code
-- 102 tests total
-- 7 snapshot files in `tests/snapshots/`
+- 64+ Rust files across `src/` and `tests/`
+- 282 tests total (unit + integration + snapshot + property-based + signal + tracing + NDJSON)
+- 9 snapshot files in `tests/snapshots/`
 - 2 proptest regression files
+- 2 fuzz targets in `fuzz/fuzz_targets/`
 
 
 ## Test Categories
@@ -53,10 +53,10 @@
 - `cli_backup.rs` -- backup creation, dry-run, not-found error, multiple files
 - `cli_rollback.rs` -- restore from backup, dry-run, no-backup error, verify flag
 - `cli_apply.rs` -- full file replacement, SEARCH/REPLACE blocks, unified diff, dry-run
-- `cli_batch.rs` -- 7 tests for batch operation execution
+- `cli_batch.rs` -- 13 tests for batch operation execution (write, replace, delete, move, copy, path alias, transaction rollback)
 
 ### Snapshot Tests (insta)
-- Located in `tests/snapshot_write.rs` -- 7 tests
+- Located in `tests/snapshot_write.rs` -- 9 tests
 - Use the `insta` crate for snapshot-based output verification
 - Lock down the exact JSON structure of each output type
 - Snapshot files stored in `tests/snapshots/`
@@ -69,6 +69,8 @@
 - `snapshot_write__replace_result_structure.snap`
 - `snapshot_write__error_not_found_structure.snap`
 - `snapshot_write__batch_summary_structure.snap`
+- `snapshot_write__error_invalid_input_structure.snap`
+- `snapshot_write__error_workspace_jail_structure.snap`
 
 ### Property-Based Tests (proptest)
 - Located in `tests/proptest_checksum.rs` -- 2 tests
@@ -81,6 +83,30 @@
 ### Signal Tests
 - Located in `tests/signal_test.rs` -- 1 test
 - Verify graceful shutdown behavior on signal reception
+
+### NDJSON Validation Tests
+- Located in `tests/ndjson_valid_test.rs` -- 17 tests
+- Validate NDJSON output structure for 20 of 21 commands
+- Include `jaq` interop tests verifying piped JSON parsing
+- Include i18n test confirming `--lang` does not alter JSON output
+
+### Concurrency Tests
+- Located in `tests/cli_concurrency.rs`
+- Test parallel file operations and race conditions
+
+### Max Filesize Tests
+- Located in `tests/cli_max_filesize.rs`
+- Test enforcement of file size limits
+
+### Tracing Tests
+- Located in `tests/tracing_test.rs`
+- Verify tracing/logging infrastructure behavior
+
+### Fuzzing Targets
+- Located in `fuzz/fuzz_targets/batch_parse.rs` -- batch NDJSON parser fuzzing
+- Located in `fuzz/fuzz_targets/extract_json.rs` -- extract JSON parser fuzzing
+- Require `cargo +nightly fuzz run <target>`
+- Run with `--max_total_time=30` for quick validation
 
 
 ## How to Run

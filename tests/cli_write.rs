@@ -145,3 +145,86 @@ fn write_expect_checksum_rejects_drift() {
     let events = common::parse_ndjson(&output.stdout);
     assert_eq!(events[0]["code"], "STATE_DRIFT");
 }
+
+#[test]
+fn write_expect_checksum_accepts_correct() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target = dir.path().join("locked.txt");
+    std::fs::write(&target, "original content\n").expect("write");
+
+    let hash_out = common::atomwrite()
+        .args(["--workspace", dir.path().to_str().unwrap(), "hash"])
+        .arg(&target)
+        .output()
+        .expect("hash");
+    let hash_events = common::parse_ndjson(&hash_out.stdout);
+    let checksum = hash_events[0]["value"].as_str().expect("checksum value");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "write",
+            "--expect-checksum",
+            checksum,
+        ])
+        .arg(&target)
+        .write_stdin("updated content\n")
+        .output()
+        .expect("run");
+
+    assert!(
+        output.status.success(),
+        "correct checksum should succeed: {:?}",
+        output.status
+    );
+    let content = std::fs::read_to_string(&target).expect("read");
+    assert_eq!(content, "updated content\n");
+}
+
+#[test]
+fn write_expect_checksum_drift_after_external_modify() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target = dir.path().join("race.txt");
+    std::fs::write(&target, "version1").expect("write");
+
+    let hash_out = common::atomwrite()
+        .args(["--workspace", dir.path().to_str().unwrap(), "hash"])
+        .arg(&target)
+        .output()
+        .expect("hash");
+    let checksum = common::parse_ndjson(&hash_out.stdout)[0]["value"]
+        .as_str()
+        .expect("value")
+        .to_string();
+
+    std::fs::write(&target, "version2-external-change").expect("external modify");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "write",
+            "--expect-checksum",
+            &checksum,
+        ])
+        .arg(&target)
+        .write_stdin("version3")
+        .output()
+        .expect("run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(82),
+        "should detect external modification"
+    );
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events[0]["code"], "STATE_DRIFT");
+    assert_eq!(events[0]["retryable"], true);
+
+    let content = std::fs::read_to_string(&target).expect("read");
+    assert_eq!(
+        content, "version2-external-change",
+        "original external change preserved"
+    );
+}

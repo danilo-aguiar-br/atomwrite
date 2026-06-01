@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Parallel text replacement across files with atomic writes.
+//! Workload: I/O-bound (file reading + regex matching + atomic write).
 
 use std::borrow::Cow;
 use std::io::Write;
@@ -26,6 +27,7 @@ use crate::signal::ShutdownSignal;
 /// Returns `AtomwriteError::WorkspaceJail` if the path escapes the workspace.
 /// Returns `AtomwriteError::Io` if reading or writing files fails.
 /// Returns `AtomwriteError::NoMatches` if no replacements are found.
+#[tracing::instrument(skip_all, fields(command = "replace"))]
 pub fn cmd_replace(
     args: &ReplaceArgs,
     global: &GlobalArgs,
@@ -39,7 +41,7 @@ pub fn cmd_replace(
 
     let walker = build_walker(args, global)?;
 
-    let (tx, rx) = crossbeam_channel::unbounded::<ReplaceEvent>();
+    let (tx, rx) = crossbeam_channel::bounded::<ReplaceEvent>(1024);
 
     let files_visited = Arc::new(AtomicU64::new(0));
     let files_modified = Arc::new(AtomicU64::new(0));
@@ -50,27 +52,34 @@ pub fn cmd_replace(
     let fm = Arc::clone(&files_modified);
     let fs_skip = Arc::clone(&files_skipped);
     let tr = Arc::clone(&total_replacements);
-    let replacement = args.replacement.clone();
+    let replacement: Arc<str> = args.replacement.clone().into();
     let max_replacements = args.max_replacements;
     let dry_run = args.dry_run;
     let preview = args.preview;
     let backup = args.backup;
-    let ws = workspace.clone();
-    let expect_ck = args.expect_checksum.clone();
+    let ws: Arc<std::path::Path> = Arc::from(workspace.as_path());
+    let expect_ck: Option<Arc<str>> = args.expect_checksum.clone().map(Into::into);
 
+    let max_size = global.effective_max_filesize();
+    let shutdown_flag = shutdown.flag();
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
             let pattern = pattern.clone();
-            let replacement = replacement.clone();
+            let replacement = Arc::clone(&replacement);
             let tx = tx.clone();
             let fv = Arc::clone(&fv);
             let fm = Arc::clone(&fm);
             let fs_skip = Arc::clone(&fs_skip);
             let tr = Arc::clone(&tr);
-            let ws = ws.clone();
+            let ws = Arc::clone(&ws);
             let expect_ck = expect_ck.clone();
+            let shutdown_flag = Arc::clone(&shutdown_flag);
 
             Box::new(move |entry| {
+                if shutdown_flag.load(Ordering::Acquire) {
+                    return ignore::WalkState::Quit;
+                }
+
                 let entry = match entry {
                     Ok(e) => e,
                     Err(_) => return ignore::WalkState::Continue,
@@ -83,8 +92,9 @@ pub fn cmd_replace(
                 fv.fetch_add(1, Ordering::Relaxed);
 
                 let path = entry.path().to_path_buf();
+                let _span = tracing::debug_span!("process_file", path = %path.display()).entered();
 
-                let content = match crate::file_io::read_file_string(&path) {
+                let content = match crate::file_io::read_file_string(&path, max_size) {
                     Ok(c) => c,
                     Err(_) => {
                         fs_skip.fetch_add(1, Ordering::Relaxed);
@@ -105,12 +115,14 @@ pub fn cmd_replace(
                 let checksum_before = checksum::hash_bytes(content.as_bytes());
 
                 if let Some(ref expected) = expect_ck {
-                    if &checksum_before != expected {
+                    if checksum_before != **expected {
+                        // Receiver may have dropped during shutdown — send failure is expected
                         let _ = tx.send(ReplaceEvent::Error {
                             path,
-                            message: format!(
-                                "state drift: expected {expected}, got {checksum_before}"
-                            ),
+                            kind: ReplaceErrorKind::StateDrift {
+                                expected: expected.to_string(),
+                                actual: checksum_before,
+                            },
                         });
                         return ignore::WalkState::Continue;
                     }
@@ -159,7 +171,7 @@ pub fn cmd_replace(
                     Err(e) => {
                         let _ = tx.send(ReplaceEvent::Error {
                             path,
-                            message: format!("{e:#}"),
+                            kind: ReplaceErrorKind::WriteFailure(format!("{e:#}")),
                         });
                     }
                 }
@@ -184,9 +196,10 @@ pub fn cmd_replace(
                 checksum_after,
                 elapsed_ms,
             } => {
+                let path_str = path.display().to_string();
                 writer.write_event(&ReplaceResult {
                     r#type: "replaced",
-                    path: path.display().to_string(),
+                    path: path_str,
                     replacements,
                     bytes_before,
                     bytes_after,
@@ -209,26 +222,34 @@ pub fn cmd_replace(
                 replacements,
                 diff,
             } => {
-                writer.write_event(&serde_json::json!({
-                    "type": "preview",
-                    "path": path.display().to_string(),
-                    "replacements": replacements,
-                    "diff": diff,
-                }))?;
+                writer.write_event(&crate::ndjson_types::ReplacePreview {
+                    r#type: "preview",
+                    path: path.display().to_string(),
+                    replacements,
+                    diff,
+                })?;
             }
-            ReplaceEvent::Error { path, message } => {
-                writer.write_event(&serde_json::json!({
-                    "status": "error",
-                    "path": path.display().to_string(),
-                    "message": message,
-                    "error_class": "transient",
-                    "retryable": true,
-                }))?;
+            ReplaceEvent::Error { path, kind } => {
+                let message = match kind {
+                    ReplaceErrorKind::StateDrift { expected, actual } => {
+                        format!("state drift: expected {expected}, got {actual}")
+                    }
+                    ReplaceErrorKind::WriteFailure(msg) => msg,
+                };
+                writer.write_event(&crate::ndjson_types::ReplaceErrorEvent {
+                    status: "error",
+                    path: path.display().to_string(),
+                    message,
+                    error_class: crate::error::ErrorClass::Transient.as_str(),
+                    retryable: true,
+                })?;
             }
         }
     }
 
-    let _ = walker_thread.join();
+    if let Err(panic_payload) = walker_thread.join() {
+        std::panic::resume_unwind(panic_payload);
+    }
 
     writer.write_event(&Summary {
         r#type: "summary",
@@ -265,8 +286,13 @@ enum ReplaceEvent {
     },
     Error {
         path: PathBuf,
-        message: String,
+        kind: ReplaceErrorKind,
     },
+}
+
+enum ReplaceErrorKind {
+    StateDrift { expected: String, actual: String },
+    WriteFailure(String),
 }
 
 fn compile_pattern(args: &ReplaceArgs) -> Result<Regex> {
@@ -285,30 +311,30 @@ fn compile_pattern(args: &ReplaceArgs) -> Result<Regex> {
     Regex::new(&pattern_str).with_context(|| format!("invalid pattern: {}", args.pattern))
 }
 
-fn apply_replacement(
+fn apply_replacement<'a>(
     pattern: &Regex,
-    content: &str,
+    content: &'a str,
     replacement: &str,
     max_replacements: Option<usize>,
-) -> (String, u64) {
+) -> (Cow<'a, str>, u64) {
     let count = pattern.find_iter(content).count() as u64;
 
     if count == 0 {
-        return (content.to_owned(), 0);
+        return (Cow::Borrowed(content), 0);
     }
 
     let replaced = match max_replacements {
         Some(n) => {
             let actual_count = count.min(n as u64);
             let result = pattern.replacen(content, n, replacement);
-            return (result.into_owned(), actual_count);
+            return (Cow::Owned(result.into_owned()), actual_count);
         }
         None => pattern.replace_all(content, replacement),
     };
 
     match replaced {
-        Cow::Borrowed(_) => (content.to_owned(), 0),
-        Cow::Owned(s) => (s, count),
+        Cow::Borrowed(_) => (Cow::Borrowed(content), 0),
+        Cow::Owned(s) => (Cow::Owned(s), count),
     }
 }
 

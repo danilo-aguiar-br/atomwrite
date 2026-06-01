@@ -1,17 +1,16 @@
 ---
 source: tests/snapshot_write.rs
-assertion_line: 47
 expression: event
 ---
 {
-  "type": "read",
-  "path": "[redacted]",
-  "content": "hello world\n",
-  "lines": 1,
+  "binary": false,
   "bytes": 12,
   "checksum": "[redacted]",
-  "permissions": "[redacted]",
-  "modified": "[redacted]",
+  "content": "hello world\n",
   "kind": "text",
-  "binary": false
+  "lines": 1,
+  "modified": "[redacted]",
+  "path": "[redacted]",
+  "permissions": "[redacted]",
+  "type": "read"
 }

@@ -5,10 +5,9 @@
 
 
 ## Current Version
-- atomwrite is at v0.1.0
-- This is the first public release
-- This document establishes the migration template for future versions
-- No migrations are required at this time
+- atomwrite is at v0.1.1
+- This document covers migration from v0.1.0 to v0.1.1
+- See the section below for additive changes in v0.1.1
 
 
 ## What Changes
@@ -104,8 +103,47 @@
 - Update parsing to consume the new field if useful
 
 
+## v0.1.0 to v0.1.1
+### Summary
+- ZERO breaking changes
+- All v0.1.0 commands, flags and JSON output remain unchanged
+- No migration action required for existing consumers
+
+### Additive Changes
+- `batch` supports 7 operations: write, replace, delete, edit, hash, move, copy (was write, replace, delete)
+- `batch --transaction` flag for all-or-nothing execution with rollback
+- `batch` move and copy accept `source`, `from`, `src` as field aliases
+- `batch` write, delete, edit, hash accept `path` as alias for `target`
+- `edit --fuzzy` flag with 7-strategy cascade for approximate text matching
+- `edit --multi` flag for multiple NDJSON edits in one atomic write
+- `scope` subcommand for grammatical scoping with AST-based actions
+- `backup` subcommand for timestamped backups with BLAKE3 checksums
+- `rollback` subcommand for restoring from backups
+- `apply` subcommand for patch application with auto-format detection
+- `--line-ending lf|crlf|cr|auto` flag on `write` and `edit`
+- `--lang <LOCALE>` global flag for locale override (en, pt-BR)
+- i18n support via `rust-i18n` with automatic OS locale detection
+- 282 tests (was 5 in v0.1.0)
+
+### JSON Output Changes
+- `edit` output includes new optional fields: `fuzzy`, `strategy`, `strategies_tried`, `similarity`
+- `read` timestamp changed from epoch seconds to ISO 8601 format
+- New output types added for `scope`, `backup`, `rollback`, `apply`
+- All existing fields remain unchanged
+
+### Migration Action
+- No action required
+- Existing `jaq` filters and JSON parsing code continue to work
+- New fields are additive and safe to ignore
+
+
 ## Compatibility Notes
-### v0.1.0 (Current)
+### v0.1.1 (Current)
+- All v0.1.0 behavior preserved
+- New subcommands and flags are additive only
+- Exit codes unchanged from v0.1.0
+
+### v0.1.0
 - First public release
 - All JSON schemas are defined in `docs/schemas/`
 - Use `--json-schema` on any subcommand to introspect at runtime

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! File deletion with optional backup before removal.
+//! Workload: I/O-bound (unlink syscall + fsync).
 
 use std::io::Write;
 use std::time::Instant;
@@ -10,7 +11,7 @@ use anyhow::{Context, Result};
 use crate::checksum;
 use crate::cli::{DeleteArgs, GlobalArgs};
 use crate::error::AtomwriteError;
-use crate::ndjson_types::Summary;
+use crate::ndjson_types::{DeleteOutput, DryRunPlan, Summary};
 use crate::output::NdjsonWriter;
 use crate::platform;
 
@@ -21,6 +22,7 @@ use crate::platform;
 /// Returns `AtomwriteError::NotFound` if the target file does not exist.
 /// Returns `AtomwriteError::WorkspaceJail` if the path escapes the workspace.
 /// Returns `AtomwriteError::Io` if deleting the file fails.
+#[tracing::instrument(skip_all, fields(command = "delete"))]
 pub fn cmd_delete(
     args: &DeleteArgs,
     global: &GlobalArgs,
@@ -46,19 +48,20 @@ pub fn cmd_delete(
         }
 
         if path.is_file() {
-            let meta = std::fs::metadata(&path)
-                .with_context(|| format!("cannot stat {}", path.display()))?;
-            let hash = checksum::hash_file(&path)?;
+            let path_str = path.display().to_string();
+            let meta =
+                std::fs::metadata(&path).with_context(|| format!("cannot stat {path_str}"))?;
+            let hash = checksum::hash_file(&path, global.effective_max_filesize())?;
             let size = meta.len();
 
             if args.dry_run {
-                writer.write_event(&serde_json::json!({
-                    "type": "plan",
-                    "operation": "delete",
-                    "path": path.display().to_string(),
-                    "would_modify": true,
-                    "details": format!("{} bytes", size),
-                }))?;
+                writer.write_event(&DryRunPlan {
+                    r#type: "plan",
+                    operation: "delete".into(),
+                    path: path_str,
+                    would_modify: true,
+                    details: Some(format!("{size} bytes")),
+                })?;
                 continue;
             }
 
@@ -72,8 +75,9 @@ pub fn cmd_delete(
             if let Some(parent) = path.parent() {
                 if let Err(e) = platform::fsync_dir(parent) {
                     tracing::warn!(
-                        "fsync_dir after delete failed for {}: {e}",
-                        parent.display()
+                        path = %parent.display(),
+                        error = %e,
+                        "fsync_dir after delete failed"
                     );
                 }
             }
@@ -81,13 +85,13 @@ pub fn cmd_delete(
             deleted += 1;
             _bytes_freed += size;
 
-            writer.write_event(&serde_json::json!({
-                "type": "deleted",
-                "path": path.display().to_string(),
-                "bytes": size,
-                "checksum_before": hash,
-                "elapsed_ms": start.elapsed().as_millis() as u64,
-            }))?;
+            writer.write_event(&DeleteOutput {
+                r#type: "deleted",
+                path: path_str,
+                bytes: size,
+                checksum_before: hash,
+                elapsed_ms: start.elapsed().as_millis() as u64,
+            })?;
         }
     }
 

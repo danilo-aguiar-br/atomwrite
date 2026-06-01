@@ -14,11 +14,11 @@
 
 
 ## Estatísticas Atuais
-- 54 arquivos Rust em `src/` e `tests/`
-- 5923 linhas de código
-- 102 testes no total
-- 7 arquivos de snapshot em `tests/snapshots/`
+- 64+ arquivos Rust em `src/` e `tests/`
+- 282 testes no total (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON)
+- 9 arquivos de snapshot em `tests/snapshots/`
 - 2 arquivos de regressão proptest
+- 2 alvos de fuzzing em `fuzz/fuzz_targets/`
 
 
 ## Categorias de Teste
@@ -53,10 +53,10 @@
 - `cli_backup.rs` -- criação de backup, dry-run, erro de arquivo não encontrado, múltiplos arquivos
 - `cli_rollback.rs` -- restauração de backup, dry-run, erro sem backup disponível, flag de verificação
 - `cli_apply.rs` -- substituição completa de arquivo, blocos SEARCH/REPLACE, diff unificado, dry-run
-- `cli_batch.rs` -- 7 testes para execução de operações em batch
+- `cli_batch.rs` -- 13 testes para execução de operações em batch (write, replace, delete, move, copy, alias path, rollback transacional)
 
 ### Testes de Snapshot (insta)
-- Localizados em `tests/snapshot_write.rs` -- 7 testes
+- Localizados em `tests/snapshot_write.rs` -- 9 testes
 - Usam a crate `insta` para verificação de saída baseada em snapshot
 - Travam a estrutura JSON exata de cada tipo de saída
 - Arquivos de snapshot armazenados em `tests/snapshots/`
@@ -69,6 +69,8 @@
 - `snapshot_write__replace_result_structure.snap`
 - `snapshot_write__error_not_found_structure.snap`
 - `snapshot_write__batch_summary_structure.snap`
+- `snapshot_write__error_invalid_input_structure.snap`
+- `snapshot_write__error_workspace_jail_structure.snap`
 
 ### Testes Property-Based (proptest)
 - Localizados em `tests/proptest_checksum.rs` -- 2 testes
@@ -81,6 +83,30 @@
 ### Testes de Sinal
 - Localizados em `tests/signal_test.rs` -- 1 teste
 - Verificam comportamento de shutdown gracioso na recepção de sinais
+
+### Testes de Validação NDJSON
+- Localizados em `tests/ndjson_valid_test.rs` -- 17 testes
+- Validam estrutura de saída NDJSON para 20 de 21 comandos
+- Incluem testes de interoperabilidade `jaq` verificando parsing de JSON via pipe
+- Incluem teste i18n confirmando que `--lang` não altera saída JSON
+
+### Testes de Concorrência
+- Localizados em `tests/cli_concurrency.rs`
+- Testam operações paralelas de arquivo e condições de corrida
+
+### Testes de Tamanho Máximo de Arquivo
+- Localizados em `tests/cli_max_filesize.rs`
+- Testam enforcement de limites de tamanho de arquivo
+
+### Testes de Tracing
+- Localizados em `tests/tracing_test.rs`
+- Verificam comportamento da infraestrutura de tracing/logging
+
+### Alvos de Fuzzing
+- Localizados em `fuzz/fuzz_targets/batch_parse.rs` -- fuzzing do parser NDJSON de batch
+- Localizados em `fuzz/fuzz_targets/extract_json.rs` -- fuzzing do parser JSON de extract
+- Requerem `cargo +nightly fuzz run <alvo>`
+- Executar com `--max_total_time=30` para validação rápida
 
 
 ## Como Executar

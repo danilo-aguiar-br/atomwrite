@@ -1,0 +1,27 @@
+[package]
+name = "atomwrite-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+atomwrite = { path = ".." }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "batch_parse"
+path = "fuzz_targets/batch_parse.rs"
+doc = false
+
+[[bin]]
+name = "extract_json"
+path = "fuzz_targets/extract_json.rs"
+doc = false

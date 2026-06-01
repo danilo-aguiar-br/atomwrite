@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Regex pattern generation from example strings via grex.
+//! Workload: CPU-bound (regex synthesis from examples).
 
 use std::io::{BufRead, Read, Write};
 use std::time::Instant;
@@ -17,6 +18,7 @@ use crate::output::NdjsonWriter;
 /// # Errors
 ///
 /// Returns `AtomwriteError::InvalidInput` if no example strings are provided.
+#[tracing::instrument(skip_all, fields(command = "regex"))]
 pub fn cmd_regex(
     args: &RegexArgs,
     stdin: impl Read,
@@ -25,7 +27,7 @@ pub fn cmd_regex(
     let start = Instant::now();
 
     let examples = if args.stdin || args.examples.is_empty() {
-        let reader = std::io::BufReader::new(stdin);
+        let reader = std::io::BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
         let lines: Vec<String> = reader
             .lines()
             .map_while(|l| l.ok())

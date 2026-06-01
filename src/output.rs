@@ -30,20 +30,22 @@ impl<W: Write> NdjsonWriter<W> {
     pub fn write_event<T: Serialize>(&mut self, event: &T) -> anyhow::Result<()> {
         match serde_json::to_writer(&mut self.writer, event) {
             Ok(()) => {}
-            Err(e) if is_broken_pipe(&e) => std::process::exit(crate::constants::EXIT_BROKEN_PIPE),
+            Err(e) if is_broken_pipe(&e) => {
+                return Err(crate::error::AtomwriteError::BrokenPipe.into());
+            }
             Err(e) => return Err(e.into()),
         }
         match self.writer.write_all(b"\n") {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
-                std::process::exit(crate::constants::EXIT_BROKEN_PIPE)
+                return Err(crate::error::AtomwriteError::BrokenPipe.into());
             }
             Err(e) => return Err(e.into()),
         }
         match self.writer.flush() {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
-                std::process::exit(crate::constants::EXIT_BROKEN_PIPE)
+                return Err(crate::error::AtomwriteError::BrokenPipe.into());
             }
             Err(e) => return Err(e.into()),
         }
@@ -78,6 +80,7 @@ impl<W: Write> NdjsonWriter<W> {
 /// # Errors
 ///
 /// Returns an I/O error if writing the error JSON to the underlying writer fails.
+#[cold]
 pub fn write_error_json(
     out: &mut impl Write,
     err: &AtomwriteError,
@@ -91,6 +94,31 @@ pub fn write_error_json(
     out.write_all(b"\n")?;
     out.flush()?;
     Ok(())
+}
+
+/// Read a single line from a buffered reader with a per-line size limit.
+///
+/// Reuses the provided `buf` (cleared before each call). Returns the number
+/// of bytes read (0 means EOF). Returns an error if the line exceeds
+/// `max_bytes` before a newline is found.
+pub fn read_limited_line(
+    reader: &mut impl std::io::BufRead,
+    buf: &mut String,
+    max_bytes: usize,
+) -> std::io::Result<usize> {
+    buf.clear();
+    let n = reader.read_line(buf)?;
+    if buf.len() > max_bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "NDJSON line exceeds maximum size of {} bytes ({} bytes read)",
+                max_bytes,
+                buf.len()
+            ),
+        ));
+    }
+    Ok(n)
 }
 
 fn is_broken_pipe(err: &serde_json::Error) -> bool {

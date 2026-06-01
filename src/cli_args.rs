@@ -23,9 +23,11 @@ pub enum ShellType {
     Zsh,
     /// Fish shell.
     Fish,
-    /// PowerShell.
+    /// `PowerShell`.
     #[value(name = "powershell")]
     PowerShell,
+    /// Elvish shell.
+    Elvish,
 }
 
 /// Arguments for the hash subcommand.
@@ -42,14 +44,6 @@ pub struct HashArgs {
     /// Hash content from stdin.
     #[arg(long, help = "Hash content from stdin instead of files")]
     pub stdin: bool,
-
-    /// Glob patterns for file inclusion.
-    #[arg(short = 'g', long, action = clap::ArgAction::Append, help = "Include files matching glob")]
-    pub include: Vec<String>,
-
-    /// Glob patterns for file exclusion.
-    #[arg(long, action = clap::ArgAction::Append, help = "Exclude files matching glob")]
-    pub exclude: Vec<String>,
 
     /// Recurse into directories.
     #[arg(short, long, help = "Recurse into directories")]
@@ -98,10 +92,6 @@ pub struct CountArgs {
     /// Paths to count within.
     #[arg(default_value = ".")]
     pub paths: Vec<PathBuf>,
-
-    /// Pattern to count matches of.
-    #[arg(long, help = "Count matches of this pattern")]
-    pub pattern: Option<String>,
 
     /// Group counts by file extension.
     #[arg(long, help = "Group counts by file extension")]
@@ -368,13 +358,13 @@ pub struct EditArgs {
     )]
     pub between: Option<Vec<String>>,
 
-    /// Exact text to find (must be unique in file).
-    #[arg(long, help = "Exact text to find (must be unique in file)")]
-    pub old: Option<String>,
+    /// Exact text to find (repeatable for multiple replacements).
+    #[arg(long, action = clap::ArgAction::Append, help = "Exact text to find (repeatable)")]
+    pub old: Vec<String>,
 
-    /// Replacement text for --old.
-    #[arg(long, help = "Replacement text for --old")]
-    pub new: Option<String>,
+    /// Replacement text for --old (repeatable, must match --old count).
+    #[arg(long, action = clap::ArgAction::Append, help = "Replacement text for --old (repeatable)")]
+    pub new: Vec<String>,
 
     /// Fuzzy matching mode for --old/--new.
     #[arg(
@@ -671,11 +661,11 @@ pub struct TransformArgs {
     /// Source language for AST parsing.
     #[arg(
         short = 'l',
-        long,
+        long = "language",
         required = true,
         help = "Language (rust, js, ts, py, go, etc)"
     )]
-    pub lang: String,
+    pub language: String,
 
     /// Glob patterns for file inclusion.
     #[arg(short = 'g', long, action = clap::ArgAction::Append, help = "Include files matching glob")]
@@ -711,6 +701,10 @@ pub struct BatchArgs {
         help = "All-or-nothing: rollback all changes if any operation fails"
     )]
     pub transaction: bool,
+
+    /// Emit JSON Schema for the NDJSON input manifest format.
+    #[arg(long, help = "Print JSON Schema for the batch input manifest")]
+    pub input_schema: bool,
 }
 
 /// Arguments for the backup subcommand.

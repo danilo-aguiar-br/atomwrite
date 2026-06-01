@@ -5,10 +5,9 @@
 
 
 ## Versão Atual
-- atomwrite está na v0.1.0
-- Esta é a primeira versão pública
-- Este documento estabelece o template de migração para versões futuras
-- Nenhuma migração é necessária no momento
+- atomwrite está na v0.1.1
+- Este documento cobre migração da v0.1.0 para v0.1.1
+- Veja a seção abaixo para mudanças aditivas na v0.1.1
 
 
 ## O Que Muda
@@ -104,8 +103,47 @@
 - Atualize o parsing para consumir o novo campo se útil
 
 
+## v0.1.0 para v0.1.1
+### Resumo
+- ZERO mudanças que quebram compatibilidade
+- Todos os comandos, flags e saída JSON da v0.1.0 permanecem inalterados
+- Nenhuma ação de migração necessária para consumidores existentes
+
+### Mudanças Aditivas
+- `batch` suporta 7 operações: write, replace, delete, edit, hash, move, copy (era write, replace, delete)
+- `batch --transaction` flag para execução tudo-ou-nada com rollback
+- `batch` move e copy aceitam `source`, `from`, `src` como aliases de campo
+- `batch` write, delete, edit, hash aceitam `path` como alias de `target`
+- `edit --fuzzy` flag com cascata de 7 estratégias para matching aproximado
+- `edit --multi` flag para múltiplas edições NDJSON em uma escrita atômica
+- Subcomando `scope` para escopo gramatical com ações baseadas em AST
+- Subcomando `backup` para backups com timestamp e checksums BLAKE3
+- Subcomando `rollback` para restauração a partir de backups
+- Subcomando `apply` para aplicação de patches com detecção automática de formato
+- Flag `--line-ending lf|crlf|cr|auto` em `write` e `edit`
+- Flag global `--lang <LOCALE>` para override de locale (en, pt-BR)
+- Suporte a i18n via `rust-i18n` com detecção automática de locale do SO
+- 282 testes (eram 5 na v0.1.0)
+
+### Mudanças na Saída JSON
+- Saída de `edit` inclui novos campos opcionais: `fuzzy`, `strategy`, `strategies_tried`, `similarity`
+- Timestamp de `read` mudou de epoch seconds para formato ISO 8601
+- Novos tipos de saída adicionados para `scope`, `backup`, `rollback`, `apply`
+- Todos os campos existentes permanecem inalterados
+
+### Ação de Migração
+- Nenhuma ação necessária
+- Filtros `jaq` e código de parsing JSON existentes continuam funcionando
+- Novos campos são aditivos e seguros para ignorar
+
+
 ## Notas de Compatibilidade
-### v0.1.0 (Atual)
+### v0.1.1 (Atual)
+- Todo comportamento da v0.1.0 preservado
+- Novos subcomandos e flags são apenas aditivos
+- Exit codes inalterados da v0.1.0
+
+### v0.1.0
 - Primeira versão pública
 - Todos os JSON schemas estão definidos em `docs/schemas/`
 - Use `--json-schema` em qualquer subcomando para introspecção em runtime

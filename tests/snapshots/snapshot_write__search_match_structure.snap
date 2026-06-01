@@ -1,19 +1,18 @@
 ---
 source: tests/snapshot_write.rs
-assertion_line: 92
 expression: event
 ---
 {
-  "type": "match",
-  "path": "[redacted]",
+  "byte_offset": "[redacted]",
   "line_number": 1,
   "lines": "hello world",
-  "byte_offset": "[redacted]",
+  "path": "[redacted]",
   "submatches": [
     {
+      "end": 5,
       "match": "hello",
-      "start": 0,
-      "end": 5
+      "start": 0
     }
-  ]
+  ],
+  "type": "match"
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Structural AST search and rewrite via ast-grep.
+//! Workload: mixed I/O-bound + CPU-bound (file reading + AST parsing via ast-grep + atomic write).
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -27,6 +28,7 @@ use crate::signal::ShutdownSignal;
 /// Returns `AtomwriteError::WorkspaceJail` if the path escapes the workspace.
 /// Returns `AtomwriteError::InvalidInput` if the AST pattern or language is invalid.
 /// Returns `AtomwriteError::Io` if reading or writing files fails.
+#[tracing::instrument(skip_all, fields(command = "transform"))]
 pub fn cmd_transform(
     args: &TransformArgs,
     global: &GlobalArgs,
@@ -37,10 +39,10 @@ pub fn cmd_transform(
     let workspace = global.resolve_workspace()?;
 
     let lang: SupportLang =
-        args.lang
+        args.language
             .parse()
             .map_err(|_| crate::error::AtomwriteError::InvalidInput {
-                reason: format!("unsupported language: {}", args.lang),
+                reason: format!("unsupported language: {}", args.language),
             })?;
 
     let pattern = Pattern::try_new(&args.pattern, lang).map_err(|e| {
@@ -49,7 +51,7 @@ pub fn cmd_transform(
         }
     })?;
 
-    let extensions = lang_extensions(&args.lang);
+    let extensions = crate::lang_utils::lang_extensions(&args.language);
 
     let mut walker = ignore::WalkBuilder::new(&args.paths[0]);
     for p in args.paths.iter().skip(1) {
@@ -95,7 +97,7 @@ pub fn cmd_transform(
         walker.overrides(overrides_builder.build().context("build overrides")?);
     }
 
-    let (tx, rx) = crossbeam_channel::unbounded::<TransformEvent>();
+    let (tx, rx) = crossbeam_channel::bounded::<TransformEvent>(1024);
 
     let files_visited = Arc::new(AtomicU64::new(0));
     let files_transformed = Arc::new(AtomicU64::new(0));
@@ -106,12 +108,14 @@ pub fn cmd_transform(
     let ft = Arc::clone(&files_transformed);
     let fs = Arc::clone(&files_skipped);
     let tr = Arc::clone(&total_replacements);
-    let rewrite = args.rewrite.clone();
-    let language = args.lang.clone();
+    let rewrite: Arc<str> = args.rewrite.clone().into();
+    let language: Arc<str> = args.language.clone().into();
     let dry_run = args.dry_run;
     let backup = args.backup;
-    let ws = workspace.clone();
+    let ws: Arc<std::path::Path> = Arc::from(workspace.as_path());
 
+    let max_size = global.effective_max_filesize();
+    let shutdown_flag = shutdown.flag();
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
             let pattern = pattern.clone();
@@ -120,11 +124,16 @@ pub fn cmd_transform(
             let ft = Arc::clone(&ft);
             let fs = Arc::clone(&fs);
             let tr = Arc::clone(&tr);
-            let rewrite = rewrite.clone();
-            let language = language.clone();
-            let ws = ws.clone();
+            let rewrite = Arc::clone(&rewrite);
+            let language = Arc::clone(&language);
+            let ws = Arc::clone(&ws);
+            let shutdown_flag = Arc::clone(&shutdown_flag);
 
             Box::new(move |entry| {
+                if shutdown_flag.load(Ordering::Acquire) {
+                    return ignore::WalkState::Quit;
+                }
+
                 let entry = match entry {
                     Ok(e) => e,
                     Err(_) => return ignore::WalkState::Continue,
@@ -137,12 +146,14 @@ pub fn cmd_transform(
                 fv.fetch_add(1, Ordering::Relaxed);
 
                 let path = entry.path().to_path_buf();
+                let _span = tracing::debug_span!("process_file", path = %path.display()).entered();
                 let file_start = Instant::now();
 
-                let content = match crate::file_io::read_file_string(&path) {
+                let content = match crate::file_io::read_file_string(&path, max_size) {
                     Ok(c) => c,
                     Err(e) => {
                         fs.fetch_add(1, Ordering::Relaxed);
+                        // Receiver may have dropped during shutdown — send failure is expected
                         let _ = tx.send(TransformEvent::Error {
                             path,
                             message: format!("{e}"),
@@ -162,18 +173,19 @@ pub fn cmd_transform(
 
                 let match_count = edits.len() as u64;
                 let checksum_before = checksum::hash_bytes(content.as_bytes());
+                let bytes_before = content.len() as u64;
 
-                let mut new_content = content.clone();
+                let mut content = content; // rebind as mut — no clone
                 let mut sorted_edits = edits;
                 sorted_edits.sort_by_key(|e| std::cmp::Reverse(e.position));
                 for edit in &sorted_edits {
                     let start = edit.position;
                     let end = start + edit.deleted_length;
                     let replacement = String::from_utf8_lossy(&edit.inserted_text);
-                    new_content.replace_range(start..end, &replacement);
+                    content.replace_range(start..end, &replacement);
                 }
 
-                let checksum_after = checksum::hash_bytes(new_content.as_bytes());
+                let checksum_after = checksum::hash_bytes(content.as_bytes());
 
                 if !dry_run {
                     let validated = match crate::path_safety::validate_path(&path, &ws) {
@@ -190,7 +202,7 @@ pub fn cmd_transform(
                         backup,
                         ..Default::default()
                     };
-                    if let Err(e) = atomic_write(&validated, new_content.as_bytes(), &opts, &ws) {
+                    if let Err(e) = atomic_write(&validated, content.as_bytes(), &opts, &ws) {
                         let _ = tx.send(TransformEvent::Error {
                             path,
                             message: format!("{e:#}"),
@@ -204,10 +216,10 @@ pub fn cmd_transform(
 
                 let _ = tx.send(TransformEvent::Transformed {
                     path,
-                    language: language.clone(),
+                    language: language.to_string(),
                     matches: match_count,
-                    bytes_before: content.len() as u64,
-                    bytes_after: new_content.len() as u64,
+                    bytes_before,
+                    bytes_after: content.len() as u64,
                     checksum_before,
                     checksum_after,
                     elapsed_ms: file_start.elapsed().as_millis() as u64,
@@ -253,7 +265,9 @@ pub fn cmd_transform(
         }
     }
 
-    let _ = walker_thread.join();
+    if let Err(panic_payload) = walker_thread.join() {
+        std::panic::resume_unwind(panic_payload);
+    }
 
     writer.write_event(&Summary {
         r#type: "summary",
@@ -284,28 +298,4 @@ enum TransformEvent {
         path: PathBuf,
         message: String,
     },
-}
-
-fn lang_extensions(lang: &str) -> Vec<&'static str> {
-    match lang.to_lowercase().as_str() {
-        "rust" | "rs" => vec!["rs"],
-        "javascript" | "js" => vec!["js", "jsx", "mjs"],
-        "typescript" | "ts" => vec!["ts", "tsx", "mts"],
-        "python" | "py" => vec!["py", "pyi"],
-        "go" => vec!["go"],
-        "java" => vec!["java"],
-        "c" => vec!["c", "h"],
-        "cpp" | "c++" => vec!["cpp", "hpp", "cc", "hh", "cxx"],
-        "csharp" | "c#" | "cs" => vec!["cs"],
-        "ruby" | "rb" => vec!["rb"],
-        "swift" => vec!["swift"],
-        "kotlin" | "kt" => vec!["kt", "kts"],
-        "lua" => vec!["lua"],
-        "html" => vec!["html", "htm"],
-        "css" => vec!["css"],
-        "json" => vec!["json"],
-        "yaml" | "yml" => vec!["yaml", "yml"],
-        "toml" => vec!["toml"],
-        _ => vec![],
-    }
 }

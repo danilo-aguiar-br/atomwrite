@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Patch application from stdin: unified diff, SEARCH/REPLACE, full file.
+//! Workload: I/O-bound (stdin read + patch parse + atomic write).
 
 use std::io::{Read, Write};
 use std::time::Instant;
@@ -22,18 +23,21 @@ use crate::output::NdjsonWriter;
 /// Returns `AtomwriteError::InvalidInput` if the patch format is invalid.
 /// Returns `AtomwriteError::WorkspaceJail` if the path escapes the workspace.
 /// Returns an I/O error if the write fails.
+#[tracing::instrument(skip_all, fields(command = "apply"))]
 pub fn cmd_apply(
     args: &ApplyArgs,
     global: &GlobalArgs,
-    mut stdin: impl Read,
+    stdin: impl Read,
     writer: &mut NdjsonWriter<impl Write>,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
     let target = crate::path_safety::validate_path(&args.file, &workspace)?;
 
+    let max_stdin = global.effective_max_filesize();
     let mut patch = String::new();
     stdin
+        .take(max_stdin)
         .read_to_string(&mut patch)
         .map_err(|e| AtomwriteError::Io { source: e })?;
 
@@ -43,7 +47,7 @@ pub fn cmd_apply(
     };
 
     let original = if target.exists() {
-        crate::file_io::read_file_string(&target)?
+        crate::file_io::read_file_string(&target, global.effective_max_filesize())?
     } else if matches!(format, PatchFormat::Full) {
         String::new()
     } else {
@@ -63,7 +67,7 @@ pub fn cmd_apply(
             let stripped = strip_markdown_fences(&patch);
             apply_unified(&original, &stripped)?
         }
-        PatchFormat::Auto => unreachable!(),
+        PatchFormat::Auto => unreachable!("Auto resolved to concrete format before dispatch"),
     };
 
     let checksum_after = checksum::hash_bytes(result_content.as_bytes());
@@ -76,13 +80,13 @@ pub fn cmd_apply(
     };
 
     if args.dry_run {
-        writer.write_event(&serde_json::json!({
-            "type": "plan",
-            "operation": "apply",
-            "path": target.display().to_string(),
-            "format_detected": format_name,
-            "hunks": hunks,
-        }))?;
+        writer.write_event(&crate::ndjson_types::ApplyPlan {
+            r#type: "plan",
+            operation: "apply",
+            path: target.display().to_string(),
+            format_detected: format_name.to_owned(),
+            hunks,
+        })?;
         return Ok(());
     }
 
@@ -108,7 +112,16 @@ pub fn cmd_apply(
 }
 
 fn detect_format(patch: &str) -> PatchFormat {
-    let head: String = patch.lines().take(15).collect::<Vec<_>>().join("\n");
+    let head: String = {
+        let mut buf = String::with_capacity(256);
+        for (i, line) in patch.lines().take(15).enumerate() {
+            if i > 0 {
+                buf.push('\n');
+            }
+            buf.push_str(line);
+        }
+        buf
+    };
     if head.contains("--- ") && head.contains("+++ ") && head.contains("@@ ") {
         PatchFormat::Unified
     } else if head.contains("<<<<<<< SEARCH") {
@@ -128,7 +141,7 @@ fn apply_unified(original: &str, patch: &str) -> Result<(String, usize)> {
     for hunk in parse_unified_hunks(patch) {
         let start_line = ((hunk.old_start as i64) + offset - 1).max(0) as usize;
 
-        let mut new_lines = Vec::new();
+        let mut new_lines = Vec::with_capacity(hunk.ops.len());
         let mut old_consumed = 0usize;
 
         for op in &hunk.ops {
@@ -174,7 +187,7 @@ enum HunkOp<'a> {
 }
 
 fn parse_unified_hunks(patch: &str) -> Vec<Hunk<'_>> {
-    let mut hunks = Vec::new();
+    let mut hunks = Vec::with_capacity(4);
     let mut current: Option<Hunk<'_>> = None;
     let lines: Vec<&str> = patch.lines().collect();
 
@@ -188,7 +201,7 @@ fn parse_unified_hunks(patch: &str) -> Vec<Hunk<'_>> {
                     old_start,
                     old_count,
                     new_count,
-                    ops: Vec::new(),
+                    ops: Vec::with_capacity(8),
                 });
             }
         } else if let Some(ref mut h) = current {
@@ -291,7 +304,7 @@ fn apply_search_replace(original: &str, patch: &str) -> Result<(String, usize)> 
 
 fn strip_markdown_fences(patch: &str) -> String {
     let mut in_block = false;
-    let mut result = Vec::new();
+    let mut result = Vec::with_capacity(patch.lines().count());
 
     for line in patch.lines() {
         if line.starts_with("```diff") {

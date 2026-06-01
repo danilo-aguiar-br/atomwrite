@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Grammatical scoping: AST-based code selection and transformation.
+//! Workload: mixed I/O-bound + CPU-bound (file reading + AST traversal via ast-grep + atomic write).
 
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ast_grep_core::AstGrep;
-use ast_grep_core::matcher::Pattern;
+use ast_grep_core::matcher::{MatcherExt, Pattern};
 use ast_grep_language::SupportLang;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
@@ -30,11 +31,11 @@ pub struct ScopeArgs {
     /// Source language for AST parsing.
     #[arg(
         short = 'l',
-        long,
+        long = "language",
         required = true,
         help = "Language (rust, py, ts, go, c, etc)"
     )]
-    pub lang: String,
+    pub language: String,
 
     /// Prepared query name (e.g. comments, strings, fn, pub-fn).
     #[arg(
@@ -98,16 +99,17 @@ pub enum ScopeAction {
 /// # Errors
 ///
 /// Returns `AtomwriteError::InvalidInput` for unknown language, query, or pattern.
+#[tracing::instrument(skip_all, fields(command = "scope"))]
 pub fn cmd_scope(
     args: &ScopeArgs,
     global: &GlobalArgs,
     writer: &mut NdjsonWriter<impl Write>,
-    _shutdown: &ShutdownSignal,
+    shutdown: &ShutdownSignal,
 ) -> Result<()> {
     let start = Instant::now();
 
-    let lang = parse_language(&args.lang)?;
-    let pattern_str = resolve_pattern(&args.query, &args.pattern, &args.lang)?;
+    let lang = parse_language(&args.language)?;
+    let pattern_str = resolve_pattern(&args.query, &args.pattern, &args.language)?;
     let pattern =
         Pattern::try_new(&pattern_str, lang).map_err(|e| AtomwriteError::InvalidInput {
             reason: format!("invalid scope pattern: {e}"),
@@ -125,6 +127,18 @@ pub fn cmd_scope(
         .git_ignore(!global.no_gitignore)
         .follow_links(global.follow_symlinks);
 
+    let extensions = crate::lang_utils::lang_extensions(&args.language);
+    if !extensions.is_empty() {
+        let mut types_builder = ignore::types::TypesBuilder::new();
+        for ext in &extensions {
+            types_builder
+                .add_def(&format!("lang:*.{ext}"))
+                .context("invalid extension")?;
+        }
+        types_builder.select("lang");
+        walker.types(types_builder.build().context("build types")?);
+    }
+
     if !args.include.is_empty() || !args.exclude.is_empty() {
         let mut overrides = ignore::overrides::OverrideBuilder::new(&args.paths[0]);
         for pat in &args.include {
@@ -136,7 +150,7 @@ pub fn cmd_scope(
         walker.overrides(overrides.build()?);
     }
 
-    let (tx, rx) = crossbeam_channel::unbounded::<ScopeEvent>();
+    let (tx, rx) = crossbeam_channel::bounded::<ScopeEvent>(1024);
 
     let files_visited = Arc::new(AtomicU64::new(0));
     let files_modified = Arc::new(AtomicU64::new(0));
@@ -147,13 +161,15 @@ pub fn cmd_scope(
     let fs = Arc::clone(&files_skipped);
     let delete = args.delete;
     let action = args.action;
-    let replace_with = args.replace_with.clone();
+    let replace_with: Option<Arc<str>> = args.replace_with.clone().map(Into::into);
     let dry_run = args.dry_run;
     let backup = args.backup;
-    let ws = workspace.clone();
-    let qn = query_name.clone();
-    let lang_name = args.lang.clone();
+    let ws: Arc<std::path::Path> = Arc::from(workspace.as_path());
+    let qn: Arc<str> = query_name.into();
+    let lang_name: Arc<str> = args.language.clone().into();
 
+    let max_size = global.effective_max_filesize();
+    let shutdown_flag = shutdown.flag();
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
             let pattern = pattern.clone();
@@ -162,11 +178,16 @@ pub fn cmd_scope(
             let fm = Arc::clone(&fm);
             let fs = Arc::clone(&fs);
             let replace_with = replace_with.clone();
-            let ws = ws.clone();
-            let qn = qn.clone();
-            let lang_name = lang_name.clone();
+            let ws = Arc::clone(&ws);
+            let qn = Arc::clone(&qn);
+            let lang_name = Arc::clone(&lang_name);
+            let shutdown_flag = Arc::clone(&shutdown_flag);
 
             Box::new(move |entry| {
+                if shutdown_flag.load(Ordering::Acquire) {
+                    return ignore::WalkState::Quit;
+                }
+
                 let entry = match entry {
                     Ok(e) => e,
                     Err(_) => return ignore::WalkState::Continue,
@@ -178,9 +199,10 @@ pub fn cmd_scope(
 
                 fv.fetch_add(1, Ordering::Relaxed);
                 let path = entry.path().to_path_buf();
+                let _span = tracing::debug_span!("process_file", path = %path.display()).entered();
                 let file_start = Instant::now();
 
-                let content = match crate::file_io::read_file_string(&path) {
+                let content = match crate::file_io::read_file_string(&path, max_size) {
                     Ok(c) => c,
                     Err(_) => {
                         fs.fetch_add(1, Ordering::Relaxed);
@@ -190,7 +212,10 @@ pub fn cmd_scope(
 
                 let grep = AstGrep::new(&content, lang);
                 let root = grep.root();
-                let matches: Vec<_> = root.find_all(&pattern).collect();
+                let matches: Vec<_> = root
+                    .dfs()
+                    .filter(|node| pattern.match_node(node.clone()).is_some())
+                    .collect();
 
                 if matches.is_empty() {
                     fs.fetch_add(1, Ordering::Relaxed);
@@ -205,32 +230,33 @@ pub fn cmd_scope(
                     let matched_text = &content[range.start..range.end];
                     let replacement =
                         apply_scope_action(matched_text, delete, action, replace_with.as_deref());
-                    edits.push((range.start, range.end, replacement));
+                    edits.push((range.start, range.end, replacement.into_owned()));
                 }
 
                 edits.sort_by_key(|e| std::cmp::Reverse(e.0));
 
-                let mut result_content = content.clone();
+                let checksum_before = checksum::hash_bytes(content.as_bytes());
+                let bytes_before = content.len() as u64;
+                let mut content = content; // rebind as mut — no clone
                 for (s, e, replacement) in &edits {
-                    result_content.replace_range(*s..*e, replacement);
+                    content.replace_range(*s..*e, replacement);
                 }
+                let checksum_after = checksum::hash_bytes(content.as_bytes());
 
-                if result_content == content {
+                if checksum_before == checksum_after {
+                    // O(1) hash comparison instead of O(n) string comparison
                     fs.fetch_add(1, Ordering::Relaxed);
                     return ignore::WalkState::Continue;
                 }
 
                 fm.fetch_add(1, Ordering::Relaxed);
 
-                let checksum_before = checksum::hash_bytes(content.as_bytes());
-                let checksum_after = checksum::hash_bytes(result_content.as_bytes());
-
                 if !dry_run {
                     let opts = AtomicWriteOptions {
                         backup,
                         ..Default::default()
                     };
-                    if let Err(e) = atomic_write(&path, result_content.as_bytes(), &opts, &ws) {
+                    if let Err(e) = atomic_write(&path, content.as_bytes(), &opts, &ws) {
                         tracing::warn!(path = %path.display(), error = %e, "scope write failed");
                         return ignore::WalkState::Continue;
                     }
@@ -250,15 +276,16 @@ pub fn cmd_scope(
                     }
                 };
 
+                // Receiver may have dropped during shutdown — send failure is expected
                 let _ = tx.send(ScopeEvent::Result(ScopeResult {
                     r#type: "scoped",
                     path: path.display().to_string(),
-                    language: lang_name.clone(),
-                    query: qn.clone(),
+                    language: lang_name.to_string(),
+                    query: qn.to_string(),
                     action: action_name.to_owned(),
                     scopes_matched,
-                    bytes_before: content.len() as u64,
-                    bytes_after: result_content.len() as u64,
+                    bytes_before,
+                    bytes_after: content.len() as u64,
                     checksum_before,
                     checksum_after,
                     elapsed_ms: file_start.elapsed().as_millis() as u64,
@@ -270,12 +297,17 @@ pub fn cmd_scope(
     });
 
     for event in rx {
+        if shutdown.is_shutdown() {
+            break;
+        }
         match event {
             ScopeEvent::Result(r) => writer.write_event(&r)?,
         }
     }
 
-    let _ = walker_thread.join();
+    if let Err(panic_payload) = walker_thread.join() {
+        std::panic::resume_unwind(panic_payload);
+    }
 
     let summary = Summary {
         r#type: "summary",
@@ -296,24 +328,24 @@ pub fn cmd_scope(
     Ok(())
 }
 
-fn apply_scope_action(
-    text: &str,
+fn apply_scope_action<'a>(
+    text: &'a str,
     delete: bool,
     action: Option<ScopeAction>,
     replace_with: Option<&str>,
-) -> String {
+) -> std::borrow::Cow<'a, str> {
     if delete {
-        return String::new();
+        return std::borrow::Cow::Owned(String::new());
     }
     if let Some(replacement) = replace_with {
-        return replacement.to_owned();
+        return std::borrow::Cow::Owned(replacement.to_owned());
     }
     match action {
-        Some(ScopeAction::Upper) => text.to_uppercase(),
-        Some(ScopeAction::Lower) => text.to_lowercase(),
-        Some(ScopeAction::Titlecase) => titlecase(text),
-        Some(ScopeAction::Squeeze) => squeeze(text),
-        None => text.to_owned(),
+        Some(ScopeAction::Upper) => std::borrow::Cow::Owned(text.to_uppercase()),
+        Some(ScopeAction::Lower) => std::borrow::Cow::Owned(text.to_lowercase()),
+        Some(ScopeAction::Titlecase) => std::borrow::Cow::Owned(titlecase(text)),
+        Some(ScopeAction::Squeeze) => std::borrow::Cow::Owned(squeeze(text)),
+        None => std::borrow::Cow::Borrowed(text),
     }
 }
 

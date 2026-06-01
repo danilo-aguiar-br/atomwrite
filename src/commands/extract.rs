@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Field extraction from NDJSON input or text columns.
+//! Workload: I/O-bound (stdin streaming + field selection).
 
-use std::io::{BufRead, Read, Write};
+use std::io::{Read, Write};
 
 use anyhow::Result;
 
@@ -15,16 +16,25 @@ use crate::output::NdjsonWriter;
 ///
 /// Returns `AtomwriteError::Io` if reading stdin fails.
 /// Returns `AtomwriteError::InvalidInput` if the field specification is invalid.
+#[tracing::instrument(skip_all, fields(command = "extract"))]
 pub fn cmd_extract(
     args: &ExtractArgs,
     stdin: impl Read,
     writer: &mut NdjsonWriter<impl Write>,
 ) -> Result<()> {
-    let reader = std::io::BufReader::new(stdin);
+    let mut reader = std::io::BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
+    let mut line_buf = String::new();
 
-    for line in reader.lines() {
-        let line = line?;
-        let trimmed = line.trim();
+    loop {
+        let n = crate::output::read_limited_line(
+            &mut reader,
+            &mut line_buf,
+            crate::constants::MAX_NDJSON_LINE_SIZE,
+        )?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = line_buf.trim();
         if trimmed.is_empty() {
             continue;
         }
@@ -39,12 +49,34 @@ pub fn cmd_extract(
     Ok(())
 }
 
+/// Check that a JSON value's nesting depth does not exceed `max`.
+pub fn check_depth(value: &serde_json::Value, max: usize) -> bool {
+    fn recurse(v: &serde_json::Value, remaining: usize) -> bool {
+        if remaining == 0 {
+            return false;
+        }
+        match v {
+            serde_json::Value::Array(arr) => arr.iter().all(|item| recurse(item, remaining - 1)),
+            serde_json::Value::Object(map) => map.values().all(|val| recurse(val, remaining - 1)),
+            _ => true,
+        }
+    }
+    recurse(value, max)
+}
+
 fn extract_json(
     line: &str,
     fields: &[String],
     writer: &mut NdjsonWriter<impl Write>,
 ) -> Result<()> {
-    let parsed: serde_json::Value = serde_json::from_str(line)?;
+    let mut parsed: serde_json::Value = serde_json::from_str(line)?;
+
+    if !check_depth(&parsed, crate::constants::MAX_JSON_DEPTH) {
+        anyhow::bail!(
+            "JSON nesting depth exceeds maximum of {}",
+            crate::constants::MAX_JSON_DEPTH
+        );
+    }
 
     if fields.is_empty() {
         writer.write_event(&parsed)?;
@@ -52,9 +84,11 @@ fn extract_json(
     }
 
     let mut output = serde_json::Map::new();
-    for field in fields {
-        if let Some(val) = parsed.get(field) {
-            output.insert(field.clone(), val.clone());
+    if let Some(obj) = parsed.as_object_mut() {
+        for field in fields {
+            if let Some(val) = obj.remove(field.as_str()) {
+                output.insert(field.clone(), val);
+            }
         }
     }
     writer.write_event(&serde_json::Value::Object(output))?;
@@ -73,8 +107,10 @@ fn extract_text(
     };
 
     if fields.is_empty() {
-        let output = serde_json::json!({"type": "text", "fields": parts});
-        writer.write_event(&output)?;
+        writer.write_event(&crate::ndjson_types::TextFieldsOutput {
+            r#type: "text",
+            fields: parts,
+        })?;
         return Ok(());
     }
 
@@ -94,7 +130,9 @@ fn extract_text(
         }
     }
 
-    let output = serde_json::json!({"type": "text", "values": results});
-    writer.write_event(&output)?;
+    writer.write_event(&crate::ndjson_types::TextValuesOutput {
+        r#type: "text",
+        values: results,
+    })?;
     Ok(())
 }

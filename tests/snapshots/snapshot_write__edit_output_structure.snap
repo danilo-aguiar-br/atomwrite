@@ -1,21 +1,20 @@
 ---
 source: tests/snapshot_write.rs
-assertion_line: 191
 expression: event
 ---
 {
-  "type": "edit",
-  "path": "[redacted]",
-  "edits": 1,
-  "mode": "exact",
-  "bytes_before": 21,
   "bytes_after": 21,
-  "checksum_before": "[redacted]",
+  "bytes_before": 21,
   "checksum_after": "[redacted]",
-  "lines_before": 3,
-  "lines_after": 3,
+  "checksum_before": "[redacted]",
+  "edits": 1,
   "elapsed_ms": "[redacted]",
   "fuzzy": false,
+  "lines_after": 3,
+  "lines_before": 3,
+  "mode": "exact",
+  "path": "[redacted]",
+  "strategies_tried": 1,
   "strategy": "exact",
-  "strategies_tried": 1
+  "type": "edit"
 }

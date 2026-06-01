@@ -60,7 +60,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `read` -- read files with metadata, checksum, optional content
 - `write` -- create or overwrite files atomically via stdin
 - `edit` -- surgically edit by line number, text marker or exact match; `--fuzzy auto|off|aggressive` for fuzzy matching; `--multi` for NDJSON multi-edit
-- `search` -- search file contents in parallel (ripgrep engine); supports `--context N`, `--max-count N`, `--invert`, `--sort path`
+- `search` -- search file contents in parallel (ripgrep engine); supports `--context N`, `--max-count N`, `--invert`, `--sort path`, `--fixed`, `--word`, `--case-insensitive`, `--include`, `--exclude`
 - `replace` -- replace text across files with atomic writes
 - `hash` -- calculate BLAKE3 checksums
 - `delete` -- delete files with optional backup
@@ -73,7 +73,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `calc` -- evaluate math expressions and unit conversions (fend engine)
 - `regex` -- generate regex from examples (grex engine)
 - `transform` -- structural AST search and rewrite (ast-grep, 306 languages)
-- `scope` -- grammatical scoping with AST-based actions (delete, upper, lower, titlecase, squeeze, replace) on code categories (comments, functions, strings, etc); supports Rust, Python, JS/TS, Go; `--query` for prepared queries, `--pattern` for custom AST patterns
+- `scope` -- grammatical scoping on code categories; `--delete` to remove matches; `--action upper|lower|titlecase|squeeze` for text transforms; `--replace-with "text"` for custom replacement; `--query` for prepared queries (comments, fn, strings, struct, etc); `--pattern` for custom AST patterns; supports Rust (30 queries), Python (13), JS/TS (11), Go (8)
 - `backup` -- create timestamped backups with BLAKE3 checksums; `--retention` for retention period, `--dry-run` for preview
 - `rollback` -- restore from backup; `--timestamp` or `--latest` to select backup, `--verify` for checksum validation, `--dry-run` for preview
 - `apply` -- apply patches from stdin with auto-format detection (unified diff, SEARCH/REPLACE blocks, markdown-fenced, full file); `--format` to force format, `--backup` for safety, `--dry-run` for preview
@@ -174,12 +174,12 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - 74: I/O error
 - 78: config invalid
 - 82: state drift (checksum mismatch)
+- 85: FIFO detected (named pipe cannot be atomically written)
+- 86: device file detected (block or character device)
 - 126: workspace jail violated
 - 127: symlink blocked
 - 128: file immutable
 - 130: SIGINT
-- 85: FIFO detected (named pipe cannot be atomically written)
-- 86: device file detected (block or character device)
 - 141: SIGPIPE (broken pipe)
 - 143: SIGTERM
 - 255: internal error
@@ -211,7 +211,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `IMMUTABLE_FILE` (exit 128) -- do not retry without removing immutable flag
 
 ### Precondition Failed (retryable: false)
-- `BINARY_FILE` (exit 65) -- use `--force-text` or `--stat` mode
+- `BINARY_FILE` (exit 65) -- use `--stat` mode to read metadata without content
 - `IMMUTABLE_FILE` (exit 128) -- remove immutable flag first
 - `WORKSPACE_JAIL` (exit 126) -- adjust `--workspace` boundary
 
@@ -221,6 +221,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `--verbose` / `-v` -- enable tracing on stderr
 - `--quiet` / `-q` -- suppress non-essential output
 - `--color <auto|always|never>` -- control colored output
+- `--no-color` -- disable colored output (equivalent to `--color never`)
 - `--no-gitignore` -- do not respect .gitignore rules
 - `--hidden` -- include hidden files and directories
 - `--follow-symlinks` -- follow symbolic links

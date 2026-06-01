@@ -47,12 +47,18 @@ pub fn validate_path_with_symlink(
         check_reserved_windows(&path_str)?;
     }
 
-    let resolved = soft_canonicalize(path);
-    let workspace_resolved = soft_canonicalize(workspace);
+    let effective_path = if path.is_relative() {
+        workspace.join(path)
+    } else {
+        path.to_path_buf()
+    };
+    let resolved = normalize_path_nfc(&soft_canonicalize(&effective_path));
+    let workspace_resolved = normalize_path_nfc(&soft_canonicalize(workspace));
 
     if !resolved.starts_with(&workspace_resolved) {
         return Err(AtomwriteError::WorkspaceJail {
             path: resolved.clone(),
+            workspace: workspace_resolved.clone(),
         }
         .into());
     }
@@ -85,6 +91,13 @@ pub fn check_symlink(path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn normalize_path_nfc(path: &Path) -> PathBuf {
+    use unicode_normalization::UnicodeNormalization;
+    let s = path.to_string_lossy();
+    let normalized: String = s.nfc().collect();
+    PathBuf::from(normalized)
 }
 
 /// Resolve `.` and `..` components without touching the filesystem.

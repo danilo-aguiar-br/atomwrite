@@ -192,3 +192,60 @@ fn edit_output_ndjson_structure_snapshot() {
 
     insta::assert_json_snapshot!("edit_output_structure", event);
 }
+
+#[test]
+fn error_invalid_input_structure_snapshot() {
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    let output = common::atomwrite()
+        .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
+        .write_stdin("{\"op\":\"write\"}\n{bad json")
+        .output()
+        .expect("run");
+
+    assert!(!output.status.success());
+    let events = common::parse_ndjson(&output.stdout);
+
+    let error_event = events
+        .iter()
+        .find(|e| e.get("error") == Some(&serde_json::json!(true)));
+    assert!(error_event.is_some(), "expected an error event");
+
+    let mut event = error_event.expect("error").clone();
+    event["message"] = serde_json::json!("[redacted]");
+    event["suggestion"] = serde_json::json!("[redacted]");
+
+    insta::assert_json_snapshot!("error_invalid_input_structure", event);
+}
+
+#[test]
+fn error_workspace_jail_structure_snapshot() {
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "write",
+            "/etc/evil.txt",
+        ])
+        .write_stdin("payload")
+        .output()
+        .expect("run");
+
+    assert_eq!(output.status.code(), Some(126));
+    let events = common::parse_ndjson(&output.stdout);
+
+    let error_event = events
+        .iter()
+        .find(|e| e.get("error") == Some(&serde_json::json!(true)));
+    assert!(error_event.is_some(), "expected an error event");
+
+    let mut event = error_event.expect("error").clone();
+    event["message"] = serde_json::json!("[redacted]");
+    event["path"] = serde_json::json!("[redacted]");
+    event["suggestion"] = serde_json::json!("[redacted]");
+    event["workspace"] = serde_json::json!("[redacted]");
+
+    insta::assert_json_snapshot!("error_workspace_jail_structure", event);
+}

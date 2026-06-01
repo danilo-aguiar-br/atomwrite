@@ -10,7 +10,11 @@
 
 ## [Unreleased]
 
+
+## [0.1.1] - 2026-06-01
+
 ### Fixed
+- 12 links intra-doc quebrados em `error.rs` corrigidos (`DiskFull` para `Self::DiskFull` e similares)
 - `search --include`/`--exclude` agora filtram arquivos corretamente via OverrideBuilder (antes era silenciosamente ignorado)
 - `replace --include`/`--exclude` agora filtram arquivos corretamente via OverrideBuilder
 - `transform --include`/`--exclude` agora filtram arquivos corretamente via OverrideBuilder
@@ -46,7 +50,7 @@
 - Detecção de hardlink antes do rename atômico com `tracing::warn` quando nlink > 1
 - Detecção de mesmo arquivo em `copy` e `move` para prevenir perda de dados quando origem=destino
 - Módulo de detecção e normalização de terminadores de linha (`line_endings.rs`)
-- 60 testes unitários em 8 módulos (eram 5 testes em 1 módulo)
+- 282 testes entre suítes de integração e unitários (eram 5 testes em 1 módulo na v0.1.0)
 - Testes de integração para `backup`, `rollback`, `apply` e `scope`
 - `deny.toml` para auditoria de licenças e advisories via cargo-deny
 - Flag global `--lang` para override de locale (en, pt-BR) com variável de ambiente `ATOMWRITE_LANG`
@@ -59,6 +63,13 @@
 - Campo `documentation` e `[badges.maintenance]` no `Cargo.toml`
 - Lints rustdoc: `broken_intra_doc_links`, `private_intra_doc_links`, `clippy::doc_markdown`
 - `doc(html_root_url)` para cross-linking no docs.rs
+- Operações `move` e `copy` do `batch` agora aceitam `source`, `from` e `src` como aliases para o caminho de origem
+- Operações `write`, `delete`, `edit` e `hash` do `batch` agora aceitam `path` como alias de `target`
+- 2 alvos de fuzzing (`batch_parse`, `extract_json`) com `libfuzzer-sys` para testes de segurança dos parsers
+- Testes de integração de locking otimista para `write --expect-checksum` e `edit --expect-checksum`
+- Testes de validação NDJSON expandidos de 5 para 20 de 21 comandos
+- Testes de interoperabilidade `jaq` validando NDJSON via pipe com filtro `jaq`
+- Teste de integração i18n confirmando que `--lang` não altera saída JSON
 
 
 ## [0.1.0] - 2026-05-29
@@ -88,5 +99,6 @@
 - Perfil release com LTO, codegen unit único, stripping de símbolos e panic=abort
 
 
-[Unreleased]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/daniloaguiarbr/atomwrite/releases/tag/v0.1.0

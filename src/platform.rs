@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Platform-specific fsync and durability primitives.
+//! Platform-specific fsync, durability, and console initialization primitives.
 
 #![allow(unsafe_code)]
 
@@ -92,6 +92,40 @@ pub fn platform_fsync_name() -> &'static str {
         "sync_data"
     }
 }
+
+/// Initialize Windows console for UTF-8 output and ANSI escape code support.
+///
+/// Sets code page 65001 (UTF-8) for both input and output, and enables
+/// `ENABLE_VIRTUAL_TERMINAL_PROCESSING` on stdout and stderr handles so
+/// ANSI escape sequences are interpreted by the Windows Console Host.
+///
+/// On non-Windows platforms this is a no-op.
+#[cfg(windows)]
+pub fn init_console() {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::*;
+    // SAFETY: SetConsoleOutputCP, SetConsoleCP, GetStdHandle, GetConsoleMode
+    // and SetConsoleMode are safe Win32 API calls. CP 65001 is UTF-8.
+    // ENABLE_VIRTUAL_TERMINAL_PROCESSING enables ANSI escape interpretation.
+    unsafe {
+        SetConsoleOutputCP(65001);
+        SetConsoleCP(65001);
+
+        for handle_id in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            let handle = GetStdHandle(handle_id);
+            if handle != 0 && handle != INVALID_HANDLE_VALUE {
+                let mut mode: u32 = 0;
+                if GetConsoleMode(handle, &mut mode) != 0 {
+                    let _ = SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+                }
+            }
+        }
+    }
+}
+
+/// No-op on non-Windows platforms.
+#[cfg(not(windows))]
+pub fn init_console() {}
 
 /// Return the name of the directory fsync method used on this platform.
 pub fn platform_dir_fsync_name() -> &'static str {

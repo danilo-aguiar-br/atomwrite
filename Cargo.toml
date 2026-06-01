@@ -1,6 +1,9 @@
+[workspace]
+members = ["xtask"]
+
 [package]
 name = "atomwrite"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Atomic file operations CLI for LLM agents — read, write, edit, search, replace with NDJSON output"
@@ -24,13 +27,17 @@ exclude = [
     ".ingest-queue.sqlite",
     ".ingest-queue.sqlite-shm",
     ".ingest-queue.sqlite-wal",
+    "gaps.md",
 ]
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env", "wrap_help", "string"] }
 clap_complete = "4"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = "1"
+serde_path_to_error = "0.1"
+mimalloc = { version = "0.1", default-features = false }
+memchr = "2"
 schemars = "1"
 thiserror = "2"
 anyhow = "1"
@@ -39,9 +46,10 @@ blake3 = "1"
 rayon = "1"
 crossbeam-channel = "0.5"
 regex = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-signal-hook = "0.3"
+tracing = { version = "0.1", features = ["release_max_level_info"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "json", "fmt", "ansi", "std", "registry", "tracing-log"] }
+tracing-appender = "0.2"
+tracing-error = "0.2"
 memmap2 = "0.9"
 grep-regex = "0.1"
 grep-searcher = "0.1"
@@ -55,15 +63,18 @@ fend-core = "1.5"
 ast-grep-core = "0.43"
 ast-grep-language = "0.43"
 same-file = "1"
+unicode-normalization = "0.1"
 sys-locale = "0.3"
 rust-i18n = "3"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["fs"] }
 libc = "0.2"
+signal-hook = "0.3"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Console"] }
+ctrlc = "3.5"
 
 [dev-dependencies]
 assert_cmd = "2"
@@ -72,6 +83,16 @@ tempfile = "3"
 insta = { version = "1", features = ["json"] }
 proptest = "1"
 regex = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+tracing-test = "0.2"
+
+[[bench]]
+name = "hash_benchmark"
+harness = false
+
+[[bench]]
+name = "read_benchmark"
+harness = false
 
 [profile.release]
 opt-level = 3
@@ -80,6 +101,10 @@ codegen-units = 1
 strip = "symbols"
 panic = "abort"
 overflow-checks = true
+debug = false
+
+[profile.dev.package."*"]
+opt-level = 2
 
 [package.metadata.docs.rs]
 all-features = true

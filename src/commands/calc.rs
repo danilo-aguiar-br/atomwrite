@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Math expression evaluation and unit conversion via fend.
+//! Workload: CPU-bound (expression parsing + evaluation).
 
 use std::io::{BufRead, Read, Write};
 use std::time::Instant;
@@ -17,6 +18,7 @@ use crate::output::NdjsonWriter;
 /// # Errors
 ///
 /// Returns `AtomwriteError::InvalidInput` if the expression cannot be evaluated.
+#[tracing::instrument(skip_all, fields(command = "calc"))]
 pub fn cmd_calc(
     args: &CalcArgs,
     stdin: impl Read,
@@ -25,7 +27,7 @@ pub fn cmd_calc(
     let mut ctx = fend_core::Context::new();
 
     if args.stdin || args.expression.is_none() {
-        let reader = std::io::BufReader::new(stdin);
+        let reader = std::io::BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
         for line in reader.lines() {
             let line = line?;
             let trimmed = line.trim();

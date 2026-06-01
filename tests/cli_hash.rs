@@ -86,3 +86,27 @@ fn hash_stdin_mode() {
     assert_eq!(events[0]["source"], "stdin");
     assert!(events[0]["value"].is_string());
 }
+
+#[test]
+fn hash_no_include_exclude_flags() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = common::create_test_file(dir.path(), "dummy.txt", "x\n");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "hash",
+            "--include",
+            "*.rs",
+        ])
+        .arg(&path)
+        .output()
+        .expect("run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "--include should be rejected by Clap with exit code 2"
+    );
+}

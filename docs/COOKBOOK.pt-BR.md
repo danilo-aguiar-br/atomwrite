@@ -15,11 +15,11 @@
 
 ## Referência de Valores Padrão
 - `--threads` padrão é o número de cores de CPU disponíveis
-- `--max-filesize` padrão é 100 MiB
+- `--max-filesize` padrão é 1 GiB (1.073.741.824 bytes)
 - `--color` padrão é `auto` (detecta terminal)
 - `--workspace` padrão é o diretório de trabalho atual
 - `diff --context` padrão é 3 linhas
-- `diff --algorithm` padrão é `myers`
+- `diff --algorithm` padrão é `patience`
 
 
 ## Como Escrever um Arquivo Atomicamente
@@ -40,6 +40,32 @@ cat updated_config.toml | atomwrite write --backup config.toml
 
 ```bash
 echo "data" | atomwrite write --workspace /home/user/project src/data.txt
+```
+
+
+## Como Normalizar Line Endings
+- Force line endings LF ao escrever:
+
+```bash
+echo "line1\r\nline2\r\n" | atomwrite write --line-ending lf src/file.txt
+```
+
+- Force CRLF para compatibilidade Windows:
+
+```bash
+cat unix_file.txt | atomwrite write --line-ending crlf src/windows_file.txt
+```
+
+- Preserve line endings originais (padrão):
+
+```bash
+cat source.txt | atomwrite write --line-ending auto src/output.txt
+```
+
+- Normalize line endings durante edição:
+
+```bash
+atomwrite edit --line-ending lf src/mixed.rs --old "old_text" --new "new_text"
 ```
 
 
@@ -105,13 +131,13 @@ atomwrite replace --workspace /home/user/project 'old' 'new' src/
 - Delete todos os comentários de um arquivo Rust:
 
 ```bash
-atomwrite scope --query comments --action delete src/main.rs
+atomwrite scope --query comments --delete src/main.rs
 ```
 
 - Coloque em maiúsculas todos os nomes de função em Python:
 
 ```bash
-atomwrite scope --query functions --action upper src/app.py
+atomwrite scope --query def --action upper src/app.py
 ```
 
 - Comprima espaços em branco em strings:
@@ -123,7 +149,7 @@ atomwrite scope --query strings --action squeeze src/lib.rs
 - Substitua comentários por um cabeçalho padrão:
 
 ```bash
-atomwrite scope --query comments --action replace --replacement "// TODO: revisar" src/main.rs
+atomwrite scope --query comments --replace-with "// TODO: revisar" src/main.rs
 ```
 
 - Use padrão AST customizado para titlecase:
@@ -228,10 +254,10 @@ atomwrite transform -p 'old_fn($$$ARGS)' -r 'new_fn($$$ARGS)' -l rust src/
 atomwrite transform -p 'println!($$$ARGS)' -r 'tracing::info!($$$ARGS)' -l rust src/
 ```
 
-- Encontre todas as chamadas unwrap sem modificar:
+- Substitua todas as chamadas unwrap pelo operador `?`:
 
 ```bash
-atomwrite transform -p '$EXPR.unwrap()' -l rust src/
+atomwrite transform -p '$EXPR.unwrap()' -r '$EXPR?' -l rust src/
 ```
 
 - Migre JavaScript console.log:
@@ -295,6 +321,7 @@ atomwrite calc "15% of 200"
 
 
 ## Como Executar Batch de Múltiplas Operações
+- Batch suporta 7 operações: write, replace, delete, edit, hash, move, copy
 - Crie um manifesto NDJSON com múltiplas operações:
 
 ```bash
@@ -302,6 +329,10 @@ cat <<'EOF' > manifest.ndjson
 {"op":"write","path":"src/a.txt","content":"hello"}
 {"op":"write","path":"src/b.txt","content":"world"}
 {"op":"delete","path":"src/old.txt"}
+{"op":"edit","path":"src/a.txt","old":"hello","new":"hello world"}
+{"op":"hash","path":"src/b.txt"}
+{"op":"move","source":"src/a.txt","target":"src/renamed.txt"}
+{"op":"copy","source":"src/b.txt","target":"src/b_copy.txt"}
 EOF
 cat manifest.ndjson | atomwrite batch
 ```
@@ -310,6 +341,12 @@ cat manifest.ndjson | atomwrite batch
 
 ```bash
 cat manifest.ndjson | atomwrite batch --dry-run
+```
+
+- Execute como transação tudo-ou-nada com rollback automático em falha:
+
+```bash
+cat manifest.ndjson | atomwrite batch --transaction
 ```
 
 - Gere um manifesto a partir de resultados de busca:

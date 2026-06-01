@@ -1,0 +1,14 @@
+---
+source: tests/snapshot_write.rs
+assertion_line: 220
+expression: event
+---
+{
+  "code": "INVALID_INPUT",
+  "error": true,
+  "error_class": "permanent",
+  "exit": 65,
+  "message": "[redacted]",
+  "retryable": false,
+  "suggestion": "[redacted]"
+}

@@ -16,7 +16,7 @@ fn scope_rust_find_functions() {
             "--workspace",
             dir.path().to_str().unwrap(),
             "scope",
-            "--lang",
+            "--language",
             "rust",
             "--query",
             "fn",
@@ -41,7 +41,7 @@ fn scope_unknown_language_exits_65() {
             "--workspace",
             dir.path().to_str().unwrap(),
             "scope",
-            "--lang",
+            "--language",
             "nonexistent_lang",
             "--query",
             "fn",
@@ -63,7 +63,7 @@ fn scope_custom_pattern() {
             "--workspace",
             dir.path().to_str().unwrap(),
             "scope",
-            "--lang",
+            "--language",
             "rust",
             "--pattern",
             "let $NAME = $$$EXPR",
@@ -86,7 +86,7 @@ fn scope_dry_run_does_not_modify() {
             "--workspace",
             ws,
             "scope",
-            "--lang",
+            "--language",
             "rust",
             "--query",
             "comments",
@@ -101,4 +101,112 @@ fn scope_dry_run_does_not_modify() {
 
     let content = std::fs::read_to_string(&file).unwrap();
     assert!(content.contains("// comment"), "dry-run should not modify");
+}
+
+#[test]
+fn scope_rust_find_functions_nonzero() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(
+        dir.path(),
+        "test.rs",
+        "fn hello() {\n    42\n}\n\nfn world() {\n    0\n}\n",
+    );
+
+    // --delete --dry-run triggers matching without modifying; produces scoped events
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "scope",
+            "--language",
+            "rust",
+            "--query",
+            "fn",
+            "--delete",
+            "--dry-run",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit: {:?}", output.status);
+
+    let events = common::parse_ndjson(&output.stdout);
+
+    let summary = events
+        .iter()
+        .find(|e| e["type"] == "summary")
+        .expect("summary event");
+    assert!(
+        summary["files_matched"].as_u64().unwrap() >= 1,
+        "expected at least one matched file"
+    );
+
+    assert!(
+        events.iter().any(|e| e["type"] == "scoped"),
+        "expected at least one scoped event"
+    );
+}
+
+#[test]
+fn scope_language_flag_works() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "test.rs", "fn main() {}\n");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "scope",
+            "--language",
+            "rust",
+            "--query",
+            "fn",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit: {:?}", output.status);
+
+    let events = common::parse_ndjson(&output.stdout);
+    assert!(
+        events.iter().any(|e| e["type"] == "summary"),
+        "expected summary event"
+    );
+}
+
+#[test]
+fn scope_filters_by_extension() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "a.rs", "fn hello() {}\n");
+    common::create_test_file(dir.path(), "b.py", "def hello():\n    pass\n");
+    common::create_test_file(dir.path(), "c.txt", "just text\n");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "scope",
+            "--language",
+            "rust",
+            "--query",
+            "fn",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "exit: {:?}", output.status);
+
+    let events = common::parse_ndjson(&output.stdout);
+    let summary = events
+        .iter()
+        .find(|e| e["type"] == "summary")
+        .expect("summary event");
+    assert_eq!(
+        summary["files_visited"].as_u64().unwrap(),
+        1,
+        "TypesBuilder should filter to only the .rs file"
+    );
 }

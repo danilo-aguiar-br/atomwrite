@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Parallel file content search powered by the ripgrep engine.
+//! Workload: I/O-bound (file reading + regex matching via ripgrep engine).
 
 use std::io::Write;
 use std::sync::Arc;
@@ -27,6 +28,7 @@ use crate::signal::ShutdownSignal;
 ///
 /// Returns `AtomwriteError::WorkspaceJail` if the path escapes the workspace.
 /// Returns `AtomwriteError::Io` if reading files fails.
+#[tracing::instrument(skip_all, fields(command = "search"))]
 pub fn cmd_search(
     args: &SearchArgs,
     global: &GlobalArgs,
@@ -39,7 +41,7 @@ pub fn cmd_search(
 
     let walker = build_walker(args, global)?;
 
-    let (tx, rx) = crossbeam_channel::unbounded::<SearchEvent>();
+    let (tx, rx) = crossbeam_channel::bounded::<SearchEvent>(1024);
 
     let files_visited = Arc::new(AtomicU64::new(0));
     let files_matched = Arc::new(AtomicU64::new(0));
@@ -53,6 +55,7 @@ pub fn cmd_search(
     let invert = args.invert;
     let max_count = args.max_count;
 
+    let shutdown_flag = shutdown.flag();
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
             let matcher = matcher.clone();
@@ -60,6 +63,7 @@ pub fn cmd_search(
             let fv = Arc::clone(&fv);
             let fm = Arc::clone(&fm);
             let tm = Arc::clone(&tm);
+            let shutdown_flag = Arc::clone(&shutdown_flag);
 
             let mut searcher = SearcherBuilder::new()
                 .line_number(true)
@@ -70,6 +74,10 @@ pub fn cmd_search(
                 .build();
 
             Box::new(move |entry| {
+                if shutdown_flag.load(Ordering::Acquire) {
+                    return ignore::WalkState::Quit;
+                }
+
                 let entry = match entry {
                     Ok(e) => e,
                     Err(_) => return ignore::WalkState::Continue,
@@ -81,21 +89,23 @@ pub fn cmd_search(
 
                 fv.fetch_add(1, Ordering::Relaxed);
 
-                let path = entry.path().to_path_buf();
+                let path: Arc<std::path::Path> = Arc::from(entry.path());
+                let _span = tracing::debug_span!("process_file", path = %path.display()).entered();
                 let mut file_matches = 0u64;
                 let mut file_lines = 0u64;
 
-                let _ = tx.send(SearchEvent::Begin(path.clone()));
+                // Receiver may have dropped during shutdown — send failure is expected
+                let _ = tx.send(SearchEvent::Begin(Arc::clone(&path)));
 
                 let mut sink = SearchSink {
                     matcher: &matcher,
-                    path: &path,
+                    path: Arc::clone(&path),
                     tx: &tx,
                     file_matches: &mut file_matches,
                     file_lines: &mut file_lines,
                 };
 
-                let sink_result = searcher.search_path(&matcher, &path, &mut sink);
+                let sink_result = searcher.search_path(&matcher, &*path, &mut sink);
 
                 if let Err(e) = sink_result {
                     tracing::warn!(path = %path.display(), error = %e, "search error");
@@ -118,6 +128,7 @@ pub fn cmd_search(
     });
 
     let mut has_matches = false;
+    let mut current_path_str: Option<String> = None;
 
     for event in rx {
         if shutdown.is_shutdown() {
@@ -126,15 +137,17 @@ pub fn cmd_search(
 
         match event {
             SearchEvent::Begin(path) => {
+                let path_str = path.display().to_string();
                 if !args.count && !args.files {
                     writer.write_event(&SearchBegin {
                         r#type: "begin",
-                        path: path.display().to_string(),
+                        path: path_str.clone(),
                     })?;
                 }
+                current_path_str = Some(path_str);
             }
             SearchEvent::Match {
-                path,
+                path: _path,
                 line_number,
                 lines,
                 byte_offset,
@@ -147,16 +160,14 @@ pub fn cmd_search(
                 }
 
                 if args.files {
-                    writer.write_event(&SearchFile {
-                        r#type: "file",
-                        path: path.display().to_string(),
-                    })?;
                     continue;
                 }
 
+                let path_str = current_path_str.as_deref().unwrap_or("").to_owned();
+
                 writer.write_event(&SearchMatch {
                     r#type: "match",
-                    path: path.display().to_string(),
+                    path: path_str,
                     line_number,
                     lines,
                     byte_offset,
@@ -164,14 +175,15 @@ pub fn cmd_search(
                 })?;
             }
             SearchEvent::Context {
-                path,
+                path: _path,
                 line_number,
                 lines,
             } => {
                 if !args.count && !args.files {
+                    let path_str = current_path_str.as_deref().unwrap_or("").to_owned();
                     writer.write_event(&SearchContext {
                         r#type: "context",
-                        path: path.display().to_string(),
+                        path: path_str,
                         line_number,
                         lines,
                     })?;
@@ -182,10 +194,22 @@ pub fn cmd_search(
                 matches,
                 lines_searched,
             } => {
+                let path_str = current_path_str
+                    .as_deref()
+                    .unwrap_or_else(|| path.to_str().unwrap_or(""))
+                    .to_owned();
+
+                if args.files && matches > 0 {
+                    writer.write_event(&SearchFile {
+                        r#type: "file",
+                        path: path_str.clone(),
+                    })?;
+                }
+
                 if args.count && matches > 0 {
                     writer.write_event(&SearchCount {
                         r#type: "count",
-                        path: path.display().to_string(),
+                        path: path_str.clone(),
                         count: matches,
                     })?;
                 }
@@ -193,18 +217,22 @@ pub fn cmd_search(
                 if !args.count && !args.files && matches > 0 {
                     writer.write_event(&SearchEnd {
                         r#type: "end",
-                        path: path.display().to_string(),
+                        path: path_str,
                         stats: FileStats {
                             matches,
                             lines_searched,
                         },
                     })?;
                 }
+
+                current_path_str = None;
             }
         }
     }
 
-    let _ = walker_thread.join();
+    if let Err(panic_payload) = walker_thread.join() {
+        std::panic::resume_unwind(panic_payload);
+    }
 
     let summary = Summary {
         r#type: "summary",
@@ -227,21 +255,21 @@ pub fn cmd_search(
 }
 
 enum SearchEvent {
-    Begin(std::path::PathBuf),
+    Begin(Arc<std::path::Path>),
     Match {
-        path: std::path::PathBuf,
+        path: Arc<std::path::Path>,
         line_number: u64,
         lines: String,
         byte_offset: u64,
         submatches: Vec<Submatch>,
     },
     Context {
-        path: std::path::PathBuf,
+        path: Arc<std::path::Path>,
         line_number: u64,
         lines: String,
     },
     End {
-        path: std::path::PathBuf,
+        path: Arc<std::path::Path>,
         matches: u64,
         lines_searched: u64,
     },
@@ -249,7 +277,7 @@ enum SearchEvent {
 
 struct SearchSink<'a> {
     matcher: &'a grep_regex::RegexMatcher,
-    path: &'a std::path::PathBuf,
+    path: Arc<std::path::Path>,
     tx: &'a crossbeam_channel::Sender<SearchEvent>,
     file_matches: &'a mut u64,
     file_lines: &'a mut u64,
@@ -269,8 +297,9 @@ impl<'a> Sink for SearchSink<'a> {
         let line_text = std::str::from_utf8(mat.bytes()).unwrap_or("");
         let subs = extract_submatches(self.matcher, line_text);
 
+        // Receiver may have dropped during shutdown — send failure is expected
         let _ = self.tx.send(SearchEvent::Match {
-            path: self.path.clone(),
+            path: Arc::clone(&self.path),
             line_number: mat.line_number().unwrap_or(0),
             lines: line_text.trim_end_matches('\n').to_owned(),
             byte_offset: mat.absolute_byte_offset(),
@@ -288,7 +317,7 @@ impl<'a> Sink for SearchSink<'a> {
         let line_text = std::str::from_utf8(ctx.bytes()).unwrap_or("");
 
         let _ = self.tx.send(SearchEvent::Context {
-            path: self.path.clone(),
+            path: Arc::clone(&self.path),
             line_number: ctx.line_number().unwrap_or(0),
             lines: line_text.trim_end_matches('\n').to_owned(),
         });

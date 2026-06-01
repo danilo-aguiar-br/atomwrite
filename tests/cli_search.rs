@@ -146,3 +146,77 @@ fn search_case_insensitive() {
     let matches: Vec<_> = events.iter().filter(|e| e["type"] == "match").collect();
     assert!(!matches.is_empty());
 }
+
+// --- GAP 05: --files deduplicação ---
+
+#[test]
+fn search_files_dedup_multi_match() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(
+        dir.path(),
+        "multi.txt",
+        "TODO first\nTODO second\nTODO third\nTODO fourth\n",
+    );
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "search",
+            "--files",
+            "TODO",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+    let events = common::parse_ndjson(&output.stdout);
+    let files: Vec<_> = events.iter().filter(|e| e["type"] == "file").collect();
+    assert_eq!(
+        files.len(),
+        1,
+        "file with 4 matches should emit exactly 1 file event, got {}",
+        files.len()
+    );
+
+    let summary = events
+        .iter()
+        .find(|e| e["type"] == "summary")
+        .expect("summary");
+    assert_eq!(summary["total_matches"], 4);
+}
+
+#[test]
+fn search_files_dedup_multi_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(
+        dir.path(),
+        "a.txt",
+        "MATCH here\nMATCH again\nMATCH third\n",
+    );
+    common::create_test_file(dir.path(), "b.txt", "MATCH one\nMATCH two\n");
+    common::create_test_file(dir.path(), "c.txt", "no hits here\n");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "search",
+            "--files",
+            "MATCH",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+    let events = common::parse_ndjson(&output.stdout);
+    let files: Vec<_> = events.iter().filter(|e| e["type"] == "file").collect();
+    assert_eq!(
+        files.len(),
+        2,
+        "2 files with matches should emit exactly 2 file events, got {}",
+        files.len()
+    );
+}

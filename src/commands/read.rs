@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! File reading with metadata, checksum, and optional content.
+//! Workload: I/O-bound (file read + NDJSON output).
 
 use std::fs;
 use std::io::Write;
@@ -22,6 +23,7 @@ use crate::output::NdjsonWriter;
 /// Returns `AtomwriteError::NotFound` if the file does not exist.
 /// Returns `AtomwriteError::StateDrift` if `--verify-checksum` fails.
 /// Returns `AtomwriteError::BinaryFile` if `--format raw` is used on a binary file.
+#[tracing::instrument(skip_all, fields(command = "read"))]
 pub fn cmd_read(
     args: &ReadArgs,
     global: &GlobalArgs,
@@ -38,7 +40,7 @@ pub fn cmd_read(
     let metadata =
         fs::metadata(&path).with_context(|| format!("cannot stat {}", path.display()))?;
 
-    let raw_bytes = crate::file_io::read_file_bytes(&path)?;
+    let raw_bytes = crate::file_io::read_file_bytes(&path, global.effective_max_filesize())?;
 
     let is_binary = binary_detect::is_binary(&raw_bytes);
     let hash = checksum::hash_bytes(&raw_bytes);
@@ -124,9 +126,7 @@ fn write_raw(
     let mut lock = inner.lock();
     match lock.write_all(filtered.as_bytes()) {
         Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
-            std::process::exit(crate::constants::EXIT_SUCCESS)
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => return Ok(()),
         Err(e) => return Err(e.into()),
     }
     let _ = lock.flush();
@@ -211,6 +211,7 @@ fn format_permissions(metadata: &fs::Metadata) -> String {
 fn format_modified(metadata: &fs::Metadata) -> String {
     match metadata.modified() {
         Ok(time) => {
+            // defaults to epoch if file mtime precedes UNIX epoch — display-only
             let secs = time
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()

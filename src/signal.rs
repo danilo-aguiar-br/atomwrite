@@ -24,26 +24,43 @@ pub struct ShutdownSignal {
 
 impl ShutdownSignal {
     /// Return true if a shutdown signal has been received.
+    #[inline]
     pub fn is_shutdown(&self) -> bool {
-        self.flag.load(Ordering::SeqCst)
+        self.flag.load(Ordering::Acquire)
     }
 
     /// Return the exit code corresponding to the received signal.
+    #[inline]
     pub fn exit_code(&self) -> u8 {
-        match self.signal_code.load(Ordering::SeqCst) {
+        match self.signal_code.load(Ordering::Acquire) {
             143 => 143,
             _ => 130,
         }
     }
 
+    /// Return a clone of the shutdown flag for use in parallel closures.
+    #[inline]
+    pub fn flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.flag)
+    }
+
     fn record_signal(&self, code: u8) {
         self.signal_code
-            .compare_exchange(0, code, Ordering::SeqCst, Ordering::SeqCst)
+            .compare_exchange(0, code, Ordering::AcqRel, Ordering::Acquire)
             .ok();
 
-        let prev = self.count.fetch_add(1, Ordering::SeqCst);
+        let prev = self.count.fetch_add(1, Ordering::AcqRel);
         if prev >= 1 {
-            std::process::exit(self.exit_code() as i32);
+            #[cfg(unix)]
+            {
+                // SAFETY: libc::_exit is async-signal-safe unlike std::process::exit
+                // which runs destructors and flushes stdio. Second Ctrl+C is force-kill.
+                unsafe { libc::_exit(self.exit_code() as i32) };
+            }
+            #[cfg(not(unix))]
+            {
+                std::process::exit(self.exit_code() as i32);
+            }
         }
     }
 }
@@ -60,6 +77,9 @@ pub fn reset_sigpipe() {
         }
     }
 }
+
+#[cfg(unix)]
+const SHUTDOWN_MSG: &[u8] = b"\natomwrite: shutting down...\n";
 
 /// Register SIGINT and SIGTERM handlers and return the shared shutdown signal.
 ///
@@ -85,23 +105,51 @@ pub fn install_handlers() -> Result<Arc<ShutdownSignal>> {
         let sig_int = Arc::clone(&signal);
         // SAFETY: signal_hook::low_level::register requires unsafe because the
         // callback runs in a signal handler context. Our callback only performs
-        // atomic operations (compare_exchange, fetch_add on AtomicU8 and
-        // process::exit), which are async-signal-safe.
+        // atomic operations and libc::write (all async-signal-safe per POSIX).
         unsafe {
             signal_hook::low_level::register(signal_hook::consts::SIGINT, move || {
+                let was_first = sig_int.count.load(Ordering::Acquire) == 0;
                 sig_int.record_signal(EXIT_SIGINT as u8);
+                if was_first {
+                    let _ = libc::write(2, SHUTDOWN_MSG.as_ptr().cast(), SHUTDOWN_MSG.len());
+                }
             })
             .context("failed to register SIGINT counter")?;
         }
 
         let sig_term = Arc::clone(&signal);
-        // SAFETY: Same as above — only atomic operations in signal context.
+        // SAFETY: Same as above — atomic operations and libc::write only.
         unsafe {
             signal_hook::low_level::register(signal_hook::consts::SIGTERM, move || {
+                let was_first = sig_term.count.load(Ordering::Acquire) == 0;
                 sig_term.record_signal(EXIT_SIGTERM as u8);
+                if was_first {
+                    let _ = libc::write(2, SHUTDOWN_MSG.as_ptr().cast(), SHUTDOWN_MSG.len());
+                }
             })
             .context("failed to register SIGTERM counter")?;
         }
+    }
+
+    #[cfg(windows)]
+    {
+        let flag_win = Arc::clone(&flag);
+        let sig_win = Arc::clone(&signal);
+        ctrlc::set_handler(move || {
+            let was_first = sig_win.count.load(Ordering::Acquire) == 0;
+            flag_win.store(true, Ordering::Release);
+            sig_win.record_signal(EXIT_SIGINT as u8);
+            if was_first {
+                eprintln!("\natomwrite: shutting down...");
+            }
+        })
+        .context("failed to register Ctrl+C handler")?;
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = &flag;
+        tracing::warn!("signal handlers not available on this platform — Ctrl+C may not work");
     }
 
     GLOBAL_SHUTDOWN.set(Arc::clone(&signal)).ok();

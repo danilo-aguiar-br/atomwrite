@@ -2,8 +2,6 @@
 
 //! BLAKE3 checksum computation for files and byte slices.
 
-#![allow(unsafe_code)]
-
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -13,17 +11,32 @@ use anyhow::{Context, Result};
 use crate::constants::MMAP_THRESHOLD;
 
 /// Compute the BLAKE3 hash of an in-memory byte slice.
+#[inline]
 pub fn hash_bytes(data: &[u8]) -> String {
     blake3::hash(data).to_hex().to_string()
 }
 
 /// Compute the BLAKE3 hash of a file, using mmap for large files.
 ///
+/// Files exceeding `max_size` are rejected before any allocation occurs.
+///
 /// # Errors
 ///
+/// Returns `AtomwriteError::FileTooLarge` if the file exceeds `max_size`.
 /// Returns `AtomwriteError::Io` if the file cannot be read or memory-mapped.
-pub fn hash_file(path: &Path) -> Result<String> {
-    let metadata = fs::metadata(path).with_context(|| format!("cannot stat {}", path.display()))?;
+pub fn hash_file(path: &Path, max_size: u64) -> Result<String> {
+    let metadata = fs::metadata(path)
+        .inspect_err(|e| tracing::debug!(?e, path = %path.display(), "hash_file: stat failed"))
+        .with_context(|| format!("cannot stat {}", path.display()))?;
+
+    if metadata.len() > max_size {
+        return Err(crate::error::AtomwriteError::FileTooLarge {
+            path: path.to_path_buf(),
+            size: metadata.len(),
+            max_size,
+        }
+        .into());
+    }
 
     if metadata.len() >= MMAP_THRESHOLD {
         hash_file_mmap(path)
@@ -33,6 +46,7 @@ pub fn hash_file(path: &Path) -> Result<String> {
     }
 }
 
+#[allow(unsafe_code)]
 fn hash_file_mmap(path: &Path) -> Result<String> {
     let file = fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     // SAFETY: The file is opened read-only and we hold the File handle for the
@@ -102,7 +116,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.txt");
         std::fs::write(&path, "file content").unwrap();
-        let file_hash = hash_file(&path).unwrap();
+        let file_hash = hash_file(&path, u64::MAX).unwrap();
         let bytes_hash = hash_bytes(b"file content");
         assert_eq!(file_hash, bytes_hash);
     }

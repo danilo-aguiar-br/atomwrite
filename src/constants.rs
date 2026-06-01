@@ -46,3 +46,9 @@ pub const EXIT_TRANSACTION_ROLLBACK_FAILED: i32 = 80;
 
 /// Exit code when checksum verification fails after write.
 pub const EXIT_CHECKSUM_VERIFY_FAILED: i32 = 81;
+
+/// Maximum allowed size for a single NDJSON line from stdin (256 KiB).
+pub const MAX_NDJSON_LINE_SIZE: usize = 256 * 1024;
+
+/// Maximum JSON nesting depth for dynamic Value parsing.
+pub const MAX_JSON_DEPTH: usize = 128;

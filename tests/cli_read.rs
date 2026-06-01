@@ -122,3 +122,225 @@ fn read_binary_file_detected() {
     assert_eq!(events[0]["binary"], true);
     assert!(events[0]["content"].is_null());
 }
+
+// --- GAP 01: --json flag aceita como no-op ---
+
+#[test]
+fn read_with_json_flag_is_noop() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = common::create_test_file(dir.path(), "json_test.txt", "data\n");
+
+    let with_json = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "read",
+            "--json",
+        ])
+        .arg(&path)
+        .output()
+        .expect("run");
+
+    assert!(with_json.status.success(), "exit: {:?}", with_json.status);
+
+    let without_json = common::atomwrite()
+        .args(["--workspace", dir.path().to_str().unwrap(), "read"])
+        .arg(&path)
+        .output()
+        .expect("run");
+
+    assert!(without_json.status.success());
+    let events_with = common::parse_ndjson(&with_json.stdout);
+    let events_without = common::parse_ndjson(&without_json.stdout);
+    assert_eq!(events_with[0]["type"], events_without[0]["type"]);
+    assert_eq!(events_with[0]["content"], events_without[0]["content"]);
+    assert_eq!(events_with[0]["checksum"], events_without[0]["checksum"]);
+}
+
+// --- GAP 07: erros Clap emitem JSON estruturado ---
+
+#[test]
+fn invalid_arg_emits_json_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "dummy.txt", "x");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "read",
+            "--nonexistent-flag",
+        ])
+        .arg(dir.path().join("dummy.txt"))
+        .output()
+        .expect("run");
+
+    assert_eq!(output.status.code(), Some(2));
+    let events = common::parse_ndjson(&output.stdout);
+    assert!(!events.is_empty(), "stdout should contain JSON error");
+    assert_eq!(events[0]["error"], true);
+    assert_eq!(events[0]["code"], "ARGUMENT_PARSE_ERROR");
+    assert_eq!(events[0]["exit"], 2);
+    assert_eq!(events[0]["retryable"], false);
+    assert_eq!(events[0]["error_class"], "permanent");
+}
+
+#[test]
+fn help_flag_still_works() {
+    let output = common::atomwrite().args(["--help"]).output().expect("run");
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        combined.contains("atomwrite") || combined.contains("Usage"),
+        "help should mention atomwrite or Usage"
+    );
+}
+
+// --- GAP 10: caminhos relativos com workspace ---
+
+#[test]
+fn read_relative_path_with_workspace() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "rel_test.txt", "relative content\n");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "read",
+            "rel_test.txt",
+        ])
+        .output()
+        .expect("run");
+
+    assert!(
+        output.status.success(),
+        "relative path should work with absolute workspace, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events[0]["content"], "relative content\n");
+}
+
+// --- GAP 08: --json-schema sem argumentos obrigatórios ---
+
+#[test]
+fn json_schema_write_without_args() {
+    let output = common::atomwrite()
+        .args(["write", "--json-schema"])
+        .output()
+        .expect("run");
+
+    assert!(
+        output.status.success(),
+        "write --json-schema should work without <TARGET>, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON schema");
+    assert!(parsed.is_object());
+}
+
+#[test]
+fn json_schema_transform_without_args() {
+    let output = common::atomwrite()
+        .args(["transform", "--json-schema"])
+        .output()
+        .expect("run");
+
+    assert!(
+        output.status.success(),
+        "transform --json-schema should work without --pattern/--rewrite/--language"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON schema");
+    assert!(parsed.is_object());
+}
+
+#[test]
+fn json_schema_all_subcommands_no_args() {
+    let subcommands = [
+        "read",
+        "write",
+        "edit",
+        "search",
+        "replace",
+        "hash",
+        "delete",
+        "count",
+        "diff",
+        "move",
+        "copy",
+        "list",
+        "extract",
+        "calc",
+        "regex",
+        "transform",
+        "scope",
+        "batch",
+        "backup",
+        "rollback",
+        "apply",
+        "completions",
+    ];
+
+    for cmd in &subcommands {
+        let output = common::atomwrite()
+            .args([cmd, "--json-schema"])
+            .output()
+            .unwrap_or_else(|e| panic!("{cmd} --json-schema failed to run: {e}"));
+
+        assert!(
+            output.status.success(),
+            "{cmd} --json-schema exited with {:?}",
+            output.status.code()
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let parsed: Result<serde_json::Value, _> = serde_json::from_str(&stdout);
+        assert!(
+            parsed.is_ok(),
+            "{cmd} --json-schema produced invalid JSON: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn lang_flag_does_not_alter_json_output() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = common::create_test_file(dir.path(), "lang.txt", "test content\n");
+    let ws = dir.path().to_str().unwrap();
+
+    let out_en = common::atomwrite()
+        .args(["--lang", "en", "--workspace", ws, "read"])
+        .arg(&path)
+        .output()
+        .expect("en");
+
+    let out_pt = common::atomwrite()
+        .args(["--lang", "pt-BR", "--workspace", ws, "read"])
+        .arg(&path)
+        .output()
+        .expect("pt");
+
+    assert!(out_en.status.success());
+    assert!(out_pt.status.success());
+
+    let events_en = common::parse_ndjson(&out_en.stdout);
+    let events_pt = common::parse_ndjson(&out_pt.stdout);
+
+    assert_eq!(
+        events_en[0]["checksum"], events_pt[0]["checksum"],
+        "checksum must be identical regardless of --lang"
+    );
+    assert_eq!(
+        events_en[0]["content"], events_pt[0]["content"],
+        "content must be identical regardless of --lang"
+    );
+    assert_eq!(
+        events_en[0]["type"], events_pt[0]["type"],
+        "type must be identical regardless of --lang"
+    );
+}

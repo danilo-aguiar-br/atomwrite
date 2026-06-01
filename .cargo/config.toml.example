@@ -1,0 +1,11 @@
+# Optional: use mold linker for faster builds on Linux.
+# Copy this file to .cargo/config.toml and install mold:
+#   Fedora: sudo dnf install mold
+#   Ubuntu: sudo apt install mold
+#   Arch:   sudo pacman -S mold
+#
+# Without this config, the default linker (ld/gcc) is used automatically.
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]

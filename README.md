@@ -242,10 +242,10 @@ atomwrite regex "2024-01-15" "2025-12-31" "2026-06-01"
 ### transform
 - Structural AST search and rewrite powered by ast-grep
 - Covers 306 programming languages
-- Use `--rewrite` to apply transformations
+- Both `--pattern` and `--rewrite` are required
 ```bash
-atomwrite transform -p 'println!($$$ARGS)' -l rust src/
 atomwrite transform -p 'println!($$$ARGS)' -r 'tracing::info!($$$ARGS)' -l rust src/
+atomwrite transform -p 'console.log($$$ARGS)' -r 'logger.info($$$ARGS)' -l js src/
 ```
 
 ### batch
@@ -303,6 +303,7 @@ atomwrite completions bash
 - `NO_COLOR`: disable colored output when set to any value
 - `RUST_LOG`: control log verbosity (e.g., `RUST_LOG=debug`)
 - `ATOMWRITE_LANG`: override locale for translated messages (e.g., `en`, `pt-BR`)
+- `RAYON_NUM_THREADS`: override number of parallel threads for search, replace, transform and scope
 
 
 ## Exit Codes
@@ -317,15 +318,26 @@ atomwrite completions bash
 - `74`: I/O error
 - `78`: configuration invalid
 - `82`: state drift (checksum mismatch, optimistic lock failed)
-- `126`: workspace jail violated (path escapes workspace)
-- `127`: symlink blocked (symlink target outside workspace)
 - `85`: FIFO detected (named pipe cannot be atomically written)
 - `86`: device file detected (block or character device)
+- `126`: workspace jail violated (path escapes workspace)
+- `127`: symlink blocked (symlink target outside workspace)
 - `128`: file immutable (cannot modify)
 - `130`: interrupted by SIGINT
 - `141`: broken pipe (SIGPIPE)
 - `143`: terminated by SIGTERM
 - `255`: internal error
+
+
+## Signal Handling
+- Unix: SIGINT (Ctrl+C) and SIGTERM intercepted for graceful shutdown
+- Unix: SIGPIPE reset to SIG_DFL for standard pipe behavior (exit 141)
+- Windows: Ctrl+C intercepted via console handler
+- First signal: sets shutdown flag, prints "shutting down..." to stderr
+- Second signal: immediate process termination via `_exit` (Unix) or `exit` (Windows)
+- Walker threads (search, replace, transform, scope) stop between files
+- Batch operations stop between operations
+- Unsupported platforms: signal handlers are not installed (warning logged)
 
 
 ## Error Handling

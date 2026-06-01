@@ -7,7 +7,7 @@
 #![warn(rustdoc::broken_intra_doc_links)]
 #![warn(rustdoc::private_intra_doc_links)]
 #![warn(clippy::doc_markdown)]
-#![doc(html_root_url = "https://docs.rs/atomwrite/0.1.0")]
+#![doc(html_root_url = "https://docs.rs/atomwrite/0.1.1")]
 
 rust_i18n::i18n!("locales", fallback = "en");
 
@@ -29,6 +29,8 @@ pub mod constants;
 pub mod error;
 /// Smart file reading with memmap2 for large files.
 pub mod file_io;
+/// Shared language utilities for AST commands.
+pub mod lang_utils;
 /// Line ending detection and normalization.
 pub mod line_endings;
 /// NDJSON output type definitions.
@@ -81,6 +83,45 @@ fn emit_json_schema(command: &Commands, mut out: impl Write) -> Result<()> {
     Ok(())
 }
 
+/// Emit the JSON Schema for a subcommand by name, without requiring parsed args.
+///
+/// Returns `Ok(true)` if the schema was emitted, `Ok(false)` if the name is unknown.
+///
+/// # Errors
+///
+/// Returns an error if writing to the output fails.
+pub fn emit_schema_by_name(name: &str, mut out: impl Write) -> Result<bool> {
+    let schema = match name {
+        "read" => schemars::schema_for!(ndjson_types::ReadOutput),
+        "write" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "edit" => schemars::schema_for!(ndjson_types::EditOutput),
+        "search" => schemars::schema_for!(ndjson_types::SearchMatch),
+        "replace" => schemars::schema_for!(ndjson_types::ReplaceResult),
+        "hash" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "delete" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "count" => schemars::schema_for!(ndjson_types::Summary),
+        "diff" => schemars::schema_for!(ndjson_types::DryRunPlan),
+        "move" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "copy" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "list" => schemars::schema_for!(ndjson_types::ListEntry),
+        "extract" => schemars::schema_for!(ndjson_types::CalcOutput),
+        "calc" => schemars::schema_for!(ndjson_types::CalcOutput),
+        "regex" => schemars::schema_for!(ndjson_types::RegexOutput),
+        "transform" => schemars::schema_for!(ndjson_types::TransformResult),
+        "batch" => schemars::schema_for!(ndjson_types::BatchSummary),
+        "scope" => schemars::schema_for!(ndjson_types::ScopeResult),
+        "backup" => schemars::schema_for!(ndjson_types::BackupResult),
+        "rollback" => schemars::schema_for!(ndjson_types::RollbackResult),
+        "apply" => schemars::schema_for!(ndjson_types::ApplyResult),
+        "completions" => schemars::schema_for!(ndjson_types::CalcOutput),
+        _ => return Ok(false),
+    };
+    serde_json::to_writer_pretty(&mut out, &schema)?;
+    out.write_all(b"\n")?;
+    out.flush()?;
+    Ok(true)
+}
+
 /// Dispatch the parsed CLI to the appropriate subcommand handler.
 ///
 /// # Errors
@@ -91,23 +132,29 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
         return emit_json_schema(&cli.command, stdout);
     }
 
+    if cli.global.json {
+        tracing::debug!("--json is a no-op; output is always NDJSON");
+    }
+
     if let Commands::Completions(args) = &cli.command {
         return generate_completions(args, stdout);
     }
 
     if let Some(threads) = cli.global.threads {
         let n = if threads == 0 { num_cpus() } else { threads };
-        rayon::ThreadPoolBuilder::new()
+        if let Err(e) = rayon::ThreadPoolBuilder::new()
             .num_threads(n)
             .build_global()
-            .ok();
+        {
+            tracing::warn!(error = %e, "failed to configure rayon global pool");
+        }
     }
 
     let mut writer = NdjsonWriter::new(stdout);
     let shutdown = signal::get_or_install_handlers()?;
     let _workspace = cli.global.resolve_workspace()?;
 
-    match &cli.command {
+    let result = match &cli.command {
         Commands::Read(args) => commands::read::cmd_read(args, &cli.global, &mut writer),
         Commands::Write(args) => {
             commands::write::cmd_write(args, &cli.global, stdin, &mut writer, &shutdown)
@@ -134,13 +181,19 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
         Commands::Transform(args) => {
             commands::transform::cmd_transform(args, &cli.global, &mut writer, &shutdown)
         }
-        Commands::Batch(args) => commands::batch::cmd_batch(
-            &cli.global,
-            stdin,
-            &mut writer,
-            args.dry_run,
-            args.transaction,
-        ),
+        Commands::Batch(args) => {
+            if args.input_schema {
+                return commands::batch::emit_input_schema(&mut writer);
+            }
+            commands::batch::cmd_batch(
+                &cli.global,
+                stdin,
+                &mut writer,
+                args.dry_run,
+                args.transaction,
+                &shutdown,
+            )
+        }
         Commands::Scope(args) => {
             commands::scope::cmd_scope(args, &cli.global, &mut writer, &shutdown)
         }
@@ -149,8 +202,11 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
             commands::rollback::cmd_rollback(args, &cli.global, &mut writer)
         }
         Commands::Apply(args) => commands::apply::cmd_apply(args, &cli.global, stdin, &mut writer),
-        Commands::Completions(_) => unreachable!(),
-    }
+        Commands::Completions(_) => unreachable!("completions handled in prescan_json_schema"),
+    };
+
+    let _ = writer.flush();
+    result
 }
 
 fn num_cpus() -> usize {
@@ -166,6 +222,7 @@ fn generate_completions(args: &cli::CompletionsArgs, mut out: impl Write) -> Res
         cli::ShellType::Zsh => clap_complete::Shell::Zsh,
         cli::ShellType::Fish => clap_complete::Shell::Fish,
         cli::ShellType::PowerShell => clap_complete::Shell::PowerShell,
+        cli::ShellType::Elvish => clap_complete::Shell::Elvish,
     };
     clap_complete::generate(shell, &mut cli::Cli::command(), "atomwrite", &mut out);
     Ok(())

@@ -59,6 +59,7 @@ pub struct WriteResult {
 /// Returns `AtomwriteError::Io` if creating, writing, or renaming the tempfile fails.
 /// Returns `AtomwriteError::PermissionDenied` if the target directory is not writable.
 /// Returns `AtomwriteError::DiskFull` if the filesystem runs out of space during write.
+#[tracing::instrument(skip_all, fields(path = %target.display()))]
 pub fn atomic_write(
     target: &Path,
     content: &[u8],
@@ -74,7 +75,7 @@ pub fn atomic_write(
     let (checksum_before, original_meta) = if target.exists() {
         let meta =
             fs::metadata(&target).with_context(|| format!("cannot stat {}", target.display()))?;
-        let hash = checksum::hash_file(&target)?;
+        let hash = checksum::hash_file(&target, u64::MAX)?;
         (Some(hash), Some(meta))
     } else {
         (None, None)
@@ -183,6 +184,7 @@ pub fn atomic_write(
     #[cfg(not(windows))]
     {
         temp.persist(&target)
+            .inspect_err(|e| tracing::debug!(?e, path = %target.display(), "atomic rename failed"))
             .with_context(|| format!("rename error for {}", target.display()))?;
     }
 
@@ -190,8 +192,9 @@ pub fn atomic_write(
     if let Some(parent) = target.parent() {
         if let Err(e) = platform::fsync_dir(parent) {
             tracing::warn!(
-                "fsync_dir after persist failed for {}: {e}",
-                parent.display()
+                path = %parent.display(),
+                error = %e,
+                "fsync_dir after persist failed"
             );
         }
     }
@@ -227,8 +230,10 @@ pub fn atomic_write(
 /// # Errors
 ///
 /// Returns `AtomwriteError::Io` if copying the file or creating the backup fails.
+#[tracing::instrument(skip_all, fields(path = %target.display(), retention))]
 pub(crate) fn create_backup(target: &Path, retention: u8) -> Result<std::path::PathBuf> {
     let now = utc_timestamp_formatted();
+    // file_name() returns None only for root "/" — empty string is safe for backup naming
     let filename = target.file_name().unwrap_or_default().to_string_lossy();
     let backup_name = format!("{filename}.bak.{now}");
     let backup_path = target.with_file_name(&backup_name);
@@ -243,8 +248,9 @@ pub(crate) fn create_backup(target: &Path, retention: u8) -> Result<std::path::P
     if let Some(parent) = backup_path.parent() {
         if let Err(e) = platform::fsync_dir(parent) {
             tracing::warn!(
-                "fsync_dir after backup failed for {}: {e}",
-                parent.display()
+                path = %parent.display(),
+                error = %e,
+                "fsync_dir after backup failed"
             );
         }
     }
@@ -293,6 +299,7 @@ fn cleanup_old_backups(target: &Path, retention: u8) {
 
 fn utc_timestamp_formatted() -> String {
     use std::time::SystemTime;
+    // duration_since fails only if system clock precedes UNIX epoch — defaults to 1970-01-01
     let secs = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
@@ -300,6 +307,18 @@ fn utc_timestamp_formatted() -> String {
 
     let (year, month, day, hour, min, sec) = epoch_to_utc(secs);
     format!("{year:04}{month:02}{day:02}_{hour:02}{min:02}{sec:02}")
+}
+
+/// Return the current UTC time as an RFC 3339 string (e.g. `2024-01-15T14:30:22Z`).
+pub fn rfc3339_now() -> String {
+    use std::time::SystemTime;
+    // duration_since fails only if system clock precedes UNIX epoch — defaults to 1970-01-01
+    let secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let (y, m, d, h, min, sec) = epoch_to_utc(secs);
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{sec:02}Z")
 }
 
 pub(crate) fn epoch_to_utc(epoch: u64) -> (u64, u64, u64, u64, u64, u64) {

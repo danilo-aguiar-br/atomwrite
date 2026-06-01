@@ -3,7 +3,10 @@ targets = []
 all-features = true
 
 [advisories]
-ignore = []
+ignore = [
+    { id = "RUSTSEC-2026-0009", reason = "time 0.3.47 requires Rust 1.88 (MSRV 1.85). DoS via stack exhaustion in time parsing — not exploitable: atomwrite uses time only via tracing-appender for log timestamps, never for user input parsing" },
+]
+unmaintained = "workspace"
 
 [licenses]
 allow = [
@@ -17,16 +20,29 @@ allow = [
     "Zlib",
     "BSL-1.0",
 ]
-confidence-threshold = 0.8
+confidence-threshold = 0.93
 
 [licenses.private]
 ignore = true
 
 [bans]
-multiple-versions = "warn"
+multiple-versions = "deny"
 wildcards = "deny"
+skip = [
+    { crate = "anstream@0.6", reason = "human-panic pulls old version" },
+    { crate = "anstyle-parse@0.2", reason = "transitive via anstream 0.6" },
+    { crate = "bitflags@1", reason = "transitive via nix 0.29 and others" },
+    { crate = "hashbrown@0.15", reason = "transitive via older indexmap" },
+    { crate = "itertools@0.11", reason = "transitive via grex" },
+    { crate = "nix@0.29", reason = "direct dep, transitives pull 0.31" },
+    { crate = "serde_spanned@0.6", reason = "transitive via toml 0.8" },
+    { crate = "toml@0.8", reason = "transitive via serde_spanned chain" },
+    { crate = "toml_datetime@0.6", reason = "transitive via toml 0.8" },
+    { crate = "windows-sys@0.59", reason = "transitive via nix and others" },
+    { crate = "wit-bindgen@0.46", reason = "transitive via wasm chain" },
+]
 
 [sources]
-unknown-registry = "warn"
-unknown-git = "warn"
+unknown-registry = "deny"
+unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]

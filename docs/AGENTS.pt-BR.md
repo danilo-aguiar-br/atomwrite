@@ -59,8 +59,8 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 ## 22 Subcomandos
 - `read` -- lê arquivos com metadados, checksum, conteúdo opcional
 - `write` -- cria ou sobrescreve arquivos atomicamente via stdin
-- `edit` -- edita cirurgicamente por número de linha, marcador de texto ou match exato
-- `search` -- busca conteúdo de arquivos em paralelo (engine ripgrep)
+- `edit` -- edita cirurgicamente por número de linha, marcador de texto ou match exato; `--fuzzy auto|off|aggressive` para matching fuzzy; `--multi` para multi-edit NDJSON
+- `search` -- busca conteúdo de arquivos em paralelo (engine ripgrep); suporta `--context N`, `--max-count N`, `--invert`, `--sort path`, `--fixed`, `--word`, `--case-insensitive`, `--include`, `--exclude`
 - `replace` -- substitui texto em múltiplos arquivos com escritas atômicas
 - `hash` -- calcula checksums BLAKE3
 - `delete` -- deleta arquivos com backup opcional
@@ -73,11 +73,11 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `calc` -- avalia expressões matemáticas e conversões de unidades (engine fend)
 - `regex` -- gera regex a partir de exemplos (engine grex)
 - `transform` -- busca e reescrita estrutural por AST (ast-grep, 306 linguagens)
-- `scope` -- escopo gramatical com ações baseadas em AST (delete, upper, lower, titlecase, squeeze, replace) sobre categorias de código (comments, functions, strings, etc); suporta Rust, Python, JS/TS, Go; `--query` para consultas preparadas, `--pattern` para padrões AST customizados
+- `scope` -- escopo gramatical sobre categorias de código; `--delete` para remover matches; `--action upper|lower|titlecase|squeeze` para transformações de texto; `--replace-with "texto"` para substituição customizada; `--query` para consultas preparadas (comments, fn, strings, struct, etc); `--pattern` para padrões AST customizados; suporta Rust (30 queries), Python (13), JS/TS (11), Go (8)
 - `backup` -- cria backups com timestamp e checksums BLAKE3; `--retention` para período de retenção, `--dry-run` para preview
 - `rollback` -- restaura a partir de backup; `--timestamp` ou `--latest` para selecionar backup, `--verify` para validação de checksum, `--dry-run` para preview
 - `apply` -- aplica patches do stdin com detecção automática de formato (unified diff, blocos SEARCH/REPLACE, markdown-fenced, arquivo completo); `--format` para forçar formato, `--backup` para segurança, `--dry-run` para preview
-- `batch` -- executa múltiplas operações a partir de manifesto NDJSON
+- `batch` -- executa múltiplas operações a partir de manifesto NDJSON (write, replace, delete, edit, hash, move, copy); suporta `--transaction` para tudo-ou-nada
 - `completions` -- gera completions de shell
 
 
@@ -169,12 +169,12 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - 74: erro de I/O
 - 78: configuração inválida
 - 82: desvio de estado (checksum não confere)
+- 85: FIFO detectado (named pipe não pode ser escrito atomicamente)
+- 86: arquivo de dispositivo detectado (bloco ou caractere)
 - 126: violação do workspace jail
 - 127: symlink bloqueado
 - 128: arquivo imutável
 - 130: SIGINT
-- 85: FIFO detectado (named pipe não pode ser escrito atomicamente)
-- 86: arquivo de dispositivo detectado (bloco ou caractere)
 - 141: SIGPIPE (pipe quebrado)
 - 143: SIGTERM
 - 255: erro interno
@@ -206,7 +206,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `IMMUTABLE_FILE` (exit 128) -- não tente novamente sem remover flag de imutabilidade
 
 ### Pré-condição Falhou (retryable: false)
-- `BINARY_FILE` (exit 65) -- use `--force-text` ou modo `--stat`
+- `BINARY_FILE` (exit 65) -- use modo `--stat` para ler metadados sem conteúdo
 - `IMMUTABLE_FILE` (exit 128) -- remova flag de imutabilidade primeiro
 - `WORKSPACE_JAIL` (exit 126) -- ajuste limite de `--workspace`
 
@@ -216,6 +216,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `--verbose` / `-v` -- habilita tracing no stderr
 - `--quiet` / `-q` -- suprime saída não essencial
 - `--color <auto|always|never>` -- controla saída colorida
+- `--no-color` -- desabilita saída colorida (equivalente a `--color never`)
 - `--no-gitignore` -- não respeita regras do .gitignore
 - `--hidden` -- inclui arquivos e diretórios ocultos
 - `--follow-symlinks` -- segue links simbólicos

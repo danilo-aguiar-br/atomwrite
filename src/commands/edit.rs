@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Surgical file editing by line number, text marker, or exact match.
+//! Workload: I/O-bound (file read + fuzzy match + atomic write).
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::time::Instant;
 
@@ -13,6 +14,10 @@ use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 use crate::cli::{EditArgs, FuzzyMode, GlobalArgs};
 use crate::error::AtomwriteError;
+
+fn find_str(haystack: &str, needle: &str) -> Option<usize> {
+    memchr::memmem::find(haystack.as_bytes(), needle.as_bytes())
+}
 use crate::ndjson_types::EditOutput;
 use crate::output::NdjsonWriter;
 
@@ -31,9 +36,10 @@ struct FuzzyInfo {
 /// Returns `AtomwriteError::WorkspaceJail` if the path escapes the workspace.
 /// Returns `AtomwriteError::InvalidInput` if the line number or range is invalid.
 /// Returns `AtomwriteError::Io` if reading or writing the file fails.
+#[tracing::instrument(skip_all, fields(command = "edit"))]
 pub fn cmd_edit(
     args: &EditArgs,
-    _global: &GlobalArgs,
+    global: &GlobalArgs,
     stdin: impl Read,
     writer: &mut NdjsonWriter<impl Write>,
     workspace: &Path,
@@ -45,7 +51,7 @@ pub fn cmd_edit(
         return Err(AtomwriteError::NotFound { path: path.clone() }.into());
     }
 
-    let original = crate::file_io::read_file_string(&path)?;
+    let original = crate::file_io::read_file_string(&path, global.effective_max_filesize())?;
 
     let checksum_before = checksum::hash_bytes(original.as_bytes());
 
@@ -77,7 +83,15 @@ pub fn cmd_edit(
         );
     }
 
-    let (edited, mode, fuzzy_info) = if args.old.is_some() {
+    if !args.old.is_empty() && args.old.len() != args.new.len() {
+        bail!(
+            "--old and --new must be provided in equal pairs ({} old, {} new)",
+            args.old.len(),
+            args.new.len()
+        );
+    }
+
+    let (edited, mode, fuzzy_info) = if !args.old.is_empty() {
         let (e, m, fi) = edit_old_new(&original, args)?;
         (e, m, Some(fi))
     } else if args.after_line.is_some()
@@ -85,10 +99,12 @@ pub fn cmd_edit(
         || args.range.is_some()
         || args.delete_range.is_some()
     {
-        let (e, m) = edit_by_line(&lines, args, stdin)?;
+        let max_size = global.effective_max_filesize();
+        let (e, m) = edit_by_line(&lines, args, stdin, max_size)?;
         (e, m, None)
     } else if args.after_match.is_some() || args.before_match.is_some() || args.between.is_some() {
-        let (e, m) = edit_by_marker(&original, &lines, args, stdin)?;
+        let max_size = global.effective_max_filesize();
+        let (e, m) = edit_by_marker(&original, &lines, args, stdin, max_size)?;
         (e, m, None)
     } else {
         bail!(
@@ -96,11 +112,13 @@ pub fn cmd_edit(
         );
     };
 
+    let path_str = path.display().to_string();
+
     if args.dry_run {
         let plan = crate::ndjson_types::DryRunPlan {
             r#type: "plan",
             operation: "edit".into(),
-            path: path.display().to_string(),
+            path: path_str,
             would_modify: edited != original,
             details: Some(format!("mode: {mode}")),
         };
@@ -138,7 +156,7 @@ pub fn cmd_edit(
 
     let output = EditOutput {
         r#type: "edit",
-        path: path.display().to_string(),
+        path: path_str,
         edits: 1,
         mode,
         bytes_before: original.len() as u64,
@@ -160,7 +178,8 @@ pub fn cmd_edit(
 
 // ─── multi mode ──────────────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MultiEdit {
     op: String,
     #[serde(default)]
@@ -189,25 +208,38 @@ fn cmd_edit_multi(
     workspace: &Path,
     start: Instant,
 ) -> Result<()> {
-    let reader = BufReader::new(stdin);
-    let mut ops: Vec<MultiEdit> = Vec::new();
+    let mut reader = BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
+    let mut ops: Vec<MultiEdit> = Vec::with_capacity(8);
+    let mut line_buf = String::new();
+    let mut i = 0usize;
 
-    for (i, line) in reader.lines().enumerate() {
-        let line = line.context("failed to read stdin line")?;
-        let trimmed = line.trim();
+    loop {
+        let n = crate::output::read_limited_line(
+            &mut reader,
+            &mut line_buf,
+            crate::constants::MAX_NDJSON_LINE_SIZE,
+        )
+        .context("failed to read stdin line")?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = line_buf.trim();
         if trimmed.is_empty() {
+            i += 1;
             continue;
         }
-        let op: MultiEdit = serde_json::from_str(trimmed)
+        let jd = &mut serde_json::Deserializer::from_str(trimmed);
+        let op: MultiEdit = serde_path_to_error::deserialize(jd)
             .with_context(|| format!("invalid NDJSON at line {}: {}", i + 1, trimmed))?;
         ops.push(op);
+        i += 1;
     }
 
     if ops.is_empty() {
         bail!("--multi requires at least one edit operation on stdin");
     }
 
-    let content_lines: Vec<String> = original.lines().map(|s| s.to_string()).collect();
+    let content_lines = lines_from_str(&original);
     let total = content_lines.len();
 
     // Validate all operations before applying
@@ -248,7 +280,7 @@ fn cmd_edit_multi(
                     .old
                     .as_deref()
                     .ok_or_else(|| anyhow::anyhow!("op 'exact' requires 'old'"))?;
-                if !original.contains(old) {
+                if find_str(&original, old).is_none() {
                     bail!("op 'exact': old string not found: {:?}", old);
                 }
             }
@@ -275,13 +307,8 @@ fn cmd_edit_multi(
                     .line
                     .ok_or_else(|| anyhow::anyhow!("insert-after requires 'line' field"))?;
                 let idx = n - 1;
-                let new_lines: Vec<String> = op
-                    .content
-                    .as_deref()
-                    .unwrap_or("")
-                    .lines()
-                    .map(|s| s.to_string())
-                    .collect();
+                let src = op.content.as_deref().unwrap_or("");
+                let new_lines = lines_from_str(src);
                 for (i, line) in new_lines.into_iter().enumerate() {
                     result_lines.insert(idx + 1 + i, line);
                 }
@@ -291,13 +318,8 @@ fn cmd_edit_multi(
                     .line
                     .ok_or_else(|| anyhow::anyhow!("insert-before requires 'line' field"))?;
                 let idx = n - 1;
-                let new_lines: Vec<String> = op
-                    .content
-                    .as_deref()
-                    .unwrap_or("")
-                    .lines()
-                    .map(|s| s.to_string())
-                    .collect();
+                let src = op.content.as_deref().unwrap_or("");
+                let new_lines = lines_from_str(src);
                 for (i, line) in new_lines.into_iter().enumerate() {
                     result_lines.insert(idx + i, line);
                 }
@@ -310,13 +332,8 @@ fn cmd_edit_multi(
                 let e = op
                     .end
                     .ok_or_else(|| anyhow::anyhow!("replace-range requires 'end' field"))?;
-                let new_lines: Vec<String> = op
-                    .content
-                    .as_deref()
-                    .unwrap_or("")
-                    .lines()
-                    .map(|s| s.to_string())
-                    .collect();
+                let src = op.content.as_deref().unwrap_or("");
+                let new_lines = lines_from_str(src);
                 result_lines.splice(s..e, new_lines);
             }
             "delete-range" => {
@@ -329,23 +346,25 @@ fn cmd_edit_multi(
                     .ok_or_else(|| anyhow::anyhow!("delete-range requires 'end' field"))?;
                 result_lines.drain(s..e);
             }
-            _ => unreachable!(),
+            _ => unreachable!("ops filtered to known variants in validation loop"),
         }
     }
 
     let mut edited = join_lines(&result_lines);
 
     for op in &mut exact_ops {
-        let old = op.old.as_deref().unwrap();
+        let old = op.old.as_deref().expect("validated in op filter loop");
         let new = op.new.as_deref().unwrap_or("");
         edited = edited.replacen(old, new, 1);
     }
+
+    let path_str = path.display().to_string();
 
     if args.dry_run {
         let plan = crate::ndjson_types::DryRunPlan {
             r#type: "plan",
             operation: "edit".into(),
-            path: path.display().to_string(),
+            path: path_str,
             would_modify: edited != original,
             details: Some(format!("mode: multi, edits: {}", ops.len())),
         };
@@ -364,7 +383,7 @@ fn cmd_edit_multi(
 
     let output = EditOutput {
         r#type: "edit",
-        path: path.display().to_string(),
+        path: path_str,
         edits: ops.len() as u64,
         mode: "multi".into(),
         bytes_before: original.len() as u64,
@@ -387,12 +406,15 @@ fn cmd_edit_multi(
 // ─── old/new with fuzzy cascade ──────────────────────────────────────────────
 
 fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, FuzzyInfo)> {
-    let old = args.old.as_ref().expect("--old is required");
-    let new = args.new.as_deref().unwrap_or("");
+    if args.old.len() > 1 {
+        return edit_old_new_multi(original, args);
+    }
+    let old = &args.old[0];
+    let new = args.new.first().map(|s| s.as_str()).unwrap_or("");
     let fuzzy_mode = args.fuzzy;
 
     // Strategy 1: exact match
-    if let Some(pos) = original.find(old.as_str()) {
+    if let Some(pos) = find_str(original, old.as_str()) {
         let edited = format!(
             "{}{}{}",
             &original[..pos],
@@ -451,6 +473,21 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
         ));
     }
 
+    // Strategy 3.5: punctuation-whitespace-normalized
+    if let Some((start, end)) = match_punctuation_normalized(&content_lines, &old_lines) {
+        let edited = apply_replacement(original, &content_lines, start, end, new);
+        return Ok((
+            edited,
+            "old_new".into(),
+            FuzzyInfo {
+                fuzzy: true,
+                strategy: "punctuation_normalized".into(),
+                strategies_tried: 4,
+                similarity: Some(1.0),
+            },
+        ));
+    }
+
     // Strategy 4: indent-flexible
     if let Some((start, end)) = match_indent_flexible(&content_lines, &old_lines) {
         let edited = apply_replacement(original, &content_lines, start, end, new);
@@ -460,7 +497,7 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
             FuzzyInfo {
                 fuzzy: true,
                 strategy: "indent_flexible".into(),
-                strategies_tried: 4,
+                strategies_tried: 5,
                 similarity: Some(1.0),
             },
         ));
@@ -480,13 +517,13 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
             FuzzyInfo {
                 fuzzy: true,
                 strategy: "escape_normalized".into(),
-                strategies_tried: 5,
+                strategies_tried: 6,
                 similarity: Some(1.0),
             },
         ));
     }
 
-    // Strategy 6: trimmed-boundary
+    // Strategy 7: trimmed-boundary
     if let Some((start, end)) = match_trimmed_boundary(&content_lines, &old_lines) {
         let edited = apply_replacement(original, &content_lines, start, end, new);
         return Ok((
@@ -495,13 +532,13 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
             FuzzyInfo {
                 fuzzy: true,
                 strategy: "trimmed_boundary".into(),
-                strategies_tried: 6,
+                strategies_tried: 8,
                 similarity: Some(1.0),
             },
         ));
     }
 
-    // Strategy 7: block-anchor (only in auto/aggressive, requires >= 50% similarity in auto, >= 50% in aggressive)
+    // Strategy 8: block-anchor (only in auto/aggressive, requires >= 50% similarity in auto, >= 50% in aggressive)
     let min_ratio = match fuzzy_mode {
         FuzzyMode::Aggressive => 0.50,
         _ => 0.70,
@@ -514,7 +551,7 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
             FuzzyInfo {
                 fuzzy: true,
                 strategy: "block_anchor".into(),
-                strategies_tried: 7,
+                strategies_tried: 8,
                 similarity: Some(ratio),
             },
         ));
@@ -547,8 +584,69 @@ fn match_line_trimmed(content: &[&str], pattern: &[&str]) -> Option<(usize, usiz
     None
 }
 
+fn edit_old_new_multi(original: &str, args: &EditArgs) -> Result<(String, String, FuzzyInfo)> {
+    let mut content = original.to_string();
+    let mut total_edits = 0u64;
+    for (old, new) in args.old.iter().zip(args.new.iter()) {
+        if let Some(pos) = find_str(&content, old.as_str()) {
+            content.replace_range(pos..pos + old.len(), new);
+            total_edits += 1;
+        } else {
+            return Err(crate::error::AtomwriteError::InvalidInput {
+                reason: format!("old string not found in file: {old:?}"),
+            }
+            .into());
+        }
+    }
+    Ok((
+        content,
+        format!("exact-multi({total_edits})"),
+        FuzzyInfo {
+            fuzzy: false,
+            strategy: "exact-multi".into(),
+            strategies_tried: 1,
+            similarity: None,
+        },
+    ))
+}
+
 fn normalize_whitespace(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut result = String::with_capacity(s.len());
+    let mut first = true;
+    for word in s.split_whitespace() {
+        if !first {
+            result.push(' ');
+        }
+        result.push_str(word);
+        first = false;
+    }
+    result
+}
+
+fn normalize_punctuation_whitespace(s: &str) -> String {
+    static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\s*([(){}\[\]<>,;:])\s*").expect("static regex is valid")
+    });
+    RE.replace_all(&normalize_whitespace(s), "$1").to_string()
+}
+
+fn match_punctuation_normalized(content: &[&str], pattern: &[&str]) -> Option<(usize, usize)> {
+    if pattern.is_empty() {
+        return None;
+    }
+    let norm_pat: Vec<String> = pattern
+        .iter()
+        .map(|l| normalize_punctuation_whitespace(l))
+        .collect();
+    'outer: for i in 0..content.len().saturating_sub(pattern.len() - 1) {
+        for (j, norm) in norm_pat.iter().enumerate() {
+            if normalize_punctuation_whitespace(content[i + j]) != *norm {
+                continue 'outer;
+            }
+        }
+        return Some((i, i + pattern.len()));
+    }
+    None
 }
 
 fn match_whitespace_normalized(content: &[&str], pattern: &[&str]) -> Option<(usize, usize)> {
@@ -628,7 +726,7 @@ fn match_block_anchor(
     let first = pattern.first()?.trim();
     let last = pattern.last()?.trim();
     let plen = pattern.len();
-    let mut candidates: Vec<(usize, usize, f64)> = Vec::new();
+    let mut candidates: Vec<(usize, usize, f64)> = Vec::with_capacity(4);
 
     for (i, line) in content.iter().enumerate() {
         if line.trim() != first {
@@ -642,7 +740,12 @@ fn match_block_anchor(
             let block = content[i..=j].join("\n");
             let pat = pattern.join("\n");
             let diff = similar::TextDiff::from_lines(&pat, &block);
-            let ratio = diff.ratio() as f64;
+            let raw_ratio = diff.ratio() as f64;
+            let ratio = if raw_ratio.is_finite() {
+                raw_ratio
+            } else {
+                0.0
+            };
             if ratio >= min_ratio {
                 candidates.push((i, j + 1, ratio));
             }
@@ -658,6 +761,16 @@ fn match_block_anchor(
     candidates.first().copied()
 }
 
+fn lines_from_str(s: &str) -> Vec<String> {
+    s.lines().map(String::from).collect()
+}
+
+fn lines_to_owned(lines: &[&str]) -> Vec<String> {
+    let mut v = Vec::with_capacity(lines.len());
+    v.extend(lines.iter().map(|s| String::from(*s)));
+    v
+}
+
 fn apply_replacement(
     original: &str,
     content_lines: &[&str],
@@ -665,18 +778,19 @@ fn apply_replacement(
     end: usize,
     new: &str,
 ) -> String {
-    let mut result: Vec<String> = Vec::with_capacity(content_lines.len());
-    for line in &content_lines[..start] {
-        result.push(line.to_string());
+    let before = content_lines[..start].join("\n");
+    let after = content_lines[end..].join("\n");
+    let mut out = String::with_capacity(before.len() + new.len() + after.len() + 2);
+    if !before.is_empty() {
+        out.push_str(&before);
+        out.push('\n');
     }
-    for line in new.lines() {
-        result.push(line.to_string());
-    }
-    for line in &content_lines[end..] {
-        result.push(line.to_string());
+    out.push_str(new);
+    if !after.is_empty() {
+        out.push('\n');
+        out.push_str(&after);
     }
     // Preserve trailing newline if original had one
-    let mut out = result.join("\n");
     if original.ends_with('\n') && !out.ends_with('\n') {
         out.push('\n');
     }
@@ -685,21 +799,27 @@ fn apply_replacement(
 
 // ─── line-based and marker-based edits (unchanged) ───────────────────────────
 
-fn read_stdin_text(mut stdin: impl Read) -> Result<String> {
+fn read_stdin_text(stdin: impl Read, max_size: u64) -> Result<String> {
     let mut buf = String::new();
     stdin
+        .take(max_size)
         .read_to_string(&mut buf)
         .context("failed to read stdin for edit")?;
     Ok(buf)
 }
 
-fn edit_by_line(lines: &[&str], args: &EditArgs, stdin: impl Read) -> Result<(String, String)> {
-    let mut result_lines: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+fn edit_by_line(
+    lines: &[&str],
+    args: &EditArgs,
+    stdin: impl Read,
+    max_size: u64,
+) -> Result<(String, String)> {
+    let mut result_lines = lines_to_owned(lines);
 
     if let Some(n) = args.after_line {
-        let content = read_stdin_text(stdin)?;
+        let content = read_stdin_text(stdin, max_size)?;
         let idx = validate_line_num(n, lines.len())?;
-        let new_lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        let new_lines = lines_from_str(&content);
         for (i, line) in new_lines.into_iter().enumerate() {
             result_lines.insert(idx + i + 1, line);
         }
@@ -707,10 +827,10 @@ fn edit_by_line(lines: &[&str], args: &EditArgs, stdin: impl Read) -> Result<(St
     }
 
     if let Some(n) = args.before_line {
-        let content = read_stdin_text(stdin)?;
+        let content = read_stdin_text(stdin, max_size)?;
         let idx = validate_line_num(n, lines.len())?;
         let insert_at = if idx == 0 { 0 } else { idx };
-        let new_lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        let new_lines = lines_from_str(&content);
         for (i, line) in new_lines.into_iter().enumerate() {
             result_lines.insert(insert_at + i, line);
         }
@@ -718,9 +838,9 @@ fn edit_by_line(lines: &[&str], args: &EditArgs, stdin: impl Read) -> Result<(St
     }
 
     if let Some(ref range_str) = args.range {
-        let content = read_stdin_text(stdin)?;
+        let content = read_stdin_text(stdin, max_size)?;
         let (start, end) = parse_range(range_str, lines.len())?;
-        let new_lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        let new_lines = lines_from_str(&content);
         result_lines.splice(start..end, new_lines);
         return Ok((join_lines(&result_lines), "replace_range".into()));
     }
@@ -739,12 +859,13 @@ fn edit_by_marker(
     lines: &[&str],
     args: &EditArgs,
     stdin: impl Read,
+    max_size: u64,
 ) -> Result<(String, String)> {
     if let Some(ref marker) = args.after_match {
-        let content = read_stdin_text(stdin)?;
+        let content = read_stdin_text(stdin, max_size)?;
         let idx = find_line_with(lines, marker)?;
-        let mut result: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
-        let new_lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        let mut result = lines_to_owned(lines);
+        let new_lines = lines_from_str(&content);
         for (i, line) in new_lines.into_iter().enumerate() {
             result.insert(idx + 1 + i, line);
         }
@@ -752,10 +873,10 @@ fn edit_by_marker(
     }
 
     if let Some(ref marker) = args.before_match {
-        let content = read_stdin_text(stdin)?;
+        let content = read_stdin_text(stdin, max_size)?;
         let idx = find_line_with(lines, marker)?;
-        let mut result: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
-        let new_lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        let mut result = lines_to_owned(lines);
+        let new_lines = lines_from_str(&content);
         for (i, line) in new_lines.into_iter().enumerate() {
             result.insert(idx + i, line);
         }
@@ -766,12 +887,12 @@ fn edit_by_marker(
         if markers.len() != 2 {
             bail!("--between requires exactly 2 markers");
         }
-        let content = read_stdin_text(stdin)?;
+        let content = read_stdin_text(stdin, max_size)?;
         let start_idx = find_line_with(lines, &markers[0])?;
         let end_idx = find_line_with_after(lines, &markers[1], start_idx + 1)?;
 
-        let mut result: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
-        let new_lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        let mut result = lines_to_owned(lines);
+        let new_lines = lines_from_str(&content);
         result.splice((start_idx + 1)..end_idx, new_lines);
         return Ok((join_lines(&result), "between".into()));
     }

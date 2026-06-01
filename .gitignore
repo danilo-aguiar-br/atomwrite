@@ -3,6 +3,7 @@
 docs_prd/
 docs_rules/
 CLAUDE.md
+gaps.md
 
 # ── GraphRAG Database ──
 graphrag.sqlite
@@ -14,8 +15,13 @@ graphrag.sqlite-wal
 
 # ── Rust / Cargo ──
 /target/
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
 **/*.rs.bk
 # Cargo.lock DEVE ser versionado para binários (regra Rust)
+# Linker config is machine-specific (requires mold); see .cargo/config.toml.example
+.cargo/config.toml
 
 # ── IDE & Editor ──
 .vscode/

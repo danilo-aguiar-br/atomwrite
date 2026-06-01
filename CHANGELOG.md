@@ -10,7 +10,11 @@
 
 ## [Unreleased]
 
+
+## [0.1.1] - 2026-06-01
+
 ### Fixed
+- 12 broken intra-doc links in `error.rs` corrected (`DiskFull` to `Self::DiskFull` and similar)
 - `search --include`/`--exclude` now correctly filter files via OverrideBuilder (was silently ignored)
 - `replace --include`/`--exclude` now correctly filter files via OverrideBuilder
 - `transform --include`/`--exclude` now correctly filter files via OverrideBuilder
@@ -46,7 +50,7 @@
 - Hardlink detection before atomic rename with `tracing::warn` when nlink > 1
 - Same-file detection in `copy` and `move` to prevent source=destination data loss
 - Line ending detection and normalization module (`line_endings.rs`)
-- 60 unit tests across 8 modules (was 5 tests in 1 module)
+- 282 tests across integration and unit test suites (was 5 tests in 1 module at v0.1.0)
 - Integration tests for `backup`, `rollback`, `apply`, and `scope`
 - `deny.toml` for cargo-deny license and advisory auditing
 - `--lang` global flag for locale override (en, pt-BR) with `ATOMWRITE_LANG` environment variable
@@ -59,6 +63,13 @@
 - `documentation` field and `[badges.maintenance]` in `Cargo.toml`
 - Rustdoc lints: `broken_intra_doc_links`, `private_intra_doc_links`, `clippy::doc_markdown`
 - `doc(html_root_url)` for docs.rs cross-linking
+- `batch` move and copy operations now accept `source`, `from`, and `src` as field aliases for the source path
+- `batch` write, delete, edit, and hash operations now accept `path` as alias for `target`
+- 2 fuzz targets (`batch_parse`, `extract_json`) with `libfuzzer-sys` for parser security testing
+- Optimistic locking integration tests for `write --expect-checksum` and `edit --expect-checksum`
+- NDJSON validation tests expanded from 5 to 20 of 21 commands
+- `jaq` interop tests validating NDJSON piped through `jaq` filter
+- i18n integration test confirming `--lang` does not alter JSON output
 
 
 ## [0.1.0] - 2026-05-29
@@ -88,5 +99,6 @@
 - Release profile with LTO, single codegen unit, symbol stripping, and panic=abort
 
 
-[Unreleased]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/daniloaguiarbr/atomwrite/releases/tag/v0.1.0

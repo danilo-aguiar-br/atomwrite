@@ -1,0 +1,16 @@
+---
+source: tests/snapshot_write.rs
+assertion_line: 250
+expression: event
+---
+{
+  "code": "WORKSPACE_JAIL",
+  "error": true,
+  "error_class": "precondition_failed",
+  "exit": 126,
+  "message": "[redacted]",
+  "path": "[redacted]",
+  "retryable": false,
+  "suggestion": "[redacted]",
+  "workspace": "[redacted]"
+}

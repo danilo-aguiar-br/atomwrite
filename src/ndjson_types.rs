@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 /// NDJSON output for write, delete, move, copy, and hash operations.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct WriteOutput {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -31,7 +31,7 @@ pub struct WriteOutput {
 }
 
 /// Platform-specific fsync method names for diagnostics.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct PlatformInfo {
     /// File fsync method name (e.g. `F_FULLFSYNC` or `sync_data`).
     pub fsync: &'static str,
@@ -40,7 +40,7 @@ pub struct PlatformInfo {
 }
 
 /// NDJSON output for read operations with metadata and optional content.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct ReadOutput {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -72,7 +72,7 @@ pub struct ReadOutput {
 }
 
 /// Inclusive 1-based line range for partial file reads.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct LineRange {
     /// First line number returned (1-based).
     pub start: usize,
@@ -81,7 +81,7 @@ pub struct LineRange {
 }
 
 /// NDJSON event emitted when search begins processing a file.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct SearchBegin {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -90,7 +90,7 @@ pub struct SearchBegin {
 }
 
 /// NDJSON event for a single search match within a file.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct SearchMatch {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -108,7 +108,7 @@ pub struct SearchMatch {
 }
 
 /// A single regex capture within a matched line.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct Submatch {
     /// The matched text.
     pub r#match: String,
@@ -119,7 +119,7 @@ pub struct Submatch {
 }
 
 /// NDJSON event for a context line surrounding a search match.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct SearchContext {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -132,7 +132,7 @@ pub struct SearchContext {
 }
 
 /// NDJSON event emitted when search finishes processing a file.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct SearchEnd {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -143,7 +143,7 @@ pub struct SearchEnd {
 }
 
 /// Per-file match and line statistics for search operations.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct FileStats {
     /// Number of matches found in the file.
     pub matches: u64,
@@ -152,7 +152,7 @@ pub struct FileStats {
 }
 
 /// NDJSON event for count-only search mode (match count per file).
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct SearchCount {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -163,7 +163,7 @@ pub struct SearchCount {
 }
 
 /// NDJSON event for files-only search mode (path of matching file).
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct SearchFile {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -172,7 +172,7 @@ pub struct SearchFile {
 }
 
 /// Aggregate summary emitted at the end of multi-file operations.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct Summary {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -197,7 +197,7 @@ pub struct Summary {
 }
 
 /// NDJSON output for a per-file replace operation.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct ReplaceResult {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -257,7 +257,7 @@ pub struct EditOutput {
 }
 
 /// NDJSON output for dry-run and diff preview operations.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct DryRunPlan {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -273,7 +273,7 @@ pub struct DryRunPlan {
 }
 
 /// NDJSON output for a single entry in a directory listing.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct ListEntry {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -290,7 +290,7 @@ pub struct ListEntry {
 }
 
 /// Aggregate summary for a directory listing operation.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct ListSummary {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -311,7 +311,7 @@ pub struct ListSummary {
 }
 
 /// NDJSON output for math expression evaluation and field extraction.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct CalcOutput {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -324,7 +324,7 @@ pub struct CalcOutput {
 }
 
 /// NDJSON output for regex generation from examples.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct RegexOutput {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -339,7 +339,7 @@ pub struct RegexOutput {
 }
 
 /// NDJSON output for a structural AST-based code transform.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct TransformResult {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -364,7 +364,7 @@ pub struct TransformResult {
 }
 
 /// NDJSON output for a grammatical scoping operation on a single file.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct ScopeResult {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -391,7 +391,7 @@ pub struct ScopeResult {
 }
 
 /// NDJSON output for a backup operation on a single file.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct BackupResult {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -408,7 +408,7 @@ pub struct BackupResult {
 }
 
 /// NDJSON output for a rollback (restore from backup) operation.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct RollbackResult {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -417,6 +417,7 @@ pub struct RollbackResult {
     /// Path of the backup that was restored.
     pub restored_from: String,
     /// BLAKE3 checksum before restoration.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub checksum_before: Option<String>,
     /// BLAKE3 checksum after restoration.
     pub checksum_after: String,
@@ -428,7 +429,7 @@ pub struct RollbackResult {
 }
 
 /// NDJSON output for a patch apply operation.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct ApplyResult {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -472,7 +473,7 @@ pub struct BatchOpResult<'a> {
 }
 
 /// Aggregate summary emitted at the end of a batch run.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct BatchSummary {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -492,4 +493,825 @@ pub struct BatchSummary {
     /// Whether the transaction was committed (all operations succeeded).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub committed: Option<bool>,
+}
+
+/// NDJSON output for diff stat mode.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DiffStatOutput {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Whether files are identical.
+    pub identical: bool,
+    /// First file path.
+    pub file_a: String,
+    /// Second file path.
+    pub file_b: String,
+    /// Lines inserted.
+    pub insertions: u64,
+    /// Lines deleted.
+    pub deletions: u64,
+    /// Similarity ratio.
+    pub similarity_ratio: f32,
+    /// Duration in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// NDJSON output for unified diff format.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DiffUnifiedOutput {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Whether files are identical.
+    pub identical: bool,
+    /// Output format name.
+    pub format: &'static str,
+    /// Unified diff content.
+    pub content: String,
+    /// Similarity ratio.
+    pub similarity_ratio: f32,
+    /// Duration in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// NDJSON event for a single diff change line.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DiffChangeOutput<'a> {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Change tag: insert or delete.
+    pub tag: &'static str,
+    /// Line number of the change.
+    pub line: usize,
+    /// Changed text content.
+    pub text: &'a str,
+}
+
+/// NDJSON summary for a diff operation.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DiffSummaryOutput {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Whether files are identical.
+    pub identical: bool,
+    /// First file path.
+    pub file_a: String,
+    /// Second file path.
+    pub file_b: String,
+    /// Line count of first file.
+    pub lines_a: usize,
+    /// Line count of second file.
+    pub lines_b: usize,
+    /// Similarity ratio.
+    pub similarity_ratio: f32,
+    /// Duration in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// NDJSON output for BLAKE3 hash computation.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct HashOutput {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// File path, absent for stdin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Source identifier for stdin input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<&'static str>,
+    /// Hash algorithm name.
+    pub algorithm: &'static str,
+    /// Computed hash value.
+    pub value: String,
+    /// File size in bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    /// Verification result against expected hash.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified: Option<bool>,
+    /// Duration in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// NDJSON dry-run plan for move/copy operations.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct TransferPlan {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Operation name.
+    pub operation: &'static str,
+    /// Source path.
+    pub source: String,
+    /// Target path.
+    pub target: String,
+    /// Whether the operation would modify files.
+    pub would_modify: bool,
+}
+
+/// NDJSON output for a completed move operation.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct MoveOutput {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Source path.
+    pub source: String,
+    /// Target path.
+    pub target: String,
+    /// File size in bytes.
+    pub bytes: u64,
+    /// BLAKE3 checksum.
+    pub checksum: String,
+    /// Whether a cross-device copy was needed.
+    pub cross_device: bool,
+    /// Whether the operation was atomic.
+    pub atomic: bool,
+    /// Duration in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// NDJSON output for a completed copy operation.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct CopyOutput {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Source path.
+    pub source: String,
+    /// Target path.
+    pub target: String,
+    /// File size in bytes.
+    pub bytes: usize,
+    /// BLAKE3 checksum.
+    pub checksum: String,
+    /// Whether checksum was verified.
+    pub verified: bool,
+    /// Duration in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// NDJSON output for a completed delete operation.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct DeleteOutput {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Deleted file path.
+    pub path: String,
+    /// File size in bytes before deletion.
+    pub bytes: u64,
+    /// BLAKE3 checksum before deletion.
+    pub checksum_before: String,
+    /// Duration in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// NDJSON output for count grouped by file extension.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct CountByExtOutput {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Count mode name.
+    pub mode: &'static str,
+    /// Counts grouped by extension.
+    pub by_extension: std::collections::BTreeMap<String, ExtCountOutput>,
+    /// Duration in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// NDJSON output for total line/file counts.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct CountTotalOutput {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Count mode name.
+    pub mode: &'static str,
+    /// Aggregate totals.
+    pub total: CountTotals,
+    /// Duration in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// Aggregate file and line counts.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct CountTotals {
+    /// Total files counted.
+    pub files: u64,
+    /// Total lines counted.
+    pub lines: u64,
+    /// Total blank lines.
+    pub blank: u64,
+    /// Total bytes.
+    pub bytes: u64,
+}
+
+/// Per-extension file and line counts.
+#[derive(Default, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct ExtCountOutput {
+    /// Files with this extension.
+    pub files: u64,
+    /// Lines in files with this extension.
+    pub lines: u64,
+    /// Blank lines in files with this extension.
+    pub blank: u64,
+    /// Bytes in files with this extension.
+    pub bytes: u64,
+}
+
+/// NDJSON dry-run plan for backup operations.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct BackupPlan {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Operation name.
+    pub operation: &'static str,
+    /// File path.
+    pub path: String,
+    /// File size in bytes.
+    pub bytes: u64,
+    /// BLAKE3 checksum.
+    pub checksum: String,
+}
+
+/// NDJSON summary for backup operations.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct BackupSummary {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Number of files backed up.
+    pub files_backed_up: u64,
+    /// Total bytes backed up.
+    pub total_bytes: u64,
+    /// Whether this was a dry run.
+    pub dry_run: bool,
+    /// Duration in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// NDJSON dry-run plan for rollback operations.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct RollbackPlan {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Operation name.
+    pub operation: &'static str,
+    /// Target file path.
+    pub path: String,
+    /// Backup path to restore from.
+    pub restore_from: String,
+}
+
+/// NDJSON dry-run plan for patch apply operations.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct ApplyPlan {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Operation name.
+    pub operation: &'static str,
+    /// Target file path.
+    pub path: String,
+    /// Detected patch format.
+    pub format_detected: String,
+    /// Number of hunks detected.
+    pub hunks: usize,
+}
+
+/// NDJSON output for replace preview mode.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct ReplacePreview {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// File path.
+    pub path: String,
+    /// Number of replacements.
+    pub replacements: u64,
+    /// Unified diff of changes.
+    pub diff: String,
+}
+
+/// NDJSON error event for replace operations.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct ReplaceErrorEvent {
+    /// Error status.
+    pub status: &'static str,
+    /// File path.
+    pub path: String,
+    /// Error message.
+    pub message: String,
+    /// Error classification.
+    pub error_class: &'static str,
+    /// Whether the operation can be retried.
+    pub retryable: bool,
+}
+
+/// NDJSON output for text field extraction.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TextFieldsOutput<'a> {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Extracted fields.
+    pub fields: Vec<&'a str>,
+}
+
+/// NDJSON output for text value extraction.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TextValuesOutput<'a> {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Extracted values.
+    pub values: Vec<&'a str>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_valid_ndjson_object<T: serde::Serialize>(val: &T) {
+        let json = serde_json::to_value(val).expect("serialize to Value");
+        assert!(json.is_object(), "expected JSON object, got: {json}");
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("type"), "missing 'type' field");
+    }
+
+    fn assert_roundtrip_json<T: serde::Serialize>(val: &T) {
+        let json_str = serde_json::to_string(val).expect("serialize to string");
+        let reparsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("reparse from string");
+        assert!(reparsed.is_object(), "roundtrip produced non-object");
+    }
+
+    #[test]
+    fn roundtrip_write_output() {
+        let val = WriteOutput {
+            r#type: "write",
+            status: "ok",
+            path: "/tmp/test.rs".into(),
+            bytes_written: 42,
+            checksum: "abc123".into(),
+            checksum_before: None,
+            backup_path: None,
+            elapsed_ms: 5,
+            platform: PlatformInfo {
+                fsync: "sync_data",
+                dir_fsync: "sync_all",
+            },
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_batch_summary() {
+        let val = BatchSummary {
+            r#type: "summary",
+            operations: 10,
+            succeeded: 9,
+            failed: 1,
+            dry_run: false,
+            elapsed_ms: 100,
+            transaction: Some(true),
+            committed: Some(false),
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_diff_stat() {
+        let val = DiffStatOutput {
+            r#type: "diff",
+            identical: false,
+            file_a: "a.rs".into(),
+            file_b: "b.rs".into(),
+            insertions: 10,
+            deletions: 5,
+            similarity_ratio: 0.85,
+            elapsed_ms: 3,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_summary() {
+        let val = Summary {
+            r#type: "summary",
+            files_visited: 100,
+            files_matched: 5,
+            files_modified: Some(3),
+            files_skipped: None,
+            total_matches: Some(42),
+            total_replacements: None,
+            elapsed_ms: 200,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_edit_output() {
+        let val = EditOutput {
+            r#type: "edit",
+            path: "/tmp/edit.rs".into(),
+            edits: 1,
+            mode: "old_new".into(),
+            bytes_before: 100,
+            bytes_after: 110,
+            checksum_before: "aaa".into(),
+            checksum_after: "bbb".into(),
+            lines_before: 10,
+            lines_after: 11,
+            elapsed_ms: 2,
+            fuzzy: Some(true),
+            strategy: Some("block_anchor".into()),
+            strategies_tried: Some(8),
+            similarity: Some(0.95),
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_diff_summary() {
+        let val = DiffSummaryOutput {
+            r#type: "summary",
+            identical: true,
+            file_a: "x.rs".into(),
+            file_b: "y.rs".into(),
+            lines_a: 50,
+            lines_b: 50,
+            similarity_ratio: 1.0,
+            elapsed_ms: 1,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn skip_serializing_if_omits_none_fields() {
+        let val = WriteOutput {
+            r#type: "write",
+            status: "ok",
+            path: "/tmp/t.rs".into(),
+            bytes_written: 10,
+            checksum: "x".into(),
+            checksum_before: None,
+            backup_path: None,
+            elapsed_ms: 1,
+            platform: PlatformInfo {
+                fsync: "sync_data",
+                dir_fsync: "best_effort",
+            },
+        };
+        let json = serde_json::to_value(&val).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(!obj.contains_key("checksum_before"));
+        assert!(!obj.contains_key("backup_path"));
+    }
+
+    #[test]
+    fn roundtrip_read_output() {
+        let val = ReadOutput {
+            r#type: "read",
+            path: "/tmp/read.rs".into(),
+            content: Some("hello".into()),
+            lines: 1,
+            bytes: 5,
+            checksum: "abc".into(),
+            permissions: "0644".into(),
+            modified: "2026-01-01T00:00:00Z".into(),
+            kind: "file".into(),
+            binary: false,
+            range: None,
+            verified: None,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_search_match() {
+        let val = SearchMatch {
+            r#type: "match",
+            path: "/tmp/s.rs".into(),
+            line_number: 10,
+            lines: "fn main()".into(),
+            byte_offset: 42,
+            submatches: vec![],
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_replace_result() {
+        let val = ReplaceResult {
+            r#type: "replaced",
+            path: "/tmp/r.rs".into(),
+            replacements: 3,
+            bytes_before: 100,
+            bytes_after: 110,
+            checksum_before: "aaa".into(),
+            checksum_after: "bbb".into(),
+            elapsed_ms: 5,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_transform_result() {
+        let val = TransformResult {
+            r#type: "transform",
+            path: "/tmp/t.rs".into(),
+            language: "rust".into(),
+            matches: 2,
+            replacements: 2,
+            bytes_before: 50,
+            bytes_after: 55,
+            checksum_before: "aa".into(),
+            checksum_after: "bb".into(),
+            elapsed_ms: 3,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_scope_result() {
+        let val = ScopeResult {
+            r#type: "scope",
+            path: "/tmp/sc.rs".into(),
+            language: "rust".into(),
+            query: "comments".into(),
+            action: "delete".into(),
+            scopes_matched: 5,
+            bytes_before: 200,
+            bytes_after: 180,
+            checksum_before: "x".into(),
+            checksum_after: "y".into(),
+            elapsed_ms: 10,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_backup_result() {
+        let val = BackupResult {
+            r#type: "backup",
+            path: "/tmp/src.rs".into(),
+            backup_path: "/tmp/src.rs.bak".into(),
+            checksum: "hash".into(),
+            bytes: 500,
+            elapsed_ms: 2,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_rollback_result() {
+        let val = RollbackResult {
+            r#type: "rollback",
+            path: "/tmp/rb.rs".into(),
+            restored_from: "/tmp/rb.rs.bak".into(),
+            checksum_before: Some("old".into()),
+            checksum_after: "new".into(),
+            verified: Some(true),
+            elapsed_ms: 3,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_apply_result() {
+        let val = ApplyResult {
+            r#type: "apply",
+            path: "/tmp/ap.rs".into(),
+            format_detected: "unified".into(),
+            hunks_applied: 2,
+            bytes_before: 100,
+            bytes_after: 120,
+            checksum_before: "a".into(),
+            checksum_after: "b".into(),
+            elapsed_ms: 4,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_hash_output() {
+        let val = HashOutput {
+            r#type: "hash",
+            path: Some("/tmp/h.rs".into()),
+            source: None,
+            algorithm: "blake3",
+            value: "blake3hash".into(),
+            bytes: Some(1024),
+            verified: None,
+            elapsed_ms: 1,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_calc_output() {
+        let val = CalcOutput {
+            r#type: "calc",
+            expression: "2+2".into(),
+            result: "4".into(),
+            elapsed_ms: 1,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_regex_output() {
+        let val = RegexOutput {
+            r#type: "regex",
+            regex: "\\d+".into(),
+            examples: 3,
+            anchored: false,
+            elapsed_ms: 1,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_list_entry() {
+        let val = ListEntry {
+            r#type: "entry",
+            path: "/tmp/le.rs".into(),
+            kind: "file".into(),
+            size: Some(100),
+            modified: None,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_list_summary() {
+        let val = ListSummary {
+            r#type: "summary",
+            files: 10,
+            dirs: 3,
+            symlinks: 0,
+            total_bytes: Some(5000),
+            by_extension: None,
+            elapsed_ms: 15,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_dry_run_plan() {
+        let val = DryRunPlan {
+            r#type: "plan",
+            operation: "write".into(),
+            path: "/tmp/dr.rs".into(),
+            would_modify: true,
+            details: None,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_copy_output() {
+        let val = CopyOutput {
+            r#type: "copy",
+            source: "/tmp/a.rs".into(),
+            target: "/tmp/b.rs".into(),
+            bytes: 200,
+            checksum: "hash".into(),
+            verified: true,
+            elapsed_ms: 2,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_move_output() {
+        let val = MoveOutput {
+            r#type: "move",
+            source: "/tmp/old.rs".into(),
+            target: "/tmp/new.rs".into(),
+            bytes: 300,
+            checksum: "mhash".into(),
+            cross_device: false,
+            atomic: true,
+            elapsed_ms: 3,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_delete_output() {
+        let val = DeleteOutput {
+            r#type: "delete",
+            path: "/tmp/del.rs".into(),
+            bytes: 150,
+            checksum_before: "dhash".into(),
+            elapsed_ms: 1,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_count_total_output() {
+        let val = CountTotalOutput {
+            r#type: "count",
+            mode: "total",
+            total: CountTotals {
+                files: 50,
+                lines: 2000,
+                blank: 300,
+                bytes: 50000,
+            },
+            elapsed_ms: 20,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_search_begin() {
+        let val = SearchBegin {
+            r#type: "begin",
+            path: "/tmp/proj".into(),
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_search_end() {
+        let val = SearchEnd {
+            r#type: "end",
+            path: "/tmp/proj".into(),
+            stats: FileStats {
+                matches: 12,
+                lines_searched: 50,
+            },
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_transfer_plan() {
+        let val = TransferPlan {
+            r#type: "plan",
+            operation: "copy",
+            source: "/tmp/a.rs".into(),
+            target: "/tmp/b.rs".into(),
+            would_modify: true,
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_backup_plan() {
+        let val = BackupPlan {
+            r#type: "plan",
+            operation: "backup",
+            path: "/tmp/src.rs".into(),
+            bytes: 500,
+            checksum: "hash".into(),
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_rollback_plan() {
+        let val = RollbackPlan {
+            r#type: "plan",
+            operation: "rollback",
+            path: "/tmp/rb.rs".into(),
+            restore_from: "/tmp/rb.bak".into(),
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_replace_preview() {
+        let val = ReplacePreview {
+            r#type: "preview",
+            path: "/tmp/rp.rs".into(),
+            replacements: 3,
+            diff: "-old\n+new".into(),
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
 }

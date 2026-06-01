@@ -112,3 +112,38 @@ fn list_long_shows_size_and_modified() {
     assert!(file_entry["size"].is_number());
     assert!(file_entry["modified"].is_string());
 }
+
+#[test]
+fn list_exclude_filters() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "a.rs", "x\n");
+    common::create_test_file(dir.path(), "b.py", "x\n");
+    common::create_test_file(dir.path(), "c.txt", "x\n");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "list",
+            "--exclude",
+            "*.rs",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+    let events = common::parse_ndjson(&output.stdout);
+
+    let entries: Vec<_> = events.iter().filter(|e| e["type"] == "entry").collect();
+    for entry in &entries {
+        let path = entry["path"].as_str().unwrap_or("");
+        assert!(!path.ends_with(".rs"), "excluded .rs file appeared: {path}");
+    }
+
+    let summary = events
+        .iter()
+        .find(|e| e["type"] == "summary")
+        .expect("summary");
+    assert_eq!(summary["files"].as_u64().unwrap(), 2);
+}

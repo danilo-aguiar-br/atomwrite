@@ -90,8 +90,16 @@ atomwrite search --files 'deprecated' src/
 ```
 
 - Use `--regex` for regular expression patterns
-- Use `--count` for match counts per file
-- Use `--files` for file paths only
+- Use `--fixed` (`-F`) for literal string matching (no regex)
+- Use `--word` (`-w`) to match whole words only
+- Use `--case-insensitive` (`-i`) for case-insensitive search
+- Use `--context N` (`-C`) for lines of context around matches
+- Use `--max-count N` (`-m`) to limit matches per file
+- Use `--invert` to show non-matching lines
+- Use `--sort path` to sort results by file path
+- Use `--count` (`-c`) for match counts per file
+- Use `--files` (`-l`) for file paths only
+- Use `--include` (`-g`) and `--exclude` for glob-based file filtering
 - Exit code 1 means zero matches (not an error)
 
 ### replace
@@ -205,17 +213,19 @@ atomwrite regex --digits --words "user_123" "admin_456"
 ### scope
 - Grammatical scoping with AST-based actions on code categories
 - Supports Rust, Python, JavaScript/TypeScript and Go
-- Actions: delete, upper, lower, titlecase, squeeze, replace
+- Use `--delete` to remove matched content
+- Use `--action upper|lower|titlecase|squeeze` to transform matched text
+- Use `--replace-with "text"` to replace matched content with custom text
 
 ```bash
-atomwrite scope --query comments --action delete src/main.rs
-atomwrite scope --query functions --action upper src/lib.rs
+atomwrite scope --query comments --delete src/main.rs
+atomwrite scope --query fn --action upper src/lib.rs
 atomwrite scope --query strings --action lower src/app.ts
 atomwrite scope --pattern '($$$ARGS)' --action squeeze -l rust src/
-atomwrite scope --query comments --action replace --replacement "// updated" src/main.rs
+atomwrite scope --query comments --replace-with "// updated" src/main.rs
 ```
 
-- Use `--query` for prepared queries (comments, functions, strings, etc)
+- Use `--query` for prepared queries (comments, fn, strings, struct, etc)
 - Use `--pattern` for custom AST patterns
 - Use `--action` to specify the transformation
 
@@ -268,12 +278,12 @@ cat fix.patch | atomwrite apply --dry-run src/main.rs
 ```bash
 atomwrite transform --pattern 'println!($$$ARGS)' --rewrite 'tracing::info!($$$ARGS)' -l rust src/
 atomwrite transform --pattern 'console.log($$$ARGS)' --rewrite 'logger.info($$$ARGS)' -l js src/
-atomwrite transform --pattern 'unwrap()' -l rust src/
+atomwrite transform --pattern '$EXPR.unwrap()' --rewrite '$EXPR?' -l rust src/
 ```
 
 - Use `$VAR` for single AST node capture
 - Use `$$$VAR` for multiple AST nodes capture
-- Omit `--rewrite` for search-only mode
+- Both `--pattern` and `--rewrite` are required
 
 ### batch
 - Execute multiple operations from an NDJSON manifest
@@ -295,6 +305,7 @@ cat manifest.ndjson | atomwrite batch --dry-run
 - `--verbose` / `-v` -- enable tracing output on stderr
 - `--quiet` / `-q` -- suppress non-essential output
 - `--color <auto|always|never>` -- control colored output
+- `--no-color` -- disable colored output (equivalent to `--color never`)
 - `--no-gitignore` -- do not respect .gitignore rules
 - `--hidden` -- include hidden files and directories
 - `--follow-symlinks` -- follow symbolic links
@@ -311,6 +322,8 @@ cat manifest.ndjson | atomwrite batch --dry-run
 - Use `--json-schema` to introspect output format at runtime
 - Generate shell completions with `atomwrite completions bash`
 - `ATOMWRITE_LANG`: override locale for translated messages
+- `NO_COLOR`: disable colored output when set (see https://no-color.org)
+- `RAYON_NUM_THREADS`: override number of parallel threads
 
 
 ## Integration With AI Agents

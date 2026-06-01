@@ -46,3 +46,55 @@ fn count_by_extension() {
     assert!(events[0]["by_extension"]["rs"].is_object());
     assert!(events[0]["by_extension"]["txt"].is_object());
 }
+
+#[test]
+fn count_include_filters() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "a.rs", "fn main() {\n    42\n}\n");
+    common::create_test_file(dir.path(), "b.py", "def hello():\n    pass\n");
+    common::create_test_file(dir.path(), "c.txt", "hello\n");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "count",
+            "--include",
+            "*.rs",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events[0]["type"], "count");
+    assert_eq!(events[0]["mode"], "lines");
+    assert_eq!(events[0]["total"]["files"].as_u64().unwrap(), 1);
+}
+
+#[test]
+fn count_exclude_filters() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "a.rs", "fn main() {\n    42\n}\n");
+    common::create_test_file(dir.path(), "b.py", "def hello():\n    pass\n");
+    common::create_test_file(dir.path(), "c.txt", "hello\n");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "count",
+            "--exclude",
+            "*.rs",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events[0]["type"], "count");
+    assert_eq!(events[0]["mode"], "lines");
+    assert_eq!(events[0]["total"]["files"].as_u64().unwrap(), 2);
+}

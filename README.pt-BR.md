@@ -53,9 +53,17 @@
 - Cobre 306 linguagens de programação
 - Refatore código pela árvore sintática, não por regex frágil
 
+### Scoping Gramatical
+- Selecione categorias AST como comentários, funções, classes e strings
+- Aplique ações: delete, uppercase, lowercase, titlecase, squeeze ou replace
+- Cobre Rust, Python, JavaScript, TypeScript e Go com queries preparadas
+- Use `--pattern` para padrões AST customizados além das queries embutidas
+
 ### Operações em Lote
-- Execute múltiplas operações de write, replace ou delete a partir de um manifesto NDJSON
-- Todas as operações compartilham as mesmas garantias atômicas
+- Execute operações de write, replace, delete, edit, hash, move e copy a partir de um manifesto NDJSON
+- Use `--transaction` para execução tudo-ou-nada com rollback automático
+- Todas as operações em um lote compartilham as mesmas garantias atômicas
+- Use `backup` e `rollback` para fluxos manuais de snapshot e restauração
 - Uma chamada CLI substitui centenas de invocações individuais
 
 
@@ -228,10 +236,10 @@ atomwrite regex "2024-01-15" "2025-12-31" "2026-06-01"
 ### transform
 - Busca e reescrita estrutural por AST com ast-grep
 - Cobre 306 linguagens de programação
-- Use `--rewrite` para aplicar transformações
+- Ambos `--pattern` e `--rewrite` são obrigatórios
 ```bash
-atomwrite transform -p 'println!($$$ARGS)' -l rust src/
 atomwrite transform -p 'println!($$$ARGS)' -r 'tracing::info!($$$ARGS)' -l rust src/
+atomwrite transform -p 'console.log($$$ARGS)' -r 'logger.info($$$ARGS)' -l js src/
 ```
 
 ### scope
@@ -289,6 +297,7 @@ atomwrite completions bash
 - `NO_COLOR`: desabilita saída colorida quando definida com qualquer valor
 - `RUST_LOG`: controla verbosidade dos logs (ex: `RUST_LOG=debug`)
 - `ATOMWRITE_LANG`: substitui o locale para mensagens traduzidas (ex: `en`, `pt-BR`)
+- `RAYON_NUM_THREADS`: substitui número de threads paralelas para search, replace, transform e scope
 
 
 ## Códigos de Saída
@@ -303,10 +312,10 @@ atomwrite completions bash
 - `74`: erro de I/O
 - `78`: configuração inválida
 - `82`: drift de estado (checksum não confere, lock otimista falhou)
-- `126`: jail de workspace violada (caminho escapa do workspace)
-- `127`: symlink bloqueado (alvo do symlink fora do workspace)
 - `85`: FIFO detectado (named pipe não pode ser escrito atomicamente)
 - `86`: arquivo de dispositivo detectado (bloco ou caractere)
+- `126`: jail de workspace violada (caminho escapa do workspace)
+- `127`: symlink bloqueado (alvo do symlink fora do workspace)
 - `128`: arquivo imutável (não pode modificar)
 - `130`: interrompido por SIGINT
 - `141`: pipe quebrado (SIGPIPE)

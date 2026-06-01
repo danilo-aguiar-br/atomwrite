@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Directory listing with metadata, gitignore support, and depth control.
+//! Workload: I/O-bound (directory walk + stat per entry).
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -19,6 +20,7 @@ use crate::output::NdjsonWriter;
 ///
 /// Returns `AtomwriteError::WorkspaceJail` if the path escapes the workspace.
 /// Returns `AtomwriteError::Io` if traversing the directory fails.
+#[tracing::instrument(skip_all, fields(command = "list"))]
 pub fn cmd_list(
     args: &ListArgs,
     global: &GlobalArgs,
@@ -54,6 +56,14 @@ pub fn cmd_list(
         builder.types(types_builder.build().context("build types")?);
     }
 
+    if !args.exclude.is_empty() {
+        let mut overrides = ignore::overrides::OverrideBuilder::new(&root);
+        for pattern in &args.exclude {
+            overrides.add(&format!("!{pattern}"))?;
+        }
+        builder.overrides(overrides.build()?);
+    }
+
     let mut files: u64 = 0;
     let mut dirs: u64 = 0;
     let mut symlinks: u64 = 0;
@@ -64,7 +74,7 @@ pub fn cmd_list(
         let entry = match entry {
             Ok(e) => e,
             Err(e) => {
-                tracing::warn!("walk error: {e}");
+                tracing::warn!(error = %e, "walk error");
                 continue;
             }
         };

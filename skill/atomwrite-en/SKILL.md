@@ -7,6 +7,7 @@ description: |
 ---
 
 
+# atomwrite
 ## Core Identity
 ### REQUIRED
 - stdout is ALWAYS NDJSON (one JSON object per line)
@@ -15,6 +16,7 @@ description: |
 - BLAKE3 checksum is present in every write and read response
 - Pass `--workspace <DIR>` to set the jail root for all path operations
 - All paths are resolved relative to the workspace root
+- The `--json` flag is accepted but ignored (output is ALWAYS NDJSON by design)
 ### FORBIDDEN
 - NEVER parse stderr as structured data
 - NEVER assume exit 1 is an error (search uses exit 1 for zero matches)
@@ -28,6 +30,10 @@ description: |
 - USE `--backup --retention N` for destructive overwrites
 - USE `--expect-checksum <BLAKE3>` for optimistic locking (state drift detection)
 - USE `--dry-run` before destructive writes to preview the operation
+- USE `--append` to append content to end of existing file
+- USE `--prepend` to insert content at beginning of existing file
+- USE `--max-size <BYTES>` to limit accepted stdin size
+- USE `--line-ending lf|crlf|cr|auto` to normalize line endings (default: auto)
 - Response includes `checksum` (BLAKE3) and `bytes_written`
 ### FORBIDDEN
 - NEVER write without `--workspace`
@@ -42,7 +48,13 @@ cat new_config.toml | atomwrite --workspace . write --backup --retention 3 confi
 ```
 ### Correct Pattern — Optimistic Locking
 ```bash
-echo "updated" | atomwrite --workspace . write --expect-checksum abc123 config.toml
+CS=$(atomwrite --workspace . read src/main.rs | jaq -r '.checksum')
+echo "updated" | atomwrite --workspace . write --expect-checksum "$CS" src/main.rs
+```
+### Correct Pattern — Append and Prepend
+```bash
+echo "// new line" | atomwrite --workspace . write --append src/main.rs
+echo "// header" | atomwrite --workspace . write --prepend src/main.rs
 ```
 
 
@@ -51,6 +63,10 @@ echo "updated" | atomwrite --workspace . write --expect-checksum abc123 config.t
 - USE `read` for file content with metadata
 - USE `read --stat` for metadata only (no body)
 - USE `read --lines 1:50` for partial reads by line range
+- USE `read --line N` to read a single line with optional context via `--context N`
+- USE `read --head N` to read the first N lines
+- USE `read --tail N` to read the last N lines
+- USE `read --format raw` for raw content without JSON envelope
 - USE `read --verify-checksum <BLAKE3>` for integrity verification
 - Response includes `checksum`, `size`, `lines`
 ### Correct Pattern — Read
@@ -60,6 +76,12 @@ atomwrite --workspace . read src/main.rs
 ### Correct Pattern — Partial Read
 ```bash
 atomwrite --workspace . read --lines 1:50 src/main.rs
+atomwrite --workspace . read --head 20 src/main.rs
+atomwrite --workspace . read --tail 10 src/main.rs
+```
+### Correct Pattern — Line with Context
+```bash
+atomwrite --workspace . read --line 42 --context 5 src/main.rs
 ```
 ### Correct Pattern — Metadata Only
 ```bash
@@ -72,13 +94,19 @@ atomwrite --workspace . read --stat src/main.rs
 - USE `search` for parallel ripgrep-powered search across files
 - Exit code 1 means zero matches found (NOT an error)
 - USE `--include '*.rs'` to filter by file extension
+- USE `--exclude '*.log'` to exclude files by glob pattern
 - USE `--context N` for surrounding lines around each match
 - USE `--fixed` (`-F`) for literal string matching (no regex)
+- USE `--regex` (`-e`) to explicitly force regex mode
+- USE `--word` (`-w`) for word-boundary matching
+- USE `--case-insensitive` (`-i`) for case-insensitive search
+- USE `--smart-case` (`-S`) for insensitive when pattern is lowercase
 - USE `--count` (`-c`) for match counts per file instead of full matches
 - USE `--files` (`-l`) for file paths only
 - USE `--max-count N` (`-m`) to limit matches per file
+- USE `--multiline` (`-U`) for multi-line matching
 - USE `--invert` to show lines that do NOT match
-- USE `--sort path` to sort results by file path
+- USE `--sort path|modified|created|none` to sort results
 - Response is NDJSON with one object per match
 ### FORBIDDEN
 - NEVER treat exit code 1 as a failure in search
@@ -90,6 +118,10 @@ atomwrite --workspace . search 'TODO|FIXME' src/ --include '*.rs'
 ```bash
 atomwrite --workspace . search 'unsafe' src/ --context 3
 ```
+### Correct Pattern — Count per File
+```bash
+atomwrite --workspace . search 'unwrap' src/ --count --sort path
+```
 
 
 ## Replace Operations
@@ -98,6 +130,13 @@ atomwrite --workspace . search 'unsafe' src/ --context 3
 - ALWAYS use `--dry-run` first for destructive replacements
 - USE `--regex` for regex-based patterns
 - USE `--word` for word-boundary matching
+- USE `--literal` (`-F`) to treat pattern as literal string
+- USE `--include '*.rs'` to filter files by extension
+- USE `--exclude '*.log'` to exclude files by glob pattern
+- USE `--preview` to show diff without writing
+- USE `--max-replacements N` (`-n`) to limit replacements per file
+- USE `--expect-checksum <BLAKE3>` for optimistic locking
+- USE `--backup` to create backup before modifying
 - Response includes `matches`, `files_modified`, per-file checksums
 ### FORBIDDEN
 - NEVER run replace without `--dry-run` first
@@ -115,20 +154,43 @@ atomwrite --workspace . replace --regex 'v\d+\.\d+' 'v2.0' src/ --include '*.tom
 ## Edit Operations
 ### REQUIRED
 - USE `edit` for surgical modifications by line number or text marker
-- USE `--old "text" --new "text"` for exact text replacement within a file
-- USE `--fuzzy auto|off|aggressive` to control fuzzy matching in `--old/--new` mode (default: auto)
-- USE `--multi` to apply multiple edit operations from NDJSON stdin in a single atomic write
+- USE `--old "text" --new "text"` for exact text replacement (repeatable for multiple)
 - USE `--after-line N` for inserting content after a specific line
 - USE `--before-line N` for inserting content before a specific line
 - USE `--range N:M` for replacing a line range
+- USE `--delete-range N:M` for deleting a line range
+- USE `--after-match "text"` for inserting content after first match of text
+- USE `--before-match "text"` for inserting content before first match
+- USE `--between "start" "end"` for replacing content between two markers
+- USE `--fuzzy auto|off|aggressive` to control fuzzy matching (default: auto)
+- USE `--multi` to apply multiple edits from NDJSON stdin in a single atomic write
+- USE `--expect-checksum <BLAKE3>` for optimistic locking
+- USE `--line-ending lf|crlf|cr|auto` to normalize line endings
 - Pipe new content via stdin when using `--range`, `--after-line`, or `--before-line`
 ### Correct Pattern — Edit by Text
 ```bash
 atomwrite --workspace . edit src/main.rs --old "old_text" --new "new_text"
 ```
+### Correct Pattern — Multiple Replacements
+```bash
+atomwrite --workspace . edit src/main.rs --old "foo" --new "bar" --old "baz" --new "qux"
+```
 ### Correct Pattern — Insert After Line
 ```bash
 echo "new_line_content" | atomwrite --workspace . edit src/main.rs --after-line 10
+```
+### Correct Pattern — Delete Range
+```bash
+atomwrite --workspace . edit src/main.rs --delete-range 5:10
+```
+### Correct Pattern — Replace Between Markers
+```bash
+echo "new block" | atomwrite --workspace . edit src/main.rs --between "// START" "// END"
+```
+### Correct Pattern — Multiple Edits via NDJSON
+```bash
+echo '{"old":"foo","new":"bar"}
+{"old":"baz","new":"qux"}' | atomwrite --workspace . edit --multi src/main.rs
 ```
 
 
@@ -140,6 +202,9 @@ echo "new_line_content" | atomwrite --workspace . edit src/main.rs --after-line 
 - USE `$$$ARGS` for multiple AST node captures (variadic)
 - 306 languages supported via ast-grep
 - USE `--dry-run` to preview transformations
+- USE `--backup` to create backup before modifying
+- USE `--include` and `--exclude` to filter files by extension
+- Both `--pattern` and `--rewrite` are REQUIRED (no search-only mode)
 ### Correct Pattern — Transform
 ```bash
 atomwrite --workspace . transform -p 'console.log($$$A)' -r 'logger.info($$$A)' -l js src/
@@ -154,23 +219,80 @@ atomwrite --workspace . transform --dry-run -p 'old_fn($$$A)' -r 'new_fn($$$A)' 
 ```
 
 
+## Scope Operations (Grammatical Scoping)
+### REQUIRED
+- USE `scope` to select AST categories and apply actions on matched code
+- ALWAYS specify `--lang` for the target language
+- USE `--query` for prepared queries by language (see list below)
+- USE `--pattern` for custom AST patterns
+- USE `--delete` to remove matched content
+- USE `--action upper|lower|titlecase|squeeze` for text transformations
+- USE `--replace-with "text"` for custom replacement
+- USE `--include '*.rs'` to filter files by extension
+- USE `--exclude '*.log'` to exclude files by glob pattern
+- USE `--backup` to create backup before modifying
+- USE `--dry-run` to preview changes
+### Prepared Queries — Rust
+- `comments`, `doc-comment`, `strings`
+- `fn`, `pub-fn`, `async-fn`, `unsafe-fn`, `test-fn`
+- `struct`, `pub-struct`, `enum`, `pub-enum`
+- `trait`, `impl`, `mod`, `use`
+- `closure`, `unsafe`, `attribute`, `derive`
+- `return`, `match`, `if-let`, `while-let`
+- `for`, `loop`, `const`, `static`
+- `type-alias`, `macro-rules`
+### Prepared Queries — Python
+- `comments`, `strings`
+- `class`, `def`, `async-def`, `lambda`
+- `import`, `from-import`
+- `with`, `for`, `while`
+- `decorator`, `try-except`
+### Prepared Queries — JavaScript and TypeScript
+- `comments`, `strings`
+- `fn`, `arrow-fn`, `async-fn`
+- `class`, `import`, `export`
+- `try-catch`, `const`, `let`
+### Prepared Queries — Go
+- `fn`, `struct`, `interface`
+- `goroutine`, `defer`, `import`
+- `const`, `var`
+### Correct Pattern — Scope
+```bash
+atomwrite --workspace . scope src/ --lang rust --query comments --delete --dry-run
+atomwrite --workspace . scope src/ --lang rust --query fn --action upper --dry-run
+atomwrite --workspace . scope src/ --lang python --query def --action lower
+```
+
+
 ## Batch Operations
 ### REQUIRED
 - USE `batch` for multiple operations in a single call
 - Input is NDJSON on stdin (one JSON object per line)
-- Each line requires an `op` field: `write`, `replace`, `delete`, `edit`, `hash`, `move`, `copy`
+- Each line requires an `op` field: `write`, `replace`, `delete`, `edit`, `move`, `copy`, `hash`
+- For `move` and `copy`: use `source` field (origin) and `target` field (destination)
+- USE `--file <PATH>` to read manifest from file instead of stdin
 - USE `--transaction` for all-or-nothing execution with automatic rollback on failure
 - USE `--dry-run` to preview the entire batch
+- USE `--input-schema` to get the JSON Schema for the input manifest format
 - Response is NDJSON with one result per operation
-### Correct Pattern — Batch
+### Correct Pattern — Batch with Write and Delete
 ```bash
 echo '{"op":"write","target":"a.txt","content":"hello"}
-{"op":"replace","path":"b.txt","pattern":"old","replacement":"new"}
 {"op":"delete","target":"tmp.log"}' | atomwrite --workspace . batch
 ```
-### Correct Pattern — Batch Dry Run
+### Correct Pattern — Batch with Move and Copy
 ```bash
-cat ops.ndjson | atomwrite --workspace . batch --dry-run
+echo '{"op":"move","source":"src/old.rs","target":"src/new.rs"}
+{"op":"copy","source":"src/template.rs","target":"src/module.rs"}' | atomwrite --workspace . batch
+```
+### Correct Pattern — Transactional Batch
+```bash
+cat ops.ndjson | atomwrite --workspace . batch --transaction --dry-run
+cat ops.ndjson | atomwrite --workspace . batch --transaction
+```
+### Correct Pattern — Batch from File
+```bash
+atomwrite --workspace . batch --file ops.ndjson --transaction
 ```
 
 
@@ -178,11 +300,16 @@ cat ops.ndjson | atomwrite --workspace . batch --dry-run
 ### REQUIRED
 - USE `hash` for standalone BLAKE3 checksums
 - Accepts one or more file paths
+- USE `--verify <BLAKE3>` to check file hash against expected value
+- USE `--stdin` to hash content from stdin
+- USE `--recursive` (`-r`) to hash directories recursively
 - Response includes `path` and `checksum` per file
 ### Correct Pattern — Hash
 ```bash
 atomwrite --workspace . hash src/main.rs
 atomwrite --workspace . hash src/*.rs
+atomwrite --workspace . hash --verify abc123 src/main.rs
+echo "content" | atomwrite hash --stdin
 ```
 
 
@@ -190,20 +317,31 @@ atomwrite --workspace . hash src/*.rs
 ### REQUIRED
 - USE `delete` for atomic file removal
 - USE `--backup --retention N` to keep backups before deletion
+- USE `--recursive` (`-r`) to remove directories recursively
+- USE `--include '*.log'` to filter by extension
+- USE `--exclude '*.rs'` to exclude by extension
+- USE `--yes` (`-y`) to skip confirmation
 - USE `--dry-run` to preview
 ### Correct Pattern — Delete
 ```bash
 atomwrite --workspace . delete --backup --retention 1 tmp/scratch.rs
+atomwrite --workspace . delete --recursive --include '*.log' --dry-run logs/
 ```
 
 
 ## Diff Operations
 ### REQUIRED
-- USE `diff` for comparing two files or a file against stdin
+- USE `diff` for comparing two files
+- USE `--unified` for unified diff format
+- USE `--stat` for summary statistics only
+- USE `--context N` (`-C`) for context lines in diff (default: 3)
+- USE `--algorithm myers|patience|lcs` to choose diff algorithm (default: patience)
 - Response includes structured NDJSON diff hunks
 ### Correct Pattern — Diff
 ```bash
 atomwrite --workspace . diff src/old.rs src/new.rs
+atomwrite --workspace . diff --stat src/old.rs src/new.rs
+atomwrite --workspace . diff --unified --context 5 src/old.rs src/new.rs
 ```
 
 
@@ -212,13 +350,19 @@ atomwrite --workspace . diff src/old.rs src/new.rs
 - USE `move` for atomic rename/move within the workspace
 - USE `copy` for atomic copy with checksum verification
 - Both respect the workspace jail
+- USE `--force` to overwrite destination if it exists
+- USE `--dry-run` to preview
+- USE `--backup` to backup destination if it exists
+- `copy` accepts `--recursive` for directories and `--preserve` for timestamps
 ### Correct Pattern — Move
 ```bash
 atomwrite --workspace . move src/old.rs src/new.rs
+atomwrite --workspace . move --force src/old.rs src/existing.rs
 ```
 ### Correct Pattern — Copy
 ```bash
 atomwrite --workspace . copy src/template.rs src/new_module.rs
+atomwrite --workspace . copy --recursive --preserve src/dir/ dest/dir/
 ```
 
 
@@ -226,23 +370,32 @@ atomwrite --workspace . copy src/template.rs src/new_module.rs
 ### REQUIRED
 - USE `list` for directory and file listing
 - USE `--include '*.rs'` to filter by extension
+- USE `--exclude '*.log'` to exclude by extension
 - USE `--long` for size and modification time
 - USE `--depth N` to limit directory depth
 - USE `--count-by-ext` for file count grouped by extension
+- USE `--all` to include hidden files
 ### Correct Pattern — List
 ```bash
 atomwrite --workspace . list --include '*.rs' src/
 atomwrite --workspace . list --long --depth 2 src/
+atomwrite --workspace . list --count-by-ext src/
+atomwrite --workspace . list --all --long src/
 ```
 
 
 ## Count Operations
 ### REQUIRED
 - USE `count` for file and line counting
+- USE `--by-extension` to group counts by file extension
+- USE `--by-size` with `--top N` to list largest files
+- USE `--include` and `--exclude` to filter
 - Response includes `files`, `lines`, `bytes`
 ### Correct Pattern — Count
 ```bash
 atomwrite --workspace . count --include '*.rs' src/
+atomwrite --workspace . count --by-extension src/
+atomwrite --workspace . count --by-size --top 20 src/
 ```
 
 
@@ -250,6 +403,7 @@ atomwrite --workspace . count --include '*.rs' src/
 ### REQUIRED
 - USE `extract` for NDJSON field extraction from piped input
 - Pass field names as positional arguments to select specific JSON fields
+- USE `--delimiter <SEP>` for text mode with custom separator
 ### Correct Pattern — Extract
 ```bash
 atomwrite --workspace . search 'TODO' src/ | atomwrite extract path line_number
@@ -260,6 +414,7 @@ atomwrite --workspace . search 'TODO' src/ | atomwrite extract path line_number
 ### REQUIRED
 - USE `calc` for math expressions and unit conversions
 - ALWAYS quote the expression
+- USE `--stdin` to read expressions from stdin (one per line)
 - No `--workspace` needed (stateless)
 ### Correct Pattern — Calc
 ```bash
@@ -273,43 +428,35 @@ atomwrite calc "sqrt(144) + 2^10"
 ### REQUIRED
 - USE `regex` for generating regex from examples
 - Pass 3+ examples for accurate patterns
-- USE `--digits` for `\d` generalization
-- USE `--words` for `\w` generalization
+- USE `--digits` (`-d`) for `\d` generalization
+- USE `--words` (`-w`) for `\w` generalization
+- USE `--spaces` (`-s`) for `\s` generalization
+- USE `--repetitions` (`-r`) to detect repetitions
+- USE `--case-insensitive` (`-i`) for case-insensitive matching
+- USE `--no-anchors` to remove `^` and `$` from result
+- USE `--stdin` to read examples from stdin (one per line)
 - No `--workspace` needed (stateless)
 ### Correct Pattern — Regex
 ```bash
 atomwrite regex "192.168.1.1" "10.0.0.255" --digits
 atomwrite regex "v1.0.0" "v2.1.3" "v10.0.1" --digits
+atomwrite regex -d -w -s -r "example1" "example2"
 ```
 
-
-## Scope Operations (Grammatical Scoping)
-### REQUIRED
-- USE `scope` to select AST categories and apply actions on matched code
-- ALWAYS specify `--lang` for the target language (rust, python, js, ts, go)
-- USE `--query` for prepared queries (comments, fn, class, struct, etc.)
-- USE `--pattern` for custom AST patterns
-- USE `--delete` to remove matched content
-- USE `--action upper|lower|titlecase|squeeze` for text transformations
-- USE `--replace-with "text"` for custom replacement
-- USE `--dry-run` to preview changes
-### Correct Pattern — Scope
-```bash
-atomwrite --workspace . scope src/ --lang rust --query comments --delete
-atomwrite --workspace . scope src/ --lang rust --query fn --action upper --dry-run
-atomwrite --workspace . scope src/ --lang python --query def --action lower
-```
 
 ## Backup Operations
 ### REQUIRED
 - USE `backup` to create timestamped backups with BLAKE3 checksums
 - USE `--retention N` to control how many backups to keep (default: 5)
+- USE `--output-dir <DIR>` to direct backups to a specific directory
 - USE `--dry-run` to preview
 ### Correct Pattern — Backup
 ```bash
 atomwrite --workspace . backup src/config.toml
 atomwrite --workspace . backup src/main.rs src/lib.rs --retention 3
+atomwrite --workspace . backup src/main.rs --output-dir /tmp/backups/
 ```
+
 
 ## Rollback Operations
 ### REQUIRED
@@ -324,6 +471,7 @@ atomwrite --workspace . rollback src/config.toml
 atomwrite --workspace . rollback src/config.toml --timestamp 20260530_120000 --verify
 ```
 
+
 ## Apply Operations (Patch)
 ### REQUIRED
 - USE `apply` to apply patches from stdin to a target file
@@ -337,6 +485,7 @@ echo "new content" | atomwrite --workspace . apply src/file.txt --format full
 git diff src/file.txt | atomwrite --workspace . apply src/file.txt
 ```
 
+
 ## Completions
 ### REQUIRED
 - USE `completions` to generate shell completions
@@ -345,6 +494,31 @@ git diff src/file.txt | atomwrite --workspace . apply src/file.txt
 ```bash
 atomwrite completions bash > ~/.local/share/bash-completion/completions/atomwrite
 atomwrite completions zsh > ~/.zfunc/_atomwrite
+```
+
+
+## Common Pipelines
+### Correct Pattern — Optimistic Locking (Read, Modify, Write)
+```bash
+CS=$(atomwrite --workspace . read src/config.rs | jaq -r '.checksum')
+echo "new content" | atomwrite --workspace . write --expect-checksum "$CS" src/config.rs
+```
+### Correct Pattern — Search and Extract Fields
+```bash
+atomwrite --workspace . search 'TODO' src/ --include '*.rs' | atomwrite extract path line_number
+```
+### Correct Pattern — Hash for Auditing
+```bash
+atomwrite --workspace . hash src/main.rs src/lib.rs | jaq -r '.checksum'
+```
+### Correct Pattern — Structured Diff
+```bash
+atomwrite --workspace . diff src/old.rs src/new.rs | jaq '.type'
+```
+### Correct Pattern — Transactional Batch with Verification
+```bash
+cat ops.ndjson | atomwrite --workspace . batch --transaction --dry-run
+cat ops.ndjson | atomwrite --workspace . batch --transaction
 ```
 
 
@@ -382,10 +556,10 @@ fi
 - `74` — I/O error (generic filesystem failure)
 - `78` — config invalid (malformed configuration)
 - `82` — state drift (checksum mismatch, optimistic locking failed)
-- `126` — workspace jail violation (path escapes workspace root)
-- `127` — symlink blocked (symlink target outside workspace)
 - `85` — FIFO detected (named pipe cannot be atomically written)
 - `86` — device file detected (block or character device)
+- `126` — workspace jail violation (path escapes workspace root)
+- `127` — symlink blocked (symlink target outside workspace)
 - `128` — immutable (file marked immutable)
 - `130` — SIGINT (interrupted by user)
 - `141` — SIGPIPE (broken pipe)
@@ -408,12 +582,17 @@ fi
 ## Global Flags
 ### REQUIRED — Reference
 - `--workspace <DIR>` — set the workspace jail root (REQUIRED for file operations)
+- `--max-filesize <BYTES>` — maximum accepted file size in bytes (default: 1 GiB)
+- `--threads <N>` / `-j` — number of parallel threads (0 = all cores, env: `RAYON_NUM_THREADS`)
 - `--json-schema` — print the output JSON schema for any subcommand
-- `--dry-run` — preview operation without writing
-- `--backup` — create backup before destructive operation
-- `--retention <N>` — number of backups to retain (used with `--backup`)
-- `--verbose` / `-v` — increase log verbosity on stderr
-- `--quiet` / `-q` — suppress stderr logs
+- `--json` — accepted for compatibility but ignored (output is ALWAYS NDJSON)
+- `--color auto|always|never` — control colored output
+- `--no-color` — disable colored output (equivalent to `--color never`)
+- `--no-gitignore` — do not respect `.gitignore` files
+- `--hidden` — include hidden files and directories
+- `--follow-symlinks` — follow symbolic links during traversal
+- `--verbose` / `-v` — increase log verbosity on stderr (-v info, -vv debug, -vvv trace)
+- `--quiet` / `-q` — decrease verbosity (-q error, -qq off)
 - `--lang <LOCALE>` — override display locale (en, pt-BR) via `ATOMWRITE_LANG` env
 
 

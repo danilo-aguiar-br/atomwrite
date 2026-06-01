@@ -39,6 +39,7 @@
 ### Utilities
 - `src/binary_detect.rs` -- null-byte heuristic for binary content detection
 - `src/line_endings.rs` -- LF/CRLF/CR detection and normalization
+- `src/lang_utils.rs` -- locale initialization and i18n helpers for rust-i18n
 
 ### Subcommand Handlers
 - `src/commands/` -- 22 subcommand implementations, each in its own module
