@@ -63,7 +63,8 @@ pub fn cmd_backup(
             continue;
         }
 
-        let backup_path = crate::atomic::create_backup(&source, args.retention)?;
+        let backup_path =
+            crate::atomic::create_backup_in(&source, args.retention, args.output_dir.as_deref())?;
 
         writer.write_event(&BackupResult {
             r#type: "backup",

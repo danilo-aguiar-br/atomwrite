@@ -74,6 +74,7 @@ pub fn cmd_write(
         backup: args.backup,
         retention: args.retention,
         preserve_timestamps: false,
+        backup_output_dir: None,
     };
 
     let result = atomic_write(&args.target, &content, &opts, &workspace)?;

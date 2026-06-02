@@ -52,11 +52,10 @@ pub fn read_file_bytes(path: &Path, max_size: u64) -> Result<Vec<u8>> {
     if meta.len() >= MMAP_THRESHOLD {
         let file =
             fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         {
-            use std::os::unix::io::AsRawFd;
             let _ = nix::fcntl::posix_fadvise(
-                file.as_raw_fd(),
+                &file,
                 0,
                 0,
                 nix::fcntl::PosixFadviseAdvice::POSIX_FADV_SEQUENTIAL,

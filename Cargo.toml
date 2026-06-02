@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "atomwrite"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.85"
 description = "Atomic file operations CLI for LLM agents — read, write, edit, search, replace with NDJSON output"
@@ -65,15 +65,15 @@ ast-grep-language = "0.43"
 same-file = "1"
 unicode-normalization = "0.1"
 sys-locale = "0.3"
-rust-i18n = "3"
+rust-i18n = "4"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", features = ["fs"] }
+nix = { version = "0.31", features = ["fs"] }
 libc = "0.2"
-signal-hook = "0.3"
+signal-hook = "0.4"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Console"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Console"] }
 ctrlc = "3.5"
 
 [dev-dependencies]

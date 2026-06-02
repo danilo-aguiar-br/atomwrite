@@ -12,6 +12,13 @@ pub struct CompletionsArgs {
     /// Target shell for completion scripts.
     #[arg(value_enum)]
     pub shell: ShellType,
+
+    /// Install completion script to XDG data directory.
+    #[arg(
+        long,
+        help = "Install completion script to XDG data directory (Bash: ~/.local/share/bash-completion/completions/atomwrite)"
+    )]
+    pub install: bool,
 }
 
 /// Supported shell types for completion generation.
@@ -251,6 +258,10 @@ pub struct ReadArgs {
     /// Expected BLAKE3 hash for verification.
     #[arg(long, help = "Verify file checksum against expected BLAKE3 hash")]
     pub verify_checksum: Option<String>,
+
+    /// Filter lines matching this regex (substring of file content).
+    #[arg(long, help = "Filter returned lines to those matching this regex")]
+    pub grep: Option<String>,
 }
 
 /// Output format for the read subcommand.

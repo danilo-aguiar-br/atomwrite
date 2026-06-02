@@ -55,7 +55,9 @@ impl BatchOp {
 #[derive(Debug, Serialize)]
 struct RollbackEvent {
     r#type: &'static str,
-    operations_reverted: u64,
+    files_restored: u64,
+    files_removed: u64,
+    total_reverted: u64,
 }
 
 /// Emit the JSON Schema for the batch input manifest format.
@@ -68,6 +70,9 @@ pub fn emit_input_schema(writer: &mut NdjsonWriter<impl Write>) -> Result<()> {
 
 /// Execute multiple operations from an NDJSON manifest in batch mode.
 ///
+/// When `manifest_path` is `Some`, the NDJSON manifest is read from that file
+/// instead of from stdin. The path is validated against the workspace jail.
+///
 /// # Errors
 ///
 /// Returns `AtomwriteError::Io` if reading stdin or writing results fails.
@@ -79,23 +84,47 @@ pub fn cmd_batch(
     writer: &mut NdjsonWriter<impl Write>,
     dry_run: bool,
     transaction: bool,
+    manifest_path: Option<&std::path::Path>,
     shutdown: &ShutdownSignal,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
 
-    let mut reader = std::io::BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
+    // Resolve manifest source: file (validated) or stdin
+    let mut reader: Box<dyn Read> = if let Some(manifest_path) = manifest_path {
+        let validated_manifest = crate::path_safety::validate_path(manifest_path, &workspace)
+            .with_context(|| {
+                format!(
+                    "manifest path escapes workspace: {}",
+                    manifest_path.display()
+                )
+            })?;
+        if !validated_manifest.is_file() {
+            return Err(crate::error::AtomwriteError::NotFound {
+                path: validated_manifest.clone(),
+            }
+            .into());
+        }
+        let file = std::fs::File::open(&validated_manifest)
+            .with_context(|| format!("cannot open manifest {}", validated_manifest.display()))?;
+        Box::new(file)
+    } else {
+        Box::new(stdin)
+    };
+
+    let mut buf_reader =
+        std::io::BufReader::with_capacity(crate::constants::BUF_CAPACITY, &mut *reader);
     let mut ops: Vec<BatchOp> = Vec::with_capacity(16);
     let mut line_buf = String::new();
     let mut idx = 0usize;
 
     loop {
         let n = crate::output::read_limited_line(
-            &mut reader,
+            &mut buf_reader,
             &mut line_buf,
             crate::constants::MAX_NDJSON_LINE_SIZE,
         )
-        .with_context(|| format!("failed to read stdin line {}", idx + 1))?;
+        .with_context(|| format!("failed to read manifest line {}", idx + 1))?;
         if n == 0 {
             break;
         }
@@ -138,6 +167,9 @@ pub fn cmd_batch(
         Vec::new()
     };
 
+    // Track files created during the transaction so they can be removed on rollback.
+    let mut created_files: Vec<PathBuf> = Vec::new();
+
     let mut succeeded: u64 = 0;
     let mut failed: u64 = 0;
 
@@ -152,11 +184,32 @@ pub fn cmd_batch(
         }
 
         let op_start = Instant::now();
+        // Pre-snapshot existence for "write" ops so we know if we created a new file
+        let was_new_file = if transaction && !dry_run && op.op == "write" {
+            op.resolve_file_path()
+                .ok()
+                .map(std::path::Path::new)
+                .and_then(|p| crate::path_safety::validate_path(p, &workspace).ok())
+                .map(|p| !p.exists())
+                .unwrap_or(false)
+        } else {
+            false
+        };
         let result = execute_op(op, idx, &workspace, global, dry_run);
 
         match result {
             Ok(details) => {
                 succeeded += 1;
+                if transaction && !dry_run && was_new_file {
+                    if let Some(target) = op
+                        .resolve_file_path()
+                        .ok()
+                        .map(std::path::Path::new)
+                        .and_then(|p| crate::path_safety::validate_path(p, &workspace).ok())
+                    {
+                        created_files.push(target);
+                    }
+                }
                 let event = BatchOpResult {
                     r#type: "batch_op",
                     index: idx as u64,
@@ -182,11 +235,13 @@ pub fn cmd_batch(
                 writer.write_event(&event)?;
 
                 if transaction {
-                    match rollback_transaction(&backups, &workspace) {
-                        Ok(reverted) => {
+                    match rollback_transaction(&backups, &created_files, &workspace) {
+                        Ok((restored, removed)) => {
                             let rollback_event = RollbackEvent {
                                 r#type: "rollback",
-                                operations_reverted: reverted,
+                                files_restored: restored,
+                                files_removed: removed,
+                                total_reverted: restored + removed,
                             };
                             writer.write_event(&rollback_event)?;
                             bail!(
@@ -244,12 +299,18 @@ fn collect_target_paths(ops: &[BatchOp], workspace: &std::path::Path) -> Vec<Pat
     paths
 }
 
-/// Restore all pre-transaction backups to their original paths.
+/// Restore all pre-transaction backups to their original paths and remove
+/// any files that were created during the transaction.
+///
+/// Returns `(restored, removed)` where `restored` is the count of pre-existing
+/// files whose content was rolled back, and `removed` is the count of new
+/// files that were created and then deleted.
 fn rollback_transaction(
     backups: &[(PathBuf, PathBuf)],
+    created_files: &[PathBuf],
     workspace: &std::path::Path,
-) -> Result<u64> {
-    let mut reverted = 0u64;
+) -> Result<(u64, u64)> {
+    let mut restored = 0u64;
     for (original, backup) in backups {
         if backup.exists() {
             let content = std::fs::read(backup)
@@ -257,10 +318,20 @@ fn rollback_transaction(
             let opts = AtomicWriteOptions::default();
             atomic_write(original, &content, &opts, workspace)
                 .with_context(|| format!("cannot restore {}", original.display()))?;
-            reverted += 1;
+            restored += 1;
         }
     }
-    Ok(reverted)
+
+    let mut removed = 0u64;
+    for path in created_files {
+        if path.exists() {
+            std::fs::remove_file(path)
+                .with_context(|| format!("cannot remove created file {}", path.display()))?;
+            removed += 1;
+        }
+    }
+
+    Ok((restored, removed))
 }
 
 fn execute_op(

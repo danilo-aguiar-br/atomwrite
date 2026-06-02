@@ -7,7 +7,7 @@
 #![warn(rustdoc::broken_intra_doc_links)]
 #![warn(rustdoc::private_intra_doc_links)]
 #![warn(clippy::doc_markdown)]
-#![doc(html_root_url = "https://docs.rs/atomwrite/0.1.1")]
+#![doc(html_root_url = "https://docs.rs/atomwrite/0.1.2")]
 
 rust_i18n::i18n!("locales", fallback = "en");
 
@@ -191,6 +191,7 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
                 &mut writer,
                 args.dry_run,
                 args.transaction,
+                args.file.as_deref(),
                 &shutdown,
             )
         }
@@ -224,6 +225,39 @@ fn generate_completions(args: &cli::CompletionsArgs, mut out: impl Write) -> Res
         cli::ShellType::PowerShell => clap_complete::Shell::PowerShell,
         cli::ShellType::Elvish => clap_complete::Shell::Elvish,
     };
-    clap_complete::generate(shell, &mut cli::Cli::command(), "atomwrite", &mut out);
-    Ok(())
+
+    if args.install {
+        // Install to XDG data directory
+        let xdg_data = std::env::var_os("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(|h| std::path::PathBuf::from(h).join(".local").join("share"))
+            })
+            .ok_or_else(|| anyhow::anyhow!("cannot determine XDG data directory"))?;
+
+        let (subdir, filename) = match args.shell {
+            cli::ShellType::Bash => ("bash-completion/completions", "atomwrite"),
+            cli::ShellType::Zsh => ("zsh/site-functions", "_atomwrite"),
+            cli::ShellType::Fish => ("fish/vendor_completions.d", "atomwrite.fish"),
+            cli::ShellType::PowerShell => ("powershell/Completions", "_atomwrite.ps1"),
+            cli::ShellType::Elvish => ("elvish/lib", "atomwrite.elv"),
+        };
+
+        let install_dir = xdg_data.join(subdir);
+        std::fs::create_dir_all(&install_dir)
+            .map_err(|e| anyhow::anyhow!("cannot create {}: {e}", install_dir.display()))?;
+        let install_path = install_dir.join(filename);
+
+        let mut file = std::fs::File::create(&install_path)
+            .map_err(|e| anyhow::anyhow!("cannot create {}: {e}", install_path.display()))?;
+        clap_complete::generate(shell, &mut cli::Cli::command(), "atomwrite", &mut file);
+
+        let path_str = install_path.display().to_string();
+        writeln!(out, "{{\"type\":\"installed\",\"path\":\"{path_str}\"}}")?;
+        Ok(())
+    } else {
+        clap_complete::generate(shell, &mut cli::Cli::command(), "atomwrite", &mut out);
+        Ok(())
+    }
 }

@@ -404,7 +404,7 @@ fn suggestion_for(err: &AtomwriteError) -> Option<String> {
             Some("use --max-filesize to increase the limit or process smaller files".into())
         }
         AtomwriteError::WorkspaceJail { .. } => {
-            Some("use an absolute path for the target file".into())
+            Some("set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>".into())
         }
         AtomwriteError::SymlinkBlocked { .. } => {
             Some("use --follow-symlinks to allow symbolic links".into())

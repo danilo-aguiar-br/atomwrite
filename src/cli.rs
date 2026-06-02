@@ -90,6 +90,15 @@ pub struct GlobalArgs {
     )]
     pub max_filesize: Option<u64>,
 
+    /// Global operation timeout in seconds. 0 disables timeout.
+    #[arg(
+        long,
+        global = true,
+        default_value_t = 0u64,
+        help = "Global operation timeout in seconds (0 = no timeout, default: 0)"
+    )]
+    pub timeout_secs: u64,
+
     /// Emit JSON Schema for subcommand output and exit.
     #[arg(
         long,

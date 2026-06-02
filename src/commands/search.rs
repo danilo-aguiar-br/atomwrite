@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use grep_matcher::Matcher;
 use grep_regex::RegexMatcherBuilder;
 use grep_searcher::{SearcherBuilder, Sink, SinkContext, SinkMatch};
@@ -128,105 +128,48 @@ pub fn cmd_search(
     });
 
     let mut has_matches = false;
-    let mut current_path_str: Option<String> = None;
+    // Buffer events per path so that parallel walker threads do not interleave
+    // Begin/Match/End events for different files in the NDJSON output.
+    let mut buffer: std::collections::BTreeMap<std::path::PathBuf, Vec<SearchEvent>> =
+        std::collections::BTreeMap::new();
+    let mut open_paths: std::collections::BTreeSet<std::path::PathBuf> =
+        std::collections::BTreeSet::new();
 
     for event in rx {
         if shutdown.is_shutdown() {
             break;
         }
 
-        match event {
-            SearchEvent::Begin(path) => {
-                let path_str = path.display().to_string();
-                if !args.count && !args.files {
-                    writer.write_event(&SearchBegin {
-                        r#type: "begin",
-                        path: path_str.clone(),
-                    })?;
-                }
-                current_path_str = Some(path_str);
+        // Track open paths to know when we can flush a complete sequence
+        match &event {
+            SearchEvent::Begin(p) => {
+                open_paths.insert(p.to_path_buf());
+                buffer.entry(p.to_path_buf()).or_default().push(event);
             }
-            SearchEvent::Match {
-                path: _path,
-                line_number,
-                lines,
-                byte_offset,
-                submatches,
-            } => {
-                has_matches = true;
-
-                if args.count {
-                    continue;
-                }
-
-                if args.files {
-                    continue;
-                }
-
-                let path_str = current_path_str.as_deref().unwrap_or("").to_owned();
-
-                writer.write_event(&SearchMatch {
-                    r#type: "match",
-                    path: path_str,
-                    line_number,
-                    lines,
-                    byte_offset,
-                    submatches,
-                })?;
-            }
-            SearchEvent::Context {
-                path: _path,
-                line_number,
-                lines,
-            } => {
-                if !args.count && !args.files {
-                    let path_str = current_path_str.as_deref().unwrap_or("").to_owned();
-                    writer.write_event(&SearchContext {
-                        r#type: "context",
-                        path: path_str,
-                        line_number,
-                        lines,
-                    })?;
+            SearchEvent::End { path, .. } => {
+                let path_buf = path.to_path_buf();
+                buffer.entry(path_buf.clone()).or_default().push(event);
+                // Flush all events for this path now that we have End
+                if let Some(events) = buffer.remove(&path_buf) {
+                    open_paths.remove(&path_buf);
+                    for ev in events {
+                        emit_search_event(&ev, writer, args, &mut has_matches)?;
+                    }
                 }
             }
-            SearchEvent::End {
-                path,
-                matches,
-                lines_searched,
-            } => {
-                let path_str = current_path_str
-                    .as_deref()
-                    .unwrap_or_else(|| path.to_str().unwrap_or(""))
-                    .to_owned();
-
-                if args.files && matches > 0 {
-                    writer.write_event(&SearchFile {
-                        r#type: "file",
-                        path: path_str.clone(),
-                    })?;
+            _ => {
+                // For Match/Context, attach to the most recent open path
+                if let Some(last) = open_paths.iter().next_back() {
+                    buffer.entry(last.clone()).or_default().push(event);
                 }
-
-                if args.count && matches > 0 {
-                    writer.write_event(&SearchCount {
-                        r#type: "count",
-                        path: path_str.clone(),
-                        count: matches,
-                    })?;
-                }
-
-                if !args.count && !args.files && matches > 0 {
-                    writer.write_event(&SearchEnd {
-                        r#type: "end",
-                        path: path_str,
-                        stats: FileStats {
-                            matches,
-                            lines_searched,
-                        },
-                    })?;
-                }
-
-                current_path_str = None;
             }
+        }
+    }
+
+    // Flush any remaining buffered events (e.g. on shutdown)
+    for (_, events) in buffer {
+        for ev in events {
+            emit_search_event(&ev, writer, args, &mut has_matches)?;
         }
     }
 
@@ -273,6 +216,94 @@ enum SearchEvent {
         matches: u64,
         lines_searched: u64,
     },
+}
+
+/// Emit a single search event to the NDJSON writer.
+///
+/// Centralizes the dispatch logic so the main consumer loop can buffer events
+/// per path and emit them contiguously regardless of parallel walker order.
+fn emit_search_event(
+    event: &SearchEvent,
+    writer: &mut NdjsonWriter<impl Write>,
+    args: &crate::cli::SearchArgs,
+    has_matches: &mut bool,
+) -> Result<()> {
+    match event {
+        SearchEvent::Begin(path) => {
+            if !args.count && !args.files {
+                writer.write_event(&SearchBegin {
+                    r#type: "begin",
+                    path: path.display().to_string(),
+                })?;
+            }
+        }
+        SearchEvent::Match {
+            path: _path,
+            line_number,
+            lines,
+            byte_offset,
+            submatches,
+        } => {
+            *has_matches = true;
+            if args.count || args.files {
+                return Ok(());
+            }
+            let path_str = _path.display().to_string();
+            writer.write_event(&SearchMatch {
+                r#type: "match",
+                path: path_str,
+                line_number: *line_number,
+                lines: lines.clone(),
+                byte_offset: *byte_offset,
+                submatches: submatches.clone(),
+            })?;
+        }
+        SearchEvent::Context {
+            path: _path,
+            line_number,
+            lines,
+        } => {
+            if !args.count && !args.files {
+                writer.write_event(&SearchContext {
+                    r#type: "context",
+                    path: _path.display().to_string(),
+                    line_number: *line_number,
+                    lines: lines.clone(),
+                })?;
+            }
+        }
+        SearchEvent::End {
+            path,
+            matches,
+            lines_searched,
+        } => {
+            let path_str = path.display().to_string();
+            if args.files && *matches > 0 {
+                writer.write_event(&SearchFile {
+                    r#type: "file",
+                    path: path_str.clone(),
+                })?;
+            }
+            if args.count && *matches > 0 {
+                writer.write_event(&SearchCount {
+                    r#type: "count",
+                    path: path_str.clone(),
+                    count: *matches,
+                })?;
+            }
+            if !args.count && !args.files && *matches > 0 {
+                writer.write_event(&SearchEnd {
+                    r#type: "end",
+                    path: path_str,
+                    stats: FileStats {
+                        matches: *matches,
+                        lines_searched: *lines_searched,
+                    },
+                })?;
+            }
+        }
+    }
+    Ok(())
 }
 
 struct SearchSink<'a> {
@@ -349,9 +380,12 @@ fn build_matcher(args: &SearchArgs) -> Result<grep_regex::RegexMatcher> {
         builder.fixed_strings(true);
     }
 
-    builder
-        .build(&args.pattern)
-        .with_context(|| format!("invalid search pattern: {}", args.pattern))
+    builder.build(&args.pattern).map_err(|e| {
+        crate::error::AtomwriteError::InvalidInput {
+            reason: format!("invalid search pattern '{}': {e}", args.pattern),
+        }
+        .into()
+    })
 }
 
 fn build_walker(args: &SearchArgs, global: &GlobalArgs) -> Result<ignore::WalkBuilder> {

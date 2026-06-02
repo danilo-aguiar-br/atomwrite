@@ -94,6 +94,16 @@ pub fn cmd_replace(
                 let path = entry.path().to_path_buf();
                 let _span = tracing::debug_span!("process_file", path = %path.display()).entered();
 
+                // Validate path against workspace jail BEFORE processing
+                if crate::path_safety::validate_path(&path, &ws).is_err() {
+                    fs_skip.fetch_add(1, Ordering::Relaxed);
+                    let _ = tx.send(ReplaceEvent::Error {
+                        path,
+                        kind: ReplaceErrorKind::JailViolation,
+                    });
+                    return ignore::WalkState::Continue;
+                }
+
                 let content = match crate::file_io::read_file_string(&path, max_size) {
                     Ok(c) => c,
                     Err(_) => {
@@ -153,6 +163,7 @@ pub fn cmd_replace(
                     backup,
                     retention: 5,
                     preserve_timestamps: true,
+                    backup_output_dir: None,
                 };
 
                 match atomic_write(&path, replaced.as_bytes(), &opts, &ws) {
@@ -230,18 +241,28 @@ pub fn cmd_replace(
                 })?;
             }
             ReplaceEvent::Error { path, kind } => {
-                let message = match kind {
-                    ReplaceErrorKind::StateDrift { expected, actual } => {
-                        format!("state drift: expected {expected}, got {actual}")
+                let (message, error_class, retryable) = match kind {
+                    ReplaceErrorKind::StateDrift { expected, actual } => (
+                        format!("state drift: expected {expected}, got {actual}"),
+                        crate::error::ErrorClass::Conflict.as_str(),
+                        true,
+                    ),
+                    ReplaceErrorKind::WriteFailure(msg) => {
+                        (msg, crate::error::ErrorClass::Transient.as_str(), true)
                     }
-                    ReplaceErrorKind::WriteFailure(msg) => msg,
+                    ReplaceErrorKind::JailViolation => (
+                        "path escapes workspace jail; use --workspace to set a different root"
+                            .to_string(),
+                        crate::error::ErrorClass::Permanent.as_str(),
+                        false,
+                    ),
                 };
                 writer.write_event(&crate::ndjson_types::ReplaceErrorEvent {
                     status: "error",
                     path: path.display().to_string(),
                     message,
-                    error_class: crate::error::ErrorClass::Transient.as_str(),
-                    retryable: true,
+                    error_class,
+                    retryable,
                 })?;
             }
         }
@@ -293,6 +314,7 @@ enum ReplaceEvent {
 enum ReplaceErrorKind {
     StateDrift { expected: String, actual: String },
     WriteFailure(String),
+    JailViolation,
 }
 
 fn compile_pattern(args: &ReplaceArgs) -> Result<Regex> {

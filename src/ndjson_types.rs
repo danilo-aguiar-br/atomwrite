@@ -108,7 +108,7 @@ pub struct SearchMatch {
 }
 
 /// A single regex capture within a matched line.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 pub struct Submatch {
     /// The matched text.
     pub r#match: String,

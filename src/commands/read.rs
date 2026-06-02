@@ -161,6 +161,17 @@ fn apply_line_filters(text: &str, args: &ReadArgs) -> String {
         return all_lines[start..].join("\n") + "\n";
     }
 
+    if let Some(ref pattern) = args.grep {
+        if let Ok(re) = regex::Regex::new(pattern) {
+            let matched: Vec<&str> = all_lines
+                .iter()
+                .copied()
+                .filter(|l| re.is_match(l))
+                .collect();
+            return matched.join("\n") + "\n";
+        }
+    }
+
     text.to_owned()
 }
 

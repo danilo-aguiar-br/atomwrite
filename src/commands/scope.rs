@@ -423,7 +423,7 @@ fn lookup_prepared_query(name: &str, lang: &str) -> Result<String> {
 
 fn lookup_rust_query(name: &str) -> Result<String> {
     let q = match name {
-        "comments" => "// $$$BODY",
+        "comments" => "// $$BODY\\s*",
         "strings" => "\"$$$BODY\"",
         "fn" => "fn $NAME($$$ARGS) { $$$BODY }",
         "pub-fn" => "pub fn $NAME($$$ARGS) { $$$BODY }",
@@ -500,7 +500,7 @@ fn lookup_python_query(name: &str) -> Result<String> {
 
 fn lookup_js_query(name: &str) -> Result<String> {
     let q = match name {
-        "comments" => "// $$$BODY",
+        "comments" => "// $$BODY\\s*",
         "strings" => "\"$$$BODY\"",
         "fn" => "function $NAME($$$ARGS) { $$$BODY }",
         "arrow-fn" => "const $NAME = ($$$ARGS) => $$$BODY",

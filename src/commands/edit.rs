@@ -139,6 +139,7 @@ pub fn cmd_edit(
         backup: false,
         retention: 5,
         preserve_timestamps: true,
+        backup_output_dir: None,
     };
 
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
@@ -376,6 +377,7 @@ fn cmd_edit_multi(
         backup: false,
         retention: 5,
         preserve_timestamps: true,
+        backup_output_dir: None,
     };
 
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;

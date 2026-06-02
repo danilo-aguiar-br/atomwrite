@@ -21,6 +21,9 @@ pub struct AtomicWriteOptions {
     pub retention: u8,
     /// Whether to restore the original file timestamps after writing.
     pub preserve_timestamps: bool,
+    /// Custom output directory for backup files. When `None`, the backup is
+    /// created in the same directory as the target.
+    pub backup_output_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for AtomicWriteOptions {
@@ -29,6 +32,7 @@ impl Default for AtomicWriteOptions {
             backup: false,
             retention: 5,
             preserve_timestamps: true,
+            backup_output_dir: None,
         }
     }
 }
@@ -116,7 +120,11 @@ pub fn atomic_write(
 
     // Step 4: create backup if requested
     let backup_path = if opts.backup && target.exists() {
-        Some(create_backup(&target, opts.retention)?)
+        Some(create_backup_in(
+            &target,
+            opts.retention,
+            opts.backup_output_dir.as_deref(),
+        )?)
     } else {
         None
     };
@@ -232,11 +240,40 @@ pub fn atomic_write(
 /// Returns `AtomwriteError::Io` if copying the file or creating the backup fails.
 #[tracing::instrument(skip_all, fields(path = %target.display(), retention))]
 pub(crate) fn create_backup(target: &Path, retention: u8) -> Result<std::path::PathBuf> {
+    create_backup_in(target, retention, None)
+}
+
+/// Create a timestamped backup, optionally in a custom output directory.
+///
+/// When `output_dir` is `Some`, the backup is placed in that directory instead
+/// of alongside the source file. The directory is created if it does not exist.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::Io` if copying, creating the directory, or the
+/// backup itself fails.
+#[tracing::instrument(skip_all, fields(path = %target.display(), retention, output_dir))]
+pub(crate) fn create_backup_in(
+    target: &Path,
+    retention: u8,
+    output_dir: Option<&Path>,
+) -> Result<std::path::PathBuf> {
     let now = utc_timestamp_formatted();
     // file_name() returns None only for root "/" — empty string is safe for backup naming
     let filename = target.file_name().unwrap_or_default().to_string_lossy();
     let backup_name = format!("{filename}.bak.{now}");
-    let backup_path = target.with_file_name(&backup_name);
+
+    let backup_path = match output_dir {
+        Some(dir) => {
+            if !dir.exists() {
+                fs::create_dir_all(dir).with_context(|| {
+                    format!("cannot create backup output dir {}", dir.display())
+                })?;
+            }
+            dir.join(&backup_name)
+        }
+        None => target.with_file_name(&backup_name),
+    };
 
     fs::copy(target, &backup_path)
         .with_context(|| format!("cannot create backup at {}", backup_path.display()))?;
@@ -256,22 +293,22 @@ pub(crate) fn create_backup(target: &Path, retention: u8) -> Result<std::path::P
     }
 
     if retention > 0 {
-        cleanup_old_backups(target, retention);
+        // Prune old backups in the same directory as the new one.
+        // Pass the source filename (without .bak.<timestamp> suffix) so the
+        // prefix matcher correctly identifies peer backups.
+        cleanup_old_backups_in(
+            backup_path.parent().unwrap_or_else(|| Path::new(".")),
+            &filename,
+            retention,
+        );
     }
 
     Ok(backup_path)
 }
 
-fn cleanup_old_backups(target: &Path, retention: u8) {
-    let parent = match target.parent() {
-        Some(p) => p,
-        None => return,
-    };
-    let filename = match target.file_name() {
-        Some(f) => f.to_string_lossy(),
-        None => return,
-    };
-    let prefix = format!("{filename}.bak.");
+/// Prune old backups that share the given `prefix` in the given directory.
+fn cleanup_old_backups_in(parent: &Path, prefix_name: &str, retention: u8) {
+    let prefix = format!("{prefix_name}.bak.");
 
     let mut backups: Vec<std::path::PathBuf> = match fs::read_dir(parent) {
         Ok(entries) => entries
