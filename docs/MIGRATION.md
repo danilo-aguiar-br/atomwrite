@@ -165,32 +165,94 @@ atomwrite v0.1.2 now compiles on macOS arm64 (Apple Silicon) and macOS x86_64. T
 - All v0.1.0 commands, flags and JSON output remain unchanged
 - No migration action required for existing consumers
 
+### Fixed Behaviors (silent failures corrected)
+- `search --include` and `search --exclude` now actually filter files (was silently ignored)
+- `replace --include` and `replace --exclude` now actually filter files
+- `transform --include` and `transform --exclude` now actually filter files
+- `search --context N` now emits context lines around matches
+- `search --max-count N` now limits matches per file
+- `search --invert` now shows non-matching lines (was inverted)
+- `search --sort path` now sorts results by file path
+- `transform` now processes files in parallel (was sequential)
+- `read` modified timestamp now returns ISO 8601 instead of epoch seconds
+- `batch delete` backup now uses atomic create_backup() with fsync (was racing the write)
+- `create_backup` now uses `fs::copy` instead of `fs::hard_link` (hard links would diverge silently)
+- 12 broken intra-doc links in `error.rs` corrected
+- Magic exit code numbers replaced with named constants in `constants.rs`
+- Six `unwrap()` calls in `edit.rs` multi-edit mode replaced with `ok_or_else`
+- `scope.rs` thread join no longer panics on failure
+
 ### Additive Changes
-- `batch` supports 7 operations: write, replace, delete, edit, hash, move, copy (was write, replace, delete)
+#### New Subcommands
+- `scope` subcommand for grammatical scoping with AST-based actions (delete, upper, lower, titlecase, squeeze, replace)
+- `scope` supports Rust (30 prepared queries), Python (13), JavaScript/TypeScript (11), Go (8)
+- `backup` subcommand for timestamped backups with BLAKE3 checksums and configurable retention
+- `rollback` subcommand for restoring from backups with optional BLAKE3 verification
+- `apply` subcommand for patch application with auto-format detection (unified diff, SEARCH/REPLACE, markdown-fenced, full file)
+
+#### New Flags
 - `batch --transaction` flag for all-or-nothing execution with rollback
-- `batch` move and copy accept `source`, `from`, `src` as field aliases
-- `batch` write, delete, edit, hash accept `path` as alias for `target`
 - `edit --fuzzy` flag with 7-strategy cascade for approximate text matching
 - `edit --multi` flag for multiple NDJSON edits in one atomic write
-- `scope` subcommand for grammatical scoping with AST-based actions
-- `backup` subcommand for timestamped backups with BLAKE3 checksums
-- `rollback` subcommand for restoring from backups
-- `apply` subcommand for patch application with auto-format detection
 - `--line-ending lf|crlf|cr|auto` flag on `write` and `edit`
 - `--lang <LOCALE>` global flag for locale override (en, pt-BR)
+- `batch` move and copy accept `source`, `from`, `src` as field aliases
+- `batch` write, delete, edit, hash accept `path` as alias for `target`
+
+#### Internationalization
 - i18n support via `rust-i18n` with automatic OS locale detection
+- All user-facing strings now locale-aware (errors, warnings, info messages)
+- Bilingual documentation (en + pt-BR) for all major docs
+
+#### Security
+- FIFO and device file detection in path validation (exit codes 85 and 86)
+- Hardlink detection before atomic rename with `tracing::warn` when nlink > 1
+- Same-file detection in `copy` and `move` to prevent source=destination data loss
+- SPDX license headers in all 64 `.rs` source files
+- `deny.toml` for cargo-deny license and advisory auditing
+
+#### Test Infrastructure
 - 282 tests (was 5 in v0.1.0)
+- Integration tests for `backup`, `rollback`, `apply`, and `scope`
+- 2 fuzz targets (`batch_parse`, `extract_json`) with `libfuzzer-sys`
+- Optimistic locking integration tests
+- NDJSON validation tests expanded from 5 to 20 of 21 commands
+- `jaq` interop tests validating NDJSON piped through filter
+- i18n integration test
 
 ### JSON Output Changes
-- `edit` output includes new optional fields: `fuzzy`, `strategy`, `strategies_tried`, `similarity`
-- `read` timestamp changed from epoch seconds to ISO 8601 format
+- `edit` output includes new optional fields: `fuzzy`, `strategy`, `strategies_tried`, `similarity` (only when fuzzy matching used)
+- `read` timestamp changed from epoch seconds to ISO 8601 format (breaking for consumers reading `modified` as number)
 - New output types added for `scope`, `backup`, `rollback`, `apply`
 - All existing fields remain unchanged
 
+### JSON Schema Changes Example
+
+```json
+// Before (v0.1.0)
+{"type":"read","path":"/abs/file","content":"...","modified":1704067200}
+
+// After (v0.1.1)
+{"type":"read","path":"/abs/file","content":"...","modified":"2024-01-01T00:00:00Z"}
+```
+
+### Known Limitations Fixed in v0.1.2
+- `batch --file <PATH>` flag was declared but not wired (now reads manifest from file)
+- `batch --transaction` did not delete files created mid-transaction
+- `replace` inflated counters on jail violations
+- `search` parallel walker interleaved events from different files
+- `search` invalid regex produced raw stderr instead of JSON envelope
+- `scope --delete` for Rust comments left orphan whitespace
+- macOS compilation failed (nix 0.29 gated `posix_fadvise` to non-macOS Unix)
+- `backup --output-dir` was declared but not plumbed through
+- No `--timeout`, `--grep`, `completions --install` flags
+
 ### Migration Action
-- No action required
-- Existing `jaq` filters and JSON parsing code continue to work
+- No action required for v0.1.0 to v0.1.1
+- Existing `jaq` filters and JSON parsing code continue to work for all fields except `read.modified` (epoch → ISO 8601)
+- Update consumers that read `read.modified` as a numeric value
 - New fields are additive and safe to ignore
+- Recommended: upgrade to v0.1.2 next, which fixes 14 issues introduced in v0.1.1
 
 
 ## Compatibility Notes

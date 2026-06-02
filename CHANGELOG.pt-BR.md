@@ -73,41 +73,79 @@
 - Dados de teste em português em `file_io.rs` substituídos por inglês
 
 ### Added
-- `batch` suporta 7 operações: write, replace, delete, edit, hash, move, copy
-- `batch --transaction` flag para execução tudo-ou-nada com rollback automático
-- `edit --fuzzy` flag com cascata de 7 estratégias de correspondência (exact, line_trimmed, whitespace_normalized, indent_flexible, escape_normalized, trimmed_boundary, block_anchor)
-- `edit --multi` flag para aplicar múltiplas operações de edição NDJSON em uma única escrita atômica
-- `edit` saída NDJSON inclui campos fuzzy, strategy, strategies_tried, similarity quando correspondência fuzzy é usada
+#### Novos Subcomandos
 - Subcomando `scope` para escopo gramatical: selecionar categorias AST (comentários, funções, strings, etc.) e aplicar ações (delete, upper, lower, titlecase, squeeze, replace)
 - `scope` suporta Rust (30 queries preparadas), Python (13), JavaScript/TypeScript (11), Go (8) e padrões AST customizados via `--pattern`
 - Subcomando `backup` para criar backups de arquivos com timestamp, checksums BLAKE3 e retenção configurável
 - Subcomando `rollback` para restaurar arquivos a partir de backups anteriores com verificação BLAKE3 opcional
 - Subcomando `apply` para aplicar patches do stdin com detecção automática de formato (unified diff, blocos SEARCH/REPLACE, diff com fence markdown, substituição completa de arquivo)
-- Flag `--line-ending lf|crlf|cr|auto` em `write` e `edit` para normalização de terminadores de linha
-- Detecção de FIFO e arquivos de dispositivo na validação de caminho (códigos de saída 85 e 86)
+
+#### Expansão de Operações em Batch
+- `batch` suporta 7 operações: write, replace, delete, edit, hash, move, copy
+- `batch --transaction` flag para execução tudo-ou-nada com rollback automático
+- Operações `move` e `copy` do `batch` agora aceitam `source`, `from` e `src` como aliases para o caminho de origem
+- Operações `write`, `delete`, `edit` e `hash` do `batch` agora aceitam `path` como alias de `target`
+
+#### Aprimoramentos do Motor de Edição
+- `edit --fuzzy` flag com cascata de 7 estratégias de correspondência (exact, line_trimmed, whitespace_normalized, indent_flexible, escape_normalized, trimmed_boundary, block_anchor)
+- `edit --multi` flag para aplicar múltiplas operações de edição NDJSON em uma única escrita atômica
+- `edit` saída NDJSON inclui campos fuzzy, strategy, strategies_tried, similarity quando correspondência fuzzy é usada
+
+#### Segurança de Caminho
+- Detecção de FIFO e arquivos de dispositivo na validação de caminho (códigos de saída 85 e 86) — previne escritas atômicas em arquivos especiais
 - Detecção de hardlink antes do rename atômico com `tracing::warn` quando nlink > 1
-- Detecção de mesmo arquivo em `copy` e `move` para prevenir perda de dados quando origem=destino
-- Módulo de detecção e normalização de terminadores de linha (`line_endings.rs`)
-- 282 testes entre suítes de integração e unitários (eram 5 testes em 1 módulo na v0.1.0)
-- Testes de integração para `backup`, `rollback`, `apply` e `scope`
-- `deny.toml` para auditoria de licenças e advisories via cargo-deny
+- Detecção de mesmo arquivo em `copy` e `move` para prevenir perda de dados quando origem=destino (estava sobrescrevendo)
+
+#### Internacionalização (i18n)
 - Flag global `--lang` para override de locale (en, pt-BR) com variável de ambiente `ATOMWRITE_LANG`
 - Suporte a i18n via `rust-i18n` e `sys-locale`: detecção automática de locale do SO com traduções en e pt-BR
+- Todas as strings voltadas ao usuário agora cientes de locale (erros, avisos, mensagens informativas)
+
+#### Documentação Bilíngue
+- Documentação bilíngue `ARCHITECTURE.md` (en + pt-BR) descrevendo mapa de módulos, fluxo de dados e decisões chave
 - Headers de licença SPDX (`MIT OR Apache-2.0`) em todos os 64 arquivos `.rs`
 - Documentação `//!` em nível de módulo em todos os 38 módulos fonte
 - Doctests executáveis para funções `is_binary`, `detect` e `normalize`
-- Documentação bilíngue `ARCHITECTURE.md` (en + pt-BR) descrevendo mapa de módulos, fluxo de dados e decisões chave
 - Configuração `[package.metadata.docs.rs]` para builds no docs.rs
 - Campo `documentation` e `[badges.maintenance]` no `Cargo.toml`
 - Lints rustdoc: `broken_intra_doc_links`, `private_intra_doc_links`, `clippy::doc_markdown`
 - `doc(html_root_url)` para cross-linking no docs.rs
-- Operações `move` e `copy` do `batch` agora aceitam `source`, `from` e `src` como aliases para o caminho de origem
-- Operações `write`, `delete`, `edit` e `hash` do `batch` agora aceitam `path` como alias de `target`
+
+#### Supply Chain e Segurança
+- `deny.toml` para auditoria de licenças e advisories via cargo-deny
+- Módulo de detecção e normalização de terminadores de linha (`line_endings.rs`)
+- Flag `--line-ending lf|crlf|cr|auto` em `write` e `edit` para normalização de terminadores de linha
+
+#### Infraestrutura de Testes
+- 282 testes entre suítes de integração e unitários (eram 5 testes em 1 módulo na v0.1.0)
+- Testes de integração para `backup`, `rollback`, `apply` e `scope`
 - 2 alvos de fuzzing (`batch_parse`, `extract_json`) com `libfuzzer-sys` para testes de segurança dos parsers
 - Testes de integração de locking otimista para `write --expect-checksum` e `edit --expect-checksum`
 - Testes de validação NDJSON expandidos de 5 para 20 de 21 comandos
 - Testes de interoperabilidade `jaq` validando NDJSON via pipe com filtro `jaq`
 - Teste de integração i18n confirmando que `--lang` não altera saída JSON
+
+### Segurança
+- Headers de licença SPDX garantem clareza de licença em todos os arquivos fonte
+- cargo-deny enforces conformidade de licença e rastreia advisories de segurança
+- Detecção de FIFO e device file previne escritas acidentais em arquivos especiais
+- Detecção de hardlink previne corrupção silenciosa de dados quando rename atômico quebra hard links
+
+### Limitações Conhecidas (corrigidas em v0.1.2)
+- Flag `batch --file <PATH>` era declarada no help mas não era conectada à lógica do comando
+- `batch --transaction` não deletava arquivos criados durante transações falhadas (apenas restaurava arquivos modificados)
+- `replace` incrementava contadores ANTES da validação do jail do workspace, produzindo contagens NDJSON contraditórias
+- `search` com regex inválido produzia erro cru no stderr em vez de envelope JSON
+- Walker paralelo do `search` intercalava eventos begin/match/end de arquivos diferentes
+- `scope --delete` em comentários Rust deixava whitespace órfão
+- Compilação no macOS falhava (nix 0.29 restringia `posix_fadvise` a Unix não-macOS)
+- `--workspace` padrão era CWD silencioso (sem aviso ao capturar tudo)
+- Mensagem de erro WORKSPACE_JAIL sugeria "use an absolute path" mesmo quando o path já era absoluto
+- `backup --output-dir` era declarado mas não era conectado
+- 4 dependências congeladas (nix 0.29, signal-hook 0.3, windows-sys 0.59, rust-i18n 3)
+- `read` não tinha flags `--head`/`--tail`/`--grep` para controle de janela de contexto LLM
+- `completions` não auto-instalava
+- Sem flag global `--timeout` para terminação de operação sem limite
 
 
 ## [0.1.0] - 2026-05-29

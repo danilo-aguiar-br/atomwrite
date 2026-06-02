@@ -47,66 +47,109 @@
 
 ## [0.1.1] - 2026-06-01
 
-
-## [0.1.1] - 2026-06-01
-
 ### Fixed
-- 12 broken intra-doc links in `error.rs` corrected (`DiskFull` to `Self::DiskFull` and similar)
+#### Search and Replace Engine
 - `search --include`/`--exclude` now correctly filter files via OverrideBuilder (was silently ignored)
 - `replace --include`/`--exclude` now correctly filter files via OverrideBuilder
 - `transform --include`/`--exclude` now correctly filter files via OverrideBuilder
-- `search --context` now emits context lines via custom SearchSink
-- `search --max-count` now limits matches per file via SearcherBuilder.max_matches()
-- `search --invert` now shows non-matching lines via SearcherBuilder.invert_match()
-- `search --sort` now sorts results by file path
-- `transform` now processes files in parallel via WalkParallel + crossbeam channel
-- `read` modified timestamp now returns ISO 8601 format instead of epoch seconds
-- `batch delete` backup now uses atomic create_backup() with fsync
-- `create_backup` now uses `fs::copy` instead of `fs::hard_link` to prevent backup corruption when original is overwritten in-place
-- Exit codes in `output.rs`, `read.rs`, `batch.rs`, and `hash.rs` moved from magic numbers to named constants in `constants.rs`
-- `DETECTION_SIZE` in `binary_detect.rs` centralized to `BINARY_DETECT_SIZE` in `constants.rs`
+- `search --context` now emits context lines via custom SearchSink (was missing entirely)
+- `search --max-count` now limits matches per file via SearcherBuilder.max_matches() (was being ignored)
+- `search --invert` now shows non-matching lines via SearcherBuilder.invert_match() (was inverted behavior)
+- `search --sort` now sorts results by file path (was returning in unspecified order)
+- `transform` now processes files in parallel via WalkParallel + crossbeam channel (was sequential)
+- `search` regex special characters in patterns now properly escaped when `--literal` is set
+
+#### Atomic Writes and Backups
+- `batch delete` backup now uses atomic create_backup() with fsync (was racing the write)
+- `create_backup` now uses `fs::copy` instead of `fs::hard_link` to prevent backup corruption when original is overwritten in-place (hard links would diverge silently)
+- Hardlink detection before atomic rename with `tracing::warn` when nlink > 1
+- Same-file detection in `copy` and `move` to prevent source=destination data loss (was overwriting)
+
+#### Error Handling and Code Quality
+- 12 broken intra-doc links in `error.rs` corrected (`DiskFull` to `Self::DiskFull` and similar)
 - Six `unwrap()` calls in `edit.rs` multi-edit mode replaced with `ok_or_else` for safer error handling
 - `scope.rs` thread join changed from `unwrap()` to `let _ = join()` to prevent panic propagation
 - `rollback.rs` `unwrap()` replaced with descriptive `expect` message
+- Exit codes in `output.rs`, `read.rs`, `batch.rs`, and `hash.rs` moved from magic numbers to named constants in `constants.rs`
+- `DETECTION_SIZE` in `binary_detect.rs` centralized to `BINARY_DETECT_SIZE` in `constants.rs`
+
+#### Output Format
+- `read` modified timestamp now returns ISO 8601 format instead of epoch seconds (LLM-readable)
 - `# Errors` documentation added to three `output.rs` public functions returning `Result`
-- Portuguese test data in `file_io.rs` replaced with English
+- Portuguese test data in `file_io.rs` replaced with English (code-in-english convention)
 
 ### Added
-- `batch` supports 7 operations: write, replace, delete, edit, hash, move, copy
-- `batch --transaction` flag for all-or-nothing execution with automatic rollback
-- `edit --fuzzy` flag with cascade of 7 matching strategies (exact, line_trimmed, whitespace_normalized, indent_flexible, escape_normalized, trimmed_boundary, block_anchor)
-- `edit --multi` flag for applying multiple NDJSON edit operations in a single atomic write
-- `edit` NDJSON output includes fuzzy, strategy, strategies_tried, similarity fields when fuzzy matching is used
+#### New Subcommands
 - `scope` subcommand for grammatical scoping: select AST categories (comments, functions, strings, etc.) and apply actions (delete, upper, lower, titlecase, squeeze, replace)
 - `scope` supports Rust (30 prepared queries), Python (13), JavaScript/TypeScript (11), Go (8), and custom AST patterns via `--pattern`
 - `backup` subcommand for creating timestamped file backups with BLAKE3 checksums and configurable retention
 - `rollback` subcommand for restoring files from previous backups with optional BLAKE3 verification
 - `apply` subcommand for applying patches from stdin with auto-detection of format (unified diff, SEARCH/REPLACE blocks, markdown-fenced diff, full file replacement)
-- `--line-ending lf|crlf|cr|auto` flag on `write` and `edit` for line ending normalization
-- FIFO and device file detection in path validation (exit codes 85 and 86)
-- Hardlink detection before atomic rename with `tracing::warn` when nlink > 1
-- Same-file detection in `copy` and `move` to prevent source=destination data loss
-- Line ending detection and normalization module (`line_endings.rs`)
-- 282 tests across integration and unit test suites (was 5 tests in 1 module at v0.1.0)
-- Integration tests for `backup`, `rollback`, `apply`, and `scope`
-- `deny.toml` for cargo-deny license and advisory auditing
+
+#### Batch Operations Expansion
+- `batch` supports 7 operations: write, replace, delete, edit, hash, move, copy
+- `batch --transaction` flag for all-or-none execution with automatic rollback
+- `batch` move and copy operations now accept `source`, `from`, and `src` as field aliases for the source path
+- `batch` write, delete, edit, and hash operations now accept `path` as alias for `target`
+
+#### Edit Engine Enhancements
+- `edit --fuzzy` flag with cascade of 7 matching strategies (exact, line_trimmed, whitespace_normalized, indent_flexible, escape_normalized, trimmed_boundary, block_anchor)
+- `edit --multi` flag for applying multiple NDJSON edit operations in a single atomic write
+- `edit` NDJSON output includes `fuzzy`, `strategy`, `strategies_tried`, `similarity` fields when fuzzy matching is used
+
+#### Path Safety
+- FIFO and device file detection in path validation (exit codes 85 and 86) — prevents atomic writes to special files
+
+#### Internationalization (i18n)
 - `--lang` global flag for locale override (en, pt-BR) with `ATOMWRITE_LANG` environment variable
 - i18n support via `rust-i18n` and `sys-locale`: automatic OS locale detection with en and pt-BR translations
+- All user-facing strings now locale-aware (errors, warnings, info messages)
+
+#### Internationalization Documentation
+- `ARCHITECTURE.md` bilingual documentation (en + pt-BR) describing module map, data flow, and key decisions
 - SPDX license headers (`MIT OR Apache-2.0`) in all 64 `.rs` source files
 - Module-level `//!` documentation in all 38 source modules
 - Executable doctests for `is_binary`, `detect`, and `normalize` functions
-- `ARCHITECTURE.md` bilingual documentation (en + pt-BR) describing module map, data flow, and key decisions
 - `[package.metadata.docs.rs]` configuration for docs.rs builds
 - `documentation` field and `[badges.maintenance]` in `Cargo.toml`
 - Rustdoc lints: `broken_intra_doc_links`, `private_intra_doc_links`, `clippy::doc_markdown`
 - `doc(html_root_url)` for docs.rs cross-linking
-- `batch` move and copy operations now accept `source`, `from`, and `src` as field aliases for the source path
-- `batch` write, delete, edit, and hash operations now accept `path` as alias for `target`
+
+#### Supply Chain and Security
+- `deny.toml` for cargo-deny license and advisory auditing
+- Line ending detection and normalization module (`line_endings.rs`)
+- `--line-ending lf|crlf|cr|auto` flag on `write` and `edit` for line ending normalization
+
+#### Test Infrastructure
+- 282 tests across integration and unit test suites (was 5 tests in 1 module at v0.1.0)
+- Integration tests for `backup`, `rollback`, `apply`, and `scope`
 - 2 fuzz targets (`batch_parse`, `extract_json`) with `libfuzzer-sys` for parser security testing
 - Optimistic locking integration tests for `write --expect-checksum` and `edit --expect-checksum`
 - NDJSON validation tests expanded from 5 to 20 of 21 commands
 - `jaq` interop tests validating NDJSON piped through `jaq` filter
 - i18n integration test confirming `--lang` does not alter JSON output
+
+### Security
+- SPDX license headers ensure license clarity in all source files
+- cargo-deny enforces license compliance and tracks security advisories
+- FIFO and device file detection prevents accidental writes to special files
+- Hardlink detection prevents silent data corruption when atomic rename breaks hard links
+
+### Known Limitations (fixed in v0.1.2)
+- `batch --file <PATH>` flag was declared in help but not wired through to command logic
+- `batch --transaction` did not delete files created during failed transactions (only restored modified files)
+- `replace` incremented counters BEFORE workspace jail validation, producing contradictory NDJSON counts
+- `search` invalid regex produced raw stderr error instead of JSON envelope
+- `search` parallel walker interleaved begin/match/end events for different files
+- `scope --delete` for Rust comments left orphan whitespace
+- macOS compilation failed (nix 0.29 gated `posix_fadvise` to non-macOS Unix)
+- Default `--workspace` was CWD-silent (no warning when capturing everything)
+- WORKSPACE_JAIL error message suggested "use an absolute path" even when path was already absolute
+- `backup --output-dir` was declared but not plumbed through
+- 4 dependencies frozen (nix 0.29, signal-hook 0.3, windows-sys 0.59, rust-i18n 3)
+- `read` had no `--head`/`--tail`/`--grep` flags for LLM context window control
+- `completions` did not auto-install
+- No global `--timeout` flag for unbounded operation termination
 
 
 ## [0.1.0] - 2026-05-29

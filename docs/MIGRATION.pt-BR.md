@@ -165,32 +165,94 @@ atomwrite v0.1.2 agora compila no macOS arm64 (Apple Silicon) e macOS x86_64. A 
 - Todos os comandos, flags e saída JSON da v0.1.0 permanecem inalterados
 - Nenhuma ação de migração necessária para consumidores existentes
 
+### Comportamentos Corrigidos (falhas silenciosas corrigidas)
+- `search --include` e `search --exclude` agora realmente filtram arquivos (eram silenciosamente ignorados)
+- `replace --include` e `replace --exclude` agora realmente filtram arquivos
+- `transform --include` e `transform --exclude` agora realmente filtram arquivos
+- `search --context N` agora emite linhas de contexto ao redor dos matches
+- `search --max-count N` agora limita matches por arquivo
+- `search --invert` agora mostra linhas sem correspondência (estava invertido)
+- `search --sort path` agora ordena resultados por caminho de arquivo
+- `transform` agora processa arquivos em paralelo (era sequencial)
+- Timestamp `modified` de `read` agora retorna ISO 8601 em vez de epoch seconds
+- Backup de `batch delete` agora usa create_backup() atômico com fsync (estava competindo com a escrita)
+- `create_backup` agora usa `fs::copy` em vez de `fs::hard_link` (hard links divergiriam silenciosamente)
+- 12 links intra-doc quebrados em `error.rs` corrigidos
+- Números mágicos de exit code substituídos por constantes nomeadas em `constants.rs`
+- Seis chamadas `unwrap()` em `edit.rs` modo multi-edit substituídas por `ok_or_else`
+- `scope.rs` thread join não causa mais panic em falha
+
 ### Mudanças Aditivas
-- `batch` suporta 7 operações: write, replace, delete, edit, hash, move, copy (era write, replace, delete)
-- `batch --transaction` flag para execução tudo-ou-nada com rollback
-- `batch` move e copy aceitam `source`, `from`, `src` como aliases de campo
-- `batch` write, delete, edit, hash aceitam `path` como alias de `target`
-- `edit --fuzzy` flag com cascata de 7 estratégias para matching aproximado
-- `edit --multi` flag para múltiplas edições NDJSON em uma escrita atômica
-- Subcomando `scope` para escopo gramatical com ações baseadas em AST
-- Subcomando `backup` para backups com timestamp e checksums BLAKE3
-- Subcomando `rollback` para restauração a partir de backups
-- Subcomando `apply` para aplicação de patches com detecção automática de formato
+#### Novos Subcomandos
+- Subcomando `scope` para escopo gramatical com ações baseadas em AST (delete, upper, lower, titlecase, squeeze, replace)
+- `scope` suporta Rust (30 queries preparadas), Python (13), JavaScript/TypeScript (11), Go (8)
+- Subcomando `backup` para backups com timestamp e checksums BLAKE3 e retenção configurável
+- Subcomando `rollback` para restauração a partir de backups com verificação BLAKE3 opcional
+- Subcomando `apply` para aplicação de patches com detecção automática de formato (unified diff, SEARCH/REPLACE, markdown-fenced, full file)
+
+#### Novas Flags
+- Flag `batch --transaction` para execução tudo-ou-nada com rollback
+- Flag `edit --fuzzy` com cascata de 7 estratégias para matching aproximado
+- Flag `edit --multi` para múltiplas edições NDJSON em uma escrita atômica
 - Flag `--line-ending lf|crlf|cr|auto` em `write` e `edit`
 - Flag global `--lang <LOCALE>` para override de locale (en, pt-BR)
+- `batch` move e copy aceitam `source`, `from`, `src` como aliases de campo
+- `batch` write, delete, edit, hash aceitam `path` como alias de `target`
+
+#### Internacionalização
 - Suporte a i18n via `rust-i18n` com detecção automática de locale do SO
+- Todas as strings voltadas ao usuário agora cientes de locale (erros, avisos, mensagens informativas)
+- Documentação bilíngue (en + pt-BR) para todos os documentos principais
+
+#### Segurança
+- Detecção de FIFO e arquivos de dispositivo na validação de caminho (códigos de saída 85 e 86)
+- Detecção de hardlink antes do rename atômico com `tracing::warn` quando nlink > 1
+- Detecção de mesmo arquivo em `copy` e `move` para prevenir perda de dados quando origem=destino
+- Headers de licença SPDX em todos os 64 arquivos `.rs` fonte
+- `deny.toml` para auditoria de licenças e advisories via cargo-deny
+
+#### Infraestrutura de Testes
 - 282 testes (eram 5 na v0.1.0)
+- Testes de integração para `backup`, `rollback`, `apply` e `scope`
+- 2 alvos de fuzzing (`batch_parse`, `extract_json`) com `libfuzzer-sys`
+- Testes de integração de locking otimista
+- Testes de validação NDJSON expandidos de 5 para 20 de 21 comandos
+- Testes de interoperabilidade `jaq` validando NDJSON via filtro
+- Teste de integração i18n
 
 ### Mudanças na Saída JSON
-- Saída de `edit` inclui novos campos opcionais: `fuzzy`, `strategy`, `strategies_tried`, `similarity`
-- Timestamp de `read` mudou de epoch seconds para formato ISO 8601
+- Saída de `edit` inclui novos campos opcionais: `fuzzy`, `strategy`, `strategies_tried`, `similarity` (apenas quando correspondência fuzzy é usada)
+- Timestamp de `read` mudou de epoch seconds para formato ISO 8601 (quebra para consumidores lendo `modified` como número)
 - Novos tipos de saída adicionados para `scope`, `backup`, `rollback`, `apply`
 - Todos os campos existentes permanecem inalterados
 
+### Exemplo de Mudança de JSON Schema
+
+```json
+// Antes (v0.1.0)
+{"type":"read","path":"/abs/file","content":"...","modified":1704067200}
+
+// Depois (v0.1.1)
+{"type":"read","path":"/abs/file","content":"...","modified":"2024-01-01T00:00:00Z"}
+```
+
+### Limitações Conhecidas Corrigidas em v0.1.2
+- Flag `batch --file <PATH>` era declarada mas não era conectada (agora lê manifesto de arquivo)
+- `batch --transaction` não deletava arquivos criados no meio da transação
+- `replace` inflava contadores em violações de jail
+- Walker paralelo do `search` intercalava eventos de arquivos diferentes
+- `search` com regex inválido produzia erro cru no stderr em vez de envelope JSON
+- `scope --delete` em comentários Rust deixava whitespace órfão
+- Compilação no macOS falhava (nix 0.29 restringia `posix_fadvise` a Unix não-macOS)
+- `backup --output-dir` era declarado mas não era conectado
+- Sem flags `--timeout`, `--grep`, `completions --install`
+
 ### Ação de Migração
-- Nenhuma ação necessária
-- Filtros `jaq` e código de parsing JSON existentes continuam funcionando
+- Nenhuma ação necessária para v0.1.0 a v0.1.1
+- Filtros `jaq` e código de parsing JSON existentes continuam funcionando para todos os campos exceto `read.modified` (epoch → ISO 8601)
+- Atualize consumidores que leem `read.modified` como valor numérico
 - Novos campos são aditivos e seguros para ignorar
+- Recomendado: atualize para v0.1.2 em seguida, que corrige 14 issues introduzidas na v0.1.1
 
 
 ## Notas de Compatibilidade
