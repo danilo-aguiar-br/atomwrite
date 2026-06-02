@@ -78,7 +78,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `rollback` -- restore from backup; `--timestamp` or `--latest` to select backup, `--verify` for checksum validation, `--dry-run` for preview
 - `apply` -- apply patches from stdin with auto-format detection (unified diff, SEARCH/REPLACE blocks, markdown-fenced, full file); `--format` to force format, `--backup` for safety, `--dry-run` for preview
 - `batch` -- execute multiple operations from NDJSON manifest (write, replace, delete, edit, hash, move, copy); supports `--transaction` for all-or-nothing
-- `completions` -- generate shell completions
+- `completions` -- generate shell completions; use `--install` to install to XDG data directory
 
 
 ## REQUIRED -- Output Contract
@@ -100,7 +100,9 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 ### Read (read)
 - Receive path, content, lines, bytes, checksum, permissions, modified, kind
 - Use `--stat` to skip content (metadata only)
-- Use `--lines START:END` for partial reads
+- Use `--lines START:END` for partial reads (1-based inclusive)
+- Use `--head N` for first N lines, `--tail N` for last N lines
+- Use `--grep <REGEX>` to filter returned lines to those matching a regex
 - Binary files are auto-detected and content is omitted
 
 ### Update (edit, replace, transform)
@@ -227,6 +229,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `--follow-symlinks` -- follow symbolic links
 - `--threads <N>` / `-j <N>` -- parallel threads (0 = all cores)
 - `--max-filesize <BYTES>` -- skip files larger than limit
+- `--timeout <SECONDS>` -- global operation timeout (0 = no timeout, default 0). Use to bound long-running searches, batches, and replace operations
 - `--json-schema` -- emit JSON schema for the subcommand output
 - `--lang <LOCALE>` -- override display locale (en, pt-BR) via `ATOMWRITE_LANG` env
 

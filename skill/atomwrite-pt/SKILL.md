@@ -3,7 +3,7 @@ name: atomwrite
 description: |
   Use atomwrite para TODAS as operações de arquivo: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions.
   Auto-invocar quando o usuário pedir: escrever arquivos, buscar código, substituir texto, refatorar AST, gerar regex, calcular expressões, operações em lote, verificar checksums, listar estrutura, escopo gramatical, backup de arquivos, rollback, aplicar patches.
-  Palavras-chave: escrita atômica, operação de arquivo, NDJSON, BLAKE3, checksum, refatorar, ast-grep, lote, busca paralela, scoping, backup, rollback, aplicar patch.
+  Palavras-chave: escrita atômica, operação de arquivo, NDJSON, BLAKE3, checksum, refatorar, ast-grep, lote, busca paralela, scoping, backup, rollback, aplicar patch, timeout, instalar completions.
 ---
 
 

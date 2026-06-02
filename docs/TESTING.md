@@ -15,7 +15,8 @@
 
 ## Current Stats
 - 64+ Rust files across `src/` and `tests/`
-- 282 tests total (unit + integration + snapshot + property-based + signal + tracing + NDJSON)
+- 292+ tests total across 33 test suites (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression)
+- 10 regression tests in `tests/cli_v012_regressions.rs` (added in v0.1.2)
 - 9 snapshot files in `tests/snapshots/`
 - 2 proptest regression files
 - 2 fuzz targets in `fuzz/fuzz_targets/`

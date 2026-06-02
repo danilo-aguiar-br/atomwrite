@@ -554,3 +554,56 @@ new_function_name
 >>>> END
 EOF
 ```
+
+
+## Padrões Agent-First (v0.1.2+)
+
+### Limite de Tempo em Busca Longa
+
+```bash
+# Aborta após 60s se a busca não terminar; emite erro NDJSON com error_class=transient
+atomwrite --workspace . --timeout 60 search 'TODO' src/
+```
+
+### Ler Apenas Linhas que Casam com Regex
+
+```bash
+# Útil para extrair logs de arquivos enormes sem esgotar o contexto
+atomwrite --workspace . read --grep 'ERROR|WARN' /var/log/app.log
+```
+
+### Ler Primeiras N Linhas de Arquivo Enorme
+
+```bash
+# Evita carregar o arquivo inteiro no contexto
+atomwrite --workspace . read --head 20 huge.log
+```
+
+### Batch a partir de Arquivo em vez de stdin
+
+```bash
+# Arquivo de manifesto persistido (NDJSON, uma op por linha)
+atomwrite --workspace . batch --file ops.ndjson
+```
+
+### Backup em Diretório Centralizado
+
+```bash
+# Mantém o diretório de origem limpo; centraliza backups
+atomwrite --workspace . backup --output-dir /var/backups/atomwrite src/critical.rs
+```
+
+### Instalar Completions de Shell no Primeiro Uso
+
+```bash
+# Auto-instala em ~/.local/share/bash-completion/completions/atomwrite
+atomwrite completions bash --install
+```
+
+### Usar Variável de Ambiente para Workspace
+
+```bash
+# Para agentes que não passam --workspace explicitamente
+export ATOMWRITE_WORKSPACE=/home/usuario/projeto
+atomwrite read src/main.rs
+```

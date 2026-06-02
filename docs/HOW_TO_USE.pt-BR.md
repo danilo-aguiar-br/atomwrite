@@ -313,6 +313,8 @@ cat manifest.ndjson | atomwrite batch --dry-run
 - `--max-filesize <BYTES>` -- ignora arquivos maiores que este limite
 - `--json-schema` -- emite JSON schema da saída do subcomando
 - `--lang <LOCALE>` -- substitui o locale de exibição (en, pt-BR)
+- `--timeout <SECONDS>` -- timeout global de operação (0 = sem timeout)
+- `--grep <REGEX>` em `read` para filtrar linhas retornadas às que casam com regex
 
 
 ## Configuração
@@ -320,8 +322,9 @@ cat manifest.ndjson | atomwrite batch --dry-run
 - Todo comportamento é controlado via flags de linha de comando
 - Use `--workspace` para definir o limite do diretório do projeto
 - Use `--json-schema` para inspecionar o formato de saída em tempo de execução
-- Gere completions de shell com `atomwrite completions bash`
+- Gere completions de shell com `atomwrite completions bash` ou auto-instale com `atomwrite completions bash --install` (escreve no diretório XDG)
 - `ATOMWRITE_LANG`: substitui o locale para mensagens traduzidas
+- `ATOMWRITE_WORKSPACE`: define a raiz do workspace para validação do jail de caminho
 - `NO_COLOR`: desabilita saída colorida quando definida (veja https://no-color.org)
 - `RAYON_NUM_THREADS`: sobrescreve número de threads paralelas
 

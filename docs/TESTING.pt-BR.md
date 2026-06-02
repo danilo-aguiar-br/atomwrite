@@ -15,7 +15,8 @@
 
 ## Estatísticas Atuais
 - 64+ arquivos Rust em `src/` e `tests/`
-- 282 testes no total (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON)
+- 292+ testes no total em 33 suítes (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão)
+- 10 testes de regressão em `tests/cli_v012_regressions.rs` (adicionados em v0.1.2)
 - 9 arquivos de snapshot em `tests/snapshots/`
 - 2 arquivos de regressão proptest
 - 2 alvos de fuzzing em `fuzz/fuzz_targets/`

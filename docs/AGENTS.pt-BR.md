@@ -100,7 +100,9 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 ### Read (read)
 - Receba path, content, lines, bytes, checksum, permissions, modified, kind
 - Use `--stat` para pular conteúdo (apenas metadados)
-- Use `--lines START:END` para leituras parciais
+- Use `--lines START:END` para leituras parciais (1-based inclusivo)
+- Use `--head N` para primeiras N linhas, `--tail N` para últimas N linhas
+- Use `--grep <REGEX>` para filtrar linhas retornadas às que casam com regex
 - Arquivos binários são auto-detectados e conteúdo é omitido
 
 ### Update (edit, replace, transform)
@@ -222,6 +224,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `--follow-symlinks` -- segue links simbólicos
 - `--threads <N>` / `-j <N>` -- threads paralelas (0 = todos os cores)
 - `--max-filesize <BYTES>` -- ignora arquivos maiores que o limite
+- `--timeout <SECONDS>` -- timeout global de operação (0 = sem timeout, padrão 0). Use para limitar buscas longas, batches e operações replace
 - `--json-schema` -- emite JSON schema da saída do subcomando
 - `--lang <LOCALE>` -- substitui o locale de exibição (en, pt-BR) via env `ATOMWRITE_LANG`
 

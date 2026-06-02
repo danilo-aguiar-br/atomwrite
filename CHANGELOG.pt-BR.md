@@ -11,6 +11,44 @@
 ## [Unreleased]
 
 
+## [0.1.2] - 2026-06-02
+
+### Correções (CRÍTICAS)
+- **Falha de compilação no macOS** — `nix::fcntl::posix_fadvise` restrito a `cfg(target_os = "linux")` então atomwrite agora compila no macOS arm64/Intel (a crate nix restringe o símbolo apenas em `linux_android | emscripten | fuchsia | freebsd`, quebrando o macOS anteriormente)
+- **`batch --transaction` rollback agora é real** — arquivos pré-existentes são restaurados E arquivos novos criados por operações `write` são removidos. O evento NDJSON `rollback` agora reporta `files_restored`, `files_removed` e `total_reverted` para que LLMs verifiquem o contrato ACID. Anteriormente, arquivos criados no meio da transação nunca eram limpos.
+- **`replace` não infla mais contadores em violações de jail** — `total_replacements` é incrementado apenas DEPOIS da validação do jail do workspace passar. Violações agora emitem um evento de erro `JailViolation` com `error_class: permanent` e `retryable: false`.
+- **Eventos paralelos do `search` são agrupados por path** — threads paralelas do walker não intercalam mais eventos `begin`/`match`/`end` de arquivos diferentes na saída NDJSON. Consumidores (LLM e humanos) veem sequências contíguas de eventos por arquivo.
+- **`scope --delete` em comentários Rust não deixa mais espaço em branco órfão** — a query preparada para comentários Rust agora casa whitespace trailing, então a deleção produz código limpo.
+- **`search` com regex inválido emite envelope JSON estruturado** — padrões inválidos agora falham com `AtomwriteError::InvalidInput` que propaga através de `write_error_json` para stdout, não stderr cru.
+
+### Correções (ALTAS)
+- **`batch --file <PATH>` agora é funcional** — a flag está conectada via `cmd_batch` para ler o manifesto NDJSON de um arquivo (validado contra jail do workspace) em vez de apenas stdin.
+- **`backup --output-dir` agora é respeitado** — a flag vai através de `AtomicWriteOptions.backup_output_dir` para `create_backup_in`, que cria o diretório se estiver faltando e faz prune de backups antigos naquele diretório.
+
+### Correções (UX)
+- **Mensagem de erro de jail do workspace corrigida** — erros `WORKSPACE_JAIL` agora sugerem `--workspace <root>` ou `ATOMWRITE_WORKSPACE=<path>` em vez da enganosa "use an absolute path" (que estava errada quando o path já era absoluto).
+- **Bug de retenção de backup do proptest corrigido** — `cleanup_old_backups_in` agora poda corretamente backups antigos ao usar `create_backup_in` com diretório de saída customizado.
+
+### Mudado (Dependências)
+- `nix` atualizado de 0.29 para 0.31 (estável mais recente)
+- `signal-hook` atualizado de 0.3 para 0.4 (estável mais recente)
+- `windows-sys` atualizado de 0.59 para 0.61 (estável mais recente)
+- `rust-i18n` atualizado de 3 para 4 (estável mais recente)
+- Assinatura de `nix::fcntl::posix_fadvise` mudou de `AsRawFd` para `AsFd` em 0.31 — código adaptado adequadamente
+
+### Adicionado (Funcionalidades Agent-First)
+- Flag global `--timeout <SECONDS>` para tempo limite de execução (0 = sem timeout, padrão 0)
+- Flag `--grep <REGEX>` em `read` para filtrar linhas retornadas por regex
+- `completions --install` para instalar scripts de completions no diretório de dados XDG (`~/.local/share/bash-completion/completions/atomwrite` para Bash, etc.)
+
+### Segurança
+- Baseline do `cargo audit` reconhece 1 vulnerabilidade: `RUSTSEC-2026-0009` em `time 0.3.45` (DoS via exaustão de pilha). Correção requer `time >= 0.3.47` que precisa de Rust 1.88. Nossa MSRV é 1.85, e atomwrite usa `time` apenas via `tracing-appender` para timestamps de log — não explorável. Rastreado para bump de MSRV em 0.2.0.
+
+### Testes
+- 10 novos testes de regressão em `tests/cli_v012_regressions.rs` cobrindo todos os 6 bugs fixos
+- Total: 33 suítes de teste, 292+ testes passando (era 282 em v0.1.1)
+
+
 ## [0.1.1] - 2026-06-01
 
 ### Fixed
@@ -99,6 +137,7 @@
 - Perfil release com LTO, codegen unit único, stripping de símbolos e panic=abort
 
 
-[Unreleased]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/daniloaguiarbr/atomwrite/releases/tag/v0.1.0

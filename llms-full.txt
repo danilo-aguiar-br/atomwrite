@@ -4,6 +4,8 @@
 
 atomwrite is a Rust CLI that provides 22 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
+**Latest release: v0.1.2** — Critical macOS build fix, 6 bug fixes, 4 dependency updates (nix 0.31, signal-hook 0.4, windows-sys 0.61, rust-i18n 4), and agent-first features (`--timeout`, `--grep`, `completions --install`).
+
 
 ## Installation
 
@@ -59,6 +61,13 @@ cargo install atomwrite
 - `--rewrite <PATTERN>` -- rewrite pattern for AST transform
 - `--line-ending lf|crlf|cr|auto` -- normalize line endings on write and edit
 - `--lang <LOCALE>` (global) -- override display locale (en, pt-BR) for translated messages
+- `--timeout <SECONDS>` (global, v0.1.2+) -- global operation timeout (0 = no timeout)
+- `--grep <REGEX>` (read, v0.1.2+) -- filter returned lines to those matching a regex
+- `--head N` / `--tail N` (read) -- read first/last N lines
+- `--lines START:END` (read) -- partial read with 1-based inclusive range
+- `--file <PATH>` (batch, v0.1.2+) -- read NDJSON manifest from file instead of stdin
+- `--output-dir <DIR>` (backup, v0.1.2+) -- place backups in custom directory instead of source
+- `--install` (completions, v0.1.2+) -- install completions to XDG data directory
 
 
 ## Exit Codes
@@ -88,6 +97,7 @@ cargo install atomwrite
 - `NO_COLOR` -- disable colored output
 - `RUST_LOG` -- control log verbosity
 - `ATOMWRITE_LANG` -- override locale for translated messages (en, pt-BR)
+- `ATOMWRITE_WORKSPACE` -- set the workspace root for path jail validation
 
 
 ## Usage Examples

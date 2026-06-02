@@ -8,9 +8,12 @@
 - Apenas a release mais recente recebe atualizações de segurança
 - Atualize para a versão mais recente antes de reportar
 
-| Versão  | Suportada |
-|---------|-----------|
-| 0.1.x   | Sim       |
+| Versão  | Suportada           |
+|---------|---------------------|
+| 0.1.2   | Sim                 |
+| 0.1.1   | Sim                 |
+| 0.1.0   | Não (atualize)      |
+| < 0.1.0 | Não (pré-release)   |
 
 
 ## Reportando uma Vulnerabilidade
@@ -41,9 +44,12 @@
 
 
 ## Política de Atualização de Segurança
-- Patches de segurança são lançados como point releases (ex: 0.1.1)
+- Patches de segurança são lançados como point releases (ex: 0.1.2)
 - Anúncios são publicados via GitHub Security Advisories
 - Usuários devem se inscrever nas notificações do repositório para atualizações oportunas
+
+## Advisories de Segurança Conhecidas (v0.1.2)
+- **RUSTSEC-2026-0009** em `time 0.3.45` (transitivo via `tracing-appender`): DoS via exaustão de pilha no parsing de tempo. A correção requer `time >= 0.3.47` que precisa de Rust 1.88. Nossa MSRV é 1.85, e atomwrite usa `time` apenas via `tracing-appender` para timestamps de log — não explorável via entrada do usuário. Reconhecido em `deny.toml` e rastreado para bump de MSRV em v0.2.0.
 
 
 ## Hall da Fama

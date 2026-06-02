@@ -8,9 +8,12 @@
 - Only the latest release receives security updates
 - Upgrade to the latest version before reporting
 
-| Version | Supported |
-|---------|-----------|
-| 0.1.x   | Yes       |
+| Version | Supported          |
+|---------|--------------------|
+| 0.1.2   | Yes                |
+| 0.1.1   | Yes                |
+| 0.1.0   | No (upgrade)       |
+| < 0.1.0 | No (pre-release)   |
 
 
 ## Reporting a Vulnerability
@@ -41,9 +44,12 @@
 
 
 ## Security Update Policy
-- Security patches are released as point releases (e.g., 0.1.1)
+- Security patches are released as point releases (e.g., 0.1.2)
 - Announcements are posted via GitHub Security Advisories
 - Users should subscribe to repository notifications for timely updates
+
+## Known Security Advisories (v0.1.2)
+- **RUSTSEC-2026-0009** in `time 0.3.45` (transitive via `tracing-appender`): DoS via stack exhaustion in time parsing. The fix requires `time >= 0.3.47` which needs Rust 1.88. Our MSRV is 1.85, and atomwrite uses `time` only via `tracing-appender` for log timestamps — not exploitable via user input. Acknowledged in `deny.toml` and tracked for MSRV bump in v0.2.0.
 
 
 ## Hall of Fame

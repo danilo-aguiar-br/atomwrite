@@ -5,9 +5,65 @@
 
 
 ## Current Version
-- atomwrite is at v0.1.1
-- This document covers migration from v0.1.0 to v0.1.1
-- See the section below for additive changes in v0.1.1
+- atomwrite is at v0.1.2
+- This document covers migration from v0.1.1 to v0.1.2
+- See the section below for additive changes in v0.1.2
+
+
+## v0.1.1 to v0.1.2
+
+### v0.1.2 (Current)
+
+#### Fixed (Bug Fixes)
+
+##### `batch --transaction` rollback is now real
+Previously, files created by `write` operations during a transaction were never removed on rollback. Now:
+- `RollbackEvent` includes `files_restored`, `files_removed`, and `total_reverted`
+- New files created mid-transaction are deleted on rollback
+- Pre-existing modified files are restored from backup
+
+Affected consumers (LLM agents): trust the NDJSON `rollback` event — disk state matches it.
+
+##### `replace` no longer inflates counters on jail violations
+Previously, `total_replacements` was incremented for files outside the workspace jail. Now:
+- Jail validation runs BEFORE counter increment
+- Violations emit `ReplaceErrorEvent` with `kind: jail_violation`, `error_class: permanent`, `retryable: false`
+- `total_replacements` reflects only in-jail matches
+
+##### `search` parallel events are now grouped by path
+The parallel walker no longer interleaves `begin`/`match`/`end` events from different files. Event sequences for a given path are now contiguous in NDJSON output.
+
+##### `scope --delete` Rust comments no longer leaves orphan whitespace
+The `comments` prepared query for Rust now matches trailing whitespace so deletion produces clean code.
+
+##### `search` invalid regex emits structured JSON envelope
+Invalid patterns now fail with `AtomwriteError::InvalidInput` which is serialized as `error.json` on stdout, not raw stderr.
+
+##### `batch --file <PATH>` is now functional
+The flag now actually reads the NDJSON manifest from a file (validated against workspace jail) instead of being ignored.
+
+##### `backup --output-dir <DIR>` is now respected
+The flag now places backups in the custom directory (created if missing) and prunes old backups in that directory.
+
+##### WORKSPACE_JAIL error message corrected
+The misleading "use an absolute path" suggestion is now "set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>".
+
+#### Added (Agent-First Features)
+
+- `--timeout <SECONDS>` global flag for bounded execution (0 = no timeout, default 0)
+- `read --grep <REGEX>` filter to return only lines matching a regex
+- `completions --install` to install completion scripts to XDG data directory
+
+#### Changed (Dependencies)
+
+- `nix` 0.29 → 0.31
+- `signal-hook` 0.3 → 0.4
+- `windows-sys` 0.59 → 0.61
+- `rust-i18n` 3 → 4
+
+#### Cross-Platform
+
+atomwrite v0.1.2 now compiles on macOS arm64 (Apple Silicon) and macOS x86_64. The `posix_fadvise` syscall is now correctly gated to `target_os = "linux"` only.
 
 
 ## What Changes

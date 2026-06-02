@@ -61,6 +61,7 @@
 ## Shell Support
 ### bash
 - Generate completions: `atomwrite completions bash > ~/.local/share/bash-completion/completions/atomwrite`
+- Auto-install (v0.1.2+): `atomwrite completions bash --install` writes directly to XDG data dir
 - Reload: `source ~/.bashrc`
 
 ### zsh
@@ -81,9 +82,15 @@
 - atomwrite uses absolute paths in all NDJSON output
 - Relative paths in arguments are resolved against the workspace root
 - `--workspace` defaults to the current working directory
-- No XDG directories are created or used
-- No configuration files are read from disk
-- Backup files are stored alongside the original with a timestamp suffix
+- `--workspace` is required when set via the `ATOMWRITE_WORKSPACE` environment variable
+- Backup files are stored alongside the original with a timestamp suffix, unless `--output-dir` is set
+- The `completions --install` command writes to XDG data directories (`$XDG_DATA_HOME` or `~/.local/share`)
+
+
+## Build Requirements per Platform
+- **Linux** (x86_64, aarch64): Rust 1.85+, standard glibc
+- **macOS** (Intel, Apple Silicon): Rust 1.85+, Nix compatibility is restricted to `cfg(target_os = "linux")` so `posix_fadvise` is a no-op on macOS (added in v0.1.2 — before v0.1.2, the build failed on macOS)
+- **Windows** (x86_64): Rust 1.85+, MSVC toolchain, `windows-sys` 0.61 (updated in v0.1.2)
 
 
 ## Performance by Target

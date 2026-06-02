@@ -554,3 +554,56 @@ new_function_name
 >>>> END
 EOF
 ```
+
+
+## Agent-First Patterns (v0.1.2+)
+
+### Bound a Long Search with Timeout
+
+```bash
+# Aborts after 60s if search doesn't finish; emits NDJSON error with error_class=transient
+atomwrite --workspace . --timeout 60 search 'TODO' src/
+```
+
+### Read Only Lines Matching a Regex
+
+```bash
+# Useful for extracting logs from huge files without exhausting context
+atomwrite --workspace . read --grep 'ERROR|WARN' /var/log/app.log
+```
+
+### Read First N Lines of a Huge File
+
+```bash
+# Avoids loading the entire file into context
+atomwrite --workspace . read --head 20 huge.log
+```
+
+### Batch from File Instead of stdin
+
+```bash
+# Persisted manifest file (NDJSON, one op per line)
+atomwrite --workspace . batch --file ops.ndjson
+```
+
+### Backup to a Centralized Directory
+
+```bash
+# Keep source directory clean; centralize backups
+atomwrite --workspace . backup --output-dir /var/backups/atomwrite src/critical.rs
+```
+
+### Install Shell Completions on First Use
+
+```bash
+# Auto-installs to ~/.local/share/bash-completion/completions/atomwrite
+atomwrite completions bash --install
+```
+
+### Use the Environment Variable for Workspace
+
+```bash
+# For agents that don't pass --workspace explicitly
+export ATOMWRITE_WORKSPACE=/home/user/project
+atomwrite read src/main.rs
+```
