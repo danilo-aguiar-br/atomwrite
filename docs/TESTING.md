@@ -15,9 +15,10 @@
 
 ## Current Stats
 - 64+ Rust files across `src/` and `tests/`
-- 292+ tests total across 33 test suites (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression)
+- 294 tests total across 33 test suites (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression)
 - 10 regression tests in `tests/cli_v012_regressions.rs` (added in v0.1.2)
-- 9 snapshot files in `tests/snapshots/`
+- 2 new mtime regression tests in `src/atomic.rs::tests` (added in v0.1.3): `atomic_write_updates_mtime_by_default` and `atomic_write_preserves_mtime_when_opted_in`
+- 9 snapshot files in `tests/snapshots/` (2 updated in v0.1.3 to include `mtime_preserved: false`)
 - 2 proptest regression files
 - 2 fuzz targets in `fuzz/fuzz_targets/`
 

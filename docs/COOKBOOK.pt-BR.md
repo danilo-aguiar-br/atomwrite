@@ -410,6 +410,31 @@ fi
 ```
 
 
+## Como Editar E Disparar Build Sem Touch Manual
+- Edite um arquivo fonte em um projeto Rust e dispare o cargo sem rodar `touch` manualmente:
+
+```bash
+atomwrite edit src/main.rs --old "old_text" --new "new_text"
+cargo build
+```
+
+- Isso funciona porque o `edit` atualiza o mtime por padrão, então o cargo vê o fonte como mais novo que o arquivo dep-info e recompila.
+- Se você desativar a atualização de mtime com `--preserve-timestamps`, o cargo pode pular o rebuild silenciosamente (o famoso no-op `Finished in 0.29s`):
+
+```bash
+atomwrite edit --preserve-timestamps src/main.rs --old "old_text" --new "new_text"
+cargo build  # pode ser um no-op silencioso, forçando você a tocar o arquivo manualmente
+```
+
+- Verifique se o mtime foi preservado lendo o campo `mtime_preserved` na resposta NDJSON:
+
+```bash
+atomwrite edit src/main.rs --old "old" --new "new" | atomwrite extract mtime_preserved
+```
+
+- Use `--preserve-timestamps` apenas para cenários de backup, snapshot ou builds reproduzíveis. Para desenvolvimento interativo, mantenha o padrão para que sistemas de build detectem suas mudanças.
+
+
 ## Como Criar Backups Com Retenção
 - Escreva um arquivo com backup automático:
 
@@ -606,4 +631,30 @@ atomwrite completions bash --install
 # Para agentes que não passam --workspace explicitamente
 export ATOMWRITE_WORKSPACE=/home/usuario/projeto
 atomwrite read src/main.rs
+```
+
+
+## Padrões Agent-First (v0.1.3+)
+
+### Editar e Disparar Build do Cargo Sem Touch Manual
+
+```bash
+# Novo padrão: edit atualiza o mtime, então o cargo rebuilda automaticamente
+atomwrite edit src/main.rs --old "texto_antigo" --new "texto_novo"
+cargo build  # rebuilda sem precisar de `touch` antes
+```
+
+### Ler mtime_preserved Da Resposta de Edit
+
+```bash
+# Parse a resposta NDJSON para verificar se o timestamp foi mantido
+atomwrite edit src/main.rs --old "antigo" --new "novo" | atomwrite extract mtime_preserved
+```
+
+### Preservar mtime Original Para Workflows de Backup ou Snapshot
+
+```bash
+# Voltar ao comportamento v0.1.2 de preservar o mtime original do arquivo
+atomwrite edit --preserve-timestamps src/snapshot.rs --old "antigo" --new "novo"
+atomwrite replace --preserve-timestamps 'old_api' 'new_api' src/
 ```

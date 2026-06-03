@@ -4,7 +4,9 @@
 
 atomwrite is a Rust CLI that provides 22 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
-**Latest release: v0.1.2** — Critical macOS build fix, 6 bug fixes, 4 dependency updates (nix 0.31, signal-hook 0.4, windows-sys 0.61, rust-i18n 4), and agent-first features (`--timeout`, `--grep`, `completions --install`).
+**Latest release: v0.1.3** — BREAKING change to atomic write default: mtime is now updated to reflect the edit (was preserved). Fixes silent no-op rebuilds in cargo/make/cmake/gradle. New `--preserve-timestamps` flag on `edit` and `replace` for opt-in behavior, plus `mtime_preserved` field in `EditOutput` and `ReplaceResult` NDJSON responses. 33 test suites, 294 tests passing.
+
+**Previous release: v0.1.2** — Critical macOS build fix, 6 bug fixes, 4 dependency updates (nix 0.31, signal-hook 0.4, windows-sys 0.61, rust-i18n 4), and agent-first features (`--timeout`, `--grep`, `completions --install`).
 
 
 ## Installation
@@ -68,6 +70,7 @@ cargo install atomwrite
 - `--file <PATH>` (batch, v0.1.2+) -- read NDJSON manifest from file instead of stdin
 - `--output-dir <DIR>` (backup, v0.1.2+) -- place backups in custom directory instead of source
 - `--install` (completions, v0.1.2+) -- install completions to XDG data directory
+- `--preserve-timestamps` (edit, replace, v0.1.3+) -- keep the original file mtime (default: mtime is updated to reflect the change). Critical for build systems (cargo, make, cmake) that use mtime to detect source changes
 
 
 ## Exit Codes

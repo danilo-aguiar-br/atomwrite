@@ -62,6 +62,7 @@ pub fn cmd_replace(
 
     let max_size = global.effective_max_filesize();
     let shutdown_flag = shutdown.flag();
+    let preserve_timestamps = args.preserve_timestamps;
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
             let pattern = pattern.clone();
@@ -162,7 +163,7 @@ pub fn cmd_replace(
                 let opts = AtomicWriteOptions {
                     backup,
                     retention: 5,
-                    preserve_timestamps: true,
+                    preserve_timestamps,
                     backup_output_dir: None,
                 };
 
@@ -177,6 +178,7 @@ pub fn cmd_replace(
                             checksum_before,
                             checksum_after: result.checksum,
                             elapsed_ms: result.elapsed_ms,
+                            mtime_preserved: preserve_timestamps,
                         });
                     }
                     Err(e) => {
@@ -206,6 +208,7 @@ pub fn cmd_replace(
                 checksum_before,
                 checksum_after,
                 elapsed_ms,
+                mtime_preserved,
             } => {
                 let path_str = path.display().to_string();
                 writer.write_event(&ReplaceResult {
@@ -217,6 +220,7 @@ pub fn cmd_replace(
                     checksum_before,
                     checksum_after,
                     elapsed_ms,
+                    mtime_preserved: Some(mtime_preserved),
                 })?;
             }
             ReplaceEvent::DryRun { path, replacements } => {
@@ -295,6 +299,7 @@ enum ReplaceEvent {
         checksum_before: String,
         checksum_after: String,
         elapsed_ms: u64,
+        mtime_preserved: bool,
     },
     DryRun {
         path: PathBuf,

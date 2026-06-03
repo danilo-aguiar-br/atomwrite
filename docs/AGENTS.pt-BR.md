@@ -52,7 +52,7 @@ echo "hello" | atomwrite write src/hello.txt
 atomwrite read src/hello.txt
 atomwrite search 'hello' src/
 atomwrite replace 'hello' 'world' src/
-atomwrite calc "2 hours + 30 minutes to seconds"
+atomwrite calc "2 horas + 30 minutos para segundos"
 ```
 
 
@@ -111,6 +111,8 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `transform` -- estrutural: reescrita por AST em codebases
 - Todos os três retornam checksums antes e depois da modificação
 - Todos os três suportam `--dry-run` para preview
+- `edit` e `replace` suportam `--preserve-timestamps` para dispensar a atualização de mtime (padrão: mtime é atualizado para refletir a mudança, então sistemas de build como cargo/make/cmake detectam a mudança do fonte sem `touch` manual)
+- A saída NDJSON de `edit` e `replace` inclui o campo `mtime_preserved: bool` para verificar qual caminho foi tomado
 
 ### Delete (delete)
 - Receba path, bytes, checksum_before

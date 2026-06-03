@@ -1,5 +1,6 @@
 ---
 source: tests/snapshot_write.rs
+assertion_line: 193
 expression: event
 ---
 {
@@ -13,6 +14,7 @@ expression: event
   "lines_after": 3,
   "lines_before": 3,
   "mode": "exact",
+  "mtime_preserved": false,
   "path": "[redacted]",
   "strategies_tried": 1,
   "strategy": "exact",

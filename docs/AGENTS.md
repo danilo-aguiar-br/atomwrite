@@ -111,6 +111,8 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `transform` -- structural: AST-aware rewrite across codebases
 - All three return checksums before and after modification
 - All three support `--dry-run` for preview
+- `edit` and `replace` support `--preserve-timestamps` to opt out of mtime updates (default: mtime is updated to reflect the change, so build systems like cargo/make/cmake detect the source change without manual `touch`)
+- `edit` and `replace` NDJSON output include `mtime_preserved: bool` field to verify which path was taken
 
 ### Delete (delete)
 - Receive path, bytes, checksum_before

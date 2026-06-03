@@ -2,8 +2,8 @@
 name: atomwrite
 description: |
   Use atomwrite for ALL file operations: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions.
-  Auto-invoke when user asks to: write files, search code, replace text, refactor AST, generate regex, calculate expressions, batch operations, check checksums, list project structure, scope code by grammar, backup files, rollback changes, apply patches.
-  Trigger on keywords: atomic write, file operation, NDJSON, BLAKE3, checksum, refactor, ast-grep, batch, search parallel, scope, backup, rollback, apply patch, timeout, install completions.
+  Auto-invoke when user asks to: write files, search code, replace text, refactor AST, generate regex, calculate expressions, batch operations, check checksums, list project structure, scope code by grammar, backup files, rollback changes, apply patches, edit and trigger cargo build, preserve file timestamps.
+  Trigger on keywords: atomic write, file operation, NDJSON, BLAKE3, checksum, refactor, ast-grep, batch, search parallel, scope, backup, rollback, apply patch, timeout, grep, install completions, mtime, preserve-timestamps, preserve timestamps, build system aware, cargo build, make, cmake.
 ---
 
 
@@ -67,6 +67,7 @@ echo "// header" | atomwrite --workspace . write --prepend src/main.rs
 - USE `read --head N` to read the first N lines
 - USE `read --tail N` to read the last N lines
 - USE `read --format raw` for raw content without JSON envelope
+- USE `read --grep <REGEX>` to filter returned lines to those matching a regex (v0.1.2+)
 - USE `read --verify-checksum <BLAKE3>` for integrity verification
 - Response includes `checksum`, `size`, `lines`
 ### Correct Pattern — Read
@@ -137,7 +138,8 @@ atomwrite --workspace . search 'unwrap' src/ --count --sort path
 - USE `--max-replacements N` (`-n`) to limit replacements per file
 - USE `--expect-checksum <BLAKE3>` for optimistic locking
 - USE `--backup` to create backup before modifying
-- Response includes `matches`, `files_modified`, per-file checksums
+- USE `--preserve-timestamps` to keep the original mtime of modified files (default: mtime is updated to reflect the change). Add this when integrating with build systems (cargo, make, cmake) that need stable timestamps
+- Response includes `matches`, `files_modified`, per-file checksums, and `mtime_preserved` field
 ### FORBIDDEN
 - NEVER run replace without `--dry-run` first
 ### Correct Pattern — Replace
@@ -148,6 +150,11 @@ atomwrite --workspace . replace 'old_api' 'new_api' src/
 ### Correct Pattern — Regex Replace
 ```bash
 atomwrite --workspace . replace --regex 'v\d+\.\d+' 'v2.0' src/ --include '*.toml'
+```
+### Correct Pattern — Replace With Preserved Mtime
+```bash
+# v0.1.3+: keep the original mtime of all replaced files
+atomwrite --workspace . replace --preserve-timestamps 'old_api' 'new_api' src/
 ```
 
 
@@ -166,10 +173,27 @@ atomwrite --workspace . replace --regex 'v\d+\.\d+' 'v2.0' src/ --include '*.tom
 - USE `--multi` to apply multiple edits from NDJSON stdin in a single atomic write
 - USE `--expect-checksum <BLAKE3>` for optimistic locking
 - USE `--line-ending lf|crlf|cr|auto` to normalize line endings
+- USE `--preserve-timestamps` to keep the original file mtime (default: mtime is updated to reflect the edit). Add this when integrating with build systems (cargo, make, cmake) that need stable timestamps
 - Pipe new content via stdin when using `--range`, `--after-line`, or `--before-line`
+- Note: `edit` and `replace` now update the mtime of the file by default (v0.1.3+). This is the correct behavior for cargo/make/cmake so they detect the change. For backup or reproducible builds, pass `--preserve-timestamps` to keep the original timestamp
 ### Correct Pattern — Edit by Text
 ```bash
 atomwrite --workspace . edit src/main.rs --old "old_text" --new "new_text"
+```
+### Correct Pattern — Edit With Preserved Mtime
+```bash
+# v0.1.3+: keep the original file mtime (e.g. for backup or snapshot workflows)
+atomwrite --workspace . edit --preserve-timestamps src/main.rs --old "old_text" --new "new_text"
+```
+### Correct Pattern — Verify Mtime Was Preserved
+```bash
+# v0.1.3+: read the mtime_preserved field from the NDJSON response
+atomwrite --workspace . edit src/main.rs --old "old" --new "new" | jaq -r '.mtime_preserved'
+```
+### Correct Pattern — Read Full NDJSON Edit Response
+```bash
+# v0.1.3+: the EditOutput envelope includes mtime_preserved as the last field
+atomwrite --workspace . edit src/main.rs --old "old" --new "new" | jaq 'del(.checksum_before, .checksum_after) | {type, mtime_preserved, bytes_after}'
 ```
 ### Correct Pattern — Multiple Replacements
 ```bash
@@ -450,6 +474,7 @@ atomwrite regex -d -w -s -r "example1" "example2"
 - USE `--retention N` to control how many backups to keep (default: 5)
 - USE `--output-dir <DIR>` to direct backups to a specific directory
 - USE `--dry-run` to preview
+- Note: `backup` uses `fs::copy` directly (not the atomic write pipeline), so the backup file inherits the SOURCE mtime, not the moment of backup creation. This is intentional and matches POSIX behavior for file copies
 ### Correct Pattern — Backup
 ```bash
 atomwrite --workspace . backup src/config.toml
@@ -479,6 +504,7 @@ atomwrite --workspace . rollback src/config.toml --timestamp 20260530_120000 --v
 - USE `--format auto|unified|search-replace|full|markdown` to force format
 - USE `--backup` to create backup before patching
 - USE `--dry-run` to preview
+- Note (v0.1.3+): `apply` updates the mtime of the target file by default (same as `edit` and `replace`). This ensures build systems detect the change. Use `--preserve-timestamps` to opt out (not yet exposed in the CLI for `apply`; if needed, edit the target before/after)
 ### Correct Pattern — Apply
 ```bash
 echo "new content" | atomwrite --workspace . apply src/file.txt --format full
@@ -519,6 +545,53 @@ atomwrite --workspace . diff src/old.rs src/new.rs | jaq '.type'
 ```bash
 cat ops.ndjson | atomwrite --workspace . batch --transaction --dry-run
 cat ops.ndjson | atomwrite --workspace . batch --transaction
+```
+### Correct Pattern — Verify mtime Behavior of Edit (v0.1.3+)
+```bash
+# Edit and confirm whether the mtime was preserved or updated (boolean)
+atomwrite --workspace . edit src/main.rs --old "old" --new "new" | jaq -r '.mtime_preserved'
+```
+### Correct Pattern — Edit and Trigger Build Without Manual Touch (v0.1.3+)
+```bash
+# Default behavior of edit updates the mtime, so cargo/make/cmake detect the change
+atomwrite --workspace . edit src/main.rs --old "old" --new "new"
+cargo build
+```
+
+
+## Agent-First Patterns (v0.1.3+)
+
+### Edit Source File and Trigger Build Without Manual Touch
+
+```bash
+# New default: edit updates the mtime, so cargo/make/cmake rebuild automatically
+atomwrite --workspace . edit src/main.rs --old "old_text" --new "new_text"
+cargo build  # rebuilds without needing `touch` first
+```
+
+### Read mtime_preserved From Edit Response
+
+```bash
+# Parse the NDJSON response to verify whether the timestamp was kept
+atomwrite --workspace . edit src/main.rs --old "old" --new "new" | jaq -r '.mtime_preserved'
+```
+
+### Preserve Original mtime For Backup or Snapshot Workflows
+
+```bash
+# Opt back into the v0.1.2 behavior of preserving the original file mtime
+atomwrite --workspace . edit --preserve-timestamps src/snapshot.rs --old "old" --new "new"
+atomwrite --workspace . replace --preserve-timestamps 'old_api' 'new_api' src/
+```
+
+### Verify Edit Did Not Silently Skip a Build
+
+```bash
+# Diagnostic: confirm the mtime was updated, not preserved
+result=$(atomwrite --workspace . edit src/main.rs --old "old" --new "new" | jaq -r '.mtime_preserved')
+if [ "$result" = "true" ]; then
+  echo "WARNING: mtime was preserved. Build systems may skip the rebuild. Use --preserve-timestamps=false or pass it explicitly."
+fi
 ```
 
 
@@ -584,6 +657,7 @@ fi
 - `--workspace <DIR>` — set the workspace jail root (REQUIRED for file operations)
 - `--max-filesize <BYTES>` — maximum accepted file size in bytes (default: 1 GiB)
 - `--threads <N>` / `-j` — number of parallel threads (0 = all cores, env: `RAYON_NUM_THREADS`)
+- `--timeout <SECONDS>` — global operation timeout in seconds, 0 means no timeout (v0.1.2+, default: 0)
 - `--json-schema` — print the output JSON schema for any subcommand
 - `--json` — accepted for compatibility but ignored (output is ALWAYS NDJSON)
 - `--color auto|always|never` — control colored output

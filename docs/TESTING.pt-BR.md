@@ -15,9 +15,10 @@
 
 ## Estatísticas Atuais
 - 64+ arquivos Rust em `src/` e `tests/`
-- 292+ testes no total em 33 suítes (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão)
+- 294 testes no total em 33 suítes (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão)
 - 10 testes de regressão em `tests/cli_v012_regressions.rs` (adicionados em v0.1.2)
-- 9 arquivos de snapshot em `tests/snapshots/`
+- 2 novos testes de regressão de mtime em `src/atomic.rs::tests` (adicionados em v0.1.3): `atomic_write_updates_mtime_by_default` e `atomic_write_preserves_mtime_when_opted_in`
+- 9 arquivos de snapshot em `tests/snapshots/` (2 atualizados em v0.1.3 para incluir `mtime_preserved: false`)
 - 2 arquivos de regressão proptest
 - 2 alvos de fuzzing em `fuzz/fuzz_targets/`
 

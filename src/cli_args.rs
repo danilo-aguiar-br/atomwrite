@@ -406,6 +406,15 @@ pub struct EditArgs {
     /// Preview without writing.
     #[arg(long, help = "Show what would be done without writing")]
     pub dry_run: bool,
+
+    /// Preserve original modification time (mtime) of the file.
+    /// Default is false: mtime is updated to reflect the edit.
+    /// Set true for backup workflows, version control snapshots, or
+    /// reproducible builds that depend on stable timestamps.
+    /// Note: setting true may break build systems that use mtime to
+    /// detect source changes (cargo, make, cmake, gradle).
+    #[arg(long, help = "Preserve original mtime (default: update mtime to now)")]
+    pub preserve_timestamps: bool,
 }
 
 /// Arguments for the search subcommand.
@@ -555,6 +564,15 @@ pub struct ReplaceArgs {
     /// Preview without writing.
     #[arg(long, help = "Show what would be done without writing")]
     pub dry_run: bool,
+
+    /// Preserve original modification time (mtime) of replaced files.
+    /// Default is false: mtime is updated to reflect the change.
+    /// Set true for backup workflows, version control snapshots, or
+    /// reproducible builds that depend on stable timestamps.
+    /// Note: setting true may break build systems that use mtime to
+    /// detect source changes (cargo, make, cmake, gradle).
+    #[arg(long, help = "Preserve original mtime (default: update mtime to now)")]
+    pub preserve_timestamps: bool,
 }
 
 /// Arguments for the list subcommand.

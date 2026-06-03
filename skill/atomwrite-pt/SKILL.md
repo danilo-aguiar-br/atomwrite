@@ -2,8 +2,8 @@
 name: atomwrite
 description: |
   Use atomwrite para TODAS as operações de arquivo: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions.
-  Auto-invocar quando o usuário pedir: escrever arquivos, buscar código, substituir texto, refatorar AST, gerar regex, calcular expressões, operações em lote, verificar checksums, listar estrutura, escopo gramatical, backup de arquivos, rollback, aplicar patches.
-  Palavras-chave: escrita atômica, operação de arquivo, NDJSON, BLAKE3, checksum, refatorar, ast-grep, lote, busca paralela, scoping, backup, rollback, aplicar patch, timeout, instalar completions.
+  Auto-invocar quando o usuário pedir: escrever arquivos, buscar código, substituir texto, refatorar AST, gerar regex, calcular expressões, operações em lote, verificar checksums, listar estrutura, escopo gramatical, backup de arquivos, rollback, aplicar patches, editar e disparar build do cargo, preservar timestamps de arquivos.
+  Palavras-chave: escrita atômica, operação de arquivo, NDJSON, BLAKE3, checksum, refatorar, ast-grep, lote, busca paralela, scoping, backup, rollback, aplicar patch, timeout, grep, instalar completions, mtime, preservar timestamps, preservação de timestamp, consciência de sistema de build, cargo build, make, cmake.
 ---
 
 
@@ -67,6 +67,7 @@ echo "// header" | atomwrite --workspace . write --prepend src/main.rs
 - USAR `read --head N` para ler as primeiras N linhas
 - USAR `read --tail N` para ler as últimas N linhas
 - USAR `read --format raw` para conteúdo puro sem envelope JSON
+- USAR `read --grep <REGEX>` para filtrar linhas retornadas às que casam com regex (v0.1.2+)
 - USAR `read --verify-checksum <BLAKE3>` para verificação de integridade
 - Resposta inclui `checksum`, `size`, `lines`
 ### Padrão Correto — Leitura
@@ -137,7 +138,8 @@ atomwrite --workspace . search 'unwrap' src/ --count --sort path
 - USAR `--max-replacements N` (`-n`) para limitar substituições por arquivo
 - USAR `--expect-checksum <BLAKE3>` para locking otimista
 - USAR `--backup` para criar backup antes de modificar
-- Resposta inclui `matches`, `files_modified`, checksums por arquivo
+- USAR `--preserve-timestamps` para manter o mtime original dos arquivos modificados (padrão: mtime é atualizado para refletir a mudança). Adicione ao integrar com sistemas de build (cargo, make, cmake) que precisam de timestamps estáveis
+- Resposta inclui `matches`, `files_modified`, checksums por arquivo e campo `mtime_preserved`
 ### PROIBIDO
 - NUNCA executar replace sem `--dry-run` primeiro
 ### Padrão Correto — Substituição
@@ -148,6 +150,11 @@ atomwrite --workspace . replace 'old_api' 'new_api' src/
 ### Padrão Correto — Substituição com Regex
 ```bash
 atomwrite --workspace . replace --regex 'v\d+\.\d+' 'v2.0' src/ --include '*.toml'
+```
+### Padrão Correto — Substituição Com mtime Preservado
+```bash
+# v0.1.3+: manter o mtime original de todos os arquivos substituídos
+atomwrite --workspace . replace --preserve-timestamps 'old_api' 'new_api' src/
 ```
 
 
@@ -166,10 +173,27 @@ atomwrite --workspace . replace --regex 'v\d+\.\d+' 'v2.0' src/ --include '*.tom
 - USAR `--multi` para aplicar múltiplas edições de uma vez (lê NDJSON do stdin)
 - USAR `--expect-checksum <BLAKE3>` para locking otimista
 - USAR `--line-ending lf|crlf|cr|auto` para normalizar quebras de linha
+- USAR `--preserve-timestamps` para manter o mtime original do arquivo (padrão: mtime é atualizado para refletir a edição). Adicione ao integrar com sistemas de build (cargo, make, cmake) que precisam de timestamps estáveis
 - Enviar novo conteúdo via stdin ao usar `--range`, `--after-line` ou `--before-line`
+- Nota: `edit` e `replace` agora atualizam o mtime do arquivo por padrão (v0.1.3+). Este é o comportamento correto para cargo/make/cmake detectarem a mudança. Para backup ou builds reproduzíveis, passe `--preserve-timestamps` para manter o timestamp original
 ### Padrão Correto — Edição por Texto
 ```bash
 atomwrite --workspace . edit src/main.rs --old "old_text" --new "new_text"
+```
+### Padrão Correto — Edição Com mtime Preservado
+```bash
+# v0.1.3+: manter o mtime original do arquivo (ex: para workflows de backup ou snapshot)
+atomwrite --workspace . edit --preserve-timestamps src/main.rs --old "old_text" --new "new_text"
+```
+### Padrão Correto — Verificar Se mtime Foi Preservado
+```bash
+# v0.1.3+: ler o campo mtime_preserved da resposta NDJSON
+atomwrite --workspace . edit src/main.rs --old "antigo" --new "novo" | jaq -r '.mtime_preserved'
+```
+### Padrão Correto — Ler Resposta NDJSON Completa de Edit
+```bash
+# v0.1.3+: o envelope EditOutput inclui mtime_preserved como último campo
+atomwrite --workspace . edit src/main.rs --old "antigo" --new "novo" | jaq 'del(.checksum_before, .checksum_after) | {type, mtime_preserved, bytes_after}'
 ```
 ### Padrão Correto — Múltiplas Substituições
 ```bash
@@ -450,6 +474,7 @@ atomwrite regex -d -w -s -r "exemplo1" "exemplo2"
 - USAR `--retention N` para controlar quantos backups manter (padrão: 5)
 - USAR `--output-dir <DIR>` para direcionar backups a diretório específico
 - USAR `--dry-run` para pré-visualizar
+- Nota: `backup` usa `fs::copy` diretamente (não o pipeline de escrita atômica), então o arquivo de backup herda o mtime da FONTE, não o momento da criação do backup. Isso é intencional e casa com o comportamento POSIX para cópias de arquivo
 ### Padrão Correto — Backup
 ```bash
 atomwrite --workspace . backup src/config.toml
@@ -479,6 +504,7 @@ atomwrite --workspace . rollback src/config.toml --timestamp 20260530_120000 --v
 - USAR `--format auto|unified|search-replace|full|markdown` para forçar formato
 - USAR `--backup` para criar backup antes de aplicar patch
 - USAR `--dry-run` para pré-visualizar
+- Nota (v0.1.3+): `apply` atualiza o mtime do arquivo alvo por padrão (mesmo que `edit` e `replace`). Isso garante que sistemas de build detectem a mudança. Use `--preserve-timestamps` para dispensar (ainda não exposto na CLI para `apply`; se necessário, edite o alvo antes/depois)
 ### Padrão Correto — Apply
 ```bash
 echo "novo conteudo" | atomwrite --workspace . apply src/file.txt --format full
@@ -519,6 +545,53 @@ atomwrite --workspace . diff src/old.rs src/new.rs | jaq '.type'
 ```bash
 cat ops.ndjson | atomwrite --workspace . batch --transaction --dry-run
 cat ops.ndjson | atomwrite --workspace . batch --transaction
+```
+### Padrão Correto — Verificar Comportamento de mtime do Edit (v0.1.3+)
+```bash
+# Edita e confirma se o mtime foi preservado ou atualizado (booleano)
+atomwrite --workspace . edit src/main.rs --old "antigo" --new "novo" | jaq -r '.mtime_preserved'
+```
+### Padrão Correto — Editar e Disparar Build Sem Touch Manual (v0.1.3+)
+```bash
+# Comportamento padrão do edit atualiza o mtime, então cargo/make/cmake detectam a mudança
+atomwrite --workspace . edit src/main.rs --old "antigo" --new "novo"
+cargo build
+```
+
+
+## Padrões Agent-First (v0.1.3+)
+
+### Editar Arquivo Fonte e Disparar Build Sem Touch Manual
+
+```bash
+# Novo padrão: edit atualiza o mtime, então cargo/make/cmake rebuildam automaticamente
+atomwrite --workspace . edit src/main.rs --old "texto_antigo" --new "texto_novo"
+cargo build  # rebuilda sem precisar de `touch` antes
+```
+
+### Ler mtime_preserved Da Resposta de Edit
+
+```bash
+# Parse a resposta NDJSON para verificar se o timestamp foi mantido
+atomwrite --workspace . edit src/main.rs --old "antigo" --new "novo" | jaq -r '.mtime_preserved'
+```
+
+### Preservar mtime Original Para Workflows de Backup ou Snapshot
+
+```bash
+# Voltar ao comportamento v0.1.2 de preservar o mtime original do arquivo
+atomwrite --workspace . edit --preserve-timestamps src/snapshot.rs --old "antigo" --new "novo"
+atomwrite --workspace . replace --preserve-timestamps 'old_api' 'new_api' src/
+```
+
+### Verificar Se Edit Não Pulou Silenciosamente um Build
+
+```bash
+# Diagnóstico: confirmar que o mtime foi atualizado, não preservado
+resultado=$(atomwrite --workspace . edit src/main.rs --old "antigo" --new "novo" | jaq -r '.mtime_preserved')
+if [ "$resultado" = "true" ]; then
+  echo "AVISO: mtime foi preservado. Sistemas de build podem pular o rebuild. Use --preserve-timestamps=false ou passe explicitamente."
+fi
 ```
 
 
@@ -584,6 +657,7 @@ fi
 - `--workspace <DIR>` — definir raiz do jail do workspace (OBRIGATÓRIO para operações de arquivo)
 - `--max-filesize <BYTES>` — tamanho máximo de arquivo aceito em bytes (padrão: 1 GiB)
 - `--threads <N>` / `-j` — número de threads paralelos (0 = todos os cores, env: `RAYON_NUM_THREADS`)
+- `--timeout <SECONDS>` — timeout global de operação em segundos, 0 significa sem timeout (v0.1.2+, padrão: 0)
 - `--json-schema` — imprimir o schema JSON de saída para qualquer subcomando
 - `--json` — aceita por compatibilidade mas ignorada (saída é SEMPRE NDJSON)
 - `--color auto|always|never` — controlar saída colorida

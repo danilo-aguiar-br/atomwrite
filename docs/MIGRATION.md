@@ -5,14 +5,53 @@
 
 
 ## Current Version
-- atomwrite is at v0.1.2
-- This document covers migration from v0.1.1 to v0.1.2
-- See the section below for additive changes in v0.1.2
+- atomwrite is at v0.1.3
+- This document covers migration from v0.1.1 to v0.1.2 AND v0.1.2 to v0.1.3
+- See the sections below for additive changes and breaking changes in each version
+
+
+## v0.1.2 to v0.1.3
+
+### v0.1.3 (Current)
+
+#### Changed (BREAKING)
+
+##### Atomic write default no longer preserves mtime
+
+The `edit` and `replace` subcommands now update the file modification time (mtime) to the moment the write completes, instead of preserving the original mtime. This is the correct default for build systems that use mtime to detect source changes.
+
+Before v0.1.3:
+- `edit` and `replace` hardcoded `AtomicWriteOptions::preserve_timestamps = true`
+- The mtime of the file was restored to the value it had BEFORE the atomic rename
+- Build systems that compare source mtime to dep-info mtime (cargo, make, cmake) would skip the rebuild silently when the source appeared older than the binary
+- Workaround: agents had to run `touch <file>` after `atomwrite edit` to force cargo to detect the change
+
+After v0.1.3:
+- `edit` and `replace` use `AtomicWriteOptions::preserve_timestamps = false` by default
+- The mtime is set to "now" automatically, so cargo detects the change without manual intervention
+- Agents no longer need `touch` after editing a Rust source file before `cargo build`
+- For backup, snapshot, or reproducible-build workflows that need the original timestamp, pass the new `--preserve-timestamps` flag
+
+Affected consumers (LLM agents):
+- If you build code after editing with atomwrite, the new default fixes a silent "Finished in 0.29s" no-op where cargo skips the rebuild
+- If you depend on the old mtime-preservation behavior, add `--preserve-timestamps` to your `edit` and `replace` invocations
+
+Diagnostic field:
+- `edit` and `replace` NDJSON output now include `mtime_preserved: bool` so you can verify which path was taken (true = timestamp kept, false = timestamp updated)
+
+#### Added (Build System Awareness)
+
+- `--preserve-timestamps` flag on `edit` and `replace` to opt back into the v0.1.2 mtime-preservation behavior
+- `mtime_preserved` field in `EditOutput` and `ReplaceResult` NDJSON responses
+
+#### Reference
+
+See `gaps.md` section "Atomic Edit Preserva mtime E Quebra Detecção De Mudança Pelo Cargo" (GAP 12) for the full root-cause analysis and design rationale.
 
 
 ## v0.1.1 to v0.1.2
 
-### v0.1.2 (Current)
+### v0.1.2
 
 #### Fixed (Bug Fixes)
 
@@ -256,7 +295,20 @@ atomwrite v0.1.2 now compiles on macOS arm64 (Apple Silicon) and macOS x86_64. T
 
 
 ## Compatibility Notes
-### v0.1.1 (Current)
+### v0.1.3 (Current)
+- BREAKING: `edit` and `replace` no longer preserve the original file mtime by default
+- New `--preserve-timestamps` flag on `edit` and `replace` restores the v0.1.2 behavior
+- New `mtime_preserved` field in `EditOutput` and `ReplaceResult` NDJSON responses
+- All v0.1.2 behavior preserved otherwise (macOS build fix, batch transaction fix, search event grouping, etc)
+
+### v0.1.2 (Previous)
+- All v0.1.1 behavior preserved
+- 6 critical bug fixes including macOS build, batch transaction, replace counter
+- 2 high-priority fixes (batch --file, backup --output-dir)
+- 3 agent-first flags (--timeout, --grep, completions --install)
+- 4 dependency updates (nix 0.31, signal-hook 0.4, windows-sys 0.61, rust-i18n 4)
+
+### v0.1.1
 - All v0.1.0 behavior preserved
 - New subcommands and flags are additive only
 - Exit codes unchanged from v0.1.0

@@ -18,6 +18,12 @@
 - Todo arquivo recebe checksum BLAKE3: detecta drift, verifica integridade, habilita locking otimista
 
 
+## O Que Há De Novo Na v0.1.3
+- Flag `--preserve-timestamps` em `edit` e `replace` para controlar o mtime do arquivo (padrão: mtime é atualizado para refletir a mudança)
+- Campo `mtime_preserved` nas respostas NDJSON de `EditOutput` e `ReplaceResult` para visibilidade diagnóstica
+- BREAKING: escrita atômica não preserva mais o mtime original do arquivo por padrão. Isso corrige um no-op silencioso em `cargo build` / `make` / `cmake` / `gradle` que ocorria quando o arquivo fonte parecia mais antigo que o binário. Veja o guia de migração v0.1.2 → v0.1.3 em `docs/MIGRATION.pt-BR.md`
+
+
 ## Por Que
 - Agentes LLM usam dezenas de comandos shell para manipular arquivos
 - Uma única falha de energia ou crash no meio da escrita corrompe o arquivo

@@ -8,8 +8,14 @@ atomwrite is a Rust CLI that provides 22 subcommands for file manipulation with 
 - [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.md): Installation, usage, all 22 commands, exit codes, error handling
 - [AGENTS.md](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget
 - [INTEGRATIONS](https://github.com/daniloaguiarbr/atomwrite/blob/main/INTEGRATIONS.md): Compatible agents and integration examples
-- [CHANGELOG](https://github.com/daniloaguiarbr/atomwrite/blob/main/CHANGELOG.md): Release history and version changes
+- [CHANGELOG](https://github.com/daniloaguiarbr/atomwrite/blob/main/CHANGELOG.md): Release history including v0.1.3 mtime default change and `--preserve-timestamps` flag
+- [MIGRATION](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/MIGRATION.md): v0.1.2 → v0.1.3 breaking change guidance for atomic write mtime default
 - [CONTRIBUTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/CONTRIBUTING.md): Development setup, PR process, testing guidelines
 - [SECURITY](https://github.com/daniloaguiarbr/atomwrite/blob/main/SECURITY.md): Vulnerability reporting and security policy
 - [Crates.io](https://crates.io/crates/atomwrite): Package registry listing
 - [Repository](https://github.com/daniloaguiarbr/atomwrite): Source code and issue tracker
+
+## v0.1.3 Highlights
+- `--preserve-timestamps` flag added to `edit` and `replace` (default: mtime is updated to reflect the edit)
+- `mtime_preserved` field added to `EditOutput` and `ReplaceResult` NDJSON responses
+- BREAKING: atomic write no longer preserves the original file mtime by default (was a silent no-op trigger for cargo/make/cmake/gradle)

@@ -31,7 +31,7 @@ impl Default for AtomicWriteOptions {
         Self {
             backup: false,
             retention: 5,
-            preserve_timestamps: true,
+            preserve_timestamps: false,
             backup_output_dir: None,
         }
     }
@@ -427,7 +427,7 @@ mod tests {
         let opts = AtomicWriteOptions::default();
         assert!(!opts.backup);
         assert_eq!(opts.retention, 5);
-        assert!(opts.preserve_timestamps);
+        assert!(!opts.preserve_timestamps);
     }
 
     #[test]
@@ -455,6 +455,59 @@ mod tests {
             backups.len() <= 5,
             "retention should keep at most 5 backups, got {}",
             backups.len()
+        );
+    }
+
+    #[test]
+    fn atomic_write_updates_mtime_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.txt");
+        std::fs::write(&file, "original").unwrap();
+
+        let original_meta = std::fs::metadata(&file).unwrap();
+        let original_mtime = filetime::FileTime::from_last_modification_time(&original_meta);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let opts = AtomicWriteOptions::default();
+        assert!(
+            !opts.preserve_timestamps,
+            "GAP 12 fix: default must update mtime so cargo/make detect the change"
+        );
+
+        let _ = atomic_write(&file, b"updated content", &opts, dir.path()).unwrap();
+
+        let new_meta = std::fs::metadata(&file).unwrap();
+        let new_mtime = filetime::FileTime::from_last_modification_time(&new_meta);
+        assert!(
+            new_mtime > original_mtime,
+            "default behavior must update mtime to now (was {:?}, now {:?})",
+            original_mtime,
+            new_mtime
+        );
+    }
+
+    #[test]
+    fn atomic_write_preserves_mtime_when_opted_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.txt");
+        std::fs::write(&file, "original").unwrap();
+
+        let original_meta = std::fs::metadata(&file).unwrap();
+        let original_mtime = filetime::FileTime::from_last_modification_time(&original_meta);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let opts = AtomicWriteOptions {
+            preserve_timestamps: true,
+            ..Default::default()
+        };
+
+        let _ = atomic_write(&file, b"updated content", &opts, dir.path()).unwrap();
+
+        let new_meta = std::fs::metadata(&file).unwrap();
+        let new_mtime = filetime::FileTime::from_last_modification_time(&new_meta);
+        assert_eq!(
+            new_mtime, original_mtime,
+            "preserve_timestamps=true must keep original mtime intact"
         );
     }
 }

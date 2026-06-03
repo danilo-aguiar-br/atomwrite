@@ -138,7 +138,7 @@ pub fn cmd_edit(
     let opts = AtomicWriteOptions {
         backup: false,
         retention: 5,
-        preserve_timestamps: true,
+        preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
     };
 
@@ -171,6 +171,7 @@ pub fn cmd_edit(
         strategy,
         strategies_tried,
         similarity,
+        mtime_preserved: Some(args.preserve_timestamps),
     };
 
     writer.write_event(&output)?;
@@ -376,13 +377,12 @@ fn cmd_edit_multi(
     let opts = AtomicWriteOptions {
         backup: false,
         retention: 5,
-        preserve_timestamps: true,
+        preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
     };
 
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
     let lines_after = edited.lines().count() as u64;
-
     let output = EditOutput {
         r#type: "edit",
         path: path_str,
@@ -399,6 +399,7 @@ fn cmd_edit_multi(
         strategy: None,
         strategies_tried: None,
         similarity: None,
+        mtime_preserved: Some(args.preserve_timestamps),
     };
 
     writer.write_event(&output)?;

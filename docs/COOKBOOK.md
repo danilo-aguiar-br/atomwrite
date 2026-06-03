@@ -410,6 +410,31 @@ fi
 ```
 
 
+## How to Edit and Trigger a Build Without Manual Touch
+- Edit a source file in a Rust project and trigger cargo without manually running `touch`:
+
+```bash
+atomwrite edit src/main.rs --old "old_text" --new "new_text"
+cargo build
+```
+
+- This works because `edit` updates the mtime by default, so cargo sees the source as newer than its dep-info file and recompiles.
+- If you opt out of mtime updates with `--preserve-timestamps`, cargo may skip the rebuild silently (the famous `Finished in 0.29s` no-op):
+
+```bash
+atomwrite edit --preserve-timestamps src/main.rs --old "old_text" --new "new_text"
+cargo build  # may be a silent no-op, forcing you to touch the file manually
+```
+
+- Check whether mtime was preserved by reading the `mtime_preserved` field in the NDJSON response:
+
+```bash
+atomwrite edit src/main.rs --old "old" --new "new" | atomwrite extract mtime_preserved
+```
+
+- Use `--preserve-timestamps` only for backup, snapshot, or reproducible-build scenarios. For interactive development, leave the default in place so build systems detect your changes.
+
+
 ## How to Create Backups With Retention
 - Write a file with automatic backup:
 
@@ -606,4 +631,30 @@ atomwrite completions bash --install
 # For agents that don't pass --workspace explicitly
 export ATOMWRITE_WORKSPACE=/home/user/project
 atomwrite read src/main.rs
+```
+
+
+## Agent-First Patterns (v0.1.3+)
+
+### Edit and Trigger Cargo Build Without Manual Touch
+
+```bash
+# New default: edit updates the mtime, so cargo rebuilds automatically
+atomwrite edit src/main.rs --old "old_text" --new "new_text"
+cargo build  # rebuilds without needing `touch` first
+```
+
+### Read mtime_preserved From Edit Response
+
+```bash
+# Parse the NDJSON response to verify whether the timestamp was kept
+atomwrite edit src/main.rs --old "old" --new "new" | atomwrite extract mtime_preserved
+```
+
+### Preserve Original mtime for Backup or Snapshot Workflows
+
+```bash
+# Opt back into the v0.1.2 behavior of preserving the original file mtime
+atomwrite edit --preserve-timestamps src/snapshot.rs --old "old" --new "new"
+atomwrite replace --preserve-timestamps 'old_api' 'new_api' src/
 ```

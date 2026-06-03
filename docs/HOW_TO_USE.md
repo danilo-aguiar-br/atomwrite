@@ -75,8 +75,10 @@ atomwrite edit src/main.rs --old "old_text" --new "new_text"
 - Use `--fuzzy auto|off|aggressive` for fuzzy text matching when exact match fails
 - Use `--multi` to apply multiple NDJSON edits in a single atomic write via stdin
 - Use `--line-ending lf|crlf|cr|auto` to normalize line endings (default: auto preserves original)
+- Use `--preserve-timestamps` to keep the original mtime of the file (default: mtime is updated to reflect the edit)
 - Returns checksums before and after for verification
 - Returns line counts before and after for auditing
+- Returns `mtime_preserved` flag in the NDJSON response
 
 ### search
 - Search file contents in parallel using the ripgrep engine
@@ -113,6 +115,7 @@ atomwrite replace --dry-run 'before' 'after' src/
 ```
 
 - Use `--dry-run` to preview replacements without modifying files
+- Use `--preserve-timestamps` to keep the original mtime of modified files (default: mtime is updated to reflect the change)
 - Returns per-file NDJSON with replacement count and checksums
 - Emits a summary line with total files and replacements
 
@@ -327,6 +330,24 @@ cat manifest.ndjson | atomwrite batch --dry-run
 - `ATOMWRITE_WORKSPACE`: set the workspace root for path jail validation
 - `NO_COLOR`: disable colored output when set (see https://no-color.org)
 - `RAYON_NUM_THREADS`: override number of parallel threads
+
+
+## Modification Time And Build Systems
+
+By default, `edit` and `replace` update the file modification time (`mtime`) to the moment the write completes. This is the correct behavior for build systems that use `mtime` to detect source changes (cargo, make, cmake, gradle, sbt, bazel, ninja, msbuild).
+
+What happens if you opt out of mtime updates:
+- Cargo compares the mtime of each source file against the `dep-info` file in `target/.fingerprint/`
+- When source mtime is older than dep-info mtime, cargo assumes nothing changed and skips the rebuild
+- This produces a silent no-op (`Finished in 0.29s`) where the binary is stale but cargo reports success
+
+When to preserve mtime with `--preserve-timestamps`:
+- You are creating a backup or snapshot of the file and want to keep its original timestamp
+- You are implementing a version control operation that mirrors historical state
+- You are generating a reproducible build artifact where source timestamps must match recorded metadata
+- You are writing to a file outside any build system context
+
+For interactive agent workflows, the safe default is to let `atomwrite` update the mtime. The `mtime_preserved` field in the NDJSON response tells you whether the timestamp was preserved or updated, which is critical for diagnosing missed rebuilds in build systems.
 
 
 ## Integration With AI Agents

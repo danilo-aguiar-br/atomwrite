@@ -215,6 +215,10 @@ pub struct ReplaceResult {
     pub checksum_after: String,
     /// Operation duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Whether the original modification time was preserved (true) or updated to now (false).
+    /// Critical for build systems: false ensures cargo/make/cmake detect the change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mtime_preserved: Option<bool>,
 }
 
 /// NDJSON output for a surgical edit operation.
@@ -254,6 +258,10 @@ pub struct EditOutput {
     /// Similarity score of the fuzzy match, 0.0-1.0 (only present for `block_anchor` strategy).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub similarity: Option<f64>,
+    /// Whether the original modification time was preserved (true) or updated to now (false).
+    /// Critical for build systems: false ensures cargo/make/cmake detect the change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mtime_preserved: Option<bool>,
 }
 
 /// NDJSON output for dry-run and diff preview operations.
@@ -922,6 +930,7 @@ mod tests {
             strategy: Some("block_anchor".into()),
             strategies_tried: Some(8),
             similarity: Some(0.95),
+            mtime_preserved: Some(false),
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -1010,6 +1019,7 @@ mod tests {
             checksum_before: "aaa".into(),
             checksum_after: "bbb".into(),
             elapsed_ms: 5,
+            mtime_preserved: Some(false),
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
