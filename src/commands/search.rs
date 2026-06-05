@@ -177,6 +177,22 @@ pub fn cmd_search(
         std::panic::resume_unwind(panic_payload);
     }
 
+    // If the search was interrupted by SIGINT/SIGTERM, the inner `for event`
+    // loop broke out before draining every Begin/End pair, so the buffered
+    // Begin events for in-flight files were never flushed and `has_matches`
+    // may be `false` even though the parallel walker did find matches
+    // (they are still sitting in the `buffer` and may also have been
+    // discarded by the break). Returning `Err(NoMatches)` here would be a
+    // lie — the search was killed, not empty — and would also cause the
+    // main entry point to take the `Err` branch and emit an error JSON
+    // envelope instead of the graceful "shutting down" banner that
+    // `atomwrite::signal::write_shutdown_message` writes from the main
+    // thread. Returning `Ok(())` lets the caller detect the shutdown via
+    // `shutdown.is_shutdown()` and emit the banner as designed.
+    if shutdown.is_shutdown() {
+        return Ok(());
+    }
+
     let summary = Summary {
         r#type: "summary",
         files_visited: files_visited.load(Ordering::Relaxed),

@@ -5,27 +5,6 @@
 #![deny(unsafe_code)]
 
 use std::io::{self, Write};
-
-// Allow unsafe only for the libc::write to STDERR_FILENO at shutdown. This is
-// the only unsafe operation in main and is required to bypass Rust's stderr
-// userspace buffer when stderr is redirected to a pipe (cargo test's
-// Stdio::piped() makes stderr fully-buffered, causing buffered writeln!
-// output to be lost on process exit).
-#[allow(unsafe_code)]
-fn write_shutdown_message_stderr() {
-    const SHUTDOWN_MSG: &[u8] = b"atomwrite: shutting down...\n";
-    // SAFETY: STDERR_FILENO is a valid file descriptor constant defined by
-    // POSIX, and SHUTDOWN_MSG is a 'static byte slice that remains valid for
-    // the duration of the write. libc::write is async-signal-safe and we are
-    // in the main thread (not signal context).
-    unsafe {
-        libc::write(
-            libc::STDERR_FILENO,
-            SHUTDOWN_MSG.as_ptr().cast(),
-            SHUTDOWN_MSG.len(),
-        );
-    }
-}
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -47,6 +26,19 @@ fn main() -> ExitCode {
     // gets killed by the default disposition with exit 128+SIGINT (130),
     // which is a different code path than our graceful shutdown and
     // produces no "shutting down" message on stderr.
+    //
+    // We install the FULL handler set here (not just the flag-only
+    // early-install variant) so that the main thread, the search polling
+    // inside `atomwrite::run`, and any other future consumer all share
+    // a single `Arc<ShutdownSignal>` instance. The previous design
+    // installed two separate `ShutdownSignal` instances (`install_handlers_early`
+    // returning signal A and `install_handlers` returning signal B) and
+    // the search polling observed flag A while the main-thread shutdown
+    // check observed flag B, which under signal-hook's chain-of-handlers
+    // ordering caused B to remain false in some timing windows — leading
+    // to the main thread taking the `Ok(())` branch with `is_shutdown()`
+    // returning false and the user-facing "shutting down" banner never
+    // being emitted.
     let _early_shutdown = atomwrite::signal::install_handlers_early();
     human_panic::setup_panic!();
 
@@ -113,26 +105,27 @@ fn main() -> ExitCode {
             if let Some(ref sig) = shutdown {
                 if sig.is_shutdown() {
                     // Emit user-facing shutdown message from the main thread.
-                    // This is the async-signal-safe equivalent of the previous
-                    // eprintln! in the signal handler. The signal handler is
-                    // forbidden from calling eprintln! per POSIX.1 signal-safety(7)
-                    // because Rust's stderr uses a global Mutex that can deadlock
-                    // or lose output if the signal arrives while another thread
-                    // holds the lock (observed on Linux/glibc; eprintln! output
-                    // was silently dropped before reaching the captured stderr
-                    // pipe in tests).
+                    // This is the async-signal-safe equivalent of a handler-side
+                    // eprintln!. The signal handler is forbidden from calling
+                    // eprintln! per POSIX.1 signal-safety(7) because Rust's
+                    // stderr uses a global Mutex that can deadlock or lose
+                    // output if the signal arrives while another thread holds
+                    // the lock (observed on Linux/glibc; eprintln! output was
+                    // silently dropped before reaching the captured stderr pipe
+                    // in tests).
                     //
-                    // We use libc::write(STDERR_FILENO, ...) which is async-
-                    // signal-safe per POSIX.1-2017 signal-safety(7) and writes
-                    // directly to fd 2 without any userspace buffering. This
-                    // bypasses Rust's stderr buffer (which is fully-buffered
-                    // when stderr is redirected to a pipe via Stdio::piped() in
-                    // cargo test, causing writeln! output to remain in the
-                    // buffer and be lost when the process exits before the
-                    // buffer is flushed). The libc::write goes straight to the
-                    // kernel, guaranteeing the bytes reach the captured pipe
-                    // before the process exits with the signal exit code.
-                    write_shutdown_message_stderr();
+                    // `atomwrite::signal::write_shutdown_message` uses
+                    // `libc::write(STDERR_FILENO, ...)` which is async-signal-
+                    // safe per POSIX.1-2017 signal-safety(7) and writes directly
+                    // to fd 2 without any userspace buffering. This bypasses
+                    // Rust's stderr buffer (which is fully-buffered when stderr
+                    // is redirected to a pipe via Stdio::piped() in cargo test,
+                    // causing writeln! output to remain in the buffer and be
+                    // lost when the process exits before the buffer is flushed).
+                    // The libc::write goes straight to the kernel, guaranteeing
+                    // the bytes reach the captured pipe before the process
+                    // exits with the signal exit code.
+                    atomwrite::signal::write_shutdown_message();
                     tracing::info!(signal = sig.exit_code(), "shutdown initiated");
                     ExitCode::from(sig.exit_code())
                 } else {

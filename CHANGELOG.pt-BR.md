@@ -10,7 +10,32 @@
 
 ## [Unreleased]
 
-### Corrigido (Falhas de CI - GAP 17 follow-up)
+## [0.1.11] - 2026-06-05
+
+### Corrigido (Falhas de CI - windows-2025-vs2026 + signal test flaky no Linux)
+- **E0433 do Windows `windows-2025-vs2026` resolvido** — `libc::write(STDERR_FILENO, ...)` e `libc::STDERR_FILENO` eram referenciados em `src/main.rs:22-23` em uma função compilada em todas as plataformas, mas `libc` é declarado apenas em `[target.'cfg(unix)'.dependencies]`. O build falhava no Windows com `error[E0433]: failed to resolve: use of unresolved module or unlinked crate 'libc'`. O escritor da mensagem de shutdown foi movido para `src/signal.rs` e protegido com `#[cfg(unix)]` (com corpo no-op `#[cfg(not(unix))]`), então o Windows usa o caminho ctrlc existente que emite a banner inline. A nova função `atomwrite::signal::write_shutdown_message()` também faz loop em `EINTR` e `EAGAIN` para ser robusta contra syscalls `write(2)` interrompidos e limites apertados de buffer de pipe impostos por alguns sandboxes de CI.
+- **`signal_test::shutdown_message_on_stderr` não falha mais intermitentemente no ubuntu-latest** — O teste anterior dormia 2 s antes de enviar SIGINT e afirmava que o stderr capturado continha "shutting down". Dois modos de falha independentes foram observados:
+  1. O comando search retornava `Err(NoMatches)` quando a flag `shutdown.is_shutdown()` disparava no meio do scan, porque as threads paralelas do walker tinham eventos Begin bufferizados que nunca foram pareados com eventos End, deixando `has_matches = false`. `main.rs` então seguia o branch `Err` e nunca chegava na escrita da banner de shutdown. `cmd_search` agora curto-circuita para `Ok(())` sempre que `shutdown.is_shutdown()` é true, então a main thread segue o branch `Ok(())` e emite a banner como projetado.
+  2. `install_handlers_early` e `install_handlers` criavam cada um seu próprio `Arc<ShutdownSignal>` (`signal A` para o polling do search dentro de `atomwrite::run`, `signal B` para a checagem `is_shutdown()` na main thread). Sob a ordenação de chain-of-handlers do `signal-hook`, apenas a primeira instância era flipada quando SIGINT chegava — a flag da segunda instância permanecia `false`, então a main thread seguia o branch `is_shutdown() == false` e saía com 0 sem escrever a banner. Ambas as funções agora compartilham uma única instância de `ShutdownSignal`: `install_handlers_early` instala a cadeia completa de handlers (flag + counter) e `install_handlers` é idempotente (retorna o `Arc` existente quando `GLOBAL_SHUTDOWN` já está populado).
+- **Teste usa `ATOMWRITE_READY_FILE` para detecção race-free de readiness** — `signal_test::shutdown_message_on_stderr` agora define `ATOMWRITE_READY_FILE` para um caminho sob o tempdir do teste e o atomwrite escreve seu PID nesse caminho assim que `install_handlers_early` retorna. O teste faz poll do arquivo com deadline de 10 s antes de enviar SIGINT, eliminando a janela de microssegundos onde SIGINT poderia competir com `posix_spawn` e chegar antes do `sigaction` do kernel ser configurado. Esta mudança é interna ao harness do teste e não tem efeito na superfície CLI publicada.
+
+### Validação
+- `cargo fmt -- --check`: PASS
+- `cargo clippy --all-features --all-targets -- -D warnings`: PASS
+- `cargo build --release`: PASS (1 m 14 s)
+- `cargo test --all-features`: 302/302 testes PASS em 33 suites de teste (5 execuções consecutivas do suite completo)
+- `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`: PASS
+- `cargo audit`: PASS (sem vulnerabilidades)
+- `cargo deny check`: PASS (advisories, bans, sources OK; um warning cosmético `license-not-encountered` para a allowance ISC não usada em `deny.toml`)
+
+### Notas
+- v0.1.11 é uma mudança NÃO-BREAKING. Nenhuma API pública foi modificada.
+- A escrita da mensagem de shutdown foi movida de `src/main.rs` para `src/signal.rs` como uma `pub fn` documentada. A função é `#[cfg(unix)]` (dependência de libc) e no-op em não-Unix. Apenas movimento de API interna.
+- v0.1.10 foi yanked do crates.io. Novo `cargo install` resolverá para v0.1.11.
+
+## [0.1.10] - 2026-06-05
+
+### Corrigido (Falhas de CI - GAP 20 follow-up)
 - **`signal_test::shutdown_message_on_stderr` faz flush da mensagem via `io::stderr().lock()`** — A primeira correção do v0.1.8 moveu `eprintln!` do signal handler para a main thread, mas usou `writeln!(io::stderr(), ...)` que é fully-buffered quando stderr é redirecionado para um pipe (como em `Stdio::piped()` do `cargo test`). O buffer nunca era flushado antes do processo terminar com o exit code do sinal, então o teste pai via stderr vazio. A correção usa `io::stderr().lock()` para adquirir o guard `StderrLock`, que faz flush do buffer no Drop. Isso garante que a mensagem chegue ao pipe de stderr capturado antes do processo terminar. CI ubuntu-latest confirmará no push.
 
 ## [0.1.8] - 2026-06-05

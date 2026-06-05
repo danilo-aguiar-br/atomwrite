@@ -183,7 +183,7 @@ fn batch_interrupted_by_signal() {
 #[test]
 fn shutdown_message_on_stderr() {
     use std::process::{Command, Stdio};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     let dir = tempfile::tempdir().unwrap();
     for i in 0..200 {
@@ -195,6 +195,8 @@ fn shutdown_message_on_stderr() {
     }
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
+    let ready_path = dir.path().join("ready");
+
     let child = Command::new(&bin)
         .args([
             "--workspace",
@@ -203,12 +205,28 @@ fn shutdown_message_on_stderr() {
             "searchable",
         ])
         .arg(dir.path())
+        .env("ATOMWRITE_READY_FILE", &ready_path)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
 
-    std::thread::sleep(Duration::from_millis(2000));
+    // Wait for atomwrite to install its signal handlers. Without this
+    // barrier, SIGINT can race `posix_spawn` and arrive before
+    // `install_handlers_early` calls `signal_hook::flag::register`, in
+    // which case the kernel's SIG_DFL disposition kills the child with
+    // no shutdown banner. Polling the readiness file is the only
+    // race-free way to observe handler installation without modifying
+    // the public CLI surface.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready_path.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        ready_path.exists(),
+        "atomwrite did not signal handler readiness within 10s"
+    );
+
     unsafe {
         libc::kill(child.id() as i32, libc::SIGINT);
     }
