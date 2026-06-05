@@ -679,7 +679,7 @@ atomwrite --workspace /home/user/project read /etc/passwd 2>/dev/null
 ## How to Install on Windows 10/11 (v0.1.4)
 - v0.1.4 finally fixes `cargo install atomwrite` on Windows
 - Install Visual Studio 2019+ Build Tools with the C++ workload
-- Install Rust 1.85+ via rustup
+- Install Rust 1.88+ via rustup
 - Run `cargo install atomwrite --locked`
 - See [INSTALL.md](INSTALL.md) for the full Windows troubleshooting guide
 

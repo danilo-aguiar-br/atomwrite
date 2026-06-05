@@ -91,9 +91,9 @@
 
 
 ## Build Requirements per Platform
-- **Linux** (x86_64, aarch64): Rust 1.85+, standard glibc
-- **macOS** (Intel, Apple Silicon): Rust 1.85+, Nix compatibility is restricted to `cfg(target_os = "linux")` so `posix_fadvise` is a no-op on macOS (added in v0.1.2 — before v0.1.2, the build failed on macOS)
-- **Windows** (x86_64): Rust 1.85+, MSVC toolchain, `windows-sys` 0.61 (updated in v0.1.2)
+- **Linux** (x86_64, aarch64): Rust 1.88+, standard glibc
+- **macOS** (Intel, Apple Silicon): Rust 1.88+, Nix compatibility is restricted to `cfg(target_os = "linux")` so `posix_fadvise` is a no-op on macOS (added in v0.1.2 — before v0.1.2, the build failed on macOS)
+- **Windows** (x86_64): Rust 1.88+, MSVC toolchain, `windows-sys` 0.61 (updated in v0.1.2)
 
 
 ## Performance by Target
@@ -118,7 +118,7 @@
 - NVMe drives: <1ms per write
 - Spinning drives: 5-15ms per write due to physical flush
 - v0.1.4 prerequisite: Visual Studio 2019+ Build Tools with "Desktop development with C++" workload
-- v0.1.4 prerequisite: Rust 1.85 or later
+- v0.1.4 prerequisite: Rust 1.88 or later
 - v0.1.4 prerequisite: Windows Terminal or PowerShell 7+ for proper UTF-8 output
 
 ### x86_64-pc-windows-gnu (cross-compile from Linux)

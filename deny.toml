@@ -3,9 +3,7 @@ targets = []
 all-features = true
 
 [advisories]
-ignore = [
-    { id = "RUSTSEC-2026-0009", reason = "time 0.3.47 requires Rust 1.88 (MSRV 1.85). DoS via stack exhaustion in time parsing — not exploitable: atomwrite uses time only via tracing-appender for log timestamps, never for user input parsing" },
-]
+ignore = []
 unmaintained = "workspace"
 
 [licenses]

@@ -10,7 +10,7 @@
 ### Quick Install (Ubuntu/Debian)
 
 ```bash
-# Install Rust 1.85 or later via rustup
+# Install Rust 1.88 or later via rustup
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
@@ -44,7 +44,7 @@ cargo install atomwrite --locked
 ### Quick Install
 
 ```bash
-# Install Rust 1.85+ via rustup
+# Install Rust 1.88+ via rustup
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
@@ -60,7 +60,7 @@ xattr -d com.apple.quarantine $(which atomwrite) 2>/dev/null || true
 
 ### Prerequisites
 
-1. **Rust 1.85 or later** — install via [rustup.rs](https://rustup.rs)
+1. **Rust 1.88 or later** — install via [rustup.rs](https://rustup.rs)
 2. **Visual Studio Build Tools 2019 or later** with the "Desktop development with C++" workload — required for linking. Download from [visualstudio.microsoft.com](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 3. **Windows Terminal** or **PowerShell 7+** (Windows Terminal recommended for UTF-8 rendering)
 4. **Git for Windows** if installing from source

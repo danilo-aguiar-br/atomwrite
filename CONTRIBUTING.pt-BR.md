@@ -21,7 +21,7 @@
 
 ## Setup de Desenvolvimento
 ### Pré-requisitos
-- Rust 1.85 ou superior (edition 2024)
+- Rust 1.88 ou superior (edition 2024)
 - Git
 
 ### Build
@@ -121,7 +121,7 @@ cargo fmt -- --check
 - Execute `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` para verificação de documentação
 - Execute `cargo audit` para alertas de segurança
 - Execute `cargo deny check` para política de licenças e dependências (veja `deny.toml`)
-- Execute `cargo check --all-features` contra o MSRV (Rust 1.85) para compatibilidade de toolchain
+- Execute `cargo check --all-features` contra o MSRV (Rust 1.88) para compatibilidade de toolchain
 - Execute `cargo package --no-verify --list` e `cargo publish --dry-run --allow-dirty` para validar artefatos de release
 
 ## Validação Cross-Platform (adicionado na v0.1.4)

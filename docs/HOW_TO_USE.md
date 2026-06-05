@@ -7,7 +7,7 @@
 
 
 ## Prerequisites
-- Rust toolchain 1.85 or later
+- Rust toolchain 1.88 or later
 - Install via `cargo install atomwrite`
 - Verify with `atomwrite --version`
 - Works on Linux, macOS and Windows
@@ -387,6 +387,6 @@ Example when workspace IS provided via `--workspace /home/user/project`:
 ## Windows Installation (v0.1.4)
 - v0.1.4 finally fixes `cargo install atomwrite` on Windows 10/11
 - Prerequisite: Visual Studio 2019+ Build Tools with "Desktop development with C++" workload
-- Prerequisite: Rust 1.85 or later
+- Prerequisite: Rust 1.88 or later
 - Recommended terminal: Windows Terminal or PowerShell 7+ (for UTF-8 output and ANSI escape sequences)
 - See [INSTALL.md](INSTALL.md) for the full Windows 10/11 installation guide with troubleshooting

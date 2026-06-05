@@ -623,7 +623,7 @@ fi
 ## Suporte ao Windows 10/11 (v0.1.4)
 ### OBRIGATÓRIO
 - VERIFICAR que Visual Studio 2019+ Build Tools com workload C++ está instalado antes de `cargo install atomwrite`
-- VERIFICAR que Rust 1.85 ou posterior está instalado
+- VERIFICAR que Rust 1.88 ou posterior está instalado
 - USAR Windows Terminal ou PowerShell 7+ para output UTF-8 e sequências ANSI adequadas
 - CONFIAR que `init_console` define code page 65001 e `ENABLE_VIRTUAL_TERMINAL_PROCESSING` automaticamente
 ### PROIBIDO
@@ -759,8 +759,8 @@ atomwrite search --json-schema
 - 300+ testes em 34 suítes de teste passam com zero regressões
 - 8 gates oficiais passam em cada commit: `fmt`, `clippy`, `build`, `test`, `doc`, `deny`, `audit`, `msrv`
 - 3 targets de cross-compile passam: `x86_64-pc-windows-gnu`, `i686-pc-windows-gnu`, `x86_64-pc-windows-msvc`
-- Cargo deny ignora o `RUSTSEC-2026-0009` preexistente em `time` 0.3.45
-- MSRV é Rust 1.85 stable
+- Cargo deny e cargo audit reportam zero vulnerabilidades (time 0.3.47+ resolveu RUSTSEC-2026-0009 via DEPTH_LIMIT=32)
+- MSRV é Rust 1.88 stable
 ### PROIBIDO
 - NUNCA publicar uma release sem todos os 8 gates passando
 - NUNCA publicar uma release sem os 3 targets de cross-compile passando

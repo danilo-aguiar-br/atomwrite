@@ -28,7 +28,7 @@ pub fn fsync_file(file: &File) -> Result<()> {
             file.sync_data()
                 .context("fsync fallback after F_FULLFSYNC failure")?;
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]

@@ -189,7 +189,7 @@ fn shutdown_message_on_stderr() {
     for i in 0..200 {
         std::fs::write(
             dir.path().join(format!("file_{i}.txt")),
-            "searchable content\n".repeat(100),
+            "searchable content\n".repeat(1000),
         )
         .unwrap();
     }
@@ -208,7 +208,7 @@ fn shutdown_message_on_stderr() {
         .spawn()
         .unwrap();
 
-    std::thread::sleep(Duration::from_millis(50));
+    std::thread::sleep(Duration::from_millis(2000));
     unsafe {
         libc::kill(child.id() as i32, libc::SIGINT);
     }

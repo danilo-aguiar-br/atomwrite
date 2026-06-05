@@ -3,6 +3,7 @@
 docs_prd/
 docs_rules/
 CLAUDE.md
+AGENTS.md
 gaps.md
 
 # ── GraphRAG Database ──
@@ -12,6 +13,9 @@ graphrag.sqlite-wal
 .ingest-queue.sqlite
 .ingest-queue.sqlite-shm
 .ingest-queue.sqlite-wal
+.enrich-queue.sqlite
+.enrich-queue.sqlite-shm
+.enrich-queue.sqlite-wal
 
 # ── Rust / Cargo ──
 /target/

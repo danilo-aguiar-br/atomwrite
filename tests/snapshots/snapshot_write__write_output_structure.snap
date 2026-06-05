@@ -9,7 +9,7 @@ expression: event
   "path": "[redacted]",
   "platform": {
     "dir_fsync": "sync_all",
-    "fsync": "sync_data"
+    "fsync": "[platform_fsync]"
   },
   "status": "success",
   "type": "write"

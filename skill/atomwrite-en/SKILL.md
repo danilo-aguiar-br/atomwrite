@@ -623,7 +623,7 @@ fi
 ## Windows 10/11 Support (v0.1.4)
 ### REQUIRED
 - VERIFY Visual Studio 2019+ Build Tools with C++ workload is installed before `cargo install atomwrite`
-- VERIFY Rust 1.85 or later is installed
+- VERIFY Rust 1.88 or later is installed
 - USE Windows Terminal or PowerShell 7+ for proper UTF-8 output and ANSI escape sequences
 - TRUST `init_console` to set code page 65001 and `ENABLE_VIRTUAL_TERMINAL_PROCESSING` automatically
 ### FORBIDDEN
@@ -759,8 +759,8 @@ atomwrite search --json-schema
 - 300+ tests in 34 test suites pass with zero regressions
 - 8 official gates pass on every commit: `fmt`, `clippy`, `build`, `test`, `doc`, `deny`, `audit`, `msrv`
 - 3 cross-compile targets pass: `x86_64-pc-windows-gnu`, `i686-pc-windows-gnu`, `x86_64-pc-windows-msvc`
-- Cargo deny ignores the pre-existing `RUSTSEC-2026-0009` in `time` 0.3.45
-- MSRV is Rust 1.85 stable
+- Cargo deny and cargo audit both report zero vulnerabilities (time 0.3.47+ resolved RUSTSEC-2026-0009 via DEPTH_LIMIT=32)
+- MSRV is Rust 1.88 stable
 ### FORBIDDEN
 - NEVER publish a release without all 8 gates passing
 - NEVER publish a release without the 3 cross-compile targets passing

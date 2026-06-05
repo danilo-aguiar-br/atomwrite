@@ -22,6 +22,7 @@ fn write_ndjson_structure_snapshot() {
     event["elapsed_ms"] = serde_json::json!("[redacted]");
     event["path"] = serde_json::json!("[redacted]");
     event["checksum"] = serde_json::json!("[redacted]");
+    event["platform"]["fsync"] = serde_json::json!("[platform_fsync]");
 
     insta::assert_json_snapshot!("write_output_structure", event);
 }

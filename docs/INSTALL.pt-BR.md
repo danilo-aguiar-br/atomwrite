@@ -10,7 +10,7 @@
 ### Instalação Rápida (Ubuntu/Debian)
 
 ```bash
-# Instalar Rust 1.85+ via rustup
+# Instalar Rust 1.88+ via rustup
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
@@ -44,7 +44,7 @@ cargo install atomwrite --locked
 ### Instalação Rápida
 
 ```bash
-# Instalar Rust 1.85+ via rustup
+# Instalar Rust 1.88+ via rustup
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
@@ -60,7 +60,7 @@ xattr -d com.apple.quarantine $(which atomwrite) 2>/dev/null || true
 
 ### Pré-Requisitos
 
-1. **Rust 1.85 ou posterior** — instalar via [rustup.rs](https://rustup.rs)
+1. **Rust 1.88 ou posterior** — instalar via [rustup.rs](https://rustup.rs)
 2. **Visual Studio Build Tools 2019 ou posterior** com o workload "Desenvolvimento para desktop com C++" — necessário para linkagem. Baixar de [visualstudio.microsoft.com](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 3. **Windows Terminal** ou **PowerShell 7+** (Windows Terminal recomendado para renderização UTF-8)
 4. **Git for Windows** se instalar do código fonte

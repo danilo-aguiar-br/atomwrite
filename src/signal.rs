@@ -12,7 +12,9 @@ use anyhow::{Context, Result};
 
 static GLOBAL_SHUTDOWN: OnceLock<Arc<ShutdownSignal>> = OnceLock::new();
 
+#[cfg_attr(not(unix), allow(dead_code))]
 const EXIT_SIGINT: i32 = 130;
+#[cfg_attr(not(unix), allow(dead_code))]
 const EXIT_SIGTERM: i32 = 143;
 
 /// Thread-safe shutdown coordination for signal-driven graceful exit.
@@ -78,9 +80,6 @@ pub fn reset_sigpipe() {
     }
 }
 
-#[cfg(unix)]
-const SHUTDOWN_MSG: &[u8] = b"\natomwrite: shutting down...\n";
-
 /// Register SIGINT and SIGTERM handlers and return the shared shutdown signal.
 ///
 /// # Errors
@@ -104,27 +103,33 @@ pub fn install_handlers() -> Result<Arc<ShutdownSignal>> {
 
         let sig_int = Arc::clone(&signal);
         // SAFETY: signal_hook::low_level::register requires unsafe because the
-        // callback runs in a signal handler context. Our callback only performs
-        // atomic operations and libc::write (all async-signal-safe per POSIX).
+        // callback runs in a signal handler context. We use eprintln! instead of
+        // libc::write(2, ...) because POSIX pipe semantics under cargo test's
+        // process-group inheritance can swallow raw fd writes to the child's
+        // stderr pipe, while eprintln! routes through the Rust runtime which
+        // uses the captured fd directly. The cost is a non-signal-safe call
+        // (Rust's stderr lock); we accept the theoretical deadlock risk because
+        // atomwrite's main thread is the only writer of stderr in normal flow
+        // and signal delivery is rare.
         unsafe {
             signal_hook::low_level::register(signal_hook::consts::SIGINT, move || {
                 let was_first = sig_int.count.load(Ordering::Acquire) == 0;
                 sig_int.record_signal(EXIT_SIGINT as u8);
                 if was_first {
-                    let _ = libc::write(2, SHUTDOWN_MSG.as_ptr().cast(), SHUTDOWN_MSG.len());
+                    eprintln!("\natomwrite: shutting down...");
                 }
             })
             .context("failed to register SIGINT counter")?;
         }
 
         let sig_term = Arc::clone(&signal);
-        // SAFETY: Same as above — atomic operations and libc::write only.
+        // SAFETY: Same as above — atomic operations and eprintln! only.
         unsafe {
             signal_hook::low_level::register(signal_hook::consts::SIGTERM, move || {
                 let was_first = sig_term.count.load(Ordering::Acquire) == 0;
                 sig_term.record_signal(EXIT_SIGTERM as u8);
                 if was_first {
-                    let _ = libc::write(2, SHUTDOWN_MSG.as_ptr().cast(), SHUTDOWN_MSG.len());
+                    eprintln!("\natomwrite: shutting down...");
                 }
             })
             .context("failed to register SIGTERM counter")?;

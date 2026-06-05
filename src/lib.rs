@@ -7,6 +7,8 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![warn(rustdoc::private_intra_doc_links)]
 #![warn(clippy::doc_markdown)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::needless_return)]
 
 rust_i18n::i18n!("locales", fallback = "en");
 

@@ -91,9 +91,9 @@
 
 
 ## Requisitos de Build por Plataforma
-- **Linux** (x86_64, aarch64): Rust 1.85+, glibc padrão
-- **macOS** (Intel, Apple Silicon): Rust 1.85+, a compatibilidade Nix é restrita a `cfg(target_os = "linux")` então `posix_fadvise` é um no-op no macOS (adicionado em v0.1.2 — antes da v0.1.2, o build falhava no macOS)
-- **Windows** (x86_64): Rust 1.85+, toolchain MSVC, `windows-sys` 0.61 (atualizado em v0.1.2)
+- **Linux** (x86_64, aarch64): Rust 1.88+, glibc padrão
+- **macOS** (Intel, Apple Silicon): Rust 1.88+, a compatibilidade Nix é restrita a `cfg(target_os = "linux")` então `posix_fadvise` é um no-op no macOS (adicionado em v0.1.2 — antes da v0.1.2, o build falhava no macOS)
+- **Windows** (x86_64): Rust 1.88+, toolchain MSVC, `windows-sys` 0.61 (atualizado em v0.1.2)
 
 
 ## Performance por Target
@@ -117,7 +117,7 @@
 - Overhead de `FlushFileBuffers` varia por driver de storage
 - Drives NVMe: <1ms por escrita
 - Pré-requisito v0.1.4: Visual Studio 2019+ Build Tools com workload C++
-- Pré-requisito v0.1.4: Rust 1.85 ou posterior
+- Pré-requisito v0.1.4: Rust 1.88 ou posterior
 - Pré-requisito v0.1.4: Windows Terminal ou PowerShell 7+ para UTF-8
 
 ### x86_64-pc-windows-gnu (cross-compile do Linux)
