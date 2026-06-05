@@ -10,6 +10,26 @@
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-06-05
+
+### Mudado (Higiene de Documentação)
+- **`#![warn(missing_docs)]` promovido para `#![deny(missing_docs)]`** — Documentação faltando em API pública agora é erro de build, não warning. Todos os itens públicos já estavam documentados em v0.1.4 (verificado via `RUSTDOCFLAGS="-D warnings" cargo doc --all-features`), então nenhuma documentação foi adicionada nesta mudança.
+- **`#![warn(rustdoc::broken_intra_doc_links)]` promovido para `#![deny(...)]`** — Links quebrados em intra-doc agora falham o build ao invés de serem warnings silenciosos.
+- **`#![doc(html_root_url = "https://docs.rs/atomwrite/0.1.2")]` removido** — O atributo estava hardcoded na versão 0.1.2, fazendo com que intra-doc-links gerados para versões mais novas (0.1.3, 0.1.4) apontassem para 0.1.2. O atributo está obsoleto desde rustc 1.48 em favor do campo `repository`, que já está configurado no `Cargo.toml`. docs.rs agora usa a versão atual do crate para resolver links automaticamente.
+
+### Mudado (Metadata docs.rs)
+- **`[package.metadata.docs.rs]` limpo** — Removido `all-features = true` (não existe tabela `[features]`, então a flag era no-op) e `rustdoc-args = ["--cfg", "docsrs"]` (não existem marcadores `#[cfg(docsrs)]` no código). Adicionado `targets = ["x86_64-unknown-linux-gnu"]` para tornar o target do build do docs.rs explícito.
+
+### Testes
+- 302 testes passam com 0 falhas (inalterado desde v0.1.4)
+- 3 testes ignorados (cross-compile Windows, inalterado)
+- `cargo doc --no-deps --all-features` com `RUSTDOCFLAGS="-D warnings"` passa limpo
+
+### Notas
+- v0.1.5 é NÃO-BREAKING. Os lints promovidos para deny já são satisfeitos pelo código atual.
+- v0.1.5 não altera nenhuma API pública nem comportamento. Apenas apertar a fiscalização de documentação e remover metadata obsoleta.
+- Nenhum guia de migração no CHANGELOG é necessário.
+
 ## [0.1.4] - 2026-06-05
 
 ### Corrigido (Compilação Windows - GAP 14)

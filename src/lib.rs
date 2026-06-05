@@ -3,11 +3,10 @@
 //! Atomic file operations CLI library for LLM agents.
 
 #![deny(unsafe_code)]
-#![warn(missing_docs)]
-#![warn(rustdoc::broken_intra_doc_links)]
+#![deny(missing_docs)]
+#![deny(rustdoc::broken_intra_doc_links)]
 #![warn(rustdoc::private_intra_doc_links)]
 #![warn(clippy::doc_markdown)]
-#![doc(html_root_url = "https://docs.rs/atomwrite/0.1.2")]
 
 rust_i18n::i18n!("locales", fallback = "en");
 
