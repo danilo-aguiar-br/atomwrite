@@ -633,7 +633,7 @@ fi
 ```powershell
 rustup default stable
 rustup target add x86_64-pc-windows-msvc
-cargo install atomwrite --locked
+cargo install atomwrite --locked --version '^0.1.4'
 atomwrite --version  # NDJSON output
 ```
 
@@ -663,6 +663,7 @@ cargo test --test cross_compile_check -- --ignored
 - `73` — cross-device (move across filesystem boundaries)
 - `74` — I/O error (generic filesystem failure)
 - `78` — config invalid (malformed configuration)
+- `81` — checksum verify failed (BLAKE3 hash mismatch on read or hash)
 - `82` — state drift (checksum mismatch, optimistic locking failed)
 - `85` — FIFO detected (named pipe cannot be atomically written)
 - `86` — device file detected (block or character device)
@@ -678,13 +679,39 @@ cargo test --test cross_compile_check -- --ignored
 ## Error JSON Schema
 ### REQUIRED — Fields
 - `error` (bool) — always `true` when an error occurs
-- `code` (string) — machine-readable error code
+- `code` (string) — machine-readable error code (see full list below)
 - `exit` (u8) — exit code number
 - `message` (string) — human-readable description
 - `path` (string, optional) — file path involved in the error
 - `error_class` (string) — one of: `permanent`, `transient`, `conflict`, `precondition_failed`
 - `retryable` (bool) — whether the operation can be retried
-- `suggestion` (string, optional) — actionable remediation step
+- `suggestion` (string, optional) — actionable remediation step (context-aware for `WorkspaceJail`)
+- `workspace` (string, optional) — current workspace jail root (v0.1.4+, GAP 13 fix)
+### REQUIRED — Full Error Code List (20 codes)
+- `WORKSPACE_JAIL` (exit 126, precondition_failed, not retryable)
+- `SYMLINK_BLOCKED` (exit 127, precondition_failed, not retryable)
+- `FILE_NOT_FOUND` (exit 4, permanent, not retryable)
+- `PERMISSION_DENIED` (exit 13, transient, retryable via `persist_with_retry` on Windows)
+- `CHECKSUM_VERIFY_FAILED` (exit 81, conflict, not retryable)
+- `STATE_DRIFT` (exit 82, conflict, not retryable)
+- `DISK_FULL` (exit 28, transient, retryable)
+- `QUOTA_EXCEEDED` (exit 30, transient, retryable)
+- `CROSS_DEVICE` (exit 73, permanent, not retryable)
+- `IO_ERROR` (exit 74, transient, retryable)
+- `FIFO_DETECTED` (exit 85, precondition_failed, not retryable)
+- `DEVICE_FILE` (exit 86, precondition_failed, not retryable)
+- `FILE_IMMUTABLE` (exit 128, precondition_failed, not retryable)
+- `BINARY_FILE` (exit 65, permanent, not retryable)
+- `NO_MATCHES` (exit 1, permanent, not retryable — by design, not an error)
+- `INVALID_INPUT` (exit 65, permanent, not retryable)
+- `CONFIG_INVALID` (exit 78, permanent, not retryable)
+- `BROKEN_PIPE` (exit 141, transient, not retryable — SIGPIPE not actionable)
+- `INTERNAL_ERROR` (exit 255, permanent, not retryable — file a bug)
+### REQUIRED — Retry Strategy by Class
+- `permanent` — NEVER retry (caller bug or invalid input)
+- `transient` — RETRY with exponential backoff (1s, 2s, 4s, 8s, max 30s)
+- `conflict` — RETRY only after re-reading state (e.g. re-fetch checksum)
+- `precondition_failed` — NEVER retry; fix the precondition (path, permissions, type)
 
 
 ## Global Flags
@@ -709,8 +736,45 @@ cargo test --test cross_compile_check -- --ignored
 ### REQUIRED
 - USE `--json-schema` flag to get the output schema for any subcommand
 - USE schema output for programmatic validation of responses
+- REFER to versioned schemas in `docs/schemas/` for stable contracts
+- DO NOT re-parse `--json-schema` output on every call; cache the schema locally
 ### Correct Pattern — Schema
 ```bash
 atomwrite write --json-schema
 atomwrite search --json-schema
 ```
+
+
+## Versioned Schemas (v0.1.4)
+### REQUIRED
+- KNOW that stable JSON Schemas are committed under `docs/schemas/`
+- KNOW that `error-output.schema.json` is the contract for all error envelopes
+- KNOW that the schema field `workspace` (string, optional) was added in v0.1.4
+- USE the versioned schema to validate responses in your agent pipeline
+- NOT invent your own parsing rules; trust the versioned schema as source of truth
+
+
+## Tests and Quality Gates (v0.1.4)
+### REQUIRED — Quality Posture
+- 300+ tests in 34 test suites pass with zero regressions
+- 8 official gates pass on every commit: `fmt`, `clippy`, `build`, `test`, `doc`, `deny`, `audit`, `msrv`
+- 3 cross-compile targets pass: `x86_64-pc-windows-gnu`, `i686-pc-windows-gnu`, `x86_64-pc-windows-msvc`
+- Cargo deny ignores the pre-existing `RUSTSEC-2026-0009` in `time` 0.3.45
+- MSRV is Rust 1.85 stable
+### FORBIDDEN
+- NEVER publish a release without all 8 gates passing
+- NEVER publish a release without the 3 cross-compile targets passing
+- NEVER accept "works on my Linux" as a release quality bar
+
+
+## v0.1.4 Migration Quick Reference
+### REQUIRED — Know What Changed Since v0.1.3
+- GAP 14 fix: `cargo install atomwrite` now works on Windows 10/11 (was broken in v0.1.3)
+- GAP 13 fix: error suggestions are now context-aware (WorkspaceJail suggestion changes based on whether `--workspace` was supplied)
+- GAP 13 fix: all 20 error variants now carry actionable `suggestion` fields
+- GAP 13 fix: phantom `--force-text` flag reference removed from BinaryFile suggestions
+- Schema: `workspace` field added to error output envelope
+- New tests: `tests/cross_compile_check.rs` with 3 gated cross-compile tests
+- New tests: 7 unit tests + 1 integration test for error suggestion context
+- Bilingual docs: 22 markdown files updated across 3 audit rounds
+- DO NOT upgrade from v0.1.3 to v0.1.4 if you depend on phantom `--force-text` behavior

@@ -633,7 +633,7 @@ fi
 ```powershell
 rustup default stable
 rustup target add x86_64-pc-windows-msvc
-cargo install atomwrite --locked
+cargo install atomwrite --locked --version '^0.1.4'
 atomwrite --version  # Saída NDJSON
 ```
 
@@ -663,6 +663,7 @@ cargo test --test cross_compile_check -- --ignored
 - `73` — cross-device (mover entre limites de filesystem)
 - `74` — erro de I/O (falha genérica de filesystem)
 - `78` — configuração inválida (configuração malformada)
+- `81` — verificação de checksum falhou (mismatch de hash BLAKE3 em read ou hash)
 - `82` — state drift (checksum mismatch, locking otimista falhou)
 - `85` — FIFO detectado (named pipe não pode ser escrito atomicamente)
 - `86` — arquivo de dispositivo detectado (bloco ou caractere)
@@ -678,13 +679,39 @@ cargo test --test cross_compile_check -- --ignored
 ## Schema JSON de Erro
 ### OBRIGATÓRIO — Campos
 - `error` (bool) — sempre `true` quando um erro ocorre
-- `code` (string) — código de erro legível por máquina
+- `code` (string) — código de erro legível por máquina (ver lista completa abaixo)
 - `exit` (u8) — número do exit code
 - `message` (string) — descrição legível por humanos
 - `path` (string, opcional) — caminho do arquivo envolvido no erro
 - `error_class` (string) — um de: `permanent`, `transient`, `conflict`, `precondition_failed`
 - `retryable` (bool) — se a operação pode ser retentada
-- `suggestion` (string, opcional) — passo de remediação acionável
+- `suggestion` (string, opcional) — passo de remediação acionável (context-aware para `WorkspaceJail`)
+- `workspace` (string, opcional) — raiz atual do jail do workspace (v0.1.4+, fix do GAP 13)
+### OBRIGATÓRIO — Lista Completa de Códigos de Erro (20 codes)
+- `WORKSPACE_JAIL` (exit 126, precondition_failed, não retentável)
+- `SYMLINK_BLOCKED` (exit 127, precondition_failed, não retentável)
+- `FILE_NOT_FOUND` (exit 4, permanent, não retentável)
+- `PERMISSION_DENIED` (exit 13, transient, retentável via `persist_with_retry` no Windows)
+- `CHECKSUM_VERIFY_FAILED` (exit 81, conflict, não retentável)
+- `STATE_DRIFT` (exit 82, conflict, não retentável)
+- `DISK_FULL` (exit 28, transient, retentável)
+- `QUOTA_EXCEEDED` (exit 30, transient, retentável)
+- `CROSS_DEVICE` (exit 73, permanent, não retentável)
+- `IO_ERROR` (exit 74, transient, retentável)
+- `FIFO_DETECTED` (exit 85, precondition_failed, não retentável)
+- `DEVICE_FILE` (exit 86, precondition_failed, não retentável)
+- `FILE_IMMUTABLE` (exit 128, precondition_failed, não retentável)
+- `BINARY_FILE` (exit 65, permanent, não retentável)
+- `NO_MATCHES` (exit 1, permanent, não retentável — por design, não é um erro)
+- `INVALID_INPUT` (exit 65, permanent, não retentável)
+- `CONFIG_INVALID` (exit 78, permanent, não retentável)
+- `BROKEN_PIPE` (exit 141, transient, não retentável — SIGPIPE não é acionável)
+- `INTERNAL_ERROR` (exit 255, permanent, não retentável — reporte um bug)
+### OBRIGATÓRIO — Estratégia de Retry por Classe
+- `permanent` — NUNCA retentar (bug do chamador ou entrada inválida)
+- `transient` — RETENTAR com backoff exponencial (1s, 2s, 4s, 8s, máximo 30s)
+- `conflict` — RETENTAR somente após reler o estado (ex: re-fetch checksum)
+- `precondition_failed` — NUNCA retentar; corrija a pré-condição (caminho, permissões, tipo)
 
 
 ## Flags Globais
@@ -709,8 +736,45 @@ cargo test --test cross_compile_check -- --ignored
 ### OBRIGATÓRIO
 - USAR a flag `--json-schema` para obter o schema de saída de qualquer subcomando
 - USAR a saída do schema para validação programática de respostas
+- REFERENCIAR schemas versionados em `docs/schemas/` para contratos estáveis
+- NÃO re-parsear a saída de `--json-schema` em cada chamada; cache o schema localmente
 ### Padrão Correto — Schema
 ```bash
 atomwrite write --json-schema
 atomwrite search --json-schema
 ```
+
+
+## Schemas Versionados (v0.1.4)
+### OBRIGATÓRIO
+- SABER que schemas JSON estáveis estão commitados em `docs/schemas/`
+- SABER que `error-output.schema.json` é o contrato para todos os envelopes de erro
+- SABER que o campo `workspace` (string, opcional) foi adicionado em v0.1.4
+- USAR o schema versionado para validar respostas no pipeline do agente
+- NÃO inventar suas próprias regras de parsing; confiar no schema versionado como fonte de verdade
+
+
+## Testes e Gates de Qualidade (v0.1.4)
+### OBRIGATÓRIO — Postura de Qualidade
+- 300+ testes em 34 suítes de teste passam com zero regressões
+- 8 gates oficiais passam em cada commit: `fmt`, `clippy`, `build`, `test`, `doc`, `deny`, `audit`, `msrv`
+- 3 targets de cross-compile passam: `x86_64-pc-windows-gnu`, `i686-pc-windows-gnu`, `x86_64-pc-windows-msvc`
+- Cargo deny ignora o `RUSTSEC-2026-0009` preexistente em `time` 0.3.45
+- MSRV é Rust 1.85 stable
+### PROIBIDO
+- NUNCA publicar uma release sem todos os 8 gates passando
+- NUNCA publicar uma release sem os 3 targets de cross-compile passando
+- NUNCA aceitar "funciona no meu Linux" como barra de qualidade de release
+
+
+## Referência Rápida de Migração v0.1.4
+### OBRIGATÓRIO — Saber o Que Mudou Desde v0.1.3
+- Fix GAP 14: `cargo install atomwrite` agora funciona no Windows 10/11 (quebrado na v0.1.3)
+- Fix GAP 13: sugestões de erro agora são context-aware (sugestão WorkspaceJail muda baseado em se `--workspace` foi fornecido)
+- Fix GAP 13: todas as 20 variants de erro agora carregam campos `suggestion` acionáveis
+- Fix GAP 13: referência phantom à flag `--force-text` removida das sugestões BinaryFile
+- Schema: campo `workspace` adicionado ao envelope de saída de erro
+- Novos testes: `tests/cross_compile_check.rs` com 3 testes de cross-compile gated
+- Novos testes: 7 testes unitários + 1 teste de integração para contexto de sugestão de erro
+- Docs bilíngues: 22 arquivos markdown atualizados em 3 rodadas de auditoria
+- NÃO atualizar de v0.1.3 para v0.1.4 se você depende do comportamento phantom `--force-text`
