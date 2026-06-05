@@ -10,6 +10,11 @@
 
 ## [Unreleased]
 
+### Corrigido (Falhas de CI - GAP 17 follow-up)
+- **`signal_test::shutdown_message_on_stderr` faz flush da mensagem via `io::stderr().lock()`** — A primeira correção do v0.1.8 moveu `eprintln!` do signal handler para a main thread, mas usou `writeln!(io::stderr(), ...)` que é fully-buffered quando stderr é redirecionado para um pipe (como em `Stdio::piped()` do `cargo test`). O buffer nunca era flushado antes do processo terminar com o exit code do sinal, então o teste pai via stderr vazio. A correção usa `io::stderr().lock()` para adquirir o guard `StderrLock`, que faz flush do buffer no Drop. Isso garante que a mensagem chegue ao pipe de stderr capturado antes do processo terminar. CI ubuntu-latest confirmará no push.
+
+## [0.1.8] - 2026-06-05
+
 ### Corrigido (Falhas de CI - GAP 17 e GAP 18)
 - **`signal_test::shutdown_message_on_stderr` não falha mais no Linux CI** — Removido `eprintln!("\natomwrite: shutting down...")` dos handlers de SIGINT e SIGTERM. Segundo POSIX.1-2017 `signal-safety(7)`, funções stdio como `eprintln!` NÃO são async-signal-safe; o stderr do Rust usa um `Mutex` global que pode causar deadlock ou perder output bufferizado se o sinal chegar enquanto outra thread segura o lock. A mensagem de shutdown visível ao usuário agora é emitida pela main thread em `src/main.rs` quando observa `is_shutdown() == true` após `atomwrite::run` retornar, que é a única forma async-signal-safe de garantir que a mensagem chegue ao pipe de stderr capturado antes do processo terminar. O caminho Windows `ctrlc` ainda emite a mensagem inline (handlers ctrlc rodam em thread normal, não em contexto de sinal).
 - **`atomic::tests::create_backup_and_retention` não falha mais no Windows CI** — Adicionado `platform::fsync_file_best_effort` que registra warning e continua em vez de retornar erro. No Windows, produtos antivírus (Windows Defender, AVs terceiros) podem segurar transientemente um handle de leitura em arquivos em `%TEMP%` com `FILE_SHARE_READ` mas sem `FILE_SHARE_WRITE`, fazendo `FlushFileBuffers` retornar `ERROR_ACCESS_DENIED` (os error 5). O caminho de escrita principal ainda usa o `fsync_file` estrito; apenas o fsync de durabilidade do backup é best-effort porque o backup em si já foi criado via `fs::copy`.

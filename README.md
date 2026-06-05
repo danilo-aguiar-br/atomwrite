@@ -19,12 +19,15 @@
 - Every file gets a BLAKE3 checksum: detect drift, verify integrity, enable optimistic locking
 
 
-## What Is New In v0.1.8 (Pending Release)
+## What Is New In v0.1.9 (Pending Release)
+- **`signal_test::shutdown_message_on_stderr` flushes the shutdown message via `io::stderr().lock()`** — The first v0.1.8 fix moved `eprintln!` from the signal handler to the main thread, but used `writeln!(io::stderr(), ...)` which is fully-buffered when stderr is redirected to a pipe (as in `cargo test`'s `Stdio::piped()`). The buffer was never flushed before the process exited with the signal exit code, so the parent test saw an empty stderr. The fix uses `io::stderr().lock()` to acquire the `StderrLock` guard, which flushes the buffer on Drop. This guarantees the message reaches the captured stderr pipe before the process exits. CI ubuntu-latest will confirm on push.
+
+See the v0.1.8 → v0.1.9 migration guide below for the upgrade path. v0.1.8 is the previous release.
+
+## What Was New In v0.1.8
 - **`signal_test::shutdown_message_on_stderr` no longer fails on Linux CI (ubuntu-latest)** — Removed `eprintln!` from the SIGINT and SIGTERM signal handlers because POSIX.1-2017 `signal-safety(7)` explicitly forbids stdio functions in signal handlers. Rust's `std::io::stderr()` uses a global `Mutex` that can deadlock or lose buffered output when the signal arrives while another thread holds the lock. The shutdown message is now emitted by the main thread in `src/main.rs` when it observes `is_shutdown() == true` after `atomwrite::run` returns, which is the only async-signal-safe way to guarantee the message reaches the captured stderr pipe before the process exits. The Windows `ctrlc` path still emits the message inline because ctrlc handlers run in a normal thread.
 - **`atomic::tests::create_backup_and_retention` no longer fails on Windows CI (windows-latest)** — Added `platform::fsync_file_best_effort` which logs a warning and continues. On Windows, antivirus products (Windows Defender, third-party AV) transiently hold a read handle on files in `%TEMP%` with `FILE_SHARE_READ` but without `FILE_SHARE_WRITE`, which causes `FlushFileBuffers` to return `ERROR_ACCESS_DENIED` (os error 5). Only the backup-durability fsync is best-effort; the primary write path still uses the strict `fsync_file` because the backup itself has already been created via `fs::copy` by the time fsync runs.
 - **CI matrix pinned to `windows-2025-vs2026`** — Replaced `windows-latest` with `windows-2025-vs2026` (its successor before the June 15 2026 GitHub-hosted runner migration). Silences the "windows-latest requests are being redirected" NOTICE and prevents unexpected runner changes from breaking the build.
-
-See the v0.1.7 → v0.1.8 migration guide below for the upgrade path. v0.1.7 is the previous release.
 
 ## What Was New In v0.1.7
 - **CI GitHub Actions fully green** — All 6 CI jobs (check matrix x3, deny, doc, msrv, security) pass after fixing 4 distinct failures. macos-latest no longer aborts on `clippy::needless_return` (removed redundant `return` in `src/platform.rs:31`); windows-latest no longer aborts on `dead_code` (added `#[cfg_attr(not(unix), allow(dead_code))]` to `EXIT_SIGINT` and `EXIT_SIGTERM` in `src/signal.rs:15-18`); `cargo audit` no longer reports RUSTSEC-2026-0009 (upgraded `time` 0.3.45 → 0.3.47 with `DEPTH_LIMIT=32`); deny.toml no longer needs the `RUSTSEC-2026-0009` ignore entry. The `deny.toml` ignore and the `cargo audit --ignore` flag were both removed as the advisory no longer applies.
