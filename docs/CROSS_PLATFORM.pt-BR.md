@@ -29,12 +29,15 @@
 - atomwrite usa `F_FULLFSYNC` automaticamente
 - Testado em Apple Silicon e Intel
 
-### Windows (Best-Effort)
+### Windows (Suporte Completo a partir da v0.1.4)
 - Fsync de arquivo: `FlushFileBuffers` via `sync_all()`
 - Fsync de diretório: best-effort (Windows não tem `fsync` para diretórios)
 - Rename atômico via `MoveFileExW` com `MOVEFILE_REPLACE_EXISTING`
 - NTFS fornece garantias razoáveis de durabilidade
-- Testado em x86_64
+- **Fix v0.1.4 (GAP 14)**: `cargo install atomwrite` agora funciona no Windows 10/11. Três erros de compilação em blocos `#[cfg(windows)]` quebravam a release v0.1.3 no Windows foram resolvidos.
+- **Adição v0.1.4**: `init_console` ativa UTF-8 (code page 65001) e `ENABLE_VIRTUAL_TERMINAL_PROCESSING` para que sequências ANSI sejam interpretadas pelo Windows Console Host. Isso faz saída colorida e caracteres Unicode funcionarem corretamente em Windows Terminal e PowerShell 7+.
+- **Adição v0.1.4**: `persist_with_retry` lida com erros `PermissionDenied` específicos de Windows durante o rename atômico via retry com backoff exponencial (100ms, 200ms, 400ms) — isso compensa o Windows Defender ou outros processos antivírus que brevemente seguram o arquivo.
+- Testado em x86_64 e i686 (i686 requer toolchain mingw 32-bit)
 
 
 ## Tratamento de Sinais
@@ -113,6 +116,19 @@
 ### x86_64-pc-windows-msvc
 - Overhead de `FlushFileBuffers` varia por driver de storage
 - Drives NVMe: <1ms por escrita
+- Pré-requisito v0.1.4: Visual Studio 2019+ Build Tools com workload C++
+- Pré-requisito v0.1.4: Rust 1.85 ou posterior
+- Pré-requisito v0.1.4: Windows Terminal ou PowerShell 7+ para UTF-8
+
+### x86_64-pc-windows-gnu (cross-compile do Linux)
+- Target de cross-compile para contribuidores
+- Requer toolchain mingw-w64 (`mingw64-gcc` Fedora, `mingw-w64` Ubuntu)
+- v0.1.4 habilita validação via `cargo test --test cross_compile_check -- --ignored`
+
+### i686-pc-windows-gnu (Windows 32-bit, cross-compile)
+- Target de cross-compile para Windows 32-bit
+- Requer `mingw32-gcc` no host (separado do mingw 64-bit)
+- v0.1.4 habilita validação via `cargo test --test cross_compile_check -- --ignored`
 - Drives rotativos: 5-15ms por escrita devido ao flush físico
 
 

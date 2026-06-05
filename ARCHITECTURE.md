@@ -120,3 +120,9 @@ stdin ──> content bytes
 - Error classification: permanent, transient, conflict, precondition_failed
 - Transient and conflict errors are marked retryable for agent retry loops
 - All errors serialize to NDJSON on stdout with machine-readable fields
+- `suggestion` field in `ErrorJson` provides actionable recovery guidance for each error variant
+- `ErrorContext` struct (added in v0.1.4) carries `workspace_provided: bool` and `workspace: Option<PathBuf>` from the CLI parser to the error output
+- `ErrorJson::from_error_with_context(err, &ErrorContext)` produces context-aware suggestions
+- `WorkspaceJail` suggestion adapts based on whether the user supplied `--workspace` or `ATOMWRITE_WORKSPACE`
+- Legacy `ErrorJson::from_error(err)` delegates to `from_error_with_context` with `ErrorContext::default()` (backward compatible)
+- `output::write_error_json_with_context()` propagates the context from the CLI to the NDJSON stream

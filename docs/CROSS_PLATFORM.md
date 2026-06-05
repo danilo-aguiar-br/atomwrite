@@ -29,12 +29,15 @@
 - atomwrite uses `F_FULLFSYNC` automatically
 - Tested on Apple Silicon and Intel
 
-### Windows (Best-Effort)
+### Windows (Full Support as of v0.1.4)
 - File fsync: `FlushFileBuffers` via `sync_all()`
 - Directory fsync: best-effort (Windows has no `fsync` for directories)
 - Atomic rename via `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`
 - NTFS provides reasonable durability guarantees
-- Tested on x86_64
+- **v0.1.4 fix (GAP 14)**: `cargo install atomwrite` now succeeds on Windows 10/11. Three compilation errors in `#[cfg(windows)]` blocks that broke the v0.1.3 release on Windows are resolved.
+- **v0.1.4 addition**: `init_console` enables UTF-8 (code page 65001) and `ENABLE_VIRTUAL_TERMINAL_PROCESSING` so ANSI escape sequences are interpreted by the Windows Console Host. This makes colored output and Unicode characters work correctly in Windows Terminal and PowerShell 7+.
+- **v0.1.4 addition**: `persist_with_retry` handles Windows-specific `PermissionDenied` errors during the atomic rename by retrying with exponential backoff (100ms, 200ms, 400ms) — this compensates for Windows Defender or other antivirus processes that briefly hold the file.
+- Tested on x86_64 and i686 (i686 requires 32-bit mingw toolchain)
 
 
 ## Signal Handling
@@ -114,6 +117,19 @@
 - `FlushFileBuffers` overhead varies by storage driver
 - NVMe drives: <1ms per write
 - Spinning drives: 5-15ms per write due to physical flush
+- v0.1.4 prerequisite: Visual Studio 2019+ Build Tools with "Desktop development with C++" workload
+- v0.1.4 prerequisite: Rust 1.85 or later
+- v0.1.4 prerequisite: Windows Terminal or PowerShell 7+ for proper UTF-8 output
+
+### x86_64-pc-windows-gnu (cross-compile from Linux)
+- Cross-compile target for contributors and CI verification
+- Requires mingw-w64 toolchain on the build host (`mingw64-gcc` on Fedora, `mingw-w64` on Ubuntu)
+- v0.1.4 enables validation via `cargo test --test cross_compile_check -- --ignored`
+
+### i686-pc-windows-gnu (32-bit Windows, cross-compile)
+- Cross-compile target for 32-bit Windows support
+- Requires `mingw32-gcc` on the build host (separate from 64-bit mingw)
+- v0.1.4 enables validation via `cargo test --test cross_compile_check -- --ignored`
 
 
 ## Agents Validated per Platform

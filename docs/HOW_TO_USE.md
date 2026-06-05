@@ -360,3 +360,33 @@ For interactive agent workflows, the safe default is to let `atomwrite` update t
 - Batch mode replaces hundreds of individual tool calls
 - Exit codes follow sysexits conventions for programmatic handling
 - See [AGENTS.md](AGENTS.md) for the full agent integration contract
+
+
+## Error Suggestions (v0.1.4)
+- Every error envelope on stdout includes a `suggestion` field with actionable recovery guidance
+- All 20 error variants now carry a `suggestion` (the only exception is `BrokenPipe` because SIGPIPE is not actionable)
+- Suggestions are **context-aware**: the `WorkspaceJail` suggestion changes depending on whether the user already supplied `--workspace` or `ATOMWRITE_WORKSPACE`
+- When the workspace IS provided: `"use a path inside the workspace (<root>)"`
+- When the workspace is NOT provided: `"set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>"`
+- `FileImmutable` suggests `chattr -i` (Unix) or `fsutil` (Windows) to clear the immutable attribute
+- `NoMatches` guides the user to broaden the pattern and review `--include`/`--exclude` filters
+- `BinaryFile` recommends `read --stat` for metadata-only reads (no longer references the phantom `--force-text` flag that was removed in v0.1.4)
+- `PermissionDenied` retries are automatic with exponential backoff (Windows-specific via `persist_with_retry`)
+
+Example of a context-aware error envelope (when workspace is NOT provided):
+```json
+{"error":true,"code":"WORKSPACE_JAIL","exit":126,"message":"path outside workspace jail: /etc/passwd (workspace: /home/user/project)","path":"/etc/passwd","error_class":"precondition_failed","retryable":false,"suggestion":"set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>","workspace":"/home/user/project"}
+```
+
+Example when workspace IS provided via `--workspace /home/user/project`:
+```json
+{"error":true,"code":"WORKSPACE_JAIL","exit":126,"message":"...","suggestion":"use a path inside the workspace (/home/user/project)","workspace":"/home/user/project"}
+```
+
+
+## Windows Installation (v0.1.4)
+- v0.1.4 finally fixes `cargo install atomwrite` on Windows 10/11
+- Prerequisite: Visual Studio 2019+ Build Tools with "Desktop development with C++" workload
+- Prerequisite: Rust 1.85 or later
+- Recommended terminal: Windows Terminal or PowerShell 7+ (for UTF-8 output and ANSI escape sequences)
+- See [INSTALL.md](INSTALL.md) for the full Windows 10/11 installation guide with troubleshooting

@@ -11,6 +11,7 @@
 - Any agent that can run a shell command can use atomwrite
 - NDJSON output is parseable by every major LLM without custom adapters
 - No plugins, extensions, or SDKs required
+- As of v0.1.4, atomwrite runs on Windows 10/11, Linux, and macOS with identical NDJSON contract
 
 
 ## Summary Table

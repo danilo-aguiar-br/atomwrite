@@ -186,9 +186,22 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 
 ## OBRIGATÓRIO -- Tratamento de Erros
 - Erros emitem JSON no stdout com `error: true`
-- Campos: `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`
+- Campos: `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`, `workspace`
 - Valores de `error_class`: `permanent`, `transient`, `conflict`, `precondition_failed`
 - `retryable` é true para classes `transient` e `conflict`
+- Campo `workspace` aparece apenas em erros `WORKSPACE_JAIL` e reporta a raiz do workspace resolvida
+- Todas as 20 variants de erro carregam texto `suggestion` acionável (adicionado na v0.1.4, GAP 13)
+- Sugestão de `WorkspaceJail` é **context-aware**: quando `--workspace` ou `ATOMWRITE_WORKSPACE` já está definido, a sugestão diz "use a path inside the workspace (<root>)" em vez de re-pedir a flag
+- Sugestão de `BinaryFile` recomenda `read --stat` para leituras somente de metadados (referência phantom anterior a `--force-text` foi removida)
+- Sugestão de `FileImmutable` menciona `chattr -i` (Unix) e `fsutil` (Windows)
+- Sugestão de `NoMatches` orienta ampliação do padrão e revisão de filtros `--include`/`--exclude`
+- Apenas `BrokenPipe` (SIGPIPE) não tem sugestão porque o erro não é acionável pelo usuário
+
+### API de Sugestão Context-Aware (v0.1.4)
+- Nova API Rust: `ErrorJson::from_error_with_context(err, &ErrorContext)` aceita proveniência de workspace
+- Struct `ErrorContext` tem `workspace_provided: bool` e `workspace: Option<PathBuf>`
+- `ErrorJson::from_error(err)` legacy ainda funciona e produz o mesmo output que a nova API com contexto padrão
+- Consumidores programáticos podem chamar `from_error_with_context` para influenciar o texto da sugestão
 
 
 ## OBRIGATÓRIO -- Estratégia de Retry

@@ -15,9 +15,11 @@
 
 ## Estatísticas Atuais
 - 64+ arquivos Rust em `src/` e `tests/`
-- 294 testes no total em 33 suítes (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão)
-- 10 testes de regressão em `tests/cli_v012_regressions.rs` (adicionados em v0.1.2)
+- 300+ testes no total em 34 suítes (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile)
+- 10 testes de regressão em `tests/cli_v012_regressions.rs` (adicionados em v0.1.2, expandidos em v0.1.4 com `gap13_jail_suggestion_when_workspace_supplied_says_inside` e `jail_suggestion_mentions_workspace_flag` atualizado)
 - 2 novos testes de regressão de mtime em `src/atomic.rs::tests` (adicionados em v0.1.3): `atomic_write_updates_mtime_by_default` e `atomic_write_preserves_mtime_when_opted_in`
+- 7 testes de sugestão de erro do GAP 13 em `src/error.rs::tests` (adicionados em v0.1.4)
+- 3 testes do gate de cross-compile em `tests/cross_compile_check.rs` (adicionados em v0.1.4): `cross_compile_windows_gnu_x64_succeeds`, `cross_compile_windows_gnu_i686_succeeds`, `cross_compile_windows_msvc_succeeds`
 - 9 arquivos de snapshot em `tests/snapshots/` (2 atualizados em v0.1.3 para incluir `mtime_preserved: false`)
 - 2 arquivos de regressão proptest
 - 2 alvos de fuzzing em `fuzz/fuzz_targets/`

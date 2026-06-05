@@ -14,11 +14,13 @@
 
 
 ## Current Stats
-- 64+ Rust files across `src/` and `tests/`
-- 294 tests total across 33 test suites (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression)
-- 10 regression tests in `tests/cli_v012_regressions.rs` (added in v0.1.2)
-- 2 new mtime regression tests in `src/atomic.rs::tests` (added in v0.1.3): `atomic_write_updates_mtime_by_default` and `atomic_write_preserves_mtime_when_opted_in`
-- 9 snapshot files in `tests/snapshots/` (2 updated in v0.1.3 to include `mtime_preserved: false`)
+- 65+ Rust files across `src/` and `tests/`
+- 300+ tests total across 34 test suites (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile)
+- 10 regression tests in `tests/cli_v012_regressions.rs` (added in v0.1.2, expanded in v0.1.4 with `gap13_jail_suggestion_when_workspace_supplied_says_inside` and updated `jail_suggestion_mentions_workspace_flag`)
+- 2 mtime regression tests in `src/atomic.rs::tests` (added in v0.1.3)
+- 7 GAP 13 error-suggestion tests in `src/error.rs::tests` (added in v0.1.4)
+- 3 cross-compile gate tests in `tests/cross_compile_check.rs` (added in v0.1.4): `cross_compile_windows_gnu_x64_succeeds`, `cross_compile_windows_gnu_i686_succeeds`, `cross_compile_windows_msvc_succeeds`
+- 9 snapshot files in `tests/snapshots/`
 - 2 proptest regression files
 - 2 fuzz targets in `fuzz/fuzz_targets/`
 

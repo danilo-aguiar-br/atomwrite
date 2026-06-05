@@ -602,17 +602,52 @@ fi
 - USE `error_class` to determine retry strategy
 - RETRY when `retryable: true`
 - USE `suggestion` field for actionable remediation
+- EXPECT that `suggestion` is context-aware: `WorkspaceJail` differs based on whether `--workspace` was supplied
+- TRUST `suggestion` for `FileImmutable` (mentions `chattr -i` / `fsutil`), `NoMatches` (broaden pattern), and `BinaryFile` (use `read --stat`)
+- NOTE that only `BrokenPipe` (SIGPIPE) returns no `suggestion` because it is not actionable
 ### FORBIDDEN
 - NEVER ignore non-zero exit codes (except exit 1 in search)
 - NEVER parse stderr for error data
 - NEVER retry when `retryable: false`
+- NEVER invent suggestions that are not in the response (the `suggestion` field is the single source of truth)
 ### Correct Pattern — Error Handling
 ```bash
 output=$(atomwrite --workspace . read missing.txt 2>/dev/null)
 exit_code=$?
 if [ $exit_code -ne 0 ]; then
-  echo "$output" | jaq '{code: .code, class: .error_class, suggestion: .suggestion}'
+  echo "$output" | jaq '{code: .code, class: .error_class, suggestion: .suggestion, workspace: .workspace}'
 fi
+```
+
+
+## Windows 10/11 Support (v0.1.4)
+### REQUIRED
+- VERIFY Visual Studio 2019+ Build Tools with C++ workload is installed before `cargo install atomwrite`
+- VERIFY Rust 1.85 or later is installed
+- USE Windows Terminal or PowerShell 7+ for proper UTF-8 output and ANSI escape sequences
+- TRUST `init_console` to set code page 65001 and `ENABLE_VIRTUAL_TERMINAL_PROCESSING` automatically
+### FORBIDDEN
+- NEVER use `cmd.exe` legacy console for output (mojibake expected)
+- NEVER rely on `cargo install atomwrite` working on v0.1.3 (broken on Windows 10/11; fix is in v0.1.4)
+### Correct Pattern — Windows Install
+```powershell
+rustup default stable
+rustup target add x86_64-pc-windows-msvc
+cargo install atomwrite --locked
+atomwrite --version  # NDJSON output
+```
+
+
+## Cross-Compile Validation (v0.1.4)
+### REQUIRED
+- RUN `cargo test --test cross_compile_check -- --ignored` before any release that touches `#[cfg(windows)]` code
+- INSTALL Windows targets: `rustup target add x86_64-pc-windows-gnu` and `i686-pc-windows-gnu`
+- ON Linux, INSTALL mingw-w64: `mingw64-gcc` (Fedora) or `mingw-w64` (Ubuntu) and `mingw32-gcc` for 32-bit
+- TRUST the gate to fail on any `E0433`, `E0308`, or `E0507` regression in Windows-only code
+### Correct Pattern — Cross-Compile Gate
+```bash
+rustup target add x86_64-pc-windows-gnu i686-pc-windows-gnu x86_64-pc-windows-msvc
+cargo test --test cross_compile_check -- --ignored
 ```
 
 

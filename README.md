@@ -18,7 +18,16 @@
 - Every file gets a BLAKE3 checksum: detect drift, verify integrity, enable optimistic locking
 
 
-## What Is New In v0.1.3
+## What Is New In v0.1.4
+- **`cargo install atomwrite` works on Windows 10/11** — Three compilation errors in `#[cfg(windows)]` blocks that broke the v0.1.3 release on Windows are now fixed: E0433 in `src/atomic.rs:404` (missing `AtomwriteError` import), E0507 in `src/atomic.rs:387` (`persist_with_retry` now takes `NamedTempFile` by value), and E0308 in `src/platform.rs:116` (raw pointer `handle` now compared with `!handle.is_null()` instead of literal `0`).
+- **Context-aware error suggestions** — The `WorkspaceJail` suggestion now adapts: when the user has already provided `--workspace` (or `ATOMWRITE_WORKSPACE`), the suggestion says "use a path inside the workspace" instead of re-prompting the flag. All 20 error variants now carry actionable `suggestion` text (previously 6 had no suggestion). The phantom `--force-text` flag reference is removed.
+- **New `ErrorContext` struct** — `ErrorJson::from_error_with_context()` and `output::write_error_json_with_context()` propagate workspace provenance from the CLI parser to the NDJSON output so suggestions stay precise. The legacy `from_error()` is preserved for backward compatibility.
+- **Cross-compile gate** — New `tests/cross_compile_check.rs` runs `cargo check` against `x86_64-pc-windows-gnu`, `i686-pc-windows-gnu`, and `x86_64-pc-windows-msvc`. The gate fails on any `E0433`, `E0308`, or `E0507` regression in `cfg(windows)` blocks. Tests are `#[ignore]` by default; run with `cargo test --test cross_compile_check -- --ignored` before any release that touches Windows-only code.
+- **Windows installation guide** — New `docs/INSTALL.md` (English) and `docs/INSTALL.pt-BR.md` (Portuguese) cover Windows 10/11 prerequisites (Visual Studio Build Tools, Rust 1.85+, Windows Terminal), `cargo install` commands, and troubleshooting.
+
+See the v0.1.3 → v0.1.4 migration guide in `docs/MIGRATION.md` for the upgrade path. v0.1.3 was the previous release.
+
+## What Was New In v0.1.3
 - `--preserve-timestamps` flag on `edit` and `replace` to control file mtime (default: mtime is updated to reflect the change)
 - `mtime_preserved` field in `EditOutput` and `ReplaceResult` NDJSON responses for diagnostic visibility
 - BREAKING: atomic write no longer preserves the original file mtime by default. This fixes a silent no-op in `cargo build` / `make` / `cmake` / `gradle` that occurred when the source file appeared older than the binary. See the v0.1.2 → v0.1.3 migration guide in `docs/MIGRATION.md`

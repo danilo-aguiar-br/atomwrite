@@ -602,17 +602,52 @@ fi
 - USAR `error_class` para determinar estratégia de retry
 - RETENTAR quando `retryable: true`
 - USAR campo `suggestion` para remediação acionável
+- ESPERAR que `suggestion` seja context-aware: `WorkspaceJail` difere com base em se `--workspace` foi fornecido
+- CONFIAR em `suggestion` para `FileImmutable` (menciona `chattr -i` / `fsutil`), `NoMatches` (ampliar padrão), e `BinaryFile` (usar `read --stat`)
+- NOTAR que apenas `BrokenPipe` (SIGPIPE) retorna sem `suggestion` porque não é acionável
 ### PROIBIDO
 - NUNCA ignorar exit codes não-zero (exceto exit 1 em search)
 - NUNCA parsear stderr para dados de erro
 - NUNCA retentar quando `retryable: false`
+- NUNCA inventar sugestões que não estão na resposta (o campo `suggestion` é a fonte única de verdade)
 ### Padrão Correto — Tratamento de Erros
 ```bash
 output=$(atomwrite --workspace . read missing.txt 2>/dev/null)
 exit_code=$?
 if [ $exit_code -ne 0 ]; then
-  echo "$output" | jaq '{code: .code, class: .error_class, suggestion: .suggestion}'
+  echo "$output" | jaq '{code: .code, class: .error_class, suggestion: .suggestion, workspace: .workspace}'
 fi
+```
+
+
+## Suporte ao Windows 10/11 (v0.1.4)
+### OBRIGATÓRIO
+- VERIFICAR que Visual Studio 2019+ Build Tools com workload C++ está instalado antes de `cargo install atomwrite`
+- VERIFICAR que Rust 1.85 ou posterior está instalado
+- USAR Windows Terminal ou PowerShell 7+ para output UTF-8 e sequências ANSI adequadas
+- CONFIAR que `init_console` define code page 65001 e `ENABLE_VIRTUAL_TERMINAL_PROCESSING` automaticamente
+### PROIBIDO
+- NUNCA usar console legado `cmd.exe` para output (mojibake esperado)
+- NUNCA depender de `cargo install atomwrite` funcionando na v0.1.3 (quebrado no Windows 10/11; fix está na v0.1.4)
+### Padrão Correto — Instalação Windows
+```powershell
+rustup default stable
+rustup target add x86_64-pc-windows-msvc
+cargo install atomwrite --locked
+atomwrite --version  # Saída NDJSON
+```
+
+
+## Validação Cross-Compile (v0.1.4)
+### OBRIGATÓRIO
+- EXECUTAR `cargo test --test cross_compile_check -- --ignored` antes de qualquer release que toque código `#[cfg(windows)]`
+- INSTALAR targets Windows: `rustup target add x86_64-pc-windows-gnu` e `i686-pc-windows-gnu`
+- NO Linux, INSTALAR mingw-w64: `mingw64-gcc` (Fedora) ou `mingw-w64` (Ubuntu) e `mingw32-gcc` para 32-bit
+- CONFIAR que o gate falha em qualquer regressão de `E0433`, `E0308`, ou `E0507` em código Windows-only
+### Padrão Correto — Gate de Cross-Compile
+```bash
+rustup target add x86_64-pc-windows-gnu i686-pc-windows-gnu x86_64-pc-windows-msvc
+cargo test --test cross_compile_check -- --ignored
 ```
 
 

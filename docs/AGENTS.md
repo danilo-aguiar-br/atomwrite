@@ -191,9 +191,22 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 
 ## REQUIRED -- Error Handling
 - Errors emit JSON on stdout with `error: true`
-- Fields: `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`
+- Fields: `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`, `workspace`
 - `error_class` values: `permanent`, `transient`, `conflict`, `precondition_failed`
 - `retryable` is true for `transient` and `conflict` classes
+- `workspace` field appears only on `WORKSPACE_JAIL` errors and reports the resolved workspace root
+- All 20 error variants carry actionable `suggestion` text (added in v0.1.4, GAP 13)
+- `WorkspaceJail` suggestion is **context-aware**: when `--workspace` or `ATOMWRITE_WORKSPACE` is already set, the suggestion says "use a path inside the workspace (<root>)" rather than re-prompting the flag
+- The `BinaryFile` suggestion recommends `read --stat` for metadata-only reads (the previous phantom `--force-text` reference is removed)
+- The `FileImmutable` suggestion mentions `chattr -i` (Unix) and `fsutil` (Windows)
+- The `NoMatches` suggestion guides pattern broadening and `--include`/`--exclude` filter review
+- Only `BrokenPipe` (SIGPIPE) has no suggestion because the error is not actionable by the user
+
+### Context-Aware Suggestion API (v0.1.4)
+- New Rust API: `ErrorJson::from_error_with_context(err, &ErrorContext)` accepts workspace provenance
+- `ErrorContext` struct has `workspace_provided: bool` and `workspace: Option<PathBuf>`
+- Legacy `ErrorJson::from_error(err)` still works and produces the same output as the new API with a default context
+- Programmatic consumers can call `from_error_with_context` to influence the suggestion text
 
 
 ## REQUIRED -- Retry Strategy

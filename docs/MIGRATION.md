@@ -5,9 +5,58 @@
 
 
 ## Current Version
-- atomwrite is at v0.1.3
-- This document covers migration from v0.1.1 to v0.1.2 AND v0.1.2 to v0.1.3
+- atomwrite is at v0.1.4
+- This document covers migration from v0.1.2 to v0.1.3 AND v0.1.3 to v0.1.4
 - See the sections below for additive changes and breaking changes in each version
+
+
+## v0.1.3 to v0.1.4
+
+### v0.1.4 (Current)
+
+#### Fixed (Windows Compilation - GAP 14)
+
+Three compilation errors in `#[cfg(windows)]` blocks prevented `cargo install atomwrite` from succeeding on Windows 10/11 since v0.1.3:
+
+- `E0433` in `src/atomic.rs:404` — `persist_with_retry` used `AtomwriteError::PermissionDenied` without importing it. The `use crate::error::AtomwriteError;` is now gated under `#[cfg(windows)]` to avoid `unused_imports` on Linux/macOS.
+- `E0507` in `src/atomic.rs:387` — `persist_with_retry` took `&NamedTempFile` but called `temp.persist()` which requires ownership. Signature changed to `fn persist_with_retry(mut temp: NamedTempFile, target: &Path) -> Result<()>`. The retry branch now recovers the file from `e.file` (PersistError exposes the original NamedTempFile on failure).
+- `E0308` in `src/platform.rs:116` — `GetStdHandle` returns `HANDLE` which is `*mut c_void` in windows-sys 0.61. The literal `0` is a `usize`; comparing a raw pointer to an integer is a type error. Replaced `handle != 0` with `!handle.is_null()`. The `handle != INVALID_HANDLE_VALUE` comparison is unchanged because `INVALID_HANDLE_VALUE` is already typed as `HANDLE` (`-1i32 as _`).
+
+Migration impact:
+- No API or behavior change for end users on Linux or macOS
+- Windows users: `cargo install atomwrite` now succeeds; no need to apply manual patches or compile from source
+- All atomic write semantics, exit codes, NDJSON output, and CLI flags are unchanged
+
+#### Fixed (Error Suggestions - GAP 13)
+
+Error suggestions are now context-aware and actionable:
+
+- `WorkspaceJail` suggestion adapts: when the user has supplied `--workspace` (or `ATOMWRITE_WORKSPACE`), the suggestion now says "use a path inside the workspace (<root>)" instead of re-prompting the flag.
+- All 20 error variants now carry `suggestion` text. Previously 6 variants (InvalidInput, Io, ConfigInvalid, FileImmutable, NoMatches, InternalError) returned `None`. Only `BrokenPipe` (SIGPIPE, not actionable) remains without a suggestion.
+- Phantom `--force-text` flag reference removed from BinaryFile suggestion.
+- New `ErrorContext` struct (`workspace_provided`, `workspace`) and `ErrorJson::from_error_with_context()` API. The legacy `from_error()` is preserved.
+
+New suggestions:
+- `FileImmutable` — mentions `chattr -i` (Unix) and `fsutil` (Windows) to clear the immutable attribute
+- `NoMatches` — guides the user to broaden the pattern and review `--include`/`--exclude` filters
+- `InternalError` — requests a bug report with the reason context
+- `InvalidInput` — asks the user to review the input and check arguments
+- `Io` — points to the underlying I/O error message
+- `ConfigInvalid` — points to the configuration reason
+
+Migration impact:
+- No API breakage: `ErrorJson::from_error()` still works with the same output
+- If you parse the `suggestion` field of error envelopes, the text may now differ for the affected variants. The semantics (actionable hint) are preserved or improved.
+
+#### Added (Cross-Platform Validation - GAP 14)
+
+- `tests/cross_compile_check.rs` — 3 gated cross-compile tests for `x86_64-pc-windows-gnu`, `i686-pc-windows-gnu`, and `x86_64-pc-windows-msvc`. Fails on any regression of `E0433`, `E0308`, or `E0507` in `cfg(windows)` blocks. Run with `cargo test --test cross_compile_check -- --ignored` before releases that touch Windows-only code.
+- `output::write_error_json_with_context()` — propagates `ErrorContext` from the CLI parser to the NDJSON output.
+- `docs/INSTALL.md` and `docs/INSTALL.pt-BR.md` — Windows 10/11 installation prerequisites, `cargo install` commands, and troubleshooting.
+
+#### Reference
+
+See `gaps.md` sections "GAP 13" and "GAP 14" for the full root-cause analysis and design rationale.
 
 
 ## v0.1.2 to v0.1.3

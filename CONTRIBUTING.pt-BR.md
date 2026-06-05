@@ -121,6 +121,16 @@ cargo fmt -- --check
 - Execute `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` para verificação de documentação
 - Execute `cargo audit` para alertas de segurança
 - Execute `cargo deny check` para política de licenças e dependências (veja `deny.toml`)
+- Execute `cargo check --all-features` contra o MSRV (Rust 1.85) para compatibilidade de toolchain
+- Execute `cargo package --no-verify --list` e `cargo publish --dry-run --allow-dirty` para validar artefatos de release
+
+## Validação Cross-Platform (adicionado na v0.1.4)
+- Instale targets Windows: `rustup target add x86_64-pc-windows-gnu` e `i686-pc-windows-gnu`
+- No Linux, instale mingw: `mingw64-gcc` (Fedora) ou `mingw-w64` (Ubuntu)
+- Execute o gate de cross-compile: `cargo test --test cross_compile_check -- --ignored`
+- O gate falha em qualquer regressão de `E0433`, `E0308`, ou `E0507` em blocos `#[cfg(windows)]`
+- Obrigatório para qualquer mudança que toque `src/atomic.rs`, `src/platform.rs`, `src/signal.rs`, ou outro código Windows-only
+- O gate é uma defesa contra a regressão do GAP 14: `cargo install atomwrite` estava quebrado no Windows 10/11 na v0.1.3 porque três erros de compilação Windows-only não foram capturados pelo CI Linux-only
 
 
 ## Dúvidas

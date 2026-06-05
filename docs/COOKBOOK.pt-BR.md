@@ -658,3 +658,35 @@ atomwrite edit src/main.rs --old "antigo" --new "novo" | atomwrite extract mtime
 atomwrite edit --preserve-timestamps src/snapshot.rs --old "antigo" --new "novo"
 atomwrite replace --preserve-timestamps 'old_api' 'new_api' src/
 ```
+
+
+## Como Interpretar Sugestões de Erro (v0.1.4)
+- Todo envelope de erro inclui um campo `suggestion` com orientação acionável de recuperação
+- A sugestão de `WorkspaceJail` se adapta com base em se `--workspace` foi fornecido
+- Use a sugestão para guiar a lógica de retry do agente em vez de parsear o texto da mensagem
+
+```bash
+# Quando workspace NÃO é fornecido, a solicitação da flag é sugerida
+atomwrite read /etc/passwd 2>/dev/null
+# Saída: {"error":true,"code":"WORKSPACE_JAIL","exit":126,...,"suggestion":"set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>",...}
+
+# Quando workspace É fornecido, a sugestão diz "use a path inside"
+atomwrite --workspace /home/user/project read /etc/passwd 2>/dev/null
+# Saída: {"error":true,"code":"WORKSPACE_JAIL","exit":126,...,"suggestion":"use a path inside the workspace (/home/user/project)",...}
+```
+
+
+## Como Instalar no Windows 10/11 (v0.1.4)
+- v0.1.4 finalmente corrige `cargo install atomwrite` no Windows
+- Instale Visual Studio 2019+ Build Tools com workload C++
+- Instale Rust 1.85+ via rustup
+- Execute `cargo install atomwrite --locked`
+- Veja [INSTALL.md](INSTALL.md) para o guia completo de troubleshooting Windows
+
+```powershell
+# PowerShell 7+ ou Windows Terminal
+rustup default stable
+rustup target add x86_64-pc-windows-msvc
+cargo install atomwrite --locked
+atomwrite --version  # Saída NDJSON
+```

@@ -5,9 +5,58 @@
 
 
 ## Versão Atual
-- atomwrite está na v0.1.3
-- Este documento cobre migração da v0.1.1 para v0.1.2 E da v0.1.2 para v0.1.3
+- atomwrite está na v0.1.4
+- Este documento cobre migração da v0.1.2 para v0.1.3 E da v0.1.3 para v0.1.4
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
+
+
+## v0.1.3 para v0.1.4
+
+### v0.1.4 (Atual)
+
+#### Corrigido (Compilação Windows - GAP 14)
+
+Três erros de compilação em blocos `#[cfg(windows)]` impediam `cargo install atomwrite` de funcionar no Windows 10/11 desde v0.1.3:
+
+- `E0433` em `src/atomic.rs:404` — `persist_with_retry` usava `AtomwriteError::PermissionDenied` sem importá-lo. O `use crate::error::AtomwriteError;` agora está gated sob `#[cfg(windows)]` para evitar `unused_imports` em Linux/macOS.
+- `E0507` em `src/atomic.rs:387` — `persist_with_retry` recebia `&NamedTempFile` mas chamava `temp.persist()` que requer ownership. Assinatura mudou para `fn persist_with_retry(mut temp: NamedTempFile, target: &Path) -> Result<()>`. O branch de retry agora recupera o arquivo de `e.file` (PersistError expõe o NamedTempFile original em falha).
+- `E0308` em `src/platform.rs:116` — `GetStdHandle` retorna `HANDLE` que é `*mut c_void` no windows-sys 0.61. O literal `0` é `usize`; comparar raw pointer com inteiro é erro de tipo. Substituído `handle != 0` por `!handle.is_null()`. A comparação `handle != INVALID_HANDLE_VALUE` permanece inalterada porque `INVALID_HANDLE_VALUE` já é tipada como `HANDLE` (`-1i32 as _`).
+
+Impacto da migração:
+- Nenhuma mudança de API ou comportamento para usuários Linux ou macOS
+- Usuários Windows: `cargo install atomwrite` agora funciona; sem necessidade de patches manuais ou compilar do código fonte
+- Toda a semântica de escrita atômica, exit codes, output NDJSON, e flags CLI permanecem inalteradas
+
+#### Corrigido (Sugestões de Erro - GAP 13)
+
+Sugestões de erro agora são context-aware e acionáveis:
+
+- Sugestão de `WorkspaceJail` se adapta: quando o usuário forneceu `--workspace` (ou `ATOMWRITE_WORKSPACE`), a sugestão agora diz "use a path inside the workspace (<root>)" em vez de re-pedir a flag.
+- Todas as 20 variants de erro agora carregam texto `suggestion`. Anteriormente 6 variants (InvalidInput, Io, ConfigInvalid, FileImmutable, NoMatches, InternalError) retornavam `None`. Apenas `BrokenPipe` (SIGPIPE, não-acionável) permanece sem sugestão.
+- Referência phantom à flag `--force-text` removida da sugestão de BinaryFile.
+- Novo struct `ErrorContext` (`workspace_provided`, `workspace`) e API `ErrorJson::from_error_with_context()`. A versão legacy `from_error()` é preservada.
+
+Novas sugestões:
+- `FileImmutable` — menciona `chattr -i` (Unix) e `fsutil` (Windows) para limpar o atributo imutável
+- `NoMatches` — orienta o usuário a ampliar o padrão e revisar filtros `--include`/`--exclude`
+- `InternalError` — solicita report de bug com o contexto da razão
+- `InvalidInput` — pede ao usuário para revisar o input e checar argumentos
+- `Io` — aponta para a mensagem de erro de I/O subjacente
+- `ConfigInvalid` — aponta para a razão da configuração
+
+Impacto da migração:
+- Sem quebra de API: `ErrorJson::from_error()` ainda funciona com o mesmo output
+- Se você parseia o campo `suggestion` de envelopes de erro, o texto pode diferir para as variants afetadas. A semântica (dica acionável) é preservada ou melhorada.
+
+#### Adicionado (Validação Cross-Platform - GAP 14)
+
+- `tests/cross_compile_check.rs` — 3 testes de cross-compile gated para `x86_64-pc-windows-gnu`, `i686-pc-windows-gnu`, e `x86_64-pc-windows-msvc`. Falha em qualquer regressão de `E0433`, `E0308`, ou `E0507` em blocos `cfg(windows)`. Execute com `cargo test --test cross_compile_check -- --ignored` antes de releases que tocam código Windows-only.
+- `output::write_error_json_with_context()` — propaga `ErrorContext` do parser CLI até o output NDJSON.
+- `docs/INSTALL.md` e `docs/INSTALL.pt-BR.md` — pré-requisitos de instalação Windows 10/11, comandos `cargo install`, e troubleshooting.
+
+#### Referência
+
+Veja as seções "GAP 13" e "GAP 14" em `gaps.md` para a análise completa de causa raiz e rationale de design.
 
 
 ## v0.1.2 para v0.1.3
