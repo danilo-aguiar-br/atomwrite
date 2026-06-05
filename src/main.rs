@@ -89,7 +89,16 @@ fn main() -> ExitCode {
                     // holds the lock (observed on Linux/glibc; eprintln! output
                     // was silently dropped before reaching the captured stderr
                     // pipe in tests).
-                    let _ = writeln!(io::stderr(), "atomwrite: shutting down...");
+                    //
+                    // We use io::stderr().lock() to acquire the StderrLock guard
+                    // which flushes the buffer on Drop. Without the lock, the
+                    // stderr is fully-buffered when redirected to a pipe (as in
+                    // cargo test's Stdio::piped()), so writeln! writes to the
+                    // buffer but never reaches the pipe before the process exits.
+                    // The lock guarantees the flush happens before this stack
+                    // frame returns and before the process exits with the signal
+                    // exit code.
+                    let _ = writeln!(io::stderr().lock(), "atomwrite: shutting down...");
                     tracing::info!(signal = sig.exit_code(), "shutdown initiated");
                     ExitCode::from(sig.exit_code())
                 } else {
