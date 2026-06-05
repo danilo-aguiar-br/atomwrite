@@ -27,3 +27,17 @@ pub fn create_test_file(dir: &Path, name: &str, content: &str) -> std::path::Pat
     std::fs::write(&path, content).expect("write test file");
     path
 }
+
+/// Build an NDJSON manifest string from a list of JSON operations.
+///
+/// Uses `serde_json::to_string` to ensure paths and other strings are
+/// properly escaped. `format!` with `display()` is unsafe for paths on
+/// Windows because the embedded backslashes produce invalid JSON escapes
+/// (e.g. `\U`, `\r`, `\T`). Always use this helper to construct manifests
+/// in tests so the suite is portable across all platforms.
+pub fn manifest(ops: &[serde_json::Value]) -> String {
+    ops.iter()
+        .map(|op| serde_json::to_string(op).expect("serialize manifest op"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}

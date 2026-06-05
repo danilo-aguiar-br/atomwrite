@@ -2,6 +2,8 @@
 
 //! Validate that all NDJSON output is valid JSON per line using serde_json.
 
+mod common;
+
 fn assert_all_lines_valid_json(stdout: &[u8], cmd_name: &str) {
     let text = String::from_utf8_lossy(stdout);
     let mut valid = 0usize;
@@ -305,10 +307,11 @@ fn ndjson_delete_output_valid() {
 fn ndjson_batch_output_valid() {
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("batch.txt");
-    let manifest = format!(
-        r#"{{"op":"write","target":"{}","content":"batch ndjson"}}"#,
-        target.display()
-    );
+    let manifest = common::manifest(&[serde_json::json!({
+        "op": "write",
+        "target": target.to_string_lossy(),
+        "content": "batch ndjson",
+    })]);
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
     let mut child = std::process::Command::new(&bin)

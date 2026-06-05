@@ -10,6 +10,14 @@
 
 ## [Unreleased]
 
+### Corrigido (Falhas de CI - GAP 23 barra invertida Windows em manifestos JSON)
+- **11 testes do `cli_batch` deixam de falhar no `windows-2025-vs2026`** — Os testes construíam o manifesto NDJSON via `format!` + `Path::display()`. No Windows o path nativo da plataforma usa barras invertidas (`C:\Users\...\Temp\.tmpXXXX\file.txt`), e o `format!` não as escapa. O resultado é uma string JSON com sequências de escape inválidas (`\U`, `\r`, `\A`, `\L`, `\T`), que o `serde_path_to_error::deserialize` rejeita com `invalid escape`. O `cmd_batch` então retorna `bail!` e sai com código não-zero, falhando o `assert!(output.status.success())`. O teste passava no Linux/macOS apenas porque os paths usam barras normais, que são válidas em strings JSON sem escape.
+  - Adicionado helper `common::manifest(&[serde_json::Value]) -> String` em `tests/common/mod.rs` que serializa cada op via `serde_json::to_string`, garantindo escape JSON correto de barras invertidas, aspas, caracteres de controle e Unicode.
+  - Refatorados todos os 11 testes afetados em `tests/cli_batch.rs` para usar o novo helper via macro `serde_json::json!`.
+  - Refatorados 2 testes adicionais com o mesmo padrão de bug: `tests/snapshot_write.rs::batch_summary_ndjson_structure_snapshot` e `tests/ndjson_valid_test.rs::ndjson_batch_output_valid` (também adicionado o `mod common;` faltante neste último).
+  - Adicionado teste de regressão `batch_write_escapes_backslash_in_target_path` que constrói uma string de path com barra invertida forçada em qualquer plataforma, para que o bug seja capturado em toda execução de CI, não apenas no Windows.
+- **Total de testes: 303/303 PASSAM** (eram 302; +1 do novo teste de regressão).
+
 ## [0.1.11] - 2026-06-05
 
 ### Corrigido (Falhas de CI - windows-2025-vs2026 + signal test flaky no Linux)

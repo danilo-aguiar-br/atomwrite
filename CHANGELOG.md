@@ -10,6 +10,14 @@
 
 ## [Unreleased]
 
+### Fixed (CI Failures - GAP 23 Windows path backslash in JSON manifests)
+- **11 `cli_batch` tests no longer fail on `windows-2025-vs2026`** — Tests were building the NDJSON manifest via `format!` + `Path::display()`. On Windows the platform-native path uses backslashes (`C:\Users\...\Temp\.tmpXXXX\file.txt`), and `format!` does not escape them. The result is a JSON string with invalid escape sequences (`\U`, `\r`, `\A`, `\L`, `\T`), which `serde_path_to_error::deserialize` rejects with `invalid escape`. `cmd_batch` then returns `bail!` and exits non-zero, failing the `assert!(output.status.success())` check. The test was passing on Linux/macOS only because their paths use forward slashes, which are valid in JSON strings without escaping.
+  - Added `common::manifest(&[serde_json::Value]) -> String` helper in `tests/common/mod.rs` that serializes each op via `serde_json::to_string`, guaranteeing correct JSON escaping of backslashes, quotes, control characters, and Unicode.
+  - Refactored all 11 affected tests in `tests/cli_batch.rs` to use the new helper via the `serde_json::json!` macro.
+  - Refactored 2 additional tests with the same bug pattern: `tests/snapshot_write.rs::batch_summary_ndjson_structure_snapshot` and `tests/ndjson_valid_test.rs::ndjson_batch_output_valid` (also added the missing `mod common;` to the latter).
+  - Added regression test `batch_write_escapes_backslash_in_target_path` that constructs a path string with a forced backslash on any platform, so the bug would be caught on every CI run, not just Windows.
+- **Total tests: 303/303 PASS** (was 302; +1 from the new regression test).
+
 ## [0.1.11] - 2026-06-05
 
 ### Fixed (CI Failures - windows-2025-vs2026 + Linux flaky signal test)

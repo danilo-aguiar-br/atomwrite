@@ -137,10 +137,11 @@ fn batch_summary_ndjson_structure_snapshot() {
     let dir = tempfile::tempdir().expect("tempdir");
     let target = dir.path().join("batch_snap.txt");
 
-    let manifest = format!(
-        r#"{{"op":"write","target":"{}","content":"batch snap"}}"#,
-        target.display()
-    );
+    let manifest = common::manifest(&[serde_json::json!({
+        "op": "write",
+        "target": target.to_string_lossy(),
+        "content": "batch snap",
+    })]);
 
     let output = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])

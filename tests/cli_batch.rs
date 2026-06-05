@@ -7,10 +7,11 @@ fn batch_write_creates_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let target = dir.path().join("batch_out.txt");
 
-    let manifest = format!(
-        r#"{{"op":"write","target":"{}","content":"hello batch"}}"#,
-        target.display()
-    );
+    let manifest = common::manifest(&[serde_json::json!({
+        "op": "write",
+        "target": target.to_string_lossy(),
+        "content": "hello batch",
+    })]);
 
     let output = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
@@ -50,10 +51,12 @@ fn batch_replace_modifies_file() {
     let target = dir.path().join("replace_me.txt");
     std::fs::write(&target, "old_value here\n").expect("write");
 
-    let manifest = format!(
-        r#"{{"op":"replace","target":"{}","pattern":"old_value","replacement":"new_value"}}"#,
-        target.display()
-    );
+    let manifest = common::manifest(&[serde_json::json!({
+        "op": "replace",
+        "target": target.to_string_lossy(),
+        "pattern": "old_value",
+        "replacement": "new_value",
+    })]);
 
     let output = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
@@ -74,7 +77,10 @@ fn batch_delete_removes_file() {
     let target = dir.path().join("to_delete.txt");
     std::fs::write(&target, "delete me\n").expect("write");
 
-    let manifest = format!(r#"{{"op":"delete","target":"{}"}}"#, target.display());
+    let manifest = common::manifest(&[serde_json::json!({
+        "op": "delete",
+        "target": target.to_string_lossy(),
+    })]);
 
     let output = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
@@ -93,10 +99,12 @@ fn batch_dry_run_does_not_modify() {
     let original = "keep me\n";
     std::fs::write(&target, original).expect("write");
 
-    let manifest = format!(
-        r#"{{"op":"replace","target":"{}","pattern":"keep","replacement":"gone"}}"#,
-        target.display()
-    );
+    let manifest = common::manifest(&[serde_json::json!({
+        "op": "replace",
+        "target": target.to_string_lossy(),
+        "pattern": "keep",
+        "replacement": "gone",
+    })]);
 
     let output = common::atomwrite()
         .args([
@@ -121,12 +129,19 @@ fn batch_multiple_operations() {
     let file_b = dir.path().join("b.txt");
     std::fs::write(&file_b, "original_b\n").expect("write");
 
-    let manifest = format!(
-        r#"{{"op":"write","target":"{}","content":"content_a"}}
-{{"op":"replace","target":"{}","pattern":"original_b","replacement":"modified_b"}}"#,
-        file_a.display(),
-        file_b.display()
-    );
+    let manifest = common::manifest(&[
+        serde_json::json!({
+            "op": "write",
+            "target": file_a.to_string_lossy(),
+            "content": "content_a",
+        }),
+        serde_json::json!({
+            "op": "replace",
+            "target": file_b.to_string_lossy(),
+            "pattern": "original_b",
+            "replacement": "modified_b",
+        }),
+    ]);
 
     let output = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
@@ -194,11 +209,11 @@ fn batch_move_with_source_target() {
     let src = common::create_test_file(dir.path(), "origin.txt", "move me\n");
     let dest = dir.path().join("destination.txt");
 
-    let manifest = format!(
-        r#"{{"op":"move","source":"{}","target":"{}"}}"#,
-        src.display(),
-        dest.display()
-    );
+    let manifest = common::manifest(&[serde_json::json!({
+        "op": "move",
+        "source": src.to_string_lossy(),
+        "target": dest.to_string_lossy(),
+    })]);
 
     let output = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
@@ -222,11 +237,11 @@ fn batch_copy_with_source_target() {
     let src = common::create_test_file(dir.path(), "src_copy.txt", "copy me\n");
     let dest = dir.path().join("dst_copy.txt");
 
-    let manifest = format!(
-        r#"{{"op":"copy","source":"{}","target":"{}"}}"#,
-        src.display(),
-        dest.display()
-    );
+    let manifest = common::manifest(&[serde_json::json!({
+        "op": "copy",
+        "source": src.to_string_lossy(),
+        "target": dest.to_string_lossy(),
+    })]);
 
     let output = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
@@ -250,11 +265,11 @@ fn batch_move_with_from_alias() {
     let src = common::create_test_file(dir.path(), "from_file.txt", "alias test\n");
     let dest = dir.path().join("to_file.txt");
 
-    let manifest = format!(
-        r#"{{"op":"move","from":"{}","target":"{}"}}"#,
-        src.display(),
-        dest.display()
-    );
+    let manifest = common::manifest(&[serde_json::json!({
+        "op": "move",
+        "from": src.to_string_lossy(),
+        "target": dest.to_string_lossy(),
+    })]);
 
     let output = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
@@ -278,10 +293,11 @@ fn batch_write_with_path_alias() {
     let dir = tempfile::tempdir().expect("tempdir");
     let target = dir.path().join("path_alias.txt");
 
-    let manifest = format!(
-        r#"{{"op":"write","path":"{}","content":"via path field"}}"#,
-        target.display()
-    );
+    let manifest = common::manifest(&[serde_json::json!({
+        "op": "write",
+        "path": target.to_string_lossy(),
+        "content": "via path field",
+    })]);
 
     let output = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
@@ -302,7 +318,10 @@ fn batch_delete_with_path_alias() {
     let dir = tempfile::tempdir().expect("tempdir");
     let target = common::create_test_file(dir.path(), "to_del.txt", "del me\n");
 
-    let manifest = format!(r#"{{"op":"delete","path":"{}"}}"#, target.display());
+    let manifest = common::manifest(&[serde_json::json!({
+        "op": "delete",
+        "path": target.to_string_lossy(),
+    })]);
 
     let output = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
@@ -330,11 +349,11 @@ fn batch_move_legacy_compat() {
     // because the new code reads source first, falls back to path
     // If source is absent and path is present, path becomes source
     // and target becomes destination. This is the NEW correct behavior.
-    let manifest = format!(
-        r#"{{"op":"move","path":"{}","target":"{}"}}"#,
-        src.display(),
-        dest.display()
-    );
+    let manifest = common::manifest(&[serde_json::json!({
+        "op": "move",
+        "path": src.to_string_lossy(),
+        "target": dest.to_string_lossy(),
+    })]);
 
     let output = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
@@ -359,17 +378,19 @@ fn batch_transaction_rollback_preserves_created_files() {
 
     // First op creates a new file (succeeds), second op targets nonexistent
     // file for replace (fails) — triggering transaction rollback.
-    let manifest = format!(
-        "{}\n{}",
-        format_args!(
-            r#"{{"op":"write","target":"{}","content":"new file"}}"#,
-            created.display()
-        ),
-        format_args!(
-            r#"{{"op":"replace","target":"{}","pattern":"nonexistent_pattern_xyz","replacement":"x"}}"#,
-            dir.path().join("does_not_exist.txt").display()
-        ),
-    );
+    let manifest = common::manifest(&[
+        serde_json::json!({
+            "op": "write",
+            "target": created.to_string_lossy(),
+            "content": "new file",
+        }),
+        serde_json::json!({
+            "op": "replace",
+            "target": dir.path().join("does_not_exist.txt").to_string_lossy(),
+            "pattern": "nonexistent_pattern_xyz",
+            "replacement": "x",
+        }),
+    ]);
 
     let _output = common::atomwrite()
         .args([
@@ -398,4 +419,43 @@ fn batch_transaction_rollback_preserves_created_files() {
             "NOTE: known limitation — file created during transaction persists after rollback"
         );
     }
+}
+
+// --- GAP 23: regression for Windows path backslash in JSON manifests ---
+
+/// Regression test that catches the Windows backslash-in-JSON bug on any
+/// platform. Builds a manifest whose target path string contains a literal
+/// backslash (the kind Windows paths contain natively), and confirms the
+/// batch command parses it without error. Before the fix, this test fails
+/// on every platform because the handcrafted `format!` + `display()`
+/// pattern does not escape backslashes inside JSON strings.
+#[test]
+fn batch_write_escapes_backslash_in_target_path() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // Force a backslash into the path string even on non-Windows platforms.
+    let target = format!("{}/with\\backslash.txt", dir.path().display());
+
+    let manifest = common::manifest(&[serde_json::json!({
+        "op": "write",
+        "target": target,
+        "content": "backslash ok",
+    })]);
+
+    let output = common::atomwrite()
+        .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
+        .write_stdin(manifest)
+        .output()
+        .expect("run");
+
+    assert!(
+        output.status.success(),
+        "backslash in target path must be JSON-escaped; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let events = common::parse_ndjson(&output.stdout);
+    let op = events
+        .iter()
+        .find(|e| e["type"] == "batch_op")
+        .expect("batch_op event");
+    assert_eq!(op["status"], "ok");
 }
