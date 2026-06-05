@@ -10,6 +10,16 @@
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-06-05
+
+### Added (README Badges)
+- **docs.rs badge in README.md and README.pt-BR.md** — Added `[![docs.rs](https://img.shields.io/docsrs/atomwrite)](https://docs.rs/atomwrite)` between the Crates.io and License badges. The badge was previously missing from the published README, even though the documentation was being built successfully on docs.rs. The badge now appears in the rendered README on crates.io and on the GitHub repository page.
+
+### Notes
+- v0.1.6 is NON-BREAKING. The change is purely visual (badge image in README).
+- No code or public API changes.
+- No CHANGELOG migration guide required.
+
 ## [0.1.5] - 2026-06-05
 
 ### Changed (Documentation Hygiene)

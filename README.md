@@ -6,6 +6,7 @@
 > Atomic file operations for LLM agents -- one CLI, zero corruption
 
 [![Crates.io](https://img.shields.io/crates/v/atomwrite)](https://crates.io/crates/atomwrite)
+[![docs.rs](https://img.shields.io/docsrs/atomwrite)](https://docs.rs/atomwrite)
 [![License](https://img.shields.io/crates/l/atomwrite)](LICENSE)
 [![CI](https://github.com/daniloaguiarbr/atomwrite/actions/workflows/ci.yml/badge.svg)](https://github.com/daniloaguiarbr/atomwrite/actions)
 
