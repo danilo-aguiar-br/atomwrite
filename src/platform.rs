@@ -113,7 +113,7 @@ pub fn init_console() {
 
         for handle_id in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
             let handle = GetStdHandle(handle_id);
-            if handle != 0 && handle != INVALID_HANDLE_VALUE {
+            if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
                 let mut mode: u32 = 0;
                 if GetConsoleMode(handle, &mut mode) != 0 {
                     let _ = SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);

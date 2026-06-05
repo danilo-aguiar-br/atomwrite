@@ -10,6 +10,25 @@
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-06-05
+
+### Corrigido (Compilação Windows)
+- **`cargo install atomwrite` no Windows 10/11** — Resolvidos dois erros de compilação que bloqueavam a instalação em Windows desde v0.1.3 (GAP 14). Erro `E0433` em `src/atomic.rs:404` (tipo `AtomwriteError` usado sem import) e erro `E0308` em `src/platform.rs:116` (comparação de `*mut c_void` com literal `0`). Bug adicional `E0507` em `persist_with_retry` (assinatura com `&NamedTempFile` mas chamada `.persist()` requer ownership) também corrigido durante a investigação. Todos os três bugs estavam em blocos `#[cfg(windows)]` invisíveis ao CI Linux.
+
+### Corrigido (Correção FFI)
+- **`src/platform.rs:116`** — Substituída comparação `handle != 0` por `!handle.is_null()` para conformidade com o padrão idiomático de raw pointer check em Rust. O `HANDLE` retornado por `GetStdHandle` é um `*mut c_void`; compará-lo com literal inteiro `0` viola o sistema de tipos e disparava `E0308`. Padrão agora é `is_null()` para nulidade e `!= INVALID_HANDLE_VALUE` (que já é `HANDLE`) para validade.
+
+### Adicionado (Validação Cross-Platform)
+- **`tests/cross_compile_check.rs`** — Novo gate de cross-compile que executa `cargo check --target x86_64-pc-windows-gnu` (e MSVC quando disponível) e falha se detectar regressão de `E0433` ou `E0308` em blocos `cfg(windows)`. Testes marcados com `#[ignore]` para não falharem em hosts sem target Windows instalado. Documentação no topo do arquivo explica como habilitar.
+- **Documentação de instalação Windows** — Novo arquivo `docs/INSTALL.md` (EN) e `docs/INSTALL.pt-BR.md` (PT-BR) com pré-requisitos Windows, comandos `cargo install` e troubleshooting.
+
+### Mudado
+- **`src/atomic.rs:13-15`** — Import `use crate::error::AtomwriteError` movido para dentro de bloco `#[cfg(windows)]` para evitar warning de `unused_imports` em builds Linux/macOS. Tipo só é referenciado em `persist_with_retry`, função exclusiva de Windows.
+
+### Notas
+- GAPs 01-12 (já resolvidos) auditados via `cargo test --all-features` e continuam passando. Veja `gaps.md` para histórico completo.
+- Decisão atômica `atomwrite-no-github-actions` mantida: release é manual via `cargo publish` local após validação dos 8 gates oficiais e cross-compile gate. CI matrix em `.github/workflows/ci.yml` existe apenas como referência, não é executado.
+
 
 ## [0.1.3] - 2026-06-03
 

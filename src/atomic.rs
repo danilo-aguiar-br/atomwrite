@@ -13,6 +13,9 @@ use crate::checksum;
 use crate::ndjson_types::PlatformInfo;
 use crate::platform;
 
+#[cfg(windows)]
+use crate::error::AtomwriteError;
+
 /// Configuration for an atomic write operation.
 pub struct AtomicWriteOptions {
     /// Whether to create a backup of the target before overwriting.
@@ -187,7 +190,7 @@ pub fn atomic_write(
     // Step 9: atomic rename
     #[cfg(windows)]
     {
-        persist_with_retry(&temp, &target)?;
+        persist_with_retry(temp, &target)?;
     }
     #[cfg(not(windows))]
     {
@@ -383,7 +386,7 @@ pub(crate) fn epoch_to_utc(epoch: u64) -> (u64, u64, u64, u64, u64, u64) {
 use tempfile::NamedTempFile;
 
 #[cfg(windows)]
-fn persist_with_retry(temp: &NamedTempFile, target: &Path) -> Result<()> {
+fn persist_with_retry(mut temp: NamedTempFile, target: &Path) -> Result<()> {
     let delays = [100, 200, 400];
     for delay_ms in &delays {
         match temp.persist(target) {
@@ -391,6 +394,7 @@ fn persist_with_retry(temp: &NamedTempFile, target: &Path) -> Result<()> {
             Err(e) => {
                 if e.error.kind() == std::io::ErrorKind::PermissionDenied {
                     std::thread::sleep(std::time::Duration::from_millis(*delay_ms));
+                    temp = e.file;
                     continue;
                 }
                 return Err(anyhow::anyhow!(
