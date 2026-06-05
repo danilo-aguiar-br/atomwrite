@@ -67,6 +67,49 @@ impl ShutdownSignal {
     }
 }
 
+/// Install minimal signal handlers as early as possible.
+///
+/// This registers only the flag-setting handlers via `signal_hook::flag::register`
+/// (which is async-signal-safe and uses only atomic operations), without
+/// installing the low-level counter handlers or the OnceLock-based shared
+/// state. The full installation (with counter tracking and the `OnceLock`
+/// `ShutdownSignal`) is performed later by [`install_handlers`], which is
+/// safe to call multiple times — the `OnceLock` ensures only one full install
+/// takes effect. If a signal arrives between [`install_handlers_early`] and
+/// the full [`install_handlers`], the flag is set and the full install
+/// observes the flag on the same atomic via the same `Arc`.
+///
+/// This is critical for tests and real-world scenarios where SIGINT arrives
+/// within the first few hundred milliseconds of process startup. Without
+/// early installation, the signal hits the default disposition (terminate
+/// via signal) before our handlers are registered, and the process exits
+/// with status 128+SIGINT (130) without any graceful shutdown.
+pub fn install_handlers_early() -> Option<Arc<ShutdownSignal>> {
+    // Build the shared signal state with a flag-only handler. This is
+    // upgraded in install_handlers by calling signal_hook::low_level::register
+    // which is a no-op if already registered.
+    let flag = Arc::new(AtomicBool::new(false));
+    let signal = Arc::new(ShutdownSignal {
+        flag: Arc::clone(&flag),
+        count: AtomicU8::new(0),
+        signal_code: AtomicU8::new(0),
+    });
+
+    #[cfg(unix)]
+    {
+        let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&flag));
+        let _ = signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&flag));
+    }
+
+    // Pre-populate the OnceLock so subsequent get_or_install_handlers() calls
+    // return THIS instance (with its already-registered flag handlers) and
+    // do not overwrite them. install_handlers checks the OnceLock and
+    // returns the existing value if set.
+    GLOBAL_SHUTDOWN.set(Arc::clone(&signal)).ok();
+
+    Some(signal)
+}
+
 /// Reset SIGPIPE to default disposition for standard Unix CLI behavior.
 pub fn reset_sigpipe() {
     #[cfg(unix)]
