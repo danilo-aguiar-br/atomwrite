@@ -7,7 +7,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::error::{AtomwriteError, ErrorJson};
+use crate::error::{AtomwriteError, ErrorContext, ErrorJson};
 
 /// Buffered NDJSON writer that flushes after every line.
 pub struct NdjsonWriter<W: Write> {
@@ -58,7 +58,26 @@ impl<W: Write> NdjsonWriter<W> {
     ///
     /// Returns an I/O error if writing the error JSON to the underlying writer fails.
     pub fn write_error(&mut self, err: &AtomwriteError, path: Option<&Path>) -> anyhow::Result<()> {
-        let mut json = ErrorJson::from_error(err);
+        self.write_error_with_context(err, path, &ErrorContext::default())
+    }
+
+    /// Emit a structured error as a single NDJSON line, with diagnostic context.
+    ///
+    /// Use this overload when the caller knows whether the workspace root was
+    /// explicitly provided (e.g. via `--workspace` or `ATOMWRITE_WORKSPACE`).
+    /// The context controls the suggestion text for `WorkspaceJail` errors
+    /// (GAP 13 fix).
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if writing the error JSON to the underlying writer fails.
+    pub fn write_error_with_context(
+        &mut self,
+        err: &AtomwriteError,
+        path: Option<&Path>,
+        ctx: &ErrorContext,
+    ) -> anyhow::Result<()> {
+        let mut json = ErrorJson::from_error_with_context(err, ctx);
         if json.path.is_none() {
             json.path = path.map(|p| p.display().to_string());
         }
@@ -86,7 +105,22 @@ pub fn write_error_json(
     err: &AtomwriteError,
     path: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let mut json = ErrorJson::from_error(err);
+    write_error_json_with_context(out, err, path, &ErrorContext::default())
+}
+
+/// Write a structured error as NDJSON directly to a raw writer, with context.
+///
+/// # Errors
+///
+/// Returns an I/O error if writing the error JSON to the underlying writer fails.
+#[cold]
+pub fn write_error_json_with_context(
+    out: &mut impl Write,
+    err: &AtomwriteError,
+    path: Option<&Path>,
+    ctx: &ErrorContext,
+) -> anyhow::Result<()> {
+    let mut json = ErrorJson::from_error_with_context(err, ctx);
     if json.path.is_none() {
         json.path = path.map(|p| p.display().to_string());
     }

@@ -12,22 +12,38 @@
 
 ## [0.1.4] - 2026-06-05
 
-### Corrigido (Compilação Windows)
-- **`cargo install atomwrite` no Windows 10/11** — Resolvidos dois erros de compilação que bloqueavam a instalação em Windows desde v0.1.3 (GAP 14). Erro `E0433` em `src/atomic.rs:404` (tipo `AtomwriteError` usado sem import) e erro `E0308` em `src/platform.rs:116` (comparação de `*mut c_void` com literal `0`). Bug adicional `E0507` em `persist_with_retry` (assinatura com `&NamedTempFile` mas chamada `.persist()` requer ownership) também corrigido durante a investigação. Todos os três bugs estavam em blocos `#[cfg(windows)]` invisíveis ao CI Linux.
+### Corrigido (Compilação Windows - GAP 14)
+- **`cargo install atomwrite` no Windows 10/11** — Resolvidos três erros de compilação que bloqueavam a instalação em Windows desde v0.1.3. Erro `E0433` em `src/atomic.rs:404` (tipo `AtomwriteError` usado sem import), erro `E0308` em `src/platform.rs:116` (comparação de `*mut c_void` com literal `0`), e erro `E0507` em `src/atomic.rs:387` (assinatura `&NamedTempFile` mas chamada `.persist()` requer ownership). Todos os três bugs estavam em blocos `#[cfg(windows)]` invisíveis ao CI Linux.
 
-### Corrigido (Correção FFI)
-- **`src/platform.rs:116`** — Substituída comparação `handle != 0` por `!handle.is_null()` para conformidade com o padrão idiomático de raw pointer check em Rust. O `HANDLE` retornado por `GetStdHandle` é um `*mut c_void`; compará-lo com literal inteiro `0` viola o sistema de tipos e disparava `E0308`. Padrão agora é `is_null()` para nulidade e `!= INVALID_HANDLE_VALUE` (que já é `HANDLE`) para validade.
+### Corrigido (Correção FFI - GAP 14)
+- **`src/platform.rs:116`** — Substituída comparação `handle != 0` por `!handle.is_null()` para conformidade com o padrão idiomático de raw pointer check em Rust. O `HANDLE` retornado por `GetStdHandle` é um `*mut c_void`; compará-lo com literal inteiro viola o sistema de tipos e disparava `E0308`. Padrão agora é `is_null()` para nulidade e `!= INVALID_HANDLE_VALUE` (que já é `HANDLE`) para validade.
 
-### Adicionado (Validação Cross-Platform)
-- **`tests/cross_compile_check.rs`** — Novo gate de cross-compile que executa `cargo check --target x86_64-pc-windows-gnu` (e MSVC quando disponível) e falha se detectar regressão de `E0433` ou `E0308` em blocos `cfg(windows)`. Testes marcados com `#[ignore]` para não falharem em hosts sem target Windows instalado. Documentação no topo do arquivo explica como habilitar.
-- **Documentação de instalação Windows** — Novo arquivo `docs/INSTALL.md` (EN) e `docs/INSTALL.pt-BR.md` (PT-BR) com pré-requisitos Windows, comandos `cargo install` e troubleshooting.
+### Corrigido (Sugestões de Erro - GAP 13)
+- **`WorkspaceJail` com `workspace_provided`** — Quando o usuário já forneceu `--workspace` ou `ATOMWRITE_WORKSPACE`, a sugestão agora diz "use a path inside the workspace" em vez de re-pedir a flag. Removido phantom `--force-text` que causava exit 2 em cascata.
+- **20 variants com sugestão** — Adicionadas sugestões actionáveis para `InvalidInput`, `Io`, `ConfigInvalid`, `FileImmutable`, `NoMatches`, e `InternalError`. Apenas `BrokenPipe` (SIGPIPE não-acionável) permanece sem sugestão.
+- **`ErrorContext` struct** — Carrega `workspace_provided: bool` e `workspace: Option<PathBuf>`. Novas funções `ErrorJson::from_error_with_context()` e `output::write_error_json_with_context()` usam o contexto para sugestões precisas.
+- **`FileImmutable`** — Sugestão menciona `chattr -i` (Unix) e `fsutil` (Windows) para remover atributo imutável.
+- **`NoMatches`** — Sugestão orienta a ampliar padrão e revisar `--include`/`--exclude`.
+- **`InternalError`** — Sugestão orienta reportar o bug com contexto.
+
+### Adicionado (Validação Cross-Platform - GAP 14)
+- **`tests/cross_compile_check.rs`** — Novo gate de cross-compile que executa `cargo check` contra `x86_64-pc-windows-gnu`, `i686-pc-windows-gnu`, e `x86_64-pc-windows-msvc`. Falha se `E0433`, `E0308`, ou `E0507` reaparecer em qualquer bloco `cfg(windows)`. Testes marcados `#[ignore]` para skip gracioso em hosts sem targets Windows.
+- **`output::write_error_json_with_context()`** — Nova função que aceita `&ErrorContext` para propagar proveniência de `--workspace` até o output NDJSON.
+- **Documentação de instalação Windows** — Novos arquivos `docs/INSTALL.md` (EN) e `docs/INSTALL.pt-BR.md` (PT-BR) com pré-requisitos Windows 10/11, comandos `cargo install` e troubleshooting.
 
 ### Mudado
-- **`src/atomic.rs:13-15`** — Import `use crate::error::AtomwriteError` movido para dentro de bloco `#[cfg(windows)]` para evitar warning de `unused_imports` em builds Linux/macOS. Tipo só é referenciado em `persist_with_retry`, função exclusiva de Windows.
+- **`src/atomic.rs:13-15`** — Movido `use crate::error::AtomwriteError` para dentro de bloco `#[cfg(windows)]` para evitar warning de `unused_imports` em builds Linux/macOS. Tipo só é referenciado dentro de `persist_with_retry`.
+- **`src/atomic.rs:386-409`** — `persist_with_retry` agora recebe `NamedTempFile` por valor e recupera o arquivo de `e.file` no branch de retry. Caller atualizado para passar `temp` por valor.
+- **`src/main.rs:93-105`** — Reporte de erro agora constrói `ErrorContext` com `workspace_provided: cli.global.workspace.is_some()` para que a sugestão de `WorkspaceJail` se adapte à invocação do usuário.
+
+### Testes
+- 7 novos testes GAP 13 em `src/error.rs::tests`: `gap13_workspace_jail_suggestion_when_workspace_not_provided`, `gap13_workspace_jail_suggestion_when_workspace_provided`, `gap13_all_variants_have_suggestion`, `gap13_binary_file_suggestion_does_not_mention_force_text_wrong_flag`, `gap13_file_immutable_suggestion_mentions_chattr`, `gap13_no_matches_suggestion_mentions_filters`, `gap13_error_context_default_matches_legacy_behavior`.
+- 1 novo teste de integração GAP 13 em `tests/cli_v012_regressions.rs`: `gap13_jail_suggestion_when_workspace_supplied_says_inside`.
+- Teste existente `jail_suggestion_mentions_workspace_flag` atualizado para validar que a sugestão menciona `--workspace` apenas quando workspace NÃO é fornecido (fix GAP 13).
 
 ### Notas
-- GAPs 01-12 (já resolvidos) auditados via `cargo test --all-features` e continuam passando. Veja `gaps.md` para histórico completo.
-- Decisão atômica `atomwrite-no-github-actions` mantida: release é manual via `cargo publish` local após validação dos 8 gates oficiais e cross-compile gate. CI matrix em `.github/workflows/ci.yml` existe apenas como referência, não é executado.
+- GAPs 01-12 (previamente resolvidos) re-auditados via `cargo test --all-features` — todos os 300+ testes continuam passando.
+- Decisão atômica `atomwrite-no-github-actions` mantida: release é manual via `cargo publish` local após 8 gates oficiais e cross-compile gate. CI matrix em `.github/workflows/ci.yml` existe apenas como referência, não é executado.
 
 
 ## [0.1.3] - 2026-06-03

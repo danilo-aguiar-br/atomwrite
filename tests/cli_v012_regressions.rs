@@ -283,6 +283,31 @@ fn completions_install_bash_creates_xdg_file() {
 
 #[test]
 fn jail_suggestion_mentions_workspace_flag() {
+    // GAP 13: when no workspace is provided, the suggestion must point the
+    // user to --workspace or ATOMWRITE_WORKSPACE so they can fix the call.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let outside_dir = tempfile::tempdir().expect("tempdir");
+    let outside = outside_dir.path().join("foo.txt");
+    std::fs::write(&outside, "data").expect("write");
+
+    let output = common::atomwrite()
+        .args(["read", outside.to_str().unwrap()])
+        .env("ATOMWRITE_WORKSPACE", dir.path().to_str().unwrap())
+        .env_remove("ATOMWRITE_LANG")
+        .output()
+        .expect("read");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--workspace") || stdout.contains("ATOMWRITE_WORKSPACE"),
+        "jail error without workspace flag should suggest --workspace: {stdout}"
+    );
+}
+
+#[test]
+fn gap13_jail_suggestion_when_workspace_supplied_says_inside() {
+    // GAP 13: when workspace IS provided (via --workspace), the suggestion
+    // must say "inside the workspace" rather than re-prompting the flag.
     let dir = tempfile::tempdir().expect("tempdir");
     let outside_dir = tempfile::tempdir().expect("tempdir");
     let outside = outside_dir.path().join("foo.txt");
@@ -295,13 +320,14 @@ fn jail_suggestion_mentions_workspace_flag() {
             "read",
             outside.to_str().unwrap(),
         ])
+        .env_remove("ATOMWRITE_LANG")
         .output()
         .expect("read");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("--workspace") || stdout.contains("ATOMWRITE_WORKSPACE"),
-        "jail error should suggest --workspace: {stdout}"
+        stdout.contains("inside the workspace"),
+        "jail error with workspace supplied should say 'inside the workspace', got: {stdout}"
     );
 }
 

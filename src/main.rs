@@ -95,7 +95,12 @@ fn main() -> ExitCode {
                     return ExitCode::from(141);
                 }
                 let mut out = io::stdout().lock();
-                let _ = atomwrite::output::write_error_json(&mut out, aw_err, None);
+                let ctx = atomwrite::error::ErrorContext {
+                    workspace_provided: cli.global.workspace.is_some(),
+                    workspace: cli.global.workspace.clone(),
+                };
+                let _ =
+                    atomwrite::output::write_error_json_with_context(&mut out, aw_err, None, &ctx);
                 let _ = out.flush();
                 ExitCode::from(aw_err.exit_code())
             } else {

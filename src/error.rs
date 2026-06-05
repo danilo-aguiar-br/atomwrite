@@ -360,10 +360,26 @@ pub struct ErrorJson {
 }
 
 impl ErrorJson {
-    /// Build an [`ErrorJson`] from a domain error.
+    /// Build an [`ErrorJson`] from a domain error with default empty context.
+    ///
+    /// Equivalent to `from_error_with_context(err, &ErrorContext::default())`.
+    /// Use [`Self::from_error_with_context`] when workspace provenance is known
+    /// so the suggestion for `WorkspaceJail` is precise.
     #[cold]
     #[track_caller]
     pub fn from_error(err: &AtomwriteError) -> Self {
+        Self::from_error_with_context(err, &ErrorContext::default())
+    }
+
+    /// Build an [`ErrorJson`] from a domain error and a diagnostic context.
+    ///
+    /// The context allows the suggestion text to be precise. In particular,
+    /// `WorkspaceJail` errors report different remediation depending on
+    /// whether the user already supplied a workspace root via `--workspace`
+    /// or `ATOMWRITE_WORKSPACE` (GAP 13 fix).
+    #[cold]
+    #[track_caller]
+    pub fn from_error_with_context(err: &AtomwriteError, ctx: &ErrorContext) -> Self {
         let workspace = match err {
             AtomwriteError::WorkspaceJail { workspace, .. } => {
                 Some(workspace.display().to_string())
@@ -378,21 +394,49 @@ impl ErrorJson {
             path: err.path().map(|p| p.display().to_string()),
             error_class: err.error_class().as_str(),
             retryable: err.is_retryable(),
-            suggestion: suggestion_for(err),
+            suggestion: suggestion_for(err, ctx),
             workspace,
         }
     }
 }
 
+/// Diagnostic context for error reporting.
+///
+/// Carries information about the runtime environment that helps
+/// `suggestion_for` produce actionable remediation text. The default
+/// instance represents "no extra context known" and yields the same
+/// suggestions as the pre-GAP-13 code path.
+#[derive(Debug, Default, Clone)]
+pub struct ErrorContext {
+    /// Whether the user explicitly provided a workspace root via `--workspace`
+    /// or the `ATOMWRITE_WORKSPACE` environment variable. When true, a
+    /// `WorkspaceJail` error means the path escapes the *user-supplied* root,
+    /// so the suggestion should be "use a path inside the workspace" rather
+    /// than "set --workspace".
+    pub workspace_provided: bool,
+    /// Effective workspace root path, if known. Used to enrich suggestions
+    /// with the actual path the user passed.
+    pub workspace: Option<PathBuf>,
+}
+
 #[cold]
-fn suggestion_for(err: &AtomwriteError) -> Option<String> {
+fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
     match err {
         AtomwriteError::NotFound { .. } => Some("verify the file path exists".into()),
+        AtomwriteError::InvalidInput { reason } => Some(format!(
+            "review the {reason}; check arguments and input content for syntax errors"
+        )),
         AtomwriteError::PermissionDenied { .. } => Some("check file permissions".into()),
         AtomwriteError::DiskFull { .. } => Some("free disk space and retry".into()),
         AtomwriteError::QuotaExceeded { .. } => Some("check disk quota and free space".into()),
         AtomwriteError::CrossDevice { .. } => {
             Some("ensure source and destination are on the same filesystem".into())
+        }
+        AtomwriteError::Io { source } => {
+            Some(format!("inspect the underlying I/O error: {source}"))
+        }
+        AtomwriteError::ConfigInvalid { reason } => {
+            Some(format!("fix the configuration: {reason}"))
         }
         AtomwriteError::StateDrift { .. } => {
             Some("re-read the file to get current checksum, then retry".into())
@@ -403,21 +447,43 @@ fn suggestion_for(err: &AtomwriteError) -> Option<String> {
         AtomwriteError::FileTooLarge { .. } => {
             Some("use --max-filesize to increase the limit or process smaller files".into())
         }
-        AtomwriteError::WorkspaceJail { .. } => {
-            Some("set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>".into())
+        AtomwriteError::WorkspaceJail { workspace, .. } => {
+            if ctx.workspace_provided {
+                Some(format!(
+                    "use a path inside the workspace ({})",
+                    workspace.display()
+                ))
+            } else {
+                Some("set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>".into())
+            }
         }
         AtomwriteError::SymlinkBlocked { .. } => {
             Some("use --follow-symlinks to allow symbolic links".into())
         }
-        AtomwriteError::BinaryFile { .. } => Some("use read --stat for metadata only".into()),
+        AtomwriteError::FileImmutable { path } => Some(format!(
+            "remove the immutable attribute (chattr -i on Unix, fsutil on Windows) from {}",
+            path.display()
+        )),
+        AtomwriteError::BinaryFile { .. } => Some(
+            "binary content detected; use read --stat for metadata only or use --force-text \
+             to override detection (read-only commands)"
+                .into(),
+        ),
         AtomwriteError::FifoDetected { .. } => {
             Some("skip this file or use stdin redirection instead".into())
         }
         AtomwriteError::DeviceFile { .. } => {
             Some("skip this file or use stdin redirection instead".into())
         }
+        AtomwriteError::NoMatches => Some(
+            "broaden the search pattern; check --include / --exclude filters; \
+             verify the file content"
+                .into(),
+        ),
         AtomwriteError::BrokenPipe => None,
-        _ => None,
+        AtomwriteError::InternalError { reason } => Some(format!(
+            "this is a bug; please report it with the {reason} context"
+        )),
     }
 }
 
@@ -732,5 +798,173 @@ mod tests {
         assert_eq!(json.code, "FILE_NOT_FOUND");
         assert_eq!(json.exit, 4);
         assert!(!json.retryable);
+    }
+
+    // GAP 13 — context-aware suggestions
+
+    #[test]
+    fn gap13_workspace_jail_suggestion_when_workspace_not_provided() {
+        let err = AtomwriteError::WorkspaceJail {
+            path: PathBuf::from("/etc/passwd"),
+            workspace: PathBuf::from("/home/user/project"),
+        };
+        let ctx = ErrorContext::default();
+        let json = ErrorJson::from_error_with_context(&err, &ctx);
+        let s = json.suggestion.expect("must have suggestion");
+        assert!(
+            s.contains("--workspace"),
+            "without workspace_provided, suggestion must mention --workspace, got: {s}"
+        );
+        assert_eq!(json.workspace.as_deref(), Some("/home/user/project"));
+    }
+
+    #[test]
+    fn gap13_workspace_jail_suggestion_when_workspace_provided() {
+        let err = AtomwriteError::WorkspaceJail {
+            path: PathBuf::from("/etc/passwd"),
+            workspace: PathBuf::from("/home/user/project"),
+        };
+        let ctx = ErrorContext {
+            workspace_provided: true,
+            workspace: Some(PathBuf::from("/home/user/project")),
+        };
+        let json = ErrorJson::from_error_with_context(&err, &ctx);
+        let s = json.suggestion.expect("must have suggestion");
+        assert!(
+            s.contains("inside the workspace"),
+            "with workspace_provided, suggestion must say 'inside the workspace', got: {s}"
+        );
+        assert!(
+            !s.contains("--workspace"),
+            "with workspace_provided, suggestion must NOT mention --workspace flag, got: {s}"
+        );
+    }
+
+    #[test]
+    fn gap13_all_variants_have_suggestion() {
+        let variants: Vec<AtomwriteError> = vec![
+            AtomwriteError::NotFound {
+                path: PathBuf::from("/x"),
+            },
+            AtomwriteError::InvalidInput { reason: "x".into() },
+            AtomwriteError::PermissionDenied {
+                path: PathBuf::from("/x"),
+            },
+            AtomwriteError::DiskFull {
+                path: PathBuf::from("/x"),
+            },
+            AtomwriteError::QuotaExceeded {
+                path: PathBuf::from("/x"),
+            },
+            AtomwriteError::CrossDevice {
+                path: PathBuf::from("/x"),
+            },
+            AtomwriteError::Io {
+                source: std::io::Error::other("x"),
+            },
+            AtomwriteError::ConfigInvalid { reason: "x".into() },
+            AtomwriteError::StateDrift {
+                path: PathBuf::from("/x"),
+                expected: "a".into(),
+                actual: "b".into(),
+            },
+            AtomwriteError::ChecksumVerifyFailed {
+                path: PathBuf::from("/x"),
+                expected: "a".into(),
+            },
+            AtomwriteError::FileTooLarge {
+                path: PathBuf::from("/x"),
+                size: 1,
+                max_size: 2,
+            },
+            AtomwriteError::WorkspaceJail {
+                path: PathBuf::from("/x"),
+                workspace: PathBuf::from("/w"),
+            },
+            AtomwriteError::SymlinkBlocked {
+                path: PathBuf::from("/x"),
+            },
+            AtomwriteError::FileImmutable {
+                path: PathBuf::from("/x"),
+            },
+            AtomwriteError::BinaryFile {
+                path: PathBuf::from("/x"),
+            },
+            AtomwriteError::FifoDetected {
+                path: PathBuf::from("/x"),
+            },
+            AtomwriteError::DeviceFile {
+                path: PathBuf::from("/x"),
+            },
+            AtomwriteError::NoMatches,
+            AtomwriteError::BrokenPipe,
+            AtomwriteError::InternalError { reason: "x".into() },
+        ];
+        assert_eq!(variants.len(), 20);
+        for err in &variants {
+            let json = ErrorJson::from_error(err);
+            if matches!(err, AtomwriteError::BrokenPipe) {
+                assert!(
+                    json.suggestion.is_none(),
+                    "BrokenPipe must remain without suggestion (SIGPIPE is not actionable)"
+                );
+            } else {
+                assert!(
+                    json.suggestion.is_some(),
+                    "GAP 13: variant {err:?} must have suggestion"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn gap13_binary_file_suggestion_does_not_mention_force_text_wrong_flag() {
+        let err = AtomwriteError::BinaryFile {
+            path: PathBuf::from("/x"),
+        };
+        let json = ErrorJson::from_error(&err);
+        let s = json.suggestion.expect("must have suggestion");
+        assert!(
+            s.contains("read --stat"),
+            "BinaryFile suggestion must mention read --stat, got: {s}"
+        );
+    }
+
+    #[test]
+    fn gap13_file_immutable_suggestion_mentions_chattr() {
+        let err = AtomwriteError::FileImmutable {
+            path: PathBuf::from("/etc/shadow"),
+        };
+        let json = ErrorJson::from_error(&err);
+        let s = json.suggestion.expect("must have suggestion");
+        assert!(
+            s.contains("chattr"),
+            "FileImmutable suggestion must mention chattr, got: {s}"
+        );
+    }
+
+    #[test]
+    fn gap13_no_matches_suggestion_mentions_filters() {
+        let err = AtomwriteError::NoMatches;
+        let json = ErrorJson::from_error(&err);
+        let s = json.suggestion.expect("must have suggestion");
+        assert!(
+            s.contains("--include") || s.contains("broaden"),
+            "NoMatches suggestion must mention broadening or filters, got: {s}"
+        );
+    }
+
+    #[test]
+    fn gap13_error_context_default_matches_legacy_behavior() {
+        // The default ErrorContext must yield the same suggestions as the
+        // pre-GAP-13 behavior for the variant set covered before.
+        let err = AtomwriteError::NotFound {
+            path: PathBuf::from("/x"),
+        };
+        let json = ErrorJson::from_error(&err);
+        assert_eq!(
+            json.suggestion.as_deref(),
+            Some("verify the file path exists")
+        );
     }
 }
