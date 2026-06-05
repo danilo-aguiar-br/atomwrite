@@ -80,6 +80,16 @@ fn main() -> ExitCode {
         Ok(()) => {
             if let Some(ref sig) = shutdown {
                 if sig.is_shutdown() {
+                    // Emit user-facing shutdown message from the main thread.
+                    // This is the async-signal-safe equivalent of the previous
+                    // eprintln! in the signal handler. The signal handler is
+                    // forbidden from calling eprintln! per POSIX.1 signal-safety(7)
+                    // because Rust's stderr uses a global Mutex that can deadlock
+                    // or lose output if the signal arrives while another thread
+                    // holds the lock (observed on Linux/glibc; eprintln! output
+                    // was silently dropped before reaching the captured stderr
+                    // pipe in tests).
+                    let _ = writeln!(io::stderr(), "atomwrite: shutting down...");
                     tracing::info!(signal = sig.exit_code(), "shutdown initiated");
                     ExitCode::from(sig.exit_code())
                 } else {

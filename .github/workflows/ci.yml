@@ -18,7 +18,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # windows-2025-vs2026 is the successor to windows-latest before the
+        # June 15 2026 GitHub-hosted runner migration. Pinning explicitly silences
+        # the "windows-latest requests are being redirected" NOTICE and prevents
+        # unexpected runner changes from breaking the build.
+        os: [ubuntu-latest, macos-latest, windows-2025-vs2026]
     steps:
       - uses: actions/checkout@v6
 

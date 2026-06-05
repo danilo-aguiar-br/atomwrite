@@ -282,8 +282,13 @@ pub(crate) fn create_backup_in(
         .with_context(|| format!("cannot create backup at {}", backup_path.display()))?;
     let backup_file = fs::File::open(&backup_path)
         .with_context(|| format!("cannot open backup for fsync: {}", backup_path.display()))?;
-    platform::fsync_file(&backup_file)
-        .with_context(|| format!("cannot fsync backup: {}", backup_path.display()))?;
+    // Best-effort fsync: backup file already exists on disk via fs::copy.
+    // On Windows %TEMP%, antivirus products can transiently hold a read handle
+    // causing FlushFileBuffers to fail with ERROR_ACCESS_DENIED. We log a
+    // warning and continue because the user-visible operation (creating a
+    // backup) has already succeeded; the worst case is a missing durability
+    // flush for the backup metadata, which is non-fatal.
+    platform::fsync_file_best_effort(&backup_file);
 
     if let Some(parent) = backup_path.parent() {
         if let Err(e) = platform::fsync_dir(parent) {

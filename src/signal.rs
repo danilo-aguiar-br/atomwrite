@@ -103,34 +103,28 @@ pub fn install_handlers() -> Result<Arc<ShutdownSignal>> {
 
         let sig_int = Arc::clone(&signal);
         // SAFETY: signal_hook::low_level::register requires unsafe because the
-        // callback runs in a signal handler context. We use eprintln! instead of
-        // libc::write(2, ...) because POSIX pipe semantics under cargo test's
-        // process-group inheritance can swallow raw fd writes to the child's
-        // stderr pipe, while eprintln! routes through the Rust runtime which
-        // uses the captured fd directly. The cost is a non-signal-safe call
-        // (Rust's stderr lock); we accept the theoretical deadlock risk because
-        // atomwrite's main thread is the only writer of stderr in normal flow
-        // and signal delivery is rare.
+        // callback runs in a signal handler context. We do ONLY async-signal-safe
+        // operations here: atomic loads/stores. We do NOT call eprintln! or
+        // libc::write(2, ...) because POSIX.1 signal-safety(7) requires handlers
+        // to use only functions that are reentrant or atomic w.r.t. signals; the
+        // Rust runtime's stdio uses a global Mutex which is not signal-safe, and
+        // raw libc::write can race with the child's normal stderr writes. The
+        // user-facing "shutting down" message is emitted by the main thread in
+        // main.rs when it observes is_shutdown() == true, which is the only
+        // async-signal-safe way to guarantee the message reaches the captured
+        // stderr pipe before the process exits.
         unsafe {
             signal_hook::low_level::register(signal_hook::consts::SIGINT, move || {
-                let was_first = sig_int.count.load(Ordering::Acquire) == 0;
                 sig_int.record_signal(EXIT_SIGINT as u8);
-                if was_first {
-                    eprintln!("\natomwrite: shutting down...");
-                }
             })
             .context("failed to register SIGINT counter")?;
         }
 
         let sig_term = Arc::clone(&signal);
-        // SAFETY: Same as above — atomic operations and eprintln! only.
+        // SAFETY: Same as above — atomic operations only.
         unsafe {
             signal_hook::low_level::register(signal_hook::consts::SIGTERM, move || {
-                let was_first = sig_term.count.load(Ordering::Acquire) == 0;
                 sig_term.record_signal(EXIT_SIGTERM as u8);
-                if was_first {
-                    eprintln!("\natomwrite: shutting down...");
-                }
             })
             .context("failed to register SIGTERM counter")?;
         }
@@ -140,6 +134,10 @@ pub fn install_handlers() -> Result<Arc<ShutdownSignal>> {
     {
         let flag_win = Arc::clone(&flag);
         let sig_win = Arc::clone(&signal);
+        // On Windows, ctrlc::set_handler runs the callback in a normal thread
+        // (not signal context), so eprintln! is safe to use here. We still keep
+        // the Unix code path async-signal-safe for parity and to satisfy any
+        // future platform that might run this in true signal context.
         ctrlc::set_handler(move || {
             let was_first = sig_win.count.load(Ordering::Acquire) == 0;
             flag_win.store(true, Ordering::Release);

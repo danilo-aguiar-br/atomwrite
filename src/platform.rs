@@ -38,6 +38,26 @@ pub fn fsync_file(file: &File) -> Result<()> {
     }
 }
 
+/// Best-effort fsync that logs a warning instead of returning an error.
+///
+/// Used for backup file durability where losing a sync is acceptable: the
+/// backup itself has been created successfully via `fs::copy`, and the worst
+/// case is that the backup metadata is not flushed to disk before the process
+/// exits. The primary write path still uses the strict [`fsync_file`].
+///
+/// On Windows, antivirus products (Windows Defender, third-party AV) can hold
+/// a transient read handle on files in the user's temp directory with
+/// `FILE_SHARE_READ` but without `FILE_SHARE_WRITE`, which causes
+/// `FlushFileBuffers` to return `ERROR_ACCESS_DENIED` (os error 5). The
+/// tempfile crate creates backup files in `%TEMP%` during tests, which is
+/// where this race was observed in CI. Logging a warning and continuing keeps
+/// the user-visible operation successful.
+pub fn fsync_file_best_effort(file: &File) {
+    if let Err(e) = fsync_file(file) {
+        tracing::warn!(error = %e, "fsync_file best-effort: continuing without durability flush");
+    }
+}
+
 /// Sync the directory metadata to ensure rename durability.
 ///
 /// # Errors

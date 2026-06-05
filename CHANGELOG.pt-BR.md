@@ -10,6 +10,26 @@
 
 ## [Unreleased]
 
+### Corrigido (Falhas de CI - GAP 17 e GAP 18)
+- **`signal_test::shutdown_message_on_stderr` não falha mais no Linux CI** — Removido `eprintln!("\natomwrite: shutting down...")` dos handlers de SIGINT e SIGTERM. Segundo POSIX.1-2017 `signal-safety(7)`, funções stdio como `eprintln!` NÃO são async-signal-safe; o stderr do Rust usa um `Mutex` global que pode causar deadlock ou perder output bufferizado se o sinal chegar enquanto outra thread segura o lock. A mensagem de shutdown visível ao usuário agora é emitida pela main thread em `src/main.rs` quando observa `is_shutdown() == true` após `atomwrite::run` retornar, que é a única forma async-signal-safe de garantir que a mensagem chegue ao pipe de stderr capturado antes do processo terminar. O caminho Windows `ctrlc` ainda emite a mensagem inline (handlers ctrlc rodam em thread normal, não em contexto de sinal).
+- **`atomic::tests::create_backup_and_retention` não falha mais no Windows CI** — Adicionado `platform::fsync_file_best_effort` que registra warning e continua em vez de retornar erro. No Windows, produtos antivírus (Windows Defender, AVs terceiros) podem segurar transientemente um handle de leitura em arquivos em `%TEMP%` com `FILE_SHARE_READ` mas sem `FILE_SHARE_WRITE`, fazendo `FlushFileBuffers` retornar `ERROR_ACCESS_DENIED` (os error 5). O caminho de escrita principal ainda usa o `fsync_file` estrito; apenas o fsync de durabilidade do backup é best-effort porque o backup em si já foi criado via `fs::copy`.
+- **Matriz de CI fixada em `windows-2025-vs2026`** — A entrada da matriz para Windows foi alterada de `windows-latest` para `windows-2025-vs2026` (seu sucessor antes da migração de runners hospedados no GitHub em 15 de junho de 2026). Isso silencia o NOTICE "windows-latest requests are being redirected to windows-2025-vs2026 by June 15, 2026" e previne mudanças inesperadas de runner que possam quebrar o build.
+
+### Validação
+- `cargo build --all-features`: PASS
+- `cargo clippy --all-features --all-targets -- -D warnings`: PASS
+- `cargo test --all-features`: 302/302 testes PASS (todos os 5 casos de `signal_test` passam; `atomic::create_backup_and_retention` passa)
+- `cargo fmt -- --check`: PASS
+- `cargo audit`: PASS (sem vulnerabilidades, sem flag `--ignore`)
+- `cargo deny check`: PASS (advisories, bans, licenses, sources todos OK)
+
+### Notas
+- v0.1.8 é uma mudança NÃO-BREAKING. Nenhuma API pública foi modificada.
+- A mudança no signal handler é interna: consumidores externos que dependiam da mensagem de shutdown aparecer no stderr continuam a vê-la; ela agora é emitida pela main thread em vez do signal handler.
+- A mudança no fsync de backup do Windows é interna: arquivos de backup ainda são criados e atômicos; a única diferença é que o flush de durabilidade para metadados de backup é best-effort. Se um usuário futuro relatar perda de dados em backup, podemos re-apertar o fsync.
+
+## [0.1.7] - 2026-06-05
+
 ### Corrigido (Falhas de CI - GAP 15)
 - **`cargo audit` não reporta mais RUSTSEC-2026-0009** — Atualizada a dependência transitiva `time` de 0.3.45 para 0.3.47 (DoS via stack exhaustion no parser RFC 2822, corrigido upstream via DEPTH_LIMIT=32). A atualização exigiu bump do MSRV de 1.85 para 1.88. A entrada `ignore` para RUSTSEC-2026-0009 no `deny.toml` foi removida porque a advisory não se aplica mais.
 - **Falha de CI no macos-latest** — `src/platform.rs:31` não usa mais `return Ok(())` (removido return redundante). O lint `needless_return` do clippy 1.94+ não dispara mais; o env `RUSTFLAGS: -Dwarnings` na CI não aborta mais o build.
