@@ -690,3 +690,89 @@ rustup target add x86_64-pc-windows-msvc
 cargo install atomwrite --locked
 atomwrite --version  # Saída NDJSON
 ```
+
+
+## Como Descobrir o JSON Schema em Runtime
+- Use `--json-schema` para emitir o JSON Schema da saída de qualquer subcomando
+- Sem necessidade de ler arquivo de schema estático; o schema faz parte do binário
+
+```bash
+# Obter schema da saída do subcomando read
+atomwrite --json-schema read
+atomwrite --json-schema write
+atomwrite --json-schema edit
+atomwrite --json-schema search
+atomwrite --json-schema replace
+atomwrite --json-schema batch
+atomwrite --json-schema error  # compartilhado por todos os subcomandos
+```
+
+- Conecte o schema ao `jaq` para validar saída ao vivo:
+
+```bash
+# 1. Capturar o schema
+atomwrite --json-schema error > /tmp/error.schema.json
+
+# 2. Executar o comando real e validar cada linha NDJSON
+atomwrite --workspace . read /missing 2>/dev/null \
+  | while IFS= read -r line; do
+      echo "$line" | jaq -r --validate --slurpfile s /tmp/error.schema.json '.' && echo "OK" || echo "FAIL"
+    done
+```
+
+
+## Como Ler NDJSON em Pipeline Shell com jaq
+- Toda saída do atomwrite é um objeto JSON por linha
+- Combine com `jaq` para filtragem estruturada, mapeamento e agregação
+
+```bash
+# Extrair apenas o checksum de uma resposta de read
+atomwrite read src/main.rs | jaq -r '.checksum'
+
+# Contar matches de search por arquivo
+atomwrite search 'TODO' src/ | jaq -r '.path' | sort | uniq -c | sort -rn
+
+# Somar bytes_written em um batch
+atomwrite batch < manifest.ndjson | jaq -s 'map(.bytes_written // 0) | add'
+
+# Filtrar envelopes de erro por classe
+atomwrite read /missing 2>/dev/null | jaq 'select(.error_class == "permanent")'
+```
+
+
+## Como Lidar com Erros Persistentes com Lógica de Retry
+- Combine `retryable: true` dos envelopes de erro com `set -e` e loop de retry em shell
+
+```bash
+#!/usr/bin/env bash
+# retry-on-transient.sh
+attempt=1
+max_attempts=5
+delay=1
+
+while [ $attempt -le $max_attempts ]; do
+  output=$(atomwrite --workspace . "$@" 2>/dev/null)
+  exit_code=$?
+
+  if [ $exit_code -eq 0 ]; then
+    echo "$output"
+    exit 0
+  fi
+
+  # Parsear flag retryable do envelope de erro
+  retryable=$(echo "$output" | jaq -r '.retryable // false')
+
+  if [ "$retryable" = "true" ]; then
+    echo "Tentativa $attempt: erro transiente, retentando em ${delay}s..." >&2
+    sleep $delay
+    delay=$((delay * 2))
+    attempt=$((attempt + 1))
+  else
+    echo "$output" >&2
+    exit $exit_code
+  fi
+done
+
+echo "Falhou após $max_attempts tentativas" >&2
+exit 1
+```

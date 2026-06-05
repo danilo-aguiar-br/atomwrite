@@ -380,7 +380,7 @@ Exemplo de envelope de erro context-aware (quando workspace NÃO é fornecido):
 
 Exemplo quando workspace É fornecido via `--workspace /home/user/project`:
 ```json
-{"error":true,"code":"WORKSPACE_JAIL","exit":126,"message":"...","suggestion":"use a path inside the workspace (/home/user/project)","workspace":"/home/user/project"}
+{"error":true,"code":"WORKSPACE_JAIL","exit":126,"message":"path outside workspace jail: /etc/passwd (workspace: /home/user/project)","path":"/etc/passwd","error_class":"precondition_failed","retryable":false,"suggestion":"use a path inside the workspace (/home/user/project)","workspace":"/home/user/project"}
 ```
 
 

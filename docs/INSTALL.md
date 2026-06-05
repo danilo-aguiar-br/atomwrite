@@ -1,6 +1,7 @@
 # Installation Guide
 
 - Complete instructions for installing atomwrite on Linux, macOS, and Windows
+- Current target version: v0.1.4 (fixes Windows 10/11 compilation and adds context-aware error suggestions)
 - Sections ordered by platform, with prerequisites and troubleshooting
 
 
@@ -13,8 +14,8 @@
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Install atomwrite from crates.io
-cargo install atomwrite --locked
+# Install atomwrite v0.1.4 from crates.io
+cargo install atomwrite --locked --version "^0.1.4"
 
 # Verify
 atomwrite --version

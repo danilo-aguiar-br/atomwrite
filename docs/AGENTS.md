@@ -160,10 +160,12 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 ### Error Envelope
 
 ```json
-{"error":true,"code":"FILE_NOT_FOUND","exit":4,"message":"file not found: src/missing.rs","path":"src/missing.rs","error_class":"permanent","retryable":false,"suggestion":"verify the file path exists"}
+{"error":true,"code":"FILE_NOT_FOUND","exit":4,"message":"file not found: src/missing.rs","path":"src/missing.rs","error_class":"permanent","retryable":false,"suggestion":"verify the file path exists","workspace":null}
 ```
 
-- See `docs/schemas/` for full JSON Schema definitions of all output types
+- `workspace` field appears only on `WORKSPACE_JAIL` errors and reports the resolved workspace root (may be `null`)
+- `suggestion` is context-aware: `WORKSPACE_JAIL` suggestion changes based on whether `--workspace` was provided
+- See `docs/schemas/` for full JSON Schema definitions of all output types (the `error-output.schema.json` defines all 20 error codes and the `workspace` field)
 
 
 ## REQUIRED -- Exit Codes
@@ -173,11 +175,12 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - 13: permission denied
 - 28: disk full
 - 30: quota exceeded
-- 65: invalid input
+- 65: invalid input, file too large, or binary file
 - 73: cross-device rename
 - 74: I/O error
 - 78: config invalid
-- 82: state drift (checksum mismatch)
+- 81: checksum verification failed (hash --verify mismatch)
+- 82: state drift (checksum mismatch on write)
 - 85: FIFO detected (named pipe cannot be atomically written)
 - 86: device file detected (block or character device)
 - 126: workspace jail violated
@@ -223,14 +226,20 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `FILE_NOT_FOUND` (exit 4) -- verify path exists before retrying
 - `PERMISSION_DENIED` (exit 13) -- do not retry without permission fix
 - `INVALID_INPUT` (exit 65) -- fix the input and retry
+- `CONFIG_INVALID` (exit 78) -- fix the configuration and retry
+- `CHECKSUM_VERIFY_FAILED` (exit 81) -- the hash passed to `--verify` did not match; re-read the file
+- `FILE_TOO_LARGE` (exit 65) -- increase `--max-filesize` or process a smaller file
 - `WORKSPACE_JAIL` (exit 126) -- do not retry, path is outside workspace
 - `SYMLINK_BLOCKED` (exit 127) -- do not retry with symlinks disabled
 - `IMMUTABLE_FILE` (exit 128) -- do not retry without removing immutable flag
+- `INTERNAL_ERROR` (exit 255) -- report as a bug; not actionable by the user
 
 ### Precondition Failed (retryable: false)
 - `BINARY_FILE` (exit 65) -- use `--stat` mode to read metadata without content
-- `IMMUTABLE_FILE` (exit 128) -- remove immutable flag first
+- `IMMUTABLE_FILE` (exit 128) -- remove immutable flag first (chattr -i on Unix, fsutil on Windows)
 - `WORKSPACE_JAIL` (exit 126) -- adjust `--workspace` boundary
+- `FIFO_DETECTED` (exit 85) -- skip this file or use stdin redirection
+- `DEVICE_FILE` (exit 86) -- skip this file or use stdin redirection
 
 
 ## REQUIRED -- Global Flags

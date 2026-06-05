@@ -61,7 +61,7 @@ Veja as seções "GAP 13" e "GAP 14" em `gaps.md` para a análise completa de ca
 
 ## v0.1.2 para v0.1.3
 
-### v0.1.3 (Atual)
+### v0.1.3 (Anterior)
 
 #### Mudado (BREAKING)
 
@@ -344,7 +344,7 @@ atomwrite v0.1.2 agora compila no macOS arm64 (Apple Silicon) e macOS x86_64. A 
 
 
 ## Notas de Compatibilidade
-### v0.1.3 (Atual)
+### v0.1.3 (Anterior)
 - BREAKING: `edit` e `replace` não preservam mais o mtime original do arquivo por padrão
 - Nova flag `--preserve-timestamps` em `edit` e `replace` restaura o comportamento da v0.1.2
 - Novo campo `mtime_preserved` nas respostas NDJSON de `EditOutput` e `ReplaceResult`

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ErrorOutput",
-  "description": "Serializable error envelope emitted as a single NDJSON line",
+  "description": "Serializable error envelope emitted as a single NDJSON line. The suggestion field is context-aware: for WORKSPACE_JAIL, the text varies based on whether --workspace was provided to the CLI.",
   "type": "object",
   "required": ["error", "code", "exit", "message", "error_class", "retryable"],
   "properties": {
@@ -21,11 +21,16 @@
         "IO_ERROR",
         "CONFIG_INVALID",
         "STATE_DRIFT",
+        "CHECKSUM_VERIFY_FAILED",
+        "FILE_TOO_LARGE",
         "WORKSPACE_JAIL",
         "SYMLINK_BLOCKED",
         "IMMUTABLE_FILE",
         "BINARY_FILE",
+        "FIFO_DETECTED",
+        "DEVICE_FILE",
         "NO_MATCHES",
+        "BROKEN_PIPE",
         "INTERNAL_ERROR"
       ]
     },
@@ -51,7 +56,11 @@
     },
     "suggestion": {
       "type": ["string", "null"],
-      "description": "Optional actionable suggestion for the caller"
+      "description": "Optional actionable suggestion for the caller. Context-aware for WORKSPACE_JAIL: when --workspace is provided the text says 'use a path inside the workspace (<root>)', when absent it says 'set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>'. For IMMUTABLE_FILE it mentions 'chattr -i' on Unix or 'fsutil' on Windows. For BINARY_FILE it recommends 'read --stat'. Only BROKEN_PIPE has no suggestion because SIGPIPE is not actionable."
+    },
+    "workspace": {
+      "type": ["string", "null"],
+      "description": "Workspace root used for jail validation. Appears on WORKSPACE_JAIL errors (and may appear on any error in future releases) to help the caller diagnose path resolution."
     }
   }
 }

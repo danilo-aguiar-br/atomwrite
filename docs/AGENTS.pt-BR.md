@@ -155,10 +155,12 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 ### Envelope de Erro
 
 ```json
-{"error":true,"code":"FILE_NOT_FOUND","exit":4,"message":"file not found: src/missing.rs","path":"src/missing.rs","error_class":"permanent","retryable":false,"suggestion":"verify the file path exists"}
+{"error":true,"code":"FILE_NOT_FOUND","exit":4,"message":"file not found: src/missing.rs","path":"src/missing.rs","error_class":"permanent","retryable":false,"suggestion":"verify the file path exists","workspace":null}
 ```
 
-- Veja `docs/schemas/` para definições completas de JSON Schema de todos os tipos de saída
+- Campo `workspace` aparece apenas em erros `WORKSPACE_JAIL` e reporta a raiz do workspace resolvida (pode ser `null`)
+- `suggestion` é context-aware: sugestão de `WORKSPACE_JAIL` muda com base em se `--workspace` foi fornecido
+- Veja `docs/schemas/` para definições completas de JSON Schema de todos os tipos de saída (`error-output.schema.json` define todos os 20 códigos de erro e o campo `workspace`)
 
 
 ## OBRIGATÓRIO -- Exit Codes
@@ -168,11 +170,12 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - 13: permissão negada
 - 28: disco cheio
 - 30: cota excedida
-- 65: entrada inválida
+- 65: entrada inválida, arquivo muito grande, ou arquivo binário
 - 73: rename entre devices
 - 74: erro de I/O
 - 78: configuração inválida
-- 82: desvio de estado (checksum não confere)
+- 81: verificação de checksum falhou (hash --verify não confere)
+- 82: desvio de estado (checksum não confere em escrita)
 - 85: FIFO detectado (named pipe não pode ser escrito atomicamente)
 - 86: arquivo de dispositivo detectado (bloco ou caractere)
 - 126: violação do workspace jail
@@ -218,14 +221,20 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - `FILE_NOT_FOUND` (exit 4) -- verifique se o path existe antes de tentar novamente
 - `PERMISSION_DENIED` (exit 13) -- não tente novamente sem corrigir permissões
 - `INVALID_INPUT` (exit 65) -- corrija a entrada e tente novamente
+- `CONFIG_INVALID` (exit 78) -- corrija a configuração e tente novamente
+- `CHECKSUM_VERIFY_FAILED` (exit 81) -- o hash passado para `--verify` não confere; releia o arquivo
+- `FILE_TOO_LARGE` (exit 65) -- aumente `--max-filesize` ou processe um arquivo menor
 - `WORKSPACE_JAIL` (exit 126) -- não tente novamente, path está fora do workspace
 - `SYMLINK_BLOCKED` (exit 127) -- não tente novamente com symlinks desabilitados
 - `IMMUTABLE_FILE` (exit 128) -- não tente novamente sem remover flag de imutabilidade
+- `INTERNAL_ERROR` (exit 255) -- reporte como bug; não acionável pelo usuário
 
 ### Pré-condição Falhou (retryable: false)
 - `BINARY_FILE` (exit 65) -- use modo `--stat` para ler metadados sem conteúdo
-- `IMMUTABLE_FILE` (exit 128) -- remova flag de imutabilidade primeiro
+- `IMMUTABLE_FILE` (exit 128) -- remova flag de imutabilidade primeiro (chattr -i no Unix, fsutil no Windows)
 - `WORKSPACE_JAIL` (exit 126) -- ajuste limite de `--workspace`
+- `FIFO_DETECTED` (exit 85) -- pule este arquivo ou use redirecionamento de stdin
+- `DEVICE_FILE` (exit 86) -- pule este arquivo ou use redirecionamento de stdin
 
 
 ## OBRIGATÓRIO -- Flags Globais

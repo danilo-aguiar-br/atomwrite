@@ -74,6 +74,22 @@
 - `snapshot_write__error_not_found_structure.snap`
 - `snapshot_write__batch_summary_structure.snap`
 - `snapshot_write__error_invalid_input_structure.snap`
+
+### Testes de Regressão
+- `tests/cli_v012_regressions.rs` -- 11 testes para regressões de v0.1.2 a v0.1.4
+- `jail_suggestion_mentions_workspace_flag` -- atualizado na v0.1.4 (GAP 13): afirma que a sugestão menciona `--workspace` quando nenhum workspace é fornecido
+- `gap13_jail_suggestion_when_workspace_supplied_says_inside` -- adicionado na v0.1.4 (GAP 13): afirma que a sugestão diz "inside the workspace" quando `--workspace` É fornecido
+- Outras regressões cobrem scope, batch path/source aliases, fuzzy edit, search files dedup, edit multi NDJSON, clap JSON errors, json-schema, validate path jail, dead flags, mtime
+
+### Gate de Cross-Compile (v0.1.4)
+- `tests/cross_compile_check.rs` -- 3 testes protegendo compilação Windows-only
+- `cross_compile_windows_gnu_x64_succeeds` -- afirma que `cargo check --target x86_64-pc-windows-gnu` sucede e não emite E0433, E0308, ou E0507
+- `cross_compile_windows_gnu_i686_succeeds` -- afirma o mesmo para `i686-pc-windows-gnu` (Windows 32-bit)
+- `cross_compile_windows_msvc_succeeds` -- afirma o mesmo para `x86_64-pc-windows-msvc` (toolchain Microsoft Visual C++)
+- Todos os testes são `#[ignore]` por padrão para pular em hosts sem os targets Windows instalados
+- Execute com `cargo test --test cross_compile_check -- --ignored`
+- Pula graciosamente quando o linker necessário (lib.exe para MSVC, i686-w64-mingw32-gcc para 32-bit) está ausente
+- Obrigatório antes de qualquer release que toque código `#[cfg(windows)]` (veja `docs/INSTALL.md` e `docs/CROSS_PLATFORM.md`)
 - `snapshot_write__error_workspace_jail_structure.snap`
 
 ### Testes Property-Based (proptest)
@@ -228,3 +244,12 @@ cargo insta review
 - Verifique loops infinitos no código sendo testado
 - Use `RUST_TEST_THREADS=1` para executar sequencialmente
 - Verifique que nenhum teste escreve em path que outro teste lê
+
+### Gate de Cross-Compile Falha
+- Confirme que o target Windows está instalado: `rustup target list --installed`
+- Instale targets ausentes: `rustup target add x86_64-pc-windows-gnu i686-pc-windows-gnu x86_64-pc-windows-msvc`
+- No Linux, instale o toolchain necessário: `mingw64-gcc` (Fedora) ou `mingw-w64` (Ubuntu)
+- Para Windows 32-bit: instale `mingw32-gcc` separadamente
+- Para MSVC: instale Visual Studio 2019+ Build Tools com workload C++ (lib.exe deve estar no PATH)
+- Reexecute após corrigir: `cargo test --test cross_compile_check -- --ignored`
+- O gate reporta linker ausente com snippet de stderr claro como "lib.exe" ou "i686-w64-mingw32-gcc"; case essa string com o toolchain ausente
