@@ -6,6 +6,59 @@
 > Write once, run anywhere -- with real fsync guarantees on every platform
 
 
+## What's New in v0.1.12
+
+This section summarizes cross-platform-relevant changes in v0.1.12.
+
+### Signal Handling (Improved)
+
+- v0.1.12 adds 5 new tests in `tests/signal_test.rs` covering SIGINT, SIGTERM, SIGPIPE, batch interruption
+- `tests/signal_test.rs::batch_interrupted_by_signal` validates the WAL journal cleanup on signal
+- `tests/signal_test.rs::sigpipe_exits_141_or_signal_13` confirms BrokenPipe handling (exit 141 or signal 13)
+- `tests/signal_test.rs::sigint_during_search_exits_130` and `sigterm_during_search_exits_143` confirm clean exit codes
+- `tests/signal_test.rs::shutdown_message_on_stderr` validates tracing on shutdown
+
+### Windows
+
+- v0.1.12 preserves the v0.1.4 Windows 10/11 fix: `cargo install atomwrite` succeeds
+- `init_console` improvements: UTF-8 code page 65001 + `ENABLE_VIRTUAL_TERMINAL_PROCESSING`
+- `persist_with_retry` handles `PermissionDenied` during atomic rename with exponential backoff
+- Windows-specific: 5 new error codes (83, 88, 91, 92, 93) all have bilingual messages
+
+### Linux
+
+- v0.1.12 requires Rust 1.88 or later
+- `--include-fifo` flag skips FIFO/named pipes (G56) to prevent blocking
+- `--strict-atomic` flag aborts on EXDEV (G90) for filesystems where atomicity is critical
+- Advisory file lock via `flock` works on Linux (G54)
+- xattr preservation works on ext4, btrfs, XFS, F2FS (G39)
+
+### macOS
+
+- v0.1.12 preserves the v0.1.2 macOS arm64 (Apple Silicon) and macOS x86_64 build fixes
+- Reflink CoW works on APFS (G64): O(1) backup and copy
+- xattr preservation works for `com.apple.quarantine`, `kMDItemUserTags`, `kMDItemFinderComment` (G39)
+- Gatekeeper may require `xattr -d com.apple.quarantine` on first run
+
+### Containers (Docker, Podman, Kubernetes)
+
+- EXDEV fallback (G90) handles Docker overlay2 + named volumes automatically
+- Exit code 91 (`ExdevFallbackDisabled`) for `--strict-atomic` opt-out
+- No code changes required for container users; works out of the box
+
+### NFS
+
+- `flock(2)` is silently ignored on NFS, so `--lock` may not protect against concurrent edits
+- Combine `--lock` with `--expect-checksum` for defense in depth
+- `--expect-checksum` detects state drift after the write (exit 82)
+
+### Test Coverage
+
+- 445 tests passing (was 320 baseline, +125 new in v0.1.11+v0.1.12)
+- Cross-compile gate: `cargo test --test cross_compile_check -- --ignored` validates Windows GNU/MSVC targets
+- 5 signal tests in `tests/signal_test.rs` cover SIGINT/SIGTERM/SIGPIPE/batch/shutdown
+- See [docs/decisions/README.md](README.md) for architectural decisions
+
 ## The Pain You Already Know
 - You write a file on Linux and it reaches disk reliably
 - You write the same file on macOS and `fsync` silently lies about durability

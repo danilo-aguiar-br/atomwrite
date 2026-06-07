@@ -2,20 +2,88 @@
 
 > Atomic file operations for LLM agents -- one CLI, zero corruption
 
-atomwrite is a Rust CLI that provides 22 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations.
+atomwrite is a Rust CLI that provides 28 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
+
+**Latest release: v0.1.12** (2026-06-07) — G72 REAL syntax check via tree-sitter (24 languages), G114 WAL sidecar for crash recovery, v14 Tier 3 structured config editors (set/get/del/case), v14 Tier 3 AST tools (query/outline via tree-sitter-language-pack with 305 languages), 5 new error variants, 445 tests passing across 43 test suites. See `CHANGELOG.md` for the full release notes and `docs/decisions/` for the 7 ADRs that drove the architecture.
+
+**Previous release: v0.1.11** (2026-06-05) — Windows E0433 fix (libc was gated by cfg(unix) but referenced in main.rs), signal_test race fix (ShutdownSignal singleton, ATOMWRITE_READY_FILE for race-free readiness), 11 cli_batch Windows path backslash fix.
+
+## 28 Subcommands
+
+### Core I/O (7)
+- `read` — read files with metadata, checksum, optional content
+- `write` — create or overwrite files atomically via stdin
+- `edit` — surgically edit by line number, text marker, or exact match
+- `delete` — delete files with optional backup
+- `copy` — copy files with checksum verification
+- `move` — move or rename files atomically (EXDEV copy-fallback)
+- `apply` — apply patches from stdin (unified diff, search/replace, full, markdown)
+
+### Search and replace (3)
+- `search` — search file contents in parallel (ripgrep engine)
+- `replace` — replace text across files with atomic writes
+- `transform` — AST refactoring via ast-grep (306 languages)
+
+### Inspection (9)
+- `hash` — calculate BLAKE3 checksums
+- `count` — count lines, files by extension
+- `diff` — compare two files (unified, stat, or changes)
+- `list` — list files in a directory tree
+- `extract` — extract fields from NDJSON input via pipe
+- `scope` — grammatical scoping (delete all comments, etc.)
+- `regex` — generate regex from examples
+- `calc` — math and unit conversions
+- `completions` — generate shell completions (bash, zsh, fish, elvish, powershell)
+
+### Backup and recovery (3)
+- `backup` — create timestamped backups with BLAKE3 checksums
+- `rollback` — restore from a previous backup
+- `batch` — NDJSON-driven batch operations (transactional)
+
+### Structured config editors (v14 Tier 3, v0.1.12) (4)
+- `set <PATH> <KEY_PATH> <VALUE>` — write a value at a dotted path in a TOML or JSON file. Preserves comments and key order via `toml_edit`. Auto-coerces int/bool/float/string.
+- `get <PATH> <KEY_PATH>` — read a value at a dotted path. NDJSON: `{"type":"get","key_path","value","found","format"}`.
+- `del <PATH> <KEY_PATH>` — remove a key. `--force-missing` flag treats missing keys as a no-op success.
+- `case <PATHS...> --subvert OLD NEW --to <style>` — rename identifiers across multiple files via `heck`. Styles: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`.
+
+### AST tools (v14 Tier 3 + G72, v0.1.12, via tree-sitter-language-pack) (2)
+- `query <PATH> [--kinds|--query <KIND>|-Q <KIND>|--tree] [--positions]` — walk a tree-sitter AST and emit nodes as NDJSON. 305 languages supported.
+- `outline <PATH> [--kind <KIND>] [--positions]` — extract high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON.
+
+Plus the G72 syntax check on `write --syntax-check` (24 languages, exit 88).
+
+## v0.1.12 Highlights
+
+- **6 new subcommands** (set, get, del, case, query, outline) for structured config editing and AST analysis
+- **G72 REAL syntax check** via tree-sitter on `atomwrite write --syntax-check` (24 languages, exit 88 on first error)
+- **G114 WAL sidecar** for crash recovery: `.atomwrite.journal.<target>.atomwrite.journal.json` with `Started`/`Committed` entries. `recover_orphan_journals(dir)` is consultative
+- **5 new error variants**: `LockTimeout` (83), `SyntaxError` (88), `ExdevFallbackDisabled` (91), `CopyBackBlake3Failed` (92), `OrphanJournal` (93). All bilingual EN/PT-BR with actionable `ErrorContext` suggestions
+- **Dependency**: `tree-sitter-language-pack = "1.8"` with `download` + `dynamic-loading` features. Parsers download on first use
+- **445 tests passing** (was 320 baseline in v0.1.10, +125 new). 43 integration test suites, 0 failures
+- **7 ADRs** in `docs/decisions/` (0019-0025): tree-sitter-language-pack choice, WAL sidecar design, query/outline kind-name only, G72 replaces heuristic, G114 consultive, get_toml_path manual, positions opt-in
+
+## v0.1.12 Migration From v0.1.11
+
+- New subcommands `set`, `get`, `del`, `case`, `query`, `outline` are ADDITIVE. No existing subcommand was renamed or removed
+- New exit codes 83, 88, 91, 92, 93 are ADDITIVE. Existing code 0-86 unchanged
+- `atomwrite write --syntax-check` is OPT-IN. Default `write` behavior is unchanged
+- `atomwrite write` now writes a WAL sidecar only when the env var `ATOMWRITE_WAL=1` is set, OR when `--strict-atomic` is passed. Default `write` does NOT write the sidecar
+- See `docs/MIGRATION.md` for the full upgrade guide
 
 ## Primary Documentation
-- [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.md): Installation, usage, all 22 commands, exit codes, error handling
-- [AGENTS.md](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget
-- [INTEGRATIONS](https://github.com/daniloaguiarbr/atomwrite/blob/main/INTEGRATIONS.md): Compatible agents and integration examples
-- [CHANGELOG](https://github.com/daniloaguiarbr/atomwrite/blob/main/CHANGELOG.md): Release history including v0.1.3 mtime default change and `--preserve-timestamps` flag
-- [MIGRATION](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/MIGRATION.md): v0.1.2 → v0.1.3 breaking change guidance for atomic write mtime default
-- [CONTRIBUTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/CONTRIBUTING.md): Development setup, PR process, testing guidelines
-- [SECURITY](https://github.com/daniloaguiarbr/atomwrite/blob/main/SECURITY.md): Vulnerability reporting and security policy
-- [Crates.io](https://crates.io/crates/atomwrite): Package registry listing
-- [Repository](https://github.com/daniloaguiarbr/atomwrite): Source code and issue tracker
 
-## v0.1.3 Highlights
-- `--preserve-timestamps` flag added to `edit` and `replace` (default: mtime is updated to reflect the edit)
-- `mtime_preserved` field added to `EditOutput` and `ReplaceResult` NDJSON responses
-- BREAKING: atomic write no longer preserves the original file mtime by default (was a silent no-op trigger for cargo/make/cmake/gradle)
+- [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.md): Full documentation with all 28 commands and examples
+- [HOW_TO_USE](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/HOW_TO_USE.md): Quickstart guide
+- [COOKBOOK](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/COOKBOOK.md): Recipes for common tasks
+- [AGENTS.md](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget
+- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.md): 445 tests across 43 test suites
+- [MIGRATION](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/MIGRATION.md): Migration guide between versions
+- [INSTALL](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/INSTALL.md): Platform-specific install instructions
+- [CROSS_PLATFORM](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/CROSS_PLATFORM.md): macOS, Linux, Windows quirks
+- [CHANGELOG](https://github.com/daniloaguiarbr/atomwrite/blob/main/CHANGELOG.md): Release history
+- [CONTRIBUTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/CONTRIBUTING.md): Development setup and guidelines
+- [SECURITY](https://github.com/daniloaguiarbr/atomwrite/blob/main/SECURITY.md): Vulnerability reporting
+- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 7 ADRs (v0.1.12 architectural decisions)
+- [docs/schemas/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/schemas/): 22 stable JSON Schema contracts
+- [Crates.io](https://crates.io/crates/atomwrite): Package registry
+- [Repository](https://github.com/daniloaguiarbr/atomwrite): Source code

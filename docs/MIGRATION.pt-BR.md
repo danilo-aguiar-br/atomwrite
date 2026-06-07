@@ -4,15 +4,88 @@
 [Read in English](MIGRATION.md)
 
 
+## O Que Há de Novo na v0.1.12
+
+Esta seção resume as mudanças relevantes para migração em v0.1.12. Veja a seção [v0.1.11 para v0.1.12 (Atual)](#v0111-para-v0112-atual) abaixo para o guia de migração completo com exemplos de código.
+
+### Novos Subcomandos (6)
+
+- `set` — escreve um valor em um caminho dotted em TOML/JSON. Use em vez de reescrever o arquivo inteiro.
+- `get` — lê um valor em um caminho dotted. Use em vez de ler o arquivo inteiro.
+- `del` — remove uma chave em um caminho dotted. `--force-missing` para scripts idempotentes.
+- `case` — renomeia identificadores em 5 estilos de case via `heck`.
+- `query` — caminha um AST tree-sitter. 305 linguagens.
+- `outline` — extrai definições top-level. 305 linguagens.
+
+Todos os 6 subcomandos são aditivos. Nenhum código existente é afetado.
+
+### Novas Flags (15 Total)
+
+- `write --syntax-check` (G72)
+- `write --include-fifo` (G56)
+- `write --strict-atomic` (G90)
+- `write --lock` e `--lock-timeout` (G54)
+- `read --format raw` e `--raw` (G81)
+- `read --head N`, `--tail N`, `--line N`, `--grep <REGEX>`
+- `search --max-filesize` e `--max-columns` (G68)
+- `replace --literal` e `-F` (G66)
+- `transform --rules` e `--inline-rules` (G44)
+- `batch --batch-size` (G77)
+- `backup/copy --no-reflink` (G64)
+- `diff --diff-algorithm patience|myers|lcs` (G76)
+
+Todas as flags são aditivas com valores padrão que preservam o comportamento de v0.1.11.
+
+### Novos Códigos de Erro (5)
+
+- 83 `LockTimeout` (G54)
+- 88 `SyntaxError` (G72)
+- 91 `ExdevFallbackDisabled` (G90)
+- 92 `CopyBackBlake3Failed` (G114)
+- 93 `OrphanJournal` (G114)
+
+Total de códigos de erro: 25 (eram 20 em v0.1.4). Todos os novos códigos têm mensagens bilíngues e sugestões acionáveis.
+
+### Dependências Adicionadas
+
+- `tree-sitter-language-pack = "1.8"` — 305 linguagens, dynamic loading
+- `toml_edit` — preserva formatação TOML
+- `heck = "0.5"` — conversão de case
+- `reflink-copy = "0.1"` — backup CoW
+- `content_inspector = "0.2"` — detecção UTF-16
+- `xattr = "1"` — extended attributes
+
+Todas aditivas. Nenhuma dependência existente removida.
+
+### Mudanças de Comportamento
+
+- Nenhuma. v0.1.12 é totalmente retrocompatível com v0.1.11.
+- Novos subcomandos são opt-in: scripts existentes continuam funcionando.
+- Valores padrão das novas flags preservam o comportamento de v0.1.11.
+- Adições de código de erro não mudam exit codes existentes.
+
+### Ação de Migração
+
+- Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.12"`
+- Novos subcomandos e flags são opt-in. Nenhuma mudança de código necessária para chamadores existentes.
+- Veja a seção [v0.1.11 para v0.1.12 (Atual)](#v0111-para-v0112-atual) para passos detalhados de migração.
+
+### Cobertura de Testes
+
+- 445 testes passando (era 320 baseline, +125 novos em v0.1.11+v0.1.12)
+- 7 novos ADRs em `docs/decisions/` (0019-0025)
+- 7 novos JSON schemas em `docs/schemas/`
+- Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
+
 ## Versão Atual
-- atomwrite está na v0.1.4
-- Este documento cobre migração da v0.1.2 para v0.1.3 E da v0.1.3 para v0.1.4
+- atomwrite está na v0.1.12
+- Este documento cobre migração de v0.1.0 a v0.1.12, com seções detalhadas para v0.1.11 a v0.1.12 e grandes transições anteriores
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
 
 
-## v0.1.3 para v0.1.4
+## v0.1.3 para v0.1.4 (Histórico)
 
-### v0.1.4 (Atual)
+### v0.1.4 (Histórico)
 
 #### Corrigido (Compilação Windows - GAP 14)
 
@@ -178,7 +251,7 @@ atomwrite v0.1.2 agora compila no macOS arm64 (Apple Silicon) e macOS x86_64. A 
 - Melhorias de performance
 
 ### Estabilizações Planejadas para 1.0
-- Schemas de saída NDJSON para todos os 22 subcomandos
+- Schemas de saída NDJSON para todos os 28 subcomandos
 - Atribuições de exit codes
 - Strings de código de erro (`FILE_NOT_FOUND`, `STATE_DRIFT`, etc)
 - Nomes e comportamento de flags globais
@@ -343,8 +416,68 @@ atomwrite v0.1.2 agora compila no macOS arm64 (Apple Silicon) e macOS x86_64. A 
 - Recomendado: atualize para v0.1.2 em seguida, que corrige 14 issues introduzidas na v0.1.1
 
 
+## v0.1.11 para v0.1.12 (Atual)
+### v0.1.12 (Atual)
+
+A release v0.1.12 fecha 13 dos Top 20 gaps da auditoria PRD v5-v16 (`gaps.md`). É aditiva: todo comportamento de v0.1.11 é preservado.
+
+#### Adicionado (Novos Subcomandos -- v14 Tier 3)
+- `set <PATH> <KEY_PATH> <VALUE>` -- escreve um valor em um caminho dotted em arquivo TOML ou JSON, preservando comentários e ordem das chaves via `toml_edit`.
+- `get <PATH> <KEY_PATH>` -- lê um valor em um caminho dotted. NDJSON: `{"type":"get","key_path","value","found","format"}`.
+- `del <PATH> <KEY_PATH>` -- remove uma chave. Flag `--force-missing` trata chaves ausentes como no-op success.
+- `case <PATHS...> --subvert OLD NEW --to <style>` -- renomeia identificadores via `heck`.
+- `query <PATH> [--kinds|--query <KIND>|-Q <KIND>|--tree] [--positions]` -- caminha um AST tree-sitter.
+- `outline <PATH> [--kind <KIND>] [--positions]` -- extrai estrutura de alto nível.
+
+#### Adicionado (G72 verificação de sintaxe REAL)
+- `atomwrite write --syntax-check` invoca tree-sitter (24 linguagens). Exit 88.
+
+#### Adicionado (G114 sidecar WAL)
+- `.atomwrite.journal.<target>.atomwrite.journal.json` com `Started`/`Committed`.
+- `recover_orphan_journals(dir)` é consultivo.
+
+#### Adicionado (Outros Gaps)
+- **G54 `--lock` e `--lock-timeout <ms>`** -- flock advisory. Exit 83.
+- **G39 xattr** -- macOS quarantine, Linux SELinux, capabilities POSIX preservados.
+- **G41 content_inspector** -- UTF-8, UTF-16LE, UTF-16BE, Binário corretamente detectados.
+- **G64 reflink CoW** -- `reflink_or_copy` em APFS/btrfs/XFS.
+- **G90 fallback EXDEV** -- copy fallback para Docker/NFS. `--strict-atomic` para opt out (exit 91).
+- **G44 transform multi-rule** -- `--rules <file.yaml>` e `--inline-rules <YAML>`.
+- **G68 `--max-filesize` e `--max-columns`** -- search skip/truncate.
+- **G80 SIGPIPE** -- broken pipe → exit 0.
+- **G81 `--format raw` e `--raw`** -- read emite bytes crus para composabilidade Unix.
+
+#### Adicionado (5 Novos Códigos de Erro)
+- 83 `LockTimeout`
+- 88 `SyntaxError`
+- 91 `ExdevFallbackDisabled`
+- 92 `CopyBackBlake3Failed`
+- 93 `OrphanJournal`
+
+#### Ação de Migração
+- Nenhuma mudança de código necessária
+- Novos subcomandos são opt-in
+- Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.12"`
+
 ## Notas de Compatibilidade
-### v0.1.3 (Anterior)
+### v0.1.12 (Atual)
+- 6 novos subcomandos: `set`, `get`, `del`, `case`, `query`, `outline` (v14 Tier 3)
+- G72 verificação de sintaxe REAL via tree-sitter (`atomwrite write --syntax-check`, exit 88)
+- G114 sidecar WAL para recuperação de crash (`.atomwrite.journal.<target>.atomwrite.journal.json`)
+- G54 lock advisory via `flock` (exit 83 em timeout)
+- G39 preservação de xattr (quarantine macOS, SELinux Linux, capabilities POSIX)
+- G41 content_inspector para detecção UTF-16/BOM/binário
+- G64 reflink CoW para backup/copy em APFS/btrfs/XFS
+- G90 fallback EXDEV para Docker/NFS (exit 91 com `--strict-atomic`)
+- G44 transform multi-rule YAML (`--rules` / `--inline-rules`)
+- G68 `--max-filesize` e `--max-columns` para search
+- G80 tratamento de SIGPIPE (broken pipe → exit 0)
+- G81 `--format raw` para read (composabilidade Unix)
+- 5 novos códigos de erro: 83, 88, 91, 92, 93
+- Todo comportamento de v0.1.11 preservado
+- 445 testes (era 320 baseline, +125 novos)
+
+### v0.1.3 (Histórico)
 - BREAKING: `edit` e `replace` não preservam mais o mtime original do arquivo por padrão
 - Nova flag `--preserve-timestamps` em `edit` e `replace` restaura o comportamento da v0.1.2
 - Novo campo `mtime_preserved` nas respostas NDJSON de `EditOutput` e `ReplaceResult`

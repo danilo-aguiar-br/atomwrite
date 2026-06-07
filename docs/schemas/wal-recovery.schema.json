@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "atomwrite WAL recovery report",
+  "description": "Output of `atomwrite wal-recovery <dir>` — scans `.atomwrite.journal.*.json` sidecars and emits one entry per orphan journal (last entry is `Started` with no matching `Committed`).",
+  "type": "object",
+  "required": ["type", "journal_path", "target", "op_id", "op", "expected_new_checksum", "started_at_unix", "pid"],
+  "properties": {
+    "type": { "const": "wal_recovery" },
+    "journal_path": { "type": "string", "description": "Absolute path to the orphan journal sidecar." },
+    "target": { "type": "string", "description": "The target file the journal was protecting." },
+    "op_id": { "type": "string", "description": "16-hex-char operation ID correlating with the original `Started` entry." },
+    "op": { "enum": ["write", "edit", "replace", "set"], "description": "Operation type that was in progress when the crash occurred." },
+    "expected_new_checksum": { "type": "string", "description": "BLAKE3 of the content the caller intended to write." },
+    "checksum_before": { "type": ["string", "null"], "description": "BLAKE3 of the original content; `null` if the target did not exist." },
+    "started_at_unix": { "type": "integer", "minimum": 0, "description": "Unix seconds when the `Started` entry was appended." },
+    "pid": { "type": "integer", "minimum": 0, "description": "Process ID that started the write." }
+  },
+  "additionalProperties": false
+}

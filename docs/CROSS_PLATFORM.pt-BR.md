@@ -6,6 +6,59 @@
 > Escreva uma vez, execute em qualquer lugar -- com garantias reais de fsync em cada plataforma
 
 
+## O Que Há de Novo na v0.1.12
+
+Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
+
+### Tratamento de Sinais (Melhorado)
+
+- v0.1.12 adiciona 5 novos testes em `tests/signal_test.rs` cobrindo SIGINT, SIGTERM, SIGPIPE, interrupção de batch
+- `tests/signal_test.rs::batch_interrupted_by_signal` valida cleanup do journal WAL em sinal
+- `tests/signal_test.rs::sigpipe_exits_141_or_signal_13` confirma tratamento de BrokenPipe (exit 141 ou signal 13)
+- `tests/signal_test.rs::sigint_during_search_exits_130` e `sigterm_during_search_exits_143` confirmam exit codes limpos
+- `tests/signal_test.rs::shutdown_message_on_stderr` valida tracing em shutdown
+
+### Windows
+
+- v0.1.12 preserva o fix do Windows 10/11 da v0.1.4: `cargo install atomwrite` funciona
+- Melhorias no `init_console`: UTF-8 code page 65001 + `ENABLE_VIRTUAL_TERMINAL_PROCESSING`
+- `persist_with_retry` lida com `PermissionDenied` durante rename atômico com backoff exponencial
+- Específico do Windows: 5 novos códigos de erro (83, 88, 91, 92, 93) todos com mensagens bilíngues
+
+### Linux
+
+- v0.1.12 requer Rust 1.88 ou posterior
+- Flag `--include-fifo` pula FIFO/named pipes (G56) para prevenir travamento
+- Flag `--strict-atomic` aborta em EXDEV (G90) para filesystems onde atomicidade é crítica
+- Lock advisory de arquivo via `flock` funciona no Linux (G54)
+- Preservação de xattr funciona em ext4, btrfs, XFS, F2FS (G39)
+
+### macOS
+
+- v0.1.12 preserva os fixes de build do macOS arm64 (Apple Silicon) e macOS x86_64 da v0.1.2
+- Reflink CoW funciona em APFS (G64): backup e copy O(1)
+- Preservação de xattr funciona para `com.apple.quarantine`, `kMDItemUserTags`, `kMDItemFinderComment` (G39)
+- Gatekeeper pode exigir `xattr -d com.apple.quarantine` no primeiro uso
+
+### Containers (Docker, Podman, Kubernetes)
+
+- Fallback EXDEV (G90) lida com Docker overlay2 + named volumes automaticamente
+- Exit code 91 (`ExdevFallbackDisabled`) para opt-out via `--strict-atomic`
+- Sem mudanças de código necessárias para usuários de container; funciona out of the box
+
+### NFS
+
+- `flock(2)` é silenciosamente ignorado em NFS, então `--lock` pode não proteger contra edições concorrentes
+- Combine `--lock` com `--expect-checksum` para defesa em profundidade
+- `--expect-checksum` detecta desvio de estado após escrita (exit 82)
+
+### Cobertura de Testes
+
+- 445 testes passando (era 320 baseline, +125 novos em v0.1.11+v0.1.12)
+- Gate de cross-compile: `cargo test --test cross_compile_check -- --ignored` valida targets Windows GNU/MSVC
+- 5 testes de sinal em `tests/signal_test.rs` cobrem SIGINT/SIGTERM/SIGPIPE/batch/shutdown
+- Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
+
 ## A Dor Que Você Já Conhece
 - Você escreve um arquivo no Linux e ele chega ao disco de forma confiável
 - Você escreve o mesmo arquivo no macOS e o `fsync` mente silenciosamente sobre durabilidade

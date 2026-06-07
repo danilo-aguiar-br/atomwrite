@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "atomwrite case subcommand output",
+  "description": "Result of `atomwrite case` — converts identifier case style (snake/camel/Pascal/kebab/SCREAMING) in source files.",
+  "type": "object",
+  "required": ["type", "path", "rewrites", "elapsed_ms"],
+  "properties": {
+    "type": { "const": "case" },
+    "path": { "type": "string", "description": "Absolute path to the source file." },
+    "rewrites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["old", "new", "line", "column"],
+        "properties": {
+          "old": { "type": "string", "description": "Original identifier (old case style)." },
+          "new": { "type": "string", "description": "Rewritten identifier (target case style)." },
+          "line": { "type": "integer", "description": "1-based line number of the rewrite." },
+          "column": { "type": "integer", "description": "1-based column number of the rewrite start." }
+        },
+        "additionalProperties": false
+      },
+      "description": "Array of identifier rewrites applied to the file."
+    },
+    "elapsed_ms": { "type": "integer", "description": "Wall-clock time for the operation in milliseconds." }
+  },
+  "additionalProperties": false
+}

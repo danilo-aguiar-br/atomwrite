@@ -1,9 +1,59 @@
 # Guia de Instalação
 
 - Instruções completas para instalar atomwrite em Linux, macOS e Windows
-- Versão alvo atual: v0.1.4 (corrige compilação Windows 10/11 e adiciona sugestões de erro context-aware)
+- Versão alvo atual: v0.1.12 (corrige compilação Windows 10/11, adiciona sugestões de erro context-aware, 6 novos subcomandos, G72 verificação de sintaxe real, G114 sidecar WAL, 5 novos códigos de erro, reflink copy, fallback EXDEV)
 - Seções ordenadas por plataforma, com pré-requisitos e solução de problemas
 
+
+## O Que Há de Novo na v0.1.12
+
+Esta seção resume as mudanças relevantes para instalação em v0.1.12.
+
+### Instalação (Linux/macOS/Windows)
+
+A release v0.1.12 é um substituto drop-in para v0.1.4. Instale com:
+
+```bash
+cargo install atomwrite --locked --version "^0.1.12"
+```
+
+O fix do Windows 10/11 de v0.1.4 é preservado (cargo install agora funciona). v0.1.12 adiciona:
+
+- 6 novos subcomandos (`set`, `get`, `del`, `case`, `query`, `outline`) via implementação Tier 3 v14
+- G72 verificação de sintaxe REAL via tree-sitter (24 linguagens via `tree-sitter-language-pack`)
+- G114 sidecar WAL para recuperação de crash (consultivo, sem auto-replay)
+- 5 novos códigos de erro (83 LockTimeout, 88 SyntaxError, 91 ExdevFallbackDisabled, 92 CopyBackBlake3Failed, 93 OrphanJournal)
+
+### Nova Dependência
+
+- `tree-sitter-language-pack = "1.8"` com features `download` + `dynamic-loading`
+- Parsers baixam no primeiro uso (~5-10MB footprint total, não empacotados)
+- Sem `cargo build` manual ou compilação de fonte necessária para suporte a linguagens
+
+### Notas Específicas do Windows
+
+- v0.1.12 preserva o fix do Windows da v0.1.4: `cargo install atomwrite` funciona no Windows 10/11.
+- Melhorias no `init_console` (de v0.1.4) garantem que UTF-8 e sequências ANSI funcionem no Windows Terminal e PowerShell 7+.
+- `persist_with_retry` lida com `PermissionDenied` durante rename atômico com backoff exponencial (compensação do Windows Defender).
+
+### Notas Específicas do Linux
+
+- v0.1.12 requer Rust 1.88 ou posterior (igual a v0.1.4).
+- `cargo install atomwrite` do crates.io é o caminho de instalação recomendado.
+- Sem dependências de nível de sistema além do toolchain Rust padrão.
+
+### Notas Específicas do macOS
+
+- v0.1.12 preserva os fixes de build do macOS arm64 (Apple Silicon) e macOS x86_64 da v0.1.2.
+- Gatekeeper pode exigir `xattr -d com.apple.quarantine $(which atomwrite)` no primeiro uso.
+- `posix_fadvise` é corretamente gateado a `cfg(target_os = "linux")` apenas (no-op no macOS).
+
+### Cobertura de Testes
+
+- 445 testes passando (era 320 baseline, +125 novos em v0.1.11+v0.1.12)
+- 7 novos ADRs em `docs/decisions/` (0019-0025)
+- 7 novos JSON schemas em `docs/schemas/`
+- Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 
 ## Linux
 
@@ -14,8 +64,8 @@
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Instalar atomwrite v0.1.4 do crates.io
-cargo install atomwrite --locked --version "^0.1.4"
+# Instalar atomwrite v0.1.12 do crates.io
+cargo install atomwrite --locked --version "^0.1.12"
 
 # Verificar
 atomwrite --version
@@ -97,11 +147,11 @@ reinicie o terminal para que o PATH atualizado seja carregado.
 
 #### "error[E0433]: failed to resolve: use of undeclared type `AtomwriteError`"
 
-Este era um bug em v0.1.3 (GAP 14) corrigido em v0.1.4. Certifique-se de
-instalar v0.1.4 ou posterior:
+Este bug foi corrigido em v0.1.4. v0.1.12 é um substituto drop-in que também inclui 6 novos subcomandos, G72 verificação de sintaxe real, G114 sidecar WAL, e 5 novos códigos de erro. Certifique-se de
+instalar v0.1.12 ou posterior:
 
 ```powershell
-cargo install atomwrite --locked --version "^0.1.4"
+cargo install atomwrite --locked --version "^0.1.12"
 ```
 
 Se não puder atualizar, compile do código fonte com o fix aplicado.
@@ -193,4 +243,4 @@ cargo test --test cross_compile_check -- --ignored
 ```
 
 Isto é obrigatório para qualquer release que toque em caminhos de código
-`#[cfg(windows)]`, conforme o fix do GAP 14 em v0.1.4.
+`#[cfg(windows)]`, conforme o fix do GAP 14 em v0.1.4 (preservado para referência histórica; instale v0.1.12 ou posterior).

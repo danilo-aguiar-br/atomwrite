@@ -299,6 +299,18 @@ pub struct WriteArgs {
     #[arg(long, help = "Prepend content to beginning of existing file")]
     pub prepend: bool,
 
+    /// Run post-write tree-sitter syntax check (G72). Aborts the
+    /// write with exit code 88 if the new content has parse errors.
+    /// Languages covered: rust, python, javascript, typescript, tsx,
+    /// go, c, cpp, java, ruby, php, bash, html, css, json, yaml,
+    /// toml, markdown, lua, scala, swift, kotlin, sql. Files with
+    /// no parser available fall back to a bracket-balance heuristic.
+    #[arg(
+        long,
+        help = "Run tree-sitter syntax check (G72). Aborts on parse errors (exit 88)."
+    )]
+    pub syntax_check: bool,
+
     /// Expected checksum for optimistic locking.
     #[arg(
         long,
@@ -491,6 +503,44 @@ pub struct SearchArgs {
     /// Sort results by criterion.
     #[arg(long, value_enum, help = "Sort results by criterion")]
     pub sort: Option<SortBy>,
+
+    /// Include FIFO / named pipe files in the search (G56).
+    ///
+    /// By default, atomwrite skips FIFOs because `open()` on a FIFO blocks
+    /// indefinitely until the other end connects — this can cause atomwrite
+    /// to hang in CI / Docker environments that have FIFOs in /tmp or /var.
+    /// Pass `--include-fifo` to opt back into the legacy behavior of
+    /// opening FIFOs (which may hang).
+    #[arg(
+        long,
+        help = "Include FIFO / named pipe files (default: skip to avoid hangs)"
+    )]
+    pub include_fifo: bool,
+
+    /// Maximum file size in bytes for `search` (G68).
+    ///
+    /// Files larger than this are skipped silently (with a `skipped` event
+    /// when `--count` or `--files` is active). Default: 10 MiB. Useful for
+    /// skipping `node_modules`, `target/`, log archives, and other large
+    /// generated files.
+    #[arg(
+        long,
+        default_value_t = 10 * 1024 * 1024,
+        help = "Skip files larger than N bytes (default: 10 MiB)"
+    )]
+    pub max_filesize: u64,
+
+    /// Maximum line length in columns for `search` matches (G68).
+    ///
+    /// Lines longer than this are truncated with a `...[truncated]` marker.
+    /// Default: 500. Useful for skipping minified bundle.js, styles.min.css,
+    /// and other single-line giant files that explode context windows.
+    #[arg(
+        long,
+        default_value_t = 500,
+        help = "Truncate matches longer than N columns (default: 500)"
+    )]
+    pub max_columns: usize,
 }
 
 /// Sort criterion for search results.
@@ -680,21 +730,20 @@ pub struct TransformArgs {
     pub paths: Vec<PathBuf>,
 
     /// AST pattern to match.
-    #[arg(short = 'p', long, required = true, help = "AST pattern to match")]
-    pub pattern: String,
+    #[arg(short = 'p', long, help = "AST pattern to match (single-rule mode)")]
+    pub pattern: Option<String>,
 
     /// Rewrite template for matched patterns.
-    #[arg(short = 'r', long, required = true, help = "Rewrite template")]
-    pub rewrite: String,
+    #[arg(short = 'r', long, help = "Rewrite template (single-rule mode)")]
+    pub rewrite: Option<String>,
 
     /// Source language for AST parsing.
     #[arg(
         short = 'l',
         long = "language",
-        required = true,
-        help = "Language (rust, js, ts, py, go, etc)"
+        help = "Language (rust, js, ts, py, go, etc.) — required for single-rule mode"
     )]
-    pub language: String,
+    pub language: Option<String>,
 
     /// Glob patterns for file inclusion.
     #[arg(short = 'g', long, action = clap::ArgAction::Append, help = "Include files matching glob")]
@@ -707,6 +756,14 @@ pub struct TransformArgs {
     /// Preview without writing.
     #[arg(long, help = "Show diff preview without writing")]
     pub dry_run: bool,
+
+    /// Path to a YAML file containing multiple rules (G44).
+    #[arg(long, help = "Apply multiple rules from a YAML file")]
+    pub rules: Option<PathBuf>,
+
+    /// Inline YAML rules (alternative to --rules).
+    #[arg(long, help = "Apply multiple rules from inline YAML string")]
+    pub inline_rules: Option<String>,
 
     /// Create backup before modifying.
     #[arg(long, help = "Create backup before modifying")]
@@ -734,6 +791,19 @@ pub struct BatchArgs {
     /// Emit JSON Schema for the NDJSON input manifest format.
     #[arg(long, help = "Print JSON Schema for the batch input manifest")]
     pub input_schema: bool,
+
+    /// Hint for NDJSON streaming: number of operations to buffer before
+    /// emitting the summary line (G77).
+    ///
+    /// atomwrite reads the manifest incrementally (one line at a time), so
+    /// memory usage is O(1) regardless of this value. This flag only
+    /// controls the granularity of the final `summary` event. Default: 100.
+    #[arg(
+        long,
+        default_value_t = 100usize,
+        help = "Operations to buffer before emitting the summary line (default: 100)"
+    )]
+    pub batch_size: usize,
 }
 
 /// Arguments for the backup subcommand.
@@ -812,4 +882,161 @@ pub struct ApplyArgs {
     /// Preview without writing.
     #[arg(long, help = "Show what would be done without writing")]
     pub dry_run: bool,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v14 Tier 3: structured config edits + identifier case conversion.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Arguments for the `set` subcommand (v14 Tier 3).
+#[derive(Args, Debug)]
+pub struct SetArgs {
+    /// Path to the structured config file (TOML or JSON).
+    pub path: PathBuf,
+    /// Dotted path to the key (e.g. `package.version`).
+    pub key_path: String,
+    /// New value (auto-coerced to bool/int/float/string).
+    pub value: String,
+    /// Create backup before modifying.
+    #[arg(long, help = "Create backup before modifying")]
+    pub backup: bool,
+    /// Preserve original file timestamps.
+    #[arg(long, help = "Preserve original mtime/atime")]
+    pub preserve_timestamps: bool,
+}
+
+/// Arguments for the `get` subcommand (v14 Tier 3).
+#[derive(Args, Debug)]
+pub struct GetArgs {
+    /// Path to the structured config file (TOML or JSON).
+    pub path: PathBuf,
+    /// Dotted path to the key (e.g. `package.version`).
+    pub key_path: String,
+}
+
+/// Arguments for the `del` subcommand (v14 Tier 3).
+#[derive(Args, Debug)]
+pub struct DelArgs {
+    /// Path to the structured config file (TOML or JSON).
+    pub path: PathBuf,
+    /// Dotted path to the key (e.g. `dependencies.serde`).
+    pub key_path: String,
+    /// Create backup before modifying.
+    #[arg(long, help = "Create backup before modifying")]
+    pub backup: bool,
+    /// Preserve original file timestamps.
+    #[arg(long, help = "Preserve original mtime/atime")]
+    pub preserve_timestamps: bool,
+    /// Treat missing key as a no-op success instead of an error.
+    #[arg(long, help = "Succeed silently if the key is already missing")]
+    pub force_missing: bool,
+}
+
+/// Identifier case style (v14 Tier 3 `case` subcommand).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum IdentifierCase {
+    /// `snake_case`
+    Snake,
+    /// `camelCase`
+    Camel,
+    /// `PascalCase`
+    Pascal,
+    /// `kebab-case`
+    Kebab,
+    /// `SCREAMING_SNAKE_CASE`
+    ScreamingSnake,
+}
+
+/// Arguments for the `case` subcommand (v14 Tier 3).
+#[derive(Args, Debug)]
+pub struct CaseArgs {
+    /// Target file paths to rewrite.
+    pub paths: Vec<PathBuf>,
+    /// Pairs of old new identifiers (must be even count).
+    #[arg(long = "subvert", num_args = 2.., value_name = "OLD NEW", help = "Old and new identifier (repeat for multiple pairs)")]
+    pub subvert: Vec<String>,
+    /// Target case style for the new identifier.
+    #[arg(long, value_enum, default_value_t = IdentifierCase::Snake, help = "Target case style")]
+    pub to: IdentifierCase,
+    /// Create backup before modifying.
+    #[arg(long, help = "Create backup before modifying")]
+    pub backup: bool,
+    /// Preserve original file timestamps.
+    #[arg(long, help = "Preserve original mtime/atime")]
+    pub preserve_timestamps: bool,
+    /// Preview without writing.
+    #[arg(long, help = "Show what would be changed without writing")]
+    pub dry_run: bool,
+}
+
+/// Arguments for the `query` subcommand (v14 Tier 3, v0.1.12).
+///
+/// Runs a tree-sitter S-expression pattern against a source file and
+/// returns all matching AST nodes as NDJSON. Uses
+/// `tree-sitter-language-pack` (downloads parsers on first use; 305
+/// languages supported). Without `--query`, prints the parsed tree
+/// structure as a compact JSON dump for debugging.
+#[derive(Args, Debug)]
+pub struct QueryArgs {
+    /// Source file to query.
+    pub path: PathBuf,
+    /// Tree-sitter language override (e.g. "rust", "python"). Auto-detected
+    /// from extension if omitted.
+    #[arg(
+        long,
+        value_name = "LANG",
+        help = "Language override (auto-detected from extension)"
+    )]
+    pub language: Option<String>,
+    /// Tree-sitter S-expression pattern (e.g. `(function_item name: (identifier) @name)`).
+    #[arg(
+        short = 'Q',
+        long,
+        value_name = "PATTERN",
+        help = "S-expression pattern (e.g. '(function_item name: (identifier) @name)')"
+    )]
+    pub query: Option<String>,
+    /// Print the full parse tree (no S-expression matching).
+    #[arg(long, help = "Print the full tree (no S-expression matching)")]
+    pub tree: bool,
+    /// Print all named node kinds found in the file (no S-expression matching).
+    #[arg(long, help = "Print all named node kinds in the file (counts)")]
+    pub kinds: bool,
+    /// Show byte offsets and start positions for every match.
+    #[arg(
+        long,
+        help = "Include byte offsets and start positions for every match"
+    )]
+    pub positions: bool,
+}
+
+/// Arguments for the `outline` subcommand (v14 Tier 3, v0.1.12).
+///
+/// Extracts the high-level structure of a source file (functions,
+/// classes, structs, enums, traits, modules, top-level consts) as
+/// NDJSON. Uses `tree-sitter-language-pack`. Without `--kind`, emits
+/// all structural items.
+#[derive(Args, Debug)]
+pub struct OutlineArgs {
+    /// Source file to outline.
+    pub path: PathBuf,
+    /// Tree-sitter language override.
+    #[arg(
+        long,
+        value_name = "LANG",
+        help = "Language override (auto-detected from extension)"
+    )]
+    pub language: Option<String>,
+    /// Filter by item kind (e.g. "function", "class", "struct", "enum",
+    /// "trait", "impl", "module", "const", "static", "`type_alias`").
+    /// Repeatable.
+    #[arg(
+        long = "kind",
+        value_name = "KIND",
+        help = "Filter by kind (repeat for multiple)"
+    )]
+    pub kinds: Vec<String>,
+    /// Show byte offsets and start positions.
+    #[arg(long, help = "Include byte offsets and start positions")]
+    pub positions: bool,
 }

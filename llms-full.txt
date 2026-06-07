@@ -2,12 +2,11 @@
 
 > Atomic file operations for LLM agents -- one CLI, zero corruption
 
-atomwrite is a Rust CLI that provides 22 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
+atomwrite is a Rust CLI that provides 31 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
-**Latest release: v0.1.3** — BREAKING change to atomic write default: mtime is now updated to reflect the edit (was preserved). Fixes silent no-op rebuilds in cargo/make/cmake/gradle. New `--preserve-timestamps` flag on `edit` and `replace` for opt-in behavior, plus `mtime_preserved` field in `EditOutput` and `ReplaceResult` NDJSON responses. 33 test suites, 294 tests passing.
+**Latest release: v0.1.12** (2026-06-07) — G72 REAL syntax check via tree-sitter (24 languages), G114 WAL sidecar for crash recovery, v14 Tier 3 structured config editors (set/get/del/case), v14 Tier 3 AST tools (query/outline via tree-sitter-language-pack with 305 languages), 5 new error variants, 445 tests passing across 43 test suites. See `CHANGELOG.md` for the full release notes and `docs/decisions/` for the 7 ADRs that drove the architecture.
 
-**Previous release: v0.1.2** — Critical macOS build fix, 6 bug fixes, 4 dependency updates (nix 0.31, signal-hook 0.4, windows-sys 0.61, rust-i18n 4), and agent-first features (`--timeout`, `--grep`, `completions --install`).
-
+**Previous release: v0.1.11** (2026-06-05) — Windows E0433 fix (libc was gated by cfg(unix) but referenced in main.rs), signal_test race fix (ShutdownSignal singleton, ATOMWRITE_READY_FILE for race-free readiness), 11 cli_batch Windows path backslash fix.
 
 ## Installation
 
@@ -15,67 +14,92 @@ atomwrite is a Rust CLI that provides 22 subcommands for file manipulation with 
 cargo install atomwrite
 ```
 
+Parsers for 305 languages are NOT bundled; they are downloaded on first use by `tree-sitter-language-pack` and cached in `~/.cache/tree-sitter-language-pack/parsers/`. Install footprint stays small (~5-10 MB vs 1+ GB if all 305 parsers were bundled).
 
-## 22 Subcommands
+## 28 Subcommands
+
+### Core I/O
 - `read` -- read files with metadata, checksum, optional content
 - `write` -- create or overwrite files atomically via stdin
 - `edit` -- surgically edit by line number, text marker, or exact match
+- `delete` -- delete files with optional backup
+- `copy` -- copy files with checksum verification (reflink on APFS/btrfs/XFS)
+- `move` -- move or rename files atomically (EXDEV copy-fallback)
+- `apply` -- apply patches from stdin (unified diff, search/replace, full, markdown)
+
+### Search and replace
 - `search` -- search file contents in parallel (ripgrep engine)
 - `replace` -- replace text across files with atomic writes
+- `transform` -- AST refactoring via ast-grep (306 languages)
+
+### Inspection
 - `hash` -- calculate BLAKE3 checksums
-- `delete` -- delete files with optional backup
 - `count` -- count lines, files by extension
 - `diff` -- compare two files (unified, stat, or changes)
-- `move` -- move or rename files atomically
-- `copy` -- copy files with checksum verification
-- `list` -- list project file structure with metadata
-- `extract` -- extract fields from NDJSON or text columns
-- `calc` -- evaluate math expressions and unit conversions (fend)
-- `regex` -- generate regex from examples (grex)
-- `transform` -- structural AST search and rewrite (ast-grep, 306 languages)
-- `batch` -- execute multiple operations from NDJSON manifest
-- `completions` -- generate shell completions
-- `scope` -- grammatical scoping: select AST categories (comments, functions, strings, etc.) and apply actions (delete, upper, lower, titlecase, squeeze, replace)
-- `backup` -- create timestamped file backups with BLAKE3 checksums and configurable retention
-- `rollback` -- restore files from previous backups with optional BLAKE3 verification
-- `apply` -- apply patches from stdin with auto-detection of format (unified diff, SEARCH/REPLACE blocks, markdown-fenced diff, full file replacement)
+- `list` -- list files in a directory tree
+- `extract` -- extract fields from NDJSON input via pipe
+- `scope` -- grammatical scoping (delete all comments, etc.)
+- `regex` -- generate regex from examples
+- `calc` -- math and unit conversions
+- `completions` -- generate shell completions (bash, zsh, fish, elvish, powershell)
 
+### Backup and recovery
+- `backup` -- create timestamped backups with BLAKE3 checksums
+- `rollback` -- restore from a previous backup
+- `batch` -- NDJSON-driven batch operations (transactional)
+
+### Structured config editors (v14 Tier 3, v0.1.12)
+- `set <PATH> <KEY_PATH> <VALUE>` -- write a value at a dotted path in a TOML or JSON file. Preserves comments and key order via `toml_edit`. Auto-coerces int/bool/float/string.
+- `get <PATH> <KEY_PATH>` -- read a value at a dotted path. NDJSON: `{"type":"get","key_path","value","found","format"}`.
+- `del <PATH> <KEY_PATH>` -- remove a key. `--force-missing` flag treats missing keys as a no-op success.
+- `case <PATHS...> --subvert OLD NEW --to <style>` -- rename identifiers across multiple files via `heck`. Styles: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`.
+
+### AST tools (v14 Tier 3 + G72, v0.1.12, via tree-sitter-language-pack)
+- `query <PATH> [--kinds|--query <KIND>|-Q <KIND>|--tree] [--positions]` -- walk a tree-sitter AST and emit nodes as NDJSON. 305 languages supported.
+- `outline <PATH> [--kind <KIND>] [--positions]` -- extract high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON.
+- `write --syntax-check` -- G72 REAL syntax check via tree-sitter. 24 languages covered. Exit 88 with first error line/column/kind/message.
 
 ## Output Contract
-- stdout: ALWAYS NDJSON structured (one JSON object per line)
-- stderr: logs only (tracing format, only with --verbose)
-- Every object has a `"type"` discriminator field
-- Flush after each line
-- Errors emit JSON on stdout with `error: true`
-- Error fields: code, exit, message, path, error_class, retryable, suggestion
 
+Every command outputs **NDJSON** (one JSON object per line) to stdout. The last line is always a `*_summary` event. Schema files are in `docs/schemas/`. The contract is stable: if you write a parser for v0.1.12 output, it will keep working in v0.2.x with only minor additive changes.
+
+### Critical NDJSON fields
+- `type` -- operation name (`set`, `get`, `del`, `case`, `query_match`, `outline_item`, `write`, `edit`, ...)
+- `checksum` (BLAKE3) -- the new file's content hash
+- `checksum_before` (BLAKE3) -- the file's hash before the operation
+- `mtime_preserved` (v0.1.3+) -- true if mtime was kept, false if updated
+- `bytes_written` -- total bytes written to the file
+- `elapsed_ms` -- wall-clock time for the operation
 
 ## Key Flags
-- `--workspace <DIR>` -- restrict operations to project root
-- `--dry-run` -- preview changes without writing
+
+- `--workspace <DIR>` -- workspace root for path jail validation (REQUIRED for file ops)
 - `--expect-checksum <HASH>` -- optimistic locking for concurrent edits
-- `--verbose` -- enable tracing logs on stderr
-- `--include <PATTERN>` / `-g <PATTERN>` -- filter files by glob pattern (search, replace)
+- `--verbose` / `-v` -- enable tracing logs on stderr
+- `--include <PATTERN>` / `-g <PATTERN>` -- filter files by glob pattern
 - `--stat` -- skip file content in read responses (metadata only)
-- `--backup` -- create backup before delete
-- `--format <FORMAT>` -- output format for diff (unified, stat, changes)
-- `--lang <LANG>` -- language for AST transform
-- `--rewrite <PATTERN>` -- rewrite pattern for AST transform
-- `--line-ending lf|crlf|cr|auto` -- normalize line endings on write and edit
-- `--lang <LOCALE>` (global) -- override display locale (en, pt-BR) for translated messages
-- `--timeout <SECONDS>` (global, v0.1.2+) -- global operation timeout (0 = no timeout)
-- `--grep <REGEX>` (read, v0.1.2+) -- filter returned lines to those matching a regex
+- `--backup` -- create backup before modify
+- `--preserve-timestamps` (edit, replace) -- keep the original file mtime (default: updated to reflect change). Critical for build systems.
+- `--syntax-check` (write, v0.1.12+) -- G72 tree-sitter REAL syntax check before commit
+- `--positions` (query, outline) -- include start_line/start_column/byte_offset in AST output
+- `--line-ending lf|crlf|cr|auto` -- normalize line endings
+- `--lang <LOCALE>` (global) -- override display locale (en, pt-BR)
+- `--timeout <SECONDS>` (global) -- global operation timeout (0 = no timeout)
+- `--grep <REGEX>` (read) -- filter returned lines to those matching a regex
 - `--head N` / `--tail N` (read) -- read first/last N lines
 - `--lines START:END` (read) -- partial read with 1-based inclusive range
-- `--file <PATH>` (batch, v0.1.2+) -- read NDJSON manifest from file instead of stdin
-- `--output-dir <DIR>` (backup, v0.1.2+) -- place backups in custom directory instead of source
-- `--install` (completions, v0.1.2+) -- install completions to XDG data directory
-- `--preserve-timestamps` (edit, replace, v0.1.3+) -- keep the original file mtime (default: mtime is updated to reflect the change). Critical for build systems (cargo, make, cmake) that use mtime to detect source changes
-
+- `--file <PATH>` (batch) -- read NDJSON manifest from file
+- `--output-dir <DIR>` (backup) -- place backups in custom directory
+- `--install` (completions) -- install to XDG data directory
+- `--lock` (global, v0.1.12+) -- advisory flock(2) on `.<target>.atomwrite.lock` sidecar
+- `--max-filesize <BYTES>` (global) -- reject files larger than N bytes (default 1 GiB)
+- `--threads <N>` (global) -- number of parallel workers (0 = all cores)
+- `--json-schema` (global) -- print JSON Schema for the subcommand output and exit
 
 ## Exit Codes
+
 - 0: success
-- 1: no matches (search)
+- 1: no matches (search) / zero results
 - 4: file not found
 - 13: permission denied
 - 28: disk full
@@ -84,9 +108,15 @@ cargo install atomwrite
 - 73: cross-device rename
 - 74: I/O error
 - 78: config invalid
-- 82: state drift (checksum mismatch)
+- 81: checksum verify failed
+- 82: state drift (optimistic locking failed)
+- 83: lock timeout (v0.1.12+)
 - 85: FIFO detected
 - 86: device file detected
+- 88: syntax error detected (v0.1.12+)
+- 91: EXDEV fallback disabled (v0.1.12+)
+- 92: copy-back BLAKE3 failed (v0.1.12+)
+- 93: orphan journal detected (v0.1.12+)
 - 126: workspace jail violated
 - 127: symlink blocked
 - 128: file immutable
@@ -95,34 +125,38 @@ cargo install atomwrite
 - 143: SIGTERM
 - 255: internal error
 
-
 ## Environment Variables
+
 - `NO_COLOR` -- disable colored output
 - `RUST_LOG` -- control log verbosity
 - `ATOMWRITE_LANG` -- override locale for translated messages (en, pt-BR)
 - `ATOMWRITE_WORKSPACE` -- set the workspace root for path jail validation
-
+- `RAYON_NUM_THREADS` -- override `--threads` value
 
 ## Usage Examples
 
 ```bash
-# Write atomically
-echo "content" | atomwrite write src/file.rs
+# Write atomically with checksum
+echo "content" | atomwrite write --workspace . src/file.rs
 
 # Read with checksum
-atomwrite read src/file.rs
+atomwrite --workspace . read src/file.rs
+
+# Optimistic locking: only write if the file hasn't changed
+CS=$(atomwrite --workspace . read src/config.toml | jaq -r .checksum)
+echo "new_value" | atomwrite --workspace . write --expect-checksum "$CS" src/config.toml
 
 # Search in parallel
-atomwrite search 'TODO' src/ --include '*.rs'
+atomwrite --workspace . search 'TODO' src/ --include '*.rs'
 
 # Replace across files
-atomwrite replace 'old_name' 'new_name' src/
+atomwrite --workspace . replace 'old_name' 'new_name' src/
 
-# AST transform
-atomwrite transform -p 'println!($$$ARGS)' -r 'tracing::info!($$$ARGS)' -l rust src/
+# AST transform via ast-grep
+atomwrite --workspace . transform -p 'println!($$$ARGS)' -r 'tracing::info!($$$ARGS)' -l rust src/
 
-# Batch operations
-cat manifest.ndjson | atomwrite batch
+# Batch operations (transactional)
+cat manifest.ndjson | atomwrite --workspace . batch --transaction
 
 # Math and units
 atomwrite calc "2 GiB to bytes"
@@ -130,26 +164,48 @@ atomwrite calc "2 GiB to bytes"
 # Generate regex
 atomwrite regex "2024-01-15" "2025-12-31"
 
-# Scope: delete all comments in a Rust file
-atomwrite scope src/main.rs --lang rust --category comments --action delete
+# v14 Tier 3: set a value in Cargo.toml
+atomwrite --workspace . set Cargo.toml package.version 0.2.0
+
+# v14 Tier 3: read a value
+atomwrite --workspace . get Cargo.toml package.version
+
+# v14 Tier 3: rename identifiers across multiple files
+atomwrite --workspace . case src/ --subvert user_id UserId --to pascal
+
+# v14 Tier 3: walk the AST of a Rust file
+atomwrite --workspace . query src/main.rs --kinds
+
+# v14 Tier 3: extract the outline of a Python file
+atomwrite --workspace . outline src/app.py --kind function_definition
+
+# G72 REAL syntax check before committing
+atomwrite --workspace . write --syntax-check src/parser.rs < parser.rs
 
 # Backup a file before risky edits
-atomwrite backup src/config.rs
+atomwrite --workspace . backup src/config.rs
 
 # Rollback to previous backup
-atomwrite rollback src/config.rs
+atomwrite --workspace . rollback src/config.rs
 
 # Apply a unified diff from stdin
-cat patch.diff | atomwrite apply src/file.rs
+cat patch.diff | atomwrite --workspace . apply src/file.rs
 ```
 
-
 ## Primary Documentation
-- [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.md): Full documentation with all 22 commands and examples
+
+- [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.md): Full documentation with all 31 commands and examples
+- [HOW_TO_USE](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/HOW_TO_USE.md): Quickstart guide
+- [COOKBOOK](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/COOKBOOK.md): Recipes for common tasks
 - [AGENTS.md](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget
-- [INTEGRATIONS](https://github.com/daniloaguiarbr/atomwrite/blob/main/INTEGRATIONS.md): Compatible agents and integration examples
+- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.md): 445 tests across 43 test suites
+- [MIGRATION](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/MIGRATION.md): Migration guide between versions
+- [INSTALL](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/INSTALL.md): Platform-specific install instructions
+- [CROSS_PLATFORM](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/CROSS_PLATFORM.md): macOS, Linux, Windows quirks
 - [CHANGELOG](https://github.com/daniloaguiarbr/atomwrite/blob/main/CHANGELOG.md): Release history
 - [CONTRIBUTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/CONTRIBUTING.md): Development setup and guidelines
 - [SECURITY](https://github.com/daniloaguiarbr/atomwrite/blob/main/SECURITY.md): Vulnerability reporting
+- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 7 ADRs (v0.1.12 architectural decisions)
+- [docs/schemas/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/schemas/): 22 stable JSON Schema contracts
 - [Crates.io](https://crates.io/crates/atomwrite): Package registry
 - [Repository](https://github.com/daniloaguiarbr/atomwrite): Source code

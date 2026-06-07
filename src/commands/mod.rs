@@ -10,10 +10,14 @@ pub mod backup;
 pub mod batch;
 /// Math expression evaluation via fend.
 pub mod calc;
+/// v14 Tier 3: identifier case conversion (snake/camel/Pascal/kebab/SCREAMING).
+pub mod case;
 /// Atomic file copy with checksum verification.
 pub mod copy;
 /// Line, match, and extension counting.
 pub mod count;
+/// v14 Tier 3: structured config key removal.
+pub mod del;
 /// File deletion with optional backup.
 pub mod delete;
 /// Unified diff between two files.
@@ -22,12 +26,18 @@ pub mod diff;
 pub mod edit;
 /// Field extraction from NDJSON or text.
 pub mod extract;
+/// v14 Tier 3: structured config value reader.
+pub mod get;
 /// BLAKE3 checksum computation for files.
 pub mod hash;
 /// Directory listing with metadata.
 pub mod list;
 /// Atomic file move and rename.
 pub mod r#move;
+/// v14 Tier 3 (v0.1.12): tree-sitter S-expression query against a file.
+pub mod outline;
+/// v14 Tier 3 (v0.1.12): tree-sitter S-expression query against a file.
+pub mod query;
 /// File reading with metadata and content.
 pub mod read;
 /// Regex generation from examples via grex.
@@ -40,6 +50,8 @@ pub mod rollback;
 pub mod scope;
 /// Parallel file content search via ripgrep.
 pub mod search;
+/// v14 Tier 3: structured config value setter.
+pub mod set;
 /// Structural AST code search and rewrite.
 pub mod transform;
 /// Atomic file creation and overwrite.

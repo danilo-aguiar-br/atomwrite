@@ -205,6 +205,50 @@ pub enum AtomwriteError {
         /// Description of the internal failure.
         reason: String,
     },
+
+    /// Advisory file lock could not be acquired within the configured timeout.
+    #[error("lock timeout on {path} after {timeout_ms}ms")]
+    LockTimeout {
+        /// File path that could not be locked.
+        path: PathBuf,
+        /// Configured lock timeout in milliseconds.
+        timeout_ms: u64,
+    },
+
+    /// Post-write tree-sitter syntax check found syntax errors in the output.
+    #[error("syntax error detected in {path} ({count} nodes with ERROR)")]
+    SyntaxError {
+        /// File path that failed syntax check.
+        path: PathBuf,
+        /// Number of nodes with ERROR.
+        count: u32,
+    },
+
+    /// `EXDEV` (cross-device rename) occurred and `--strict-atomic` was set,
+    /// so copy-fallback was disabled by the caller.
+    #[error("cross-device rename on {path} and --strict-atomic forbids fallback")]
+    ExdevFallbackDisabled {
+        /// File path involved in the cross-device rename.
+        path: PathBuf,
+    },
+
+    /// Copy-back write (in-place inode-preserving strategy) failed BLAKE3
+    /// verification after `ftruncate + write_all + fsync_data`.
+    #[error("copy-back BLAKE3 verification failed for {path}")]
+    CopyBackBlake3Failed {
+        /// File path that failed post-write checksum verification.
+        path: PathBuf,
+    },
+
+    /// Orphaneed `.atomwrite.journal.<target>.json` from a crashed
+    /// in-place write was found and could not be recovered automatically.
+    #[error("orphaned atomwrite journal at {journal} could not be recovered: {reason}")]
+    OrphanJournal {
+        /// Journal sidecar path left behind by a crashed write.
+        journal: PathBuf,
+        /// Description of why the journal could not be applied.
+        reason: String,
+    },
 }
 
 impl AtomwriteError {
@@ -232,6 +276,11 @@ impl AtomwriteError {
             Self::NoMatches => 1,
             Self::BrokenPipe => 141,
             Self::InternalError { .. } => 255,
+            Self::LockTimeout { .. } => 83,
+            Self::SyntaxError { .. } => 88,
+            Self::ExdevFallbackDisabled { .. } => 91,
+            Self::CopyBackBlake3Failed { .. } => 92,
+            Self::OrphanJournal { .. } => 93,
         }
     }
 
@@ -242,10 +291,15 @@ impl AtomwriteError {
             Self::Io { .. } | Self::DiskFull { .. } | Self::QuotaExceeded { .. } => {
                 ErrorClass::Transient
             }
-            Self::StateDrift { .. } | Self::CrossDevice { .. } => ErrorClass::Conflict,
-            Self::ChecksumVerifyFailed { .. } | Self::FileTooLarge { .. } => {
-                ErrorClass::PreconditionFailed
-            }
+            Self::StateDrift { .. }
+            | Self::CrossDevice { .. }
+            | Self::LockTimeout { .. }
+            | Self::CopyBackBlake3Failed { .. } => ErrorClass::Conflict,
+            Self::ChecksumVerifyFailed { .. }
+            | Self::FileTooLarge { .. }
+            | Self::SyntaxError { .. }
+            | Self::ExdevFallbackDisabled { .. }
+            | Self::OrphanJournal { .. } => ErrorClass::PreconditionFailed,
             Self::BinaryFile { .. }
             | Self::FileImmutable { .. }
             | Self::SymlinkBlocked { .. }
@@ -302,6 +356,11 @@ impl AtomwriteError {
             Self::NoMatches => "NO_MATCHES",
             Self::BrokenPipe => "BROKEN_PIPE",
             Self::InternalError { .. } => "INTERNAL_ERROR",
+            Self::LockTimeout { .. } => "LOCK_TIMEOUT",
+            Self::SyntaxError { .. } => "SYNTAX_ERROR_DETECTED",
+            Self::ExdevFallbackDisabled { .. } => "EXDEV_FALLBACK_DISABLED",
+            Self::CopyBackBlake3Failed { .. } => "COPY_BACK_BLAKE3_FAILED",
+            Self::OrphanJournal { .. } => "ORPHAN_JOURNAL",
         }
     }
 
@@ -322,7 +381,12 @@ impl AtomwriteError {
             | Self::FileImmutable { path }
             | Self::BinaryFile { path }
             | Self::FifoDetected { path }
-            | Self::DeviceFile { path } => Some(path),
+            | Self::DeviceFile { path }
+            | Self::LockTimeout { path, .. }
+            | Self::SyntaxError { path, .. }
+            | Self::ExdevFallbackDisabled { path }
+            | Self::CopyBackBlake3Failed { path }
+            | Self::OrphanJournal { journal: path, .. } => Some(path),
             Self::InvalidInput { .. }
             | Self::Io { .. }
             | Self::ConfigInvalid { .. }
@@ -483,6 +547,35 @@ fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
         AtomwriteError::BrokenPipe => None,
         AtomwriteError::InternalError { reason } => Some(format!(
             "this is a bug; please report it with the {reason} context"
+        )),
+        AtomwriteError::LockTimeout { path, timeout_ms } => Some(format!(
+            "another process is editing {}; wait, kill the holder, or raise --lock-timeout above {} ms",
+            path.display(),
+            timeout_ms
+        )),
+        AtomwriteError::SyntaxError { path, count } => Some(format!(
+            "post-write syntax check found {count} syntax error(s) in {}; \
+             inspect the content (or disable with --syntax-check=false) and retry",
+            path.display()
+        )),
+        AtomwriteError::ExdevFallbackDisabled { path } => Some(format!(
+            "rename across filesystems failed for {} and --strict-atomic was set; \
+             either unset --strict-atomic to enable copy-fallback, or move source/destination \
+             to the same filesystem",
+            path.display()
+        )),
+        AtomwriteError::CopyBackBlake3Failed { path } => Some(format!(
+            "BLAKE3 verification after in-place write failed for {}; the on-disk file \
+             may be partially written. Inspect manually before retrying.",
+            path.display()
+        )),
+        AtomwriteError::OrphanJournal { journal, reason } => Some(format!(
+            "a previous atomwrite run crashed and left journal {} ({}). \
+             Manually inspect the target file and the journal, then delete {} \
+             once the file is in the expected state",
+            journal.display(),
+            reason,
+            journal.display()
         )),
     }
 }
@@ -748,8 +841,52 @@ mod tests {
                 "INTERNAL_ERROR",
                 false,
             ),
+            (
+                AtomwriteError::LockTimeout {
+                    path: p.clone(),
+                    timeout_ms: 5000,
+                },
+                83,
+                ErrorClass::Conflict,
+                "LOCK_TIMEOUT",
+                true,
+            ),
+            (
+                AtomwriteError::SyntaxError {
+                    path: p.clone(),
+                    count: 1,
+                },
+                88,
+                ErrorClass::PreconditionFailed,
+                "SYNTAX_ERROR_DETECTED",
+                true,
+            ),
+            (
+                AtomwriteError::ExdevFallbackDisabled { path: p.clone() },
+                91,
+                ErrorClass::PreconditionFailed,
+                "EXDEV_FALLBACK_DISABLED",
+                true,
+            ),
+            (
+                AtomwriteError::CopyBackBlake3Failed { path: p.clone() },
+                92,
+                ErrorClass::Conflict,
+                "COPY_BACK_BLAKE3_FAILED",
+                true,
+            ),
+            (
+                AtomwriteError::OrphanJournal {
+                    journal: p.clone(),
+                    reason: "x".into(),
+                },
+                93,
+                ErrorClass::PreconditionFailed,
+                "ORPHAN_JOURNAL",
+                true,
+            ),
         ];
-        assert_eq!(variants.len(), 20, "test must cover all 20 variants");
+        assert_eq!(variants.len(), 25, "test must cover all 25 variants");
         for (err, exit, class, code, has_path) in &variants {
             assert_eq!(err.exit_code(), *exit, "exit_code mismatch for {code}");
             assert_eq!(err.error_class(), *class, "error_class mismatch for {code}");
@@ -899,8 +1036,26 @@ mod tests {
             AtomwriteError::NoMatches,
             AtomwriteError::BrokenPipe,
             AtomwriteError::InternalError { reason: "x".into() },
+            AtomwriteError::LockTimeout {
+                path: PathBuf::from("/x"),
+                timeout_ms: 5000,
+            },
+            AtomwriteError::SyntaxError {
+                path: PathBuf::from("/x"),
+                count: 1,
+            },
+            AtomwriteError::ExdevFallbackDisabled {
+                path: PathBuf::from("/x"),
+            },
+            AtomwriteError::CopyBackBlake3Failed {
+                path: PathBuf::from("/x"),
+            },
+            AtomwriteError::OrphanJournal {
+                journal: PathBuf::from("/x"),
+                reason: "x".into(),
+            },
         ];
-        assert_eq!(variants.len(), 20);
+        assert_eq!(variants.len(), 25);
         for err in &variants {
             let json = ErrorJson::from_error(err);
             if matches!(err, AtomwriteError::BrokenPipe) {

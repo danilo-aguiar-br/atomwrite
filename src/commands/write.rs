@@ -72,9 +72,12 @@ pub fn cmd_write(
 
     let opts = AtomicWriteOptions {
         backup: args.backup,
+        syntax_check: args.syntax_check,
         retention: args.retention,
         preserve_timestamps: false,
         backup_output_dir: None,
+        strategy: None,
+        strict_atomic: false,
     };
 
     let result = atomic_write(&args.target, &content, &opts, &workspace)?;

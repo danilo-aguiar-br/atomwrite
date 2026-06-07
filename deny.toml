@@ -16,6 +16,14 @@ allow = [
     "Unicode-3.0",
     "Zlib",
     "BSL-1.0",
+    # MPL-2.0 transitive via tree-sitter-language-pack -> ureq -> rustls-webpki
+    # file-level copyleft, compatible with MIT/Apache for binary distribution
+    "MPL-2.0",
+    # CDLA-Permissive-2.0 transitive via tree-sitter-language-pack -> ureq -> webpki-roots
+    # (Mozilla CA roots for HTTPS parser download)
+    "CDLA-Permissive-2.0",
+    # CC0-1.0 transitive via tree-sitter-language-pack -> ahash -> const-random -> tiny-keccak
+    "CC0-1.0",
 ]
 confidence-threshold = 0.93
 
@@ -35,6 +43,17 @@ skip = [
     { crate = "toml@0.8", reason = "transitive via serde_spanned chain" },
     { crate = "toml_datetime@0.6", reason = "transitive via toml 0.8" },
     { crate = "wit-bindgen@0.46", reason = "transitive via wasm chain" },
+    { crate = "getrandom@0.2", reason = "transitive via tree-sitter-language-pack -> ahash -> const-random" },
+    { crate = "getrandom@0.3", reason = "transitive via tree-sitter-language-pack -> ureq -> rustls -> ring AND blake3 -> cc -> jobserver" },
+    { crate = "linux-raw-sys", reason = "rustix 0.x and 1.x coexist" },
+    { crate = "r-efi", reason = "rustix 0.x and 1.x coexist" },
+    { crate = "rustix", reason = "0.x and 1.x coexist (transitive)" },
+    { crate = "windows", reason = "windows-sys 0.59 + windows 0.x coexist" },
+    { crate = "windows-core", reason = "windows-sys 0.59 + windows 0.x coexist" },
+    { crate = "windows-implement", reason = "windows-sys 0.59 + windows 0.x coexist" },
+    { crate = "windows-interface", reason = "windows-sys 0.59 + windows 0.x coexist" },
+    { crate = "windows-result", reason = "windows-sys 0.59 + windows 0.x coexist" },
+    { crate = "windows-sys", reason = "0.52/0.59 multi-version (sqlite-graphrag dep chain)" },
 ]
 
 [sources]

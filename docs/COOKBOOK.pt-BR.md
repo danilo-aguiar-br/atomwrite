@@ -6,6 +6,63 @@
 > Receitas práticas que você pode copiar e colar nos seus workflows de agente
 
 
+## O Que Há de Novo na v0.1.12
+
+Esta seção resume as mudanças relevantes para receitas em v0.1.12. A release v0.1.12 adiciona novas receitas ao cookbook para os 6 novos subcomandos, as novas flags, e o workflow de recuperação de crash.
+
+### Novas Receitas (Adicionadas em v0.1.12)
+
+- **Como Editar um Arquivo de Config Sem Reescrevê-lo** -- use `set`/`get`/`del` em vez de `read`+`edit` para caminhos dotted em TOML/JSON
+- **Como Renomear um Identificador em um Módulo** -- use `case --subvert OLD NEW --to <style>` para 5 estilos de case
+- **Como Caminhar um AST de Código** -- use `query --kinds` para listar kinds, `query --query KIND` para filtrar
+- **Como Extrair um Mapa de Código** -- use `outline --positions` para funções/structs/enums/traits
+- **Como Detectar Erros de Sintaxe Antes do Commit** -- use `write --syntax-check` para validação tree-sitter
+- **Como Recuperar de uma Escrita com Crash** -- use `recover_orphan_journals` para inspecionar sidecars WAL
+- **Como Compor read com sed/awk** -- use `read --format raw` para composabilidade Unix
+- **Como Limitar Search a Arquivos Pequenos** -- use `search --max-filesize` e `--max-columns`
+- **Como Substituir Strings Literais** -- use `replace --literal` para desabilitar regex
+- **Como Aplicar Refactor Multi-Rule** -- use `transform --rules <file.yaml>` para regras em cascata
+- **Como Adquirir Lock Advisory de Arquivo** -- use `write --lock` e `--lock-timeout` para segurança multi-agente
+- **Como Fazer Backup com CoW** -- use `backup` e `copy` com reflink padrão em APFS/btrfs/XFS
+
+### Receitas Atualizadas (mudanças v0.1.12 refletidas)
+
+- **Como Escrever um Arquivo Atomicamente** -- agora menciona `--syntax-check`, `--lock`, `--include-fifo`
+- **Como Editar um Arquivo** -- agora menciona `--after-line`, `--before-line`, `--range`, `--delete-range`, `--between`
+- **Como Ler um Arquivo** -- agora menciona `--format raw`, `--head N`, `--tail N`, `--line N`, `--grep`
+- **Como Buscar** -- agora menciona `--max-filesize`, `--max-columns`
+- **Como Substituir Texto em Massa** -- agora menciona `--literal`, `--fuzzy`
+- **Como Transformar Código** -- agora menciona `--rules`, `--inline-rules`
+- **Como Operar em Batch** -- agora menciona `--batch-size`, `--file`
+- **Como Fazer Backup** -- agora menciona `--no-reflink`, `--output-dir`
+
+### Novos Subcomandos Disponíveis
+
+- `set` -- escreve um valor em um caminho dotted em TOML/JSON
+- `get` -- lê um valor em um caminho dotted
+- `del` -- remove uma chave em um caminho dotted
+- `case` -- renomeia identificadores em 5 estilos de case via `heck`
+- `query` -- caminha um AST tree-sitter
+- `outline` -- extrai estrutura de alto nível
+
+### Novas Flags para Comandos Existentes
+
+- `read --format raw` (G81)
+- `write --syntax-check` (G72)
+- `write --lock` e `--lock-timeout` (G54)
+- `search --max-filesize`, `--max-columns` (G68)
+- `replace --literal` (G66)
+- `transform --rules`, `--inline-rules` (G44)
+- `batch --batch-size` (G77)
+- `backup/copy --no-reflink` (G64)
+
+### Cobertura de Testes
+
+- 445 testes passando (era 320 baseline, +125 novos em v0.1.11+v0.1.12)
+- 7 novos ADRs em `docs/decisions/` (0019-0025)
+- 7 novos JSON schemas em `docs/schemas/`
+- Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
+
 ## Nota de Latência
 - Todas as operações executam localmente com overhead sub-milissegundo
 - A sequência de escrita atômica adiciona ~1ms para o ciclo fsync-rename-fsync

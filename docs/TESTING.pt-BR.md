@@ -4,6 +4,78 @@
 [Read in English](TESTING.md)
 
 
+## O Que Há de Novo na v0.1.12
+
+Esta seção resume as mudanças relevantes para testes em v0.1.12. A release adicionou 96 novos testes (eram 320 baseline) para um total de **445 testes em 43 suítes**.
+
+### Novos Arquivos de Teste (10 Adicionados em v0.1.11+v0.1.12)
+
+- `tests/cli_v012_regressions.rs` -- 11 testes para regressões v0.1.2 a v0.1.4
+- `tests/cli_v012_audit_regressions.rs` -- 27 testes para auditoria G72/G114 de v0.1.12
+- `tests/cli_v012_batch4_regressions.rs` -- 23 testes para o batch final de v0.1.12
+- `tests/cli_v012_syntax_check.rs` -- 5 testes para validação G72 tree-sitter
+- `tests/cli_v012_wal.rs` -- 8 testes para G114 sidecar WAL
+- `tests/cli_v012_xattr_reflink.rs` -- 3 testes para G39 xattr + G64 reflink
+- `tests/cli_set.rs` -- 6 testes para subcomando set v14 Tier 3
+- `tests/cli_get_del.rs` -- 5 testes para subcomandos get/del v14 Tier 3
+- `tests/cli_query.rs` -- 5 testes para subcomando query v14 Tier 3
+- `tests/cli_outline.rs` -- 5 testes para subcomando outline v14 Tier 3
+- `tests/cli_case.rs` -- 3 testes para subcomando case v14 Tier 3
+
+### Novos Testes em Arquivos Existentes
+
+- 12 testes em `src/binary_detect.rs::tests` (G41 content_inspector)
+- 16 testes em `src/syntax_check.rs::tests` (G72 tree-sitter)
+- 8 testes em `src/wal.rs::tests` (G114 WAL)
+- 3 testes em `src/xattr_restore.rs::tests` (G39 xattr)
+- 3 testes em `src/lock.rs::tests` (G54 advisory lock)
+- 3 testes em `src/atomic.rs::tests` (WriteStrategy: rename/inplace/copyback)
+
+### Organização das Suítes de Teste
+
+- Total: 43 suítes (eram 34 em v0.1.10)
+- Testes unitários em `src/`
+- Testes de integração em `tests/cli_*.rs`
+- Testes property-based em `tests/proptest_*.rs`
+- Testes de snapshot via `insta`
+- Testes de sinal (SIGINT, SIGTERM, SIGPIPE)
+- Gate de cross-compile (targets Windows GNU/MSVC)
+
+### Como Executar
+
+```bash
+# Executar todos os 445 testes
+cargo test
+
+# Executar apenas a suíte de regressão v0.1.12
+cargo test --test cli_v012_regressions
+cargo test --test cli_v012_audit_regressions
+cargo test --test cli_v012_batch4_regressions
+
+# Executar com output visível para debug
+cargo test --test cli_v012_syntax_check -- --nocapture
+
+# Executar o gate de cross-compile
+cargo test --test cross_compile_check -- --ignored
+```
+
+### Cobertura
+
+- 20.19% cobertura de linhas via `cargo tarpaulin` (935/4631 linhas cobertas)
+- Menor que o ideal porque tarpaulin conta apenas testes unitários, não testes de integração CLI
+- A suíte de testes de integração é a métrica primária de cobertura (445 testes em 43 suítes)
+
+### Dependências Adicionadas
+
+- `tree-sitter-language-pack = "1.8"` -- 305 linguagens para query/outline/syntax-check
+- Todas as dependências de teste já estão na seção dev-dependencies
+
+### ADRs e Schemas
+
+- 7 novos ADRs em `docs/decisions/` (0019-0025) explicam as decisões arquiteturais por trás das features v0.1.12
+- 7 novos JSON schemas em `docs/schemas/` (set, get, del, case, query, outline, wal-recovery)
+- Veja [docs/decisions/README.md](README.md) para a lista completa de ADRs
+
 ## Por Que Testes Categorizados
 - Cada categoria de teste valida uma camada diferente do sistema
 - Testes unitários verificam lógica pura em isolamento
@@ -14,13 +86,29 @@
 
 
 ## Estatísticas Atuais
-- 64+ arquivos Rust em `src/` e `tests/`
-- 300+ testes no total em 34 suítes (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile)
-- 10 testes de regressão em `tests/cli_v012_regressions.rs` (adicionados em v0.1.2, expandidos em v0.1.4 com `gap13_jail_suggestion_when_workspace_supplied_says_inside` e `jail_suggestion_mentions_workspace_flag` atualizado)
-- 2 novos testes de regressão de mtime em `src/atomic.rs::tests` (adicionados em v0.1.3): `atomic_write_updates_mtime_by_default` e `atomic_write_preserves_mtime_when_opted_in`
-- 7 testes de sugestão de erro do GAP 13 em `src/error.rs::tests` (adicionados em v0.1.4)
-- 3 testes do gate de cross-compile em `tests/cross_compile_check.rs` (adicionados em v0.1.4): `cross_compile_windows_gnu_x64_succeeds`, `cross_compile_windows_gnu_i686_succeeds`, `cross_compile_windows_msvc_succeeds`
-- 9 arquivos de snapshot em `tests/snapshots/` (2 atualizados em v0.1.3 para incluir `mtime_preserved: false`)
+- 70+ arquivos Rust em `src/` e `tests/`
+- **445 testes no total em 43 suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
+- **96 novos testes adicionados em v0.1.11+v0.1.12**:
+  - 11 testes em `tests/cli_v012_regressions.rs` (fixes GAP 13, GAP 14, GAP 18)
+  - 27 testes em `tests/cli_v012_audit_regressions.rs` (auditoria v0.1.12 G72/G114)
+  - 23 testes em `tests/cli_v012_batch4_regressions.rs` (batch final v0.1.12)
+  - 5 testes em `tests/cli_v012_syntax_check.rs` (G72 tree-sitter)
+  - 8 testes em `tests/cli_v012_wal.rs` (G114 WAL sidecar)
+  - 3 testes em `tests/cli_v012_xattr_reflink.rs` (G39 xattr + G64 reflink)
+  - 6 testes em `tests/cli_set.rs` (v14 Tier 3)
+  - 5 testes em `tests/cli_get_del.rs` (v14 Tier 3)
+  - 5 testes em `tests/cli_query.rs` (v14 Tier 3)
+  - 5 testes em `tests/cli_outline.rs` (v14 Tier 3)
+  - 3 testes em `tests/cli_case.rs` (v14 Tier 3)
+  - 16 testes em `src/syntax_check.rs::tests` (G72 tree-sitter)
+  - 8 testes em `src/wal.rs::tests` (G114 WAL)
+  - 12 testes em `src/binary_detect.rs::tests` (G41 content_inspector)
+  - 3 testes em `src/xattr_restore.rs::tests` (G39)
+  - 3 testes em `src/lock.rs::tests` (G54 advisory lock)
+- 2 novos testes de regressão de mtime em `src/atomic.rs::tests` (v0.1.3)
+- 7 testes de sugestão de erro do GAP 13 em `src/error.rs::tests` (v0.1.4)
+- 3 testes do gate de cross-compile em `tests/cross_compile_check.rs` (v0.1.4)
+- 9 arquivos de snapshot em `tests/snapshots/`
 - 2 arquivos de regressão proptest
 - 2 alvos de fuzzing em `fuzz/fuzz_targets/`
 

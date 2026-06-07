@@ -43,3 +43,10 @@ Thumbs.db
 *.key
 *.p12
 *.pfx
+
+# ── atomwrite WAL sidecars (runtime artifacts, never commit) ──
+# Pattern matches: .atomwrite.journal.<target>.atomwrite.journal.json
+# and the empty .atomwrite.journal.json sidecar from atomic_write
+# Excludes legitimate  markdown files that happen to
+# share the prefix.
+**/.atomwrite.journal*.json

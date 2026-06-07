@@ -6,6 +6,63 @@
 > Practical recipes you can copy-paste into your agent workflows
 
 
+## What's New in v0.1.12
+
+This section summarizes recipe-relevant changes in v0.1.12. The v0.1.12 release adds new recipes to the cookbook for the 6 new subcommands, the new flags, and the crash recovery workflow.
+
+### New Recipes (Added in v0.1.12)
+
+- **How to Edit a Config File Without Rewriting It** -- use `set`/`get`/`del` instead of `read`+`edit` for dotted paths in TOML/JSON
+- **How to Rename an Identifier Across a Module** -- use `case --subvert OLD NEW --to <style>` for 5 case styles
+- **How to Walk a Code AST** -- use `query --kinds` to list kinds, `query --query KIND` to filter
+- **How to Extract a Code Map** -- use `outline --positions` for functions/structs/enums/traits
+- **How to Detect Syntax Errors Before Commit** -- use `write --syntax-check` for tree-sitter validation
+- **How to Recover from a Crashed Write** -- use `recover_orphan_journals` to inspect WAL sidecars
+- **How to Compose read with sed/awk** -- use `read --format raw` for Unix composability
+- **How to Limit Search to Small Files** -- use `search --max-filesize` and `--max-columns`
+- **How to Replace Literal Strings** -- use `replace --literal` to disable regex
+- **How to Apply Multi-Rule Refactor** -- use `transform --rules <file.yaml>` for cascading rules
+- **How to Acquire Advisory File Lock** -- use `write --lock` and `--lock-timeout` for multi-agent safety
+- **How to Backup with CoW** -- use `backup` and `copy` with default reflink on APFS/btrfs/XFS
+
+### Updated Recipes (v0.1.12 changes reflected in existing recipes)
+
+- **How to Write a File Atomically** -- now mentions `--syntax-check`, `--lock`, `--include-fifo`
+- **How to Edit a File** -- now mentions `--after-line`, `--before-line`, `--range`, `--delete-range`, `--between`
+- **How to Read a File** -- now mentions `--format raw`, `--head N`, `--tail N`, `--line N`, `--grep`
+- **How to Search** -- now mentions `--max-filesize`, `--max-columns`
+- **How to Replace Text in Bulk** -- now mentions `--literal`, `--fuzzy`
+- **How to Transform Code** -- now mentions `--rules`, `--inline-rules`
+- **How to Batch Operations** -- now mentions `--batch-size`, `--file`
+- **How to Backup** -- now mentions `--no-reflink`, `--output-dir`
+
+### New Subcommands Available
+
+- `set` -- write a value at a dotted path in TOML/JSON
+- `get` -- read a value at a dotted path
+- `del` -- remove a key at a dotted path
+- `case` -- rename identifiers in 5 case styles via `heck`
+- `query` -- walk a tree-sitter AST
+- `outline` -- extract top-level structure
+
+### New Flags for Existing Commands
+
+- `read --format raw` (G81)
+- `write --syntax-check` (G72)
+- `write --lock` and `--lock-timeout` (G54)
+- `search --max-filesize`, `--max-columns` (G68)
+- `replace --literal` (G66)
+- `transform --rules`, `--inline-rules` (G44)
+- `batch --batch-size` (G77)
+- `backup/copy --no-reflink` (G64)
+
+### Test Coverage
+
+- 445 tests passing (was 320 baseline, +125 new in v0.1.11+v0.1.12)
+- 7 new ADRs in `docs/decisions/` (0019-0025)
+- 7 new JSON schemas in `docs/schemas/`
+- See [docs/decisions/README.md](README.md) for architectural decisions
+
 ## Latency Note
 - All operations execute locally with sub-millisecond overhead
 - The atomic write sequence adds ~1ms for the fsync-rename-fsync cycle

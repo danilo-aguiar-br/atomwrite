@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "atomwrite set subcommand output",
+  "description": "Result of `atomwrite set` — modifies a single key in a structured config file (TOML/JSON) while preserving comments, key order, and formatting.",
+  "type": "object",
+  "required": ["type", "path", "key_path", "new_value", "format", "comments_preserved", "elapsed_ms"],
+  "properties": {
+    "type": { "const": "set" },
+    "path": { "type": "string", "description": "Absolute path to the config file." },
+    "config_path": { "type": "string", "description": "Alias of `path` retained for backward compatibility." },
+    "key_path": { "type": "string", "description": "Dotted path of the key that was set (e.g. `package.version`)." },
+    "old_value": {
+      "type": ["string", "null"],
+      "description": "The previous value as a TOML/JSON string. `null` when the key did not exist."
+    },
+    "new_value": { "type": "string", "description": "The new value as a TOML/JSON string." },
+    "format": { "enum": ["toml", "json"], "description": "Source config format detected from extension." },
+    "comments_preserved": { "type": "boolean", "description": "True when toml_edit successfully preserved comments (only meaningful for `format: toml`)." },
+    "elapsed_ms": { "type": "integer", "description": "Wall-clock time for the operation in milliseconds." }
+  },
+  "additionalProperties": false
+}

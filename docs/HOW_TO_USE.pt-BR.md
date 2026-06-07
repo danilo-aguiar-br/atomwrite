@@ -6,6 +6,66 @@
 > Uma CLI substitui dezenas de chamadas de ferramenta que seu agente faz hoje
 
 
+## O Que Há de Novo na v0.1.12
+
+Esta seção resume as mudanças relevantes para uso em v0.1.12.
+
+### Novos Subcomandos (Tier 3)
+
+6 novos subcomandos para operações estruturadas de config e código:
+
+- `set <PATH> <KEY_PATH> <VALUE>` -- escreve um valor em um caminho dotted em TOML/JSON
+- `get <PATH> <KEY_PATH>` -- lê um valor em um caminho dotted
+- `del <PATH> <KEY_PATH>` -- remove uma chave (`--force-missing` para scripts idempotentes)
+- `case <PATHS...> --subvert OLD NEW --to <style>` -- renomeia identificadores em 5 estilos de case
+- `query <PATH> [--kinds|--query <KIND>|--tree] [--positions]` -- caminha um AST tree-sitter
+- `outline <PATH> [--kind <KIND>] [--positions]` -- extrai estrutura de alto nível
+
+Veja a seção Comandos Avançados abaixo para documentação detalhada de cada.
+
+### Novas Flags para Comandos Existentes
+
+- `write --syntax-check` -- valida com tree-sitter após escrita (G72, exit 88)
+- `write --lock` e `--lock-timeout <ms>` -- lock advisory via flock (G54, exit 83)
+- `write --include-fifo` -- permite escrita em named pipes (G56)
+- `write --strict-atomic` -- aborta em EXDEV em vez de copy fallback (G90, exit 91)
+- `read --format raw` (alias `--raw`) -- emite bytes crus para composabilidade Unix (G81)
+- `read --head N`, `--tail N`, `--line N`, `--grep <REGEX>` -- novos modos de read
+- `search --max-filesize <BYTES>` -- pula arquivos maiores que o limite (G68, padrão 10 MiB)
+- `search --max-columns <N>` -- trunca matches com >N colunas (G68, padrão 500)
+- `replace --literal` (alias `-F`) -- desabilita interpretação de regex (G66)
+- `transform --rules <file.yaml>` -- multi-rule YAML para refactors em cascata (G44)
+- `transform --inline-rules <YAML>` -- multi-rule YAML inline
+- `batch --batch-size <N>` -- controla pico de memória (G77, padrão 100)
+- `backup/copy --no-reflink` -- desabilita CoW para filesystems sem suporte (G64)
+
+### 5 Novos Códigos de Erro
+
+- 83 `LockTimeout` (G54)
+- 88 `SyntaxError` (G72)
+- 91 `ExdevFallbackDisabled` (G90)
+- 92 `CopyBackBlake3Failed` (G114)
+- 93 `OrphanJournal` (G114)
+
+### G72 Verificação de Sintaxe REAL
+
+`atomwrite write --syntax-check` invoca o parser tree-sitter real (24 linguagens) em vez da heurística de balanceamento de colchetes. Exit 88 com primeira linha/coluna de erro. O parser é baixado no primeiro uso via `tree-sitter-language-pack`.
+
+### G114 Sidecar WAL para Recuperação de Crash
+
+`atomic_write` escreve `.atomwrite.journal.<target>.atomwrite.journal.json` com entradas `Started`/`Committed`. `recover_orphan_journals(dir)` é consultivo (sem auto-replay, sem auto-delete). O agente decide.
+
+### G64 Reflink CoW para Backup/Copy
+
+`backup` e `copy` usam `reflink_or_copy` para backup O(1) em APFS/btrfs/XFS. Fallback para `fs::copy` em filesystems sem suporte a CoW. Use `--no-reflink` para forçar copy.
+
+### Cobertura de Testes
+
+- 445 testes passando (era 320 baseline, +125 novos em v0.1.11+v0.1.12)
+- 7 novos ADRs em `docs/decisions/` (0019-0025)
+- 7 novos JSON schemas em `docs/schemas/`
+- Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
+
 ## Pré-requisitos
 - Toolchain Rust 1.88 ou superior
 - Instale via `cargo install atomwrite`
@@ -46,6 +106,12 @@ echo "data" | atomwrite write --expect-checksum abc123 src/file.txt
 - Use `--expect-checksum` para locking otimista em edições concorrentes
 - Use `--line-ending lf|crlf|cr|auto` para normalizar line endings (padrão: auto preserva o original)
 - Use `--dry-run` para visualizar a operação sem escrever
+- Use `--syntax-check` para validar o arquivo com tree-sitter após escrita (G72, exit 88 em erro)
+- Use `--preserve-timestamps` para manter o mtime original (padrão: mtime é atualizado para cargo/make/cmake rebuild)
+- Use `--include-fifo` para permitir escrita em FIFO/named pipes (padrão: exit 85)
+- Use `--strict-atomic` para abortar em EXDEV (G90, padrão: copy fallback para Docker/NFS)
+- Use `--lock` para adquirir lock advisory via flock (G54, exit 83 em timeout)
+- Use `--no-reflink` para desabilitar backup CoW (G64, padrão: reflink em APFS/btrfs/XFS)
 
 ### read
 - Lê arquivos com metadados, checksum e conteúdo opcional
@@ -60,6 +126,12 @@ atomwrite read --verify-checksum abc123 src/main.rs
 
 - Use `--stat` para obter metadados sem conteúdo do arquivo
 - Use `--lines 1:50` para ler um intervalo específico de linhas
+- Use `--head N` para ler as primeiras N linhas
+- Use `--tail N` para ler as últimas N linhas
+- Use `--line N` para ler a linha N com contexto opcional via `--context N`
+- Use `--grep <REGEX>` para filtrar as linhas retornadas para as que casam com regex
+- Use `--format raw` (ou `--raw`) para emitir bytes crus para composabilidade Unix (G81, quebra o envelope NDJSON)
+- Use `--verify-checksum <BLAKE3>` para verificar integridade do arquivo
 - Arquivos binários são detectados e o conteúdo é omitido automaticamente
 
 ### edit
@@ -72,13 +144,19 @@ echo "replacement block" | atomwrite edit src/main.rs --range 10:20
 atomwrite edit src/main.rs --old "old_text" --new "new_text"
 ```
 
-- Use `--fuzzy auto|off|aggressive` para matching fuzzy quando match exato falhar
+- Use `--fuzzy auto|off|aggressive` para matching fuzzy quando match exato falhar (9 estratégias em cascata, G116)
 - Use `--multi` para aplicar múltiplas edições NDJSON em uma escrita atômica via stdin
 - Use `--line-ending lf|crlf|cr|auto` para normalizar line endings (padrão: auto preserva o original)
 - Use `--preserve-timestamps` para manter o mtime original do arquivo (padrão: mtime é atualizado para refletir a edição)
+- Use `--after-line N` para inserir conteúdo após a linha N
+- Use `--before-line N` para inserir conteúdo antes da linha N
+- Use `--range N:M` para substituir um intervalo de linhas
+- Use `--delete-range N:M` para deletar um intervalo de linhas
+- Use `--between START END` para substituir conteúdo entre duas linhas marcadoras
 - Retorna checksums antes e depois para verificação
 - Retorna contagem de linhas antes e depois para auditoria
 - Retorna flag `mtime_preserved` na resposta NDJSON
+- Retorna `fuzzy`, `strategy`, `strategies_tried`, `similarity` quando fuzzy matching é usado
 
 ### search
 - Busca conteúdo de arquivos em paralelo usando o engine do ripgrep
@@ -102,6 +180,8 @@ atomwrite search --files 'deprecated' src/
 - Use `--count` (`-c`) para contagem de matches por arquivo
 - Use `--files` (`-l`) para apenas caminhos de arquivo
 - Use `--include` (`-g`) e `--exclude` para filtragem de arquivo por glob
+- Use `--max-filesize <BYTES>` para pular arquivos maiores que o limite (G68, padrão 10 MiB)
+- Use `--max-columns <N>` para truncar linhas maiores que N colunas (G68, padrão 500)
 - Exit code 1 significa zero matches (não é um erro)
 
 ### replace
@@ -116,6 +196,10 @@ atomwrite replace --dry-run 'before' 'after' src/
 
 - Use `--dry-run` para visualizar substituições sem modificar arquivos
 - Use `--preserve-timestamps` para manter o mtime original dos arquivos modificados (padrão: mtime é atualizado para refletir a mudança)
+- Use `--literal` (alias `-F`, `--fixed-strings`) para desabilitar interpretação de regex (G66)
+- Use `--regex` para forçar modo regex (padrão)
+- Use `--fuzzy auto|off|aggressive` para matching fuzzy (9 estratégias, G116)
+- Use `--include` e `--exclude` para filtragem por glob
 - Retorna NDJSON por arquivo com contagem de substituições e checksums
 - Emite uma linha de resumo com total de arquivos e substituições
 
@@ -243,6 +327,8 @@ atomwrite backup --dry-run src/main.rs
 
 - Use `--retention` para definir o período de retenção em dias
 - Use `--dry-run` para visualizar sem criar backups
+- Use `--no-reflink` para desabilitar backup CoW (G64, padrão: reflink em APFS/btrfs/XFS para O(1) copy)
+- Use `--output-dir <DIR>` para escrever backups em um diretório específico
 
 ### rollback
 - Restaura arquivos a partir de um backup anterior
@@ -287,6 +373,9 @@ atomwrite transform -p '$EXPR.unwrap()' -r '$EXPR?' -l rust src/
 - Use `$VAR` para captura de um único nó AST
 - Use `$$$VAR` para captura de múltiplos nós AST
 - Ambos `--pattern` e `--rewrite` são obrigatórios
+- Use `--rules <file.yaml>` para aplicar múltiplas regras de refactor em uma passada (G44)
+- Use `--inline-rules <YAML>` para YAML multi-rule inline
+- Suporta predicados ast-grep YAML all/any/not/inside/has/follows/precedes
 
 ### batch
 - Executa múltiplas operações a partir de um manifesto NDJSON
@@ -301,7 +390,99 @@ cat manifest.ndjson | atomwrite batch --dry-run
 - Cada linha no manifesto é uma operação
 - Retorna resultados por operação mais um resumo agregado
 - Use `--dry-run` para validar o manifesto sem executar
+- Use `--transaction` para execução tudo-ou-nada com rollback automático em qualquer erro
+- Use `--batch-size <N>` para controlar pico de memória (G77, padrão 100, processa em chunks)
+- Use `--file <PATH>` para ler o manifesto de um arquivo em vez de stdin
 
+
+### set
+- Escreve um valor em um caminho dotted em um arquivo TOML ou JSON
+- Preserva comentários, ordem das chaves e whitespace via `toml_edit`
+- Auto-coage o valor para int, float, bool ou string
+- Retorna NDJSON com `old_value`, `new_value`, `format`, `comments_preserved`
+
+```bash
+atomwrite set Cargo.toml package.version 0.2.0
+atomwrite set package.json scripts.build "tsc -b"
+```
+
+- Use `--type int|float|bool|string|array` para forçar coerção de tipo
+- Use `--type null` para definir uma chave como `null` em JSON
+- Use `--force-missing` para criar chaves intermediárias
+- Arrays TOML usam notação `key[N]`: `dependencies.serde[0].version = "1.0"`
+
+### get
+- Lê um valor em um caminho dotted em um arquivo TOML ou JSON
+- Retorna NDJSON com `value`, `found`, `format`
+
+```bash
+atomwrite get Cargo.toml package.version
+atomwrite get package.json scripts.build
+```
+
+- Se a chave estiver ausente, retorna `{"found": false, "value": null}`
+- Caminho dotted TOML: `dependencies.serde.features[0]`
+- Pointer JSON (RFC 6901): `/dependencies/serde/features/0`
+- Exit 0 mesmo quando a chave está ausente; use o campo `found` para detectar
+
+### del
+- Remove uma chave em um caminho dotted em um arquivo TOML ou JSON
+- Retorna NDJSON com `removed`, `path_was_array_index`, `old_value`
+
+```bash
+atomwrite del Cargo.toml package.metadata.deprecated
+atomwrite del package.json scripts.build
+```
+
+- Use `--force-missing` para tratar chaves ausentes como no-op success (exit 0 em vez de erro)
+- Remover um elemento de array desloca os índices subsequentes (TOML) ou usa nulls (JSON)
+- Não pode remover uma chave cujo pai não existe; use `--force-missing` para scripts idempotentes
+
+### case
+- Renomeia identificadores em múltiplos arquivos usando `heck` para conversão de case
+- Renomeia `old_id` → `new_id` e todas as 5 variantes de case: `oldId`, `OLD_ID`, `old-id`, `OldId`, `old_id`
+
+```bash
+atomwrite case src/ --subvert user_id account_id --to snake
+atomwrite case src/ lib/ --subvert user_id account_id --to camel
+```
+
+- Estilos: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`
+- Multi-arquivo: passe múltiplos caminhos para renomear em um módulo inteiro
+- Detecta fronteiras de identificador em 5 estilos; apenas ASCII puro
+- Preserva comentários, strings e outras estruturas de código
+
+### query
+- Caminha um AST tree-sitter e emite nós como NDJSON
+- 305 linguagens via `tree-sitter-language-pack` (parsers baixam no primeiro uso)
+- Modos: `--kinds` (lista todos os kinds), `--query <KIND>` (filtra por kind), `-Q <KIND>` (alias), `--tree` (árvore completa), `--positions` (line:column)
+
+```bash
+atomwrite query src/main.rs --kinds
+atomwrite query src/main.rs --query function_item --positions
+atomwrite query src/main.rs --tree
+```
+
+- `--positions` adiciona `line` e `column` a cada nó
+- `--query` e `--kinds` são mutuamente exclusivos
+- Retorna um objeto NDJSON por nó com `kind`, `start_byte`, `end_byte`, `text`
+- Suporte a query S-expression está adiado para v0.1.13 (veja ADR-0021)
+
+### outline
+- Extrai estrutura de alto nível (funções, classes, structs, enums, traits, módulos) como NDJSON
+- 305 linguagens via `tree-sitter-language-pack`
+- Retorna um objeto por definição top-level com `kind`, `name`, `line`, `column`
+
+```bash
+atomwrite outline src/main.rs
+atomwrite outline src/lib.rs --kind function_item
+atomwrite outline src/main.rs --positions
+```
+
+- `--kind` filtra para um kind tree-sitter específico (ex. `function_item`, `struct_item`, `impl_item`)
+- `--positions` adiciona `start_line`, `start_column`, `end_line`, `end_column`
+- Retorna 28 kinds de nós estruturais em todas as linguagens
+- Mais rápido que `query --kinds` porque pula nós folha
 
 ## Flags Globais
 - `--workspace <PATH>` -- restringe todas as operações a este diretório raiz

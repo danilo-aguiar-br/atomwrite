@@ -6,6 +6,66 @@
 > One CLI replaces dozens of file-manipulation tool calls your agent makes today
 
 
+## What's New in v0.1.12
+
+This section summarizes how-to-use-relevant changes in v0.1.12.
+
+### New Subcommands (Tier 3)
+
+6 new subcommands for structured config and code operations:
+
+- `set <PATH> <KEY_PATH> <VALUE>` -- write a value at a dotted path in TOML/JSON
+- `get <PATH> <KEY_PATH>` -- read a value at a dotted path
+- `del <PATH> <KEY_PATH>` -- remove a key (`--force-missing` for idempotent scripts)
+- `case <PATHS...> --subvert OLD NEW --to <style>` -- rename identifiers in 5 case styles
+- `query <PATH> [--kinds|--query <KIND>|--tree] [--positions]` -- walk a tree-sitter AST
+- `outline <PATH> [--kind <KIND>] [--positions]` -- extract high-level structure
+
+See the Advanced Commands section below for detailed documentation of each.
+
+### New Flags for Existing Commands
+
+- `write --syntax-check` -- validate with tree-sitter after write (G72, exit 88)
+- `write --lock` and `--lock-timeout <ms>` -- advisory file lock via flock (G54, exit 83)
+- `write --include-fifo` -- allow writing to named pipes (G56)
+- `write --strict-atomic` -- abort on EXDEV instead of copy fallback (G90, exit 91)
+- `read --format raw` (alias `--raw`) -- emit raw bytes for Unix composability (G81)
+- `read --head N`, `--tail N`, `--line N`, `--grep <REGEX>` -- new read modes
+- `search --max-filesize <BYTES>` -- skip files larger than limit (G68, default 10 MiB)
+- `search --max-columns <N>` -- truncate matches with >N columns (G68, default 500)
+- `replace --literal` (alias `-F`) -- disable regex interpretation (G66)
+- `transform --rules <file.yaml>` -- multi-rule YAML for cascading refactors (G44)
+- `transform --inline-rules <YAML>` -- inline multi-rule YAML
+- `batch --batch-size <N>` -- control peak memory (G77, default 100)
+- `backup/copy --no-reflink` -- disable CoW for filesystems without support (G64)
+
+### 5 New Error Codes
+
+- 83 `LockTimeout` (G54)
+- 88 `SyntaxError` (G72)
+- 91 `ExdevFallbackDisabled` (G90)
+- 92 `CopyBackBlake3Failed` (G114)
+- 93 `OrphanJournal` (G114)
+
+### G72 REAL Syntax Check
+
+`atomwrite write --syntax-check` invokes the actual tree-sitter parser (24 languages) instead of the bracket-balance heuristic. Exit 88 with first error line/column. The parser is downloaded on first use via `tree-sitter-language-pack`.
+
+### G114 WAL Sidecar for Crash Recovery
+
+`atomic_write` writes `.atomwrite.journal.<target>.atomwrite.journal.json` with `Started`/`Committed` entries. `recover_orphan_journals(dir)` is consultive (no auto-replay, no auto-delete). The agent decides.
+
+### G64 Reflink CoW for Backup/Copy
+
+`backup` and `copy` use `reflink_or_copy` for O(1) backup on APFS/btrfs/XFS. Fallback to `fs::copy` on filesystems without CoW support. Use `--no-reflink` to force copy.
+
+### Test Coverage
+
+- 445 tests passing (was 320 baseline, +125 new in v0.1.11+v0.1.12)
+- 7 new ADRs in `docs/decisions/` (0019-0025)
+- 7 new JSON schemas in `docs/schemas/`
+- See [docs/decisions/README.md](README.md) for architectural decisions
+
 ## Prerequisites
 - Rust toolchain 1.88 or later
 - Install via `cargo install atomwrite`
@@ -46,6 +106,12 @@ echo "data" | atomwrite write --expect-checksum abc123 src/file.txt
 - Use `--expect-checksum` for optimistic locking on concurrent edits
 - Use `--line-ending lf|crlf|cr|auto` to normalize line endings (default: auto preserves original)
 - Use `--dry-run` to preview the operation without writing
+- Use `--syntax-check` to validate the file with tree-sitter after writing (G72, exit 88 on error)
+- Use `--preserve-timestamps` to keep the original mtime (default: mtime is updated so cargo/make/cmake rebuild)
+- Use `--include-fifo` to allow writing to FIFO/named pipes (default: exit 85)
+- Use `--strict-atomic` to abort on EXDEV (G90, default: copy fallback for Docker/NFS)
+- Use `--lock` to acquire an advisory file lock via `flock` (G54, exit 83 on timeout)
+- Use `--no-reflink` to disable CoW backup (G64, default: reflink in APFS/btrfs/XFS)
 
 ### read
 - Read files with metadata, checksum and optional content
@@ -60,6 +126,12 @@ atomwrite read --verify-checksum abc123 src/main.rs
 
 - Use `--stat` to get metadata without file content
 - Use `--lines 1:50` to read a specific line range
+- Use `--head N` to read the first N lines
+- Use `--tail N` to read the last N lines
+- Use `--line N` to read line N with optional context via `--context N`
+- Use `--grep <REGEX>` to filter returned lines to those matching a regex
+- Use `--format raw` (or `--raw`) to emit raw bytes for Unix composability (G81, breaks NDJSON envelope)
+- Use `--verify-checksum <BLAKE3>` to verify file integrity
 - Binary files are detected and content is omitted automatically
 
 ### edit
@@ -72,13 +144,19 @@ echo "replacement block" | atomwrite edit src/main.rs --range 10:20
 atomwrite edit src/main.rs --old "old_text" --new "new_text"
 ```
 
-- Use `--fuzzy auto|off|aggressive` for fuzzy text matching when exact match fails
+- Use `--fuzzy auto|off|aggressive` for fuzzy text matching when exact match fails (9 strategies in cascade, G116)
 - Use `--multi` to apply multiple NDJSON edits in a single atomic write via stdin
 - Use `--line-ending lf|crlf|cr|auto` to normalize line endings (default: auto preserves original)
 - Use `--preserve-timestamps` to keep the original mtime of the file (default: mtime is updated to reflect the edit)
+- Use `--after-line N` to insert content after line N
+- Use `--before-line N` to insert content before line N
+- Use `--range N:M` to replace a line range
+- Use `--delete-range N:M` to delete a line range
+- Use `--between START END` to replace content between two marker lines
 - Returns checksums before and after for verification
 - Returns line counts before and after for auditing
 - Returns `mtime_preserved` flag in the NDJSON response
+- Returns `fuzzy`, `strategy`, `strategies_tried`, `similarity` when fuzzy matching is used
 
 ### search
 - Search file contents in parallel using the ripgrep engine
@@ -102,6 +180,8 @@ atomwrite search --files 'deprecated' src/
 - Use `--count` (`-c`) for match counts per file
 - Use `--files` (`-l`) for file paths only
 - Use `--include` (`-g`) and `--exclude` for glob-based file filtering
+- Use `--max-filesize <BYTES>` to skip files larger than the limit (G68, default 10 MiB)
+- Use `--max-columns <N>` to truncate lines longer than N columns (G68, default 500)
 - Exit code 1 means zero matches (not an error)
 
 ### replace
@@ -243,6 +323,8 @@ atomwrite backup --dry-run src/main.rs
 
 - Use `--retention` to set backup retention period in days
 - Use `--dry-run` to preview without creating backups
+- Use `--no-reflink` to disable CoW backup (G64, default: reflink in APFS/btrfs/XFS for O(1) copy)
+- Use `--output-dir <DIR>` to write backups to a specific directory
 
 ### rollback
 - Restore files from a previous backup
@@ -287,6 +369,9 @@ atomwrite transform --pattern '$EXPR.unwrap()' --rewrite '$EXPR?' -l rust src/
 - Use `$VAR` for single AST node capture
 - Use `$$$VAR` for multiple AST nodes capture
 - Both `--pattern` and `--rewrite` are required
+- Use `--rules <file.yaml>` to apply multiple refactor rules in one pass (G44)
+- Use `--inline-rules <YAML>` for inline multi-rule YAML
+- Supports all/any/not/inside/has/follows/precedes ast-grep YAML predicates
 
 ### batch
 - Execute multiple operations from an NDJSON manifest
@@ -301,7 +386,98 @@ cat manifest.ndjson | atomwrite batch --dry-run
 - Each line in the manifest is one operation
 - Returns per-operation results plus an aggregate summary
 - Use `--dry-run` to validate the manifest without executing
+- Use `--batch-size <N>` to control peak memory (G77, default 100, processes in chunks)
+- Use `--file <PATH>` to read the manifest from a file instead of stdin
 
+
+### set
+- Write a value at a dotted path in a TOML or JSON file
+- Preserves comments, key order and whitespace via `toml_edit`
+- Auto-coerces the value to int, float, bool or string
+- Returns NDJSON with `old_value`, `new_value`, `format`, `comments_preserved`
+
+```bash
+atomwrite set Cargo.toml package.version 0.2.0
+atomwrite set package.json scripts.build "tsc -b"
+```
+
+- Use `--type int|float|bool|string|array` to force type coercion
+- Use `--type null` to set a key to `null` in JSON
+- Use `--force-missing` to create intermediate keys
+- TOML arrays use `key[N]` notation: `dependencies.serde[0].version = "1.0"`
+
+### get
+- Read a value at a dotted path in a TOML or JSON file
+- Returns NDJSON with `value`, `found`, `format`
+
+```bash
+atomwrite get Cargo.toml package.version
+atomwrite get package.json scripts.build
+```
+
+- If the key is missing, returns `{"found": false, "value": null}`
+- TOML dotted path: `dependencies.serde.features[0]`
+- JSON pointer (RFC 6901): `/dependencies/serde/features/0`
+- Exit 0 even when key is missing; use `found` field to detect
+
+### del
+- Remove a key at a dotted path in a TOML or JSON file
+- Returns NDJSON with `removed`, `path_was_array_index`, `old_value`
+
+```bash
+atomwrite del Cargo.toml package.metadata.deprecated
+atomwrite del package.json scripts.build
+```
+
+- Use `--force-missing` to treat missing keys as a no-op success (exit 0 instead of error)
+- Removing an array element shifts subsequent indices (TOML) or uses nulls (JSON)
+- Cannot remove a key whose parent does not exist; use `--force-missing` for idempotent scripts
+
+### case
+- Rename identifiers across multiple files using `heck` for case conversion
+- Renames `old_id` → `new_id` and all 5 case variants: `oldId`, `OLD_ID`, `old-id`, `OldId`, `old_id`
+
+```bash
+atomwrite case src/ --subvert user_id account_id --to snake
+atomwrite case src/ lib/ --subvert user_id account_id --to camel
+```
+
+- Styles: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`
+- Multi-file: pass multiple paths to rename across an entire module
+- Detects identifier boundaries in 5 case styles; pure ASCII only
+- Preserves comments, strings and other code structure
+
+### query
+- Walk a tree-sitter AST and emit nodes as NDJSON
+- 305 languages via `tree-sitter-language-pack` (parsers download on first use)
+- Modes: `--kinds` (list all kinds), `--query <KIND>` (filter by kind), `-Q <KIND>` (alias), `--tree` (full tree), `--positions` (line:column)
+
+```bash
+atomwrite query src/main.rs --kinds
+atomwrite query src/main.rs --query function_item --positions
+atomwrite query src/main.rs --tree
+```
+
+- `--positions` adds `line` and `column` to each node
+- `--query` and `--kinds` are mutually exclusive
+- Returns one NDJSON object per node with `kind`, `start_byte`, `end_byte`, `text`
+- S-expression query support is deferred to v0.1.13 (see ADR-0021)
+
+### outline
+- Extract high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON
+- 305 languages via `tree-sitter-language-pack`
+- Returns one object per top-level definition with `kind`, `name`, `line`, `column`
+
+```bash
+atomwrite outline src/main.rs
+atomwrite outline src/lib.rs --kind function_item
+atomwrite outline src/main.rs --positions
+```
+
+- `--kind` filters to a specific tree-sitter kind (e.g. `function_item`, `struct_item`, `impl_item`)
+- `--positions` adds `start_line`, `start_column`, `end_line`, `end_column`
+- Returns 28 structural node kinds across all languages
+- Faster than `query --kinds` because it skips leaf nodes
 
 ## Global Flags
 - `--workspace <PATH>` -- restrict all operations to this root directory
@@ -364,7 +540,7 @@ For interactive agent workflows, the safe default is to let `atomwrite` update t
 
 ## Error Suggestions (v0.1.4)
 - Every error envelope on stdout includes a `suggestion` field with actionable recovery guidance
-- All 20 error variants now carry a `suggestion` (the only exception is `BrokenPipe` because SIGPIPE is not actionable)
+- All 25 error variants now carry a `suggestion` (the only exception is `BrokenPipe` because SIGPIPE is not actionable)
 - Suggestions are **context-aware**: the `WorkspaceJail` suggestion changes depending on whether the user already supplied `--workspace` or `ATOMWRITE_WORKSPACE`
 - When the workspace IS provided: `"use a path inside the workspace (<root>)"`
 - When the workspace is NOT provided: `"set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>"`

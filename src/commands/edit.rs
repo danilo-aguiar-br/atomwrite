@@ -137,9 +137,12 @@ pub fn cmd_edit(
 
     let opts = AtomicWriteOptions {
         backup: false,
+        syntax_check: false,
         retention: 5,
         preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
+        strategy: None,
+        strict_atomic: false,
     };
 
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
@@ -376,9 +379,12 @@ fn cmd_edit_multi(
 
     let opts = AtomicWriteOptions {
         backup: false,
+        syntax_check: false,
         retention: 5,
         preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
+        strategy: None,
+        strict_atomic: false,
     };
 
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
@@ -560,9 +566,32 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
         ));
     }
 
+    // Strategy 9: context-aware (G116, opt-in via aggressive or auto).
+    // Uses `strsim::normalized_levenshtein` to find a window of `old_lines`
+    // in `content_lines` with similarity >= 0.80. More expensive than
+    // block-anchor but catches edits where leading/trailing context is
+    // also wrong (e.g. when an LLM adds comments near the match).
+    if matches!(fuzzy_mode, FuzzyMode::Aggressive | FuzzyMode::Auto) {
+        if let Some((start, end, similarity)) =
+            match_context_aware(&content_lines, &old_lines, 0.80)
+        {
+            let edited = apply_replacement(original, &content_lines, start, end, new);
+            return Ok((
+                edited,
+                "old_new".into(),
+                FuzzyInfo {
+                    fuzzy: true,
+                    strategy: "context_aware".into(),
+                    strategies_tried: 9,
+                    similarity: Some(similarity),
+                },
+            ));
+        }
+    }
+
     Err(AtomwriteError::InvalidInput {
         reason: format!(
-            "old string not found after fuzzy cascade (7 strategies tried): {:?}",
+            "old string not found after fuzzy cascade (9 strategies tried): {:?}",
             old
         ),
     }
@@ -762,6 +791,47 @@ fn match_block_anchor(
     candidates.retain(|c| c.2 >= 0.70);
     candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
     candidates.first().copied()
+}
+
+/// Strategy 9: context-aware similarity via normalized Levenshtein (G116).
+///
+/// Slides a window of `pattern.len()` lines over `content` and computes
+/// `strsim::normalized_levenshtein` between the joined window and the
+/// pattern. Returns the first window whose similarity >= `threshold`.
+/// More expensive than block-anchor but tolerates edits where leading
+/// AND trailing context lines are also wrong (e.g. when an LLM rewrites
+/// a few lines around the target match).
+fn match_context_aware(
+    content: &[&str],
+    pattern: &[&str],
+    threshold: f64,
+) -> Option<(usize, usize, f64)> {
+    if pattern.is_empty() || pattern.len() > content.len() {
+        return None;
+    }
+    let pat_joined = pattern.join("\n");
+    let plen = pattern.len();
+    let mut best: Option<(usize, usize, f64)> = None;
+    for i in 0..=(content.len() - plen) {
+        let window_joined = content[i..i + plen].join("\n");
+        let sim = strsim::normalized_levenshtein(&pat_joined, &window_joined);
+        if sim >= threshold {
+            return Some((i, i + plen, sim));
+        }
+        // Track the best match in case no candidate crosses the threshold.
+        if best.is_none_or(|(_, _, b)| sim > b) {
+            best = Some((i, i + plen, sim));
+        }
+    }
+    // If nothing crossed the threshold, return the best one anyway if it's
+    // within 0.05 of the threshold. This handles near-misses (e.g. 0.79 vs
+    // 0.80) that are clearly the intended target.
+    if let Some((i, j, sim)) = best {
+        if sim >= threshold - 0.05 {
+            return Some((i, j, sim));
+        }
+    }
+    None
 }
 
 fn lines_from_str(s: &str) -> Vec<String> {

@@ -1,9 +1,59 @@
 # Installation Guide
 
 - Complete instructions for installing atomwrite on Linux, macOS, and Windows
-- Current target version: v0.1.4 (fixes Windows 10/11 compilation and adds context-aware error suggestions)
+- Current target version: v0.1.12 (fixes Windows 10/11 compilation, adds context-aware error suggestions, 6 new subcommands, G72 real syntax check, G114 WAL sidecar, 5 new error codes, reflink copy, EXDEV fallback)
 - Sections ordered by platform, with prerequisites and troubleshooting
 
+
+## What's New in v0.1.12
+
+This section summarizes installation-relevant changes in v0.1.12.
+
+### Installation (Linux/macOS/Windows)
+
+The v0.1.12 release is a drop-in replacement for v0.1.4. Install with:
+
+```bash
+cargo install atomwrite --locked --version "^0.1.12"
+```
+
+The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.1.12 adds:
+
+- 6 new subcommands (`set`, `get`, `del`, `case`, `query`, `outline`) via Tier 3 v14 implementation
+- G72 REAL syntax check via tree-sitter (24 languages via `tree-sitter-language-pack`)
+- G114 WAL sidecar for crash recovery (consultive, no auto-replay)
+- 5 new error codes (83 LockTimeout, 88 SyntaxError, 91 ExdevFallbackDisabled, 92 CopyBackBlake3Failed, 93 OrphanJournal)
+
+### New Dependency
+
+- `tree-sitter-language-pack = "1.8"` with `download` + `dynamic-loading` features
+- Parsers download on first use (~5-10MB total footprint, not bundled)
+- No manual `cargo build` or source compilation required for language support
+
+### Windows-Specific Notes
+
+- v0.1.12 preserves the v0.1.4 Windows fix: `cargo install atomwrite` succeeds on Windows 10/11.
+- New `init_console` improvements (from v0.1.4) ensure UTF-8 and ANSI sequences work in Windows Terminal and PowerShell 7+.
+- `persist_with_retry` handles `PermissionDenied` during atomic rename with exponential backoff (Windows Defender compensation).
+
+### Linux-Specific Notes
+
+- v0.1.12 requires Rust 1.88 or later (same as v0.1.4).
+- `cargo install atomwrite` from crates.io is the recommended installation path.
+- No system-level dependencies required beyond the standard Rust toolchain.
+
+### macOS-Specific Notes
+
+- v0.1.12 preserves the v0.1.2 macOS arm64 (Apple Silicon) and macOS x86_64 build fixes.
+- Gatekeeper may require `xattr -d com.apple.quarantine $(which atomwrite)` on first run.
+- `posix_fadvise` is correctly gated to `cfg(target_os = "linux")` only (no-op on macOS).
+
+### Test Coverage
+
+- 445 tests passing (was 320 baseline, +125 new in v0.1.11+v0.1.12)
+- 7 new ADRs in `docs/decisions/` (0019-0025)
+- 7 new JSON schemas in `docs/schemas/`
+- See [docs/decisions/README.md](README.md) for architectural decisions
 
 ## Linux
 
@@ -14,8 +64,8 @@
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Install atomwrite v0.1.4 from crates.io
-cargo install atomwrite --locked --version "^0.1.4"
+# Install atomwrite v0.1.12 from crates.io
+cargo install atomwrite --locked --version "^0.1.12"
 
 # Verify
 atomwrite --version
@@ -97,11 +147,11 @@ restart your terminal so the updated PATH is picked up.
 
 #### "error[E0433]: failed to resolve: use of undeclared type `AtomwriteError`"
 
-This was a bug in v0.1.3 (GAP 14) fixed in v0.1.4. Make sure you install
-v0.1.4 or later:
+This bug was fixed in v0.1.4. v0.1.12 is a drop-in replacement that also includes 6 new subcommands, G72 real syntax check, G114 WAL sidecar, and 5 new error codes. Make sure you install
+v0.1.12 or later:
 
 ```powershell
-cargo install atomwrite --locked --version "^0.1.4"
+cargo install atomwrite --locked --version "^0.1.12"
 ```
 
 If you cannot upgrade, compile from source with the fix applied.
@@ -139,7 +189,7 @@ the file in the locking application and retry.
 cargo install atomwrite --locked
 
 # Specific version
-cargo install atomwrite --locked --version 0.1.4
+cargo install atomwrite --locked --version 0.1.12
 
 # Force reinstall
 cargo install atomwrite --locked --force
@@ -192,4 +242,4 @@ cargo test --test cross_compile_check -- --ignored
 ```
 
 This is required for any release that touches `#[cfg(windows)]` code paths,
-per the GAP 14 fix in v0.1.4.
+per the GAP 14 fix in v0.1.4 (preserved for historical reference, but you should install v0.1.12 or later).

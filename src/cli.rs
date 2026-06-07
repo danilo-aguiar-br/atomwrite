@@ -225,6 +225,19 @@ pub enum Commands {
 
     /// Apply a patch (unified diff, SEARCH/REPLACE, or full file) from stdin
     Apply(ApplyArgs),
+    /// v14 Tier 3: set a value in a structured config file (TOML/JSON).
+    Set(crate::cli_args::SetArgs),
+    /// v14 Tier 3: get a value from a structured config file (TOML/JSON).
+    Get(crate::cli_args::GetArgs),
+    /// v14 Tier 3: delete a key from a structured config file (TOML/JSON).
+    Del(crate::cli_args::DelArgs),
+    /// v14 Tier 3: convert identifier case in source files.
+    Case(crate::cli_args::CaseArgs),
+    /// v14 Tier 3 (v0.1.12): tree-sitter S-expression query against a file.
+    Query(crate::cli_args::QueryArgs),
+    /// v14 Tier 3 (v0.1.12): extract high-level structure (functions, classes,
+    /// structs, enums, etc.) from a source file.
+    Outline(crate::cli_args::OutlineArgs),
 
     /// Generate shell completions for bash, zsh, fish, or powershell
     Completions(CompletionsArgs),

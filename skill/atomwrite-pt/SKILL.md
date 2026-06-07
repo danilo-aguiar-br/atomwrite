@@ -1,7 +1,7 @@
 ---
 name: atomwrite
 description: |
-  Use atomwrite para TODAS as operações de arquivo: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions.
+  Use atomwrite para TODAS as operações de arquivo: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline (28 subcomandos no total a partir da v0.1.12).
   Auto-invocar quando o usuário pedir: escrever arquivos, buscar código, substituir texto, refatorar AST, gerar regex, calcular expressões, operações em lote, verificar checksums, listar estrutura, escopo gramatical, backup de arquivos, rollback, aplicar patches, editar e disparar build do cargo, preservar timestamps de arquivos.
   Palavras-chave: escrita atômica, operação de arquivo, NDJSON, BLAKE3, checksum, refatorar, ast-grep, lote, busca paralela, scoping, backup, rollback, aplicar patch, timeout, grep, instalar completions, mtime, preservar timestamps, preservação de timestamp, consciência de sistema de build, cargo build, make, cmake.
 ---
@@ -108,9 +108,13 @@ atomwrite --workspace . read --stat src/main.rs
 - USAR `--multiline` (`-U`) para habilitar correspondência multilinha
 - USAR `--invert` para retornar linhas que NÃO casam com o padrão
 - USAR `--sort path|modified|created|none` para ordenar resultados
+- USAR `--max-filesize <BYTES>` para pular arquivos maiores que o cap (sobrescreve `--max-filesize` global)
+- USAR `--max-columns <N>` para truncar linhas de saída mais largas que N colunas (G68)
+- USAR `--include-fifo` para atravessar FIFO/named pipes (G56) — desabilitado por padrão por segurança
 - Resposta é NDJSON com um objeto por match
 ### PROIBIDO
 - NUNCA tratar exit code 1 como falha em search
+- NUNCA usar `--include-fifo` em diretórios não confiáveis (pode travar em pipes lentos)
 ### Padrão Correto — Busca
 ```bash
 atomwrite --workspace . search 'TODO|FIXME' src/ --include '*.rs'
@@ -122,6 +126,10 @@ atomwrite --workspace . search 'unsafe' src/ --context 3
 ### Padrão Correto — Contagem por Arquivo
 ```bash
 atomwrite --workspace . search 'unwrap' src/ --count --sort path
+```
+### Padrão Correto — Busca Com Truncamento de Coluna
+```bash
+atomwrite --workspace . search 'error' src/ --max-columns 120
 ```
 
 
@@ -228,7 +236,9 @@ echo '{"old":"foo","new":"bar"}
 - USAR `--dry-run` para pré-visualizar transformações
 - USAR `--backup` para criar backup antes de modificar
 - USAR `--include` e `--exclude` para filtrar arquivos por extensão
-- Ambos `--pattern` e `--rewrite` são OBRIGATÓRIOS (sem modo somente busca)
+- USAR `--rules <PATH>` (G44) para carregar múltiplas regras de um arquivo YAML/JSON
+- USAR `--inline-rules <JSON>` (G44) para aplicar múltiplas regras de uma string JSON inline
+- Ambos `--pattern` e `--rewrite` são OBRIGATÓRIOS no modo single-rule (sem modo somente busca)
 ### Padrão Correto — Transformação
 ```bash
 atomwrite --workspace . transform -p 'console.log($$$A)' -r 'logger.info($$$A)' -l js src/
@@ -295,9 +305,10 @@ atomwrite --workspace . scope src/ --lang python --query def --action lower
 - Cada linha requer um campo `op`: `write`, `replace`, `delete`, `edit`, `move`, `copy`, `hash`
 - Para `move` e `copy`: usar campo `source` (origem) e `target` (destino)
 - USAR `--file <PATH>` para ler manifesto de arquivo em vez de stdin
-- USAR `--dry-run` para pré-visualizar o lote inteiro
 - USAR `--transaction` para garantir atomicidade do lote inteiro (falha em uma op reverte todas)
+- USAR `--dry-run` para pré-visualizar o lote inteiro
 - USAR `--input-schema` para obter o JSON Schema do formato de entrada
+- USAR `--batch-size <N>` (G77) para controlar tamanho do chunk para manifestos grandes — útil para streaming com restrição de memória
 - Resposta é NDJSON com um resultado por operação
 ### Padrão Correto — Lote com Write e Delete
 ```bash
@@ -378,6 +389,9 @@ atomwrite --workspace . diff --unified --context 5 src/old.rs src/new.rs
 - USAR `--dry-run` para pré-visualizar
 - USAR `--backup` para criar backup do destino se existir
 - `copy` aceita `--recursive` para copiar diretórios e `--preserve` para manter timestamps
+- USAR `--no-reflink` (G64) para desabilitar otimização de reflink (copy-on-write) — força cópia byte a byte completa
+- USAR `--preserve-xattr` (G39) para manter extended attributes em copy/move
+- USAR `--preserve-hardlinks` (G55) em `move` para manter contagem de hardlinks intacta
 ### Padrão Correto — Mover
 ```bash
 atomwrite --workspace . move src/old.rs src/new.rs
@@ -523,6 +537,148 @@ atomwrite completions zsh > ~/.zfunc/_atomwrite
 ```
 
 
+## Operações Set (v14 Tier 3 — v0.1.12)
+### OBRIGATÓRIO
+- USAR `set` para escrever um único valor em um arquivo de config TOML ou JSON
+- ACEITAR `<PATH> <KEY_PATH> <VALUE>` como argumentos posicionais (auto-detecta TOML vs JSON pela extensão)
+- USAR notação dotted path para chaves aninhadas: `package.version`, `database.pool.max`
+- USAR `--backup` para criar backup com timestamp antes da modificação
+- USAR `--preserve-timestamps` para preservar mtime/atime original do arquivo
+- VALUE é auto-coercido: `true`/`false` para bool, strings numéricas para int/float, o resto permanece string
+- Resposta é NDJSON com `type: "result"`, `path`, `key_path`, `checksum`, `action: "set"`
+### PROIBIDO
+- NUNCA usar `set` em texto puro ou formatos não suportados (apenas TOML e JSON)
+- NUNCA usar `set` sem especificar o dotted path completo (sem escopo implícito atual)
+### Padrão Correto — Set Valor Top-Level
+```bash
+atomwrite --workspace . set Cargo.toml package.version 0.2.0
+```
+### Padrão Correto — Set Valor Aninhado Com Backup
+```bash
+atomwrite --workspace . set --backup config.toml database.pool.max 20
+```
+### Padrão Correto — Set Boolean JSON
+```bash
+atomwrite --workspace . set package.json scripts.test true
+```
+
+
+## Operações Get (v14 Tier 3 — v0.1.12)
+### OBRIGATÓRIO
+- USAR `get` para ler um único valor de um arquivo de config TOML ou JSON
+- ACEITAR `<PATH> <KEY_PATH>` como argumentos posicionais
+- USAR notação dotted path para chaves aninhadas
+- Resposta é NDJSON com `type: "result"`, `value` (auto-parseado), `key_path`
+- Retorna `FILE_NOT_FOUND` (exit 4) se a chave não existe
+### Padrão Correto — Get Valor Top-Level
+```bash
+atomwrite --workspace . get Cargo.toml package.version
+# Retorna: {"type":"result","key_path":"package.version","value":"0.1.12",...}
+```
+### Padrão Correto — Get Valor Aninhado
+```bash
+atomwrite --workspace . get config.toml database.pool.max
+```
+
+
+## Operações Del (v14 Tier 3 — v0.1.12)
+### OBRIGATÓRIO
+- USAR `del` para remover uma chave de um arquivo de config TOML ou JSON
+- ACEITAR `<PATH> <KEY_PATH>` como argumentos posicionais
+- USAR notação dotted path para chaves aninhadas
+- USAR `--force-missing` para suceder silenciosamente se a chave já estiver ausente (idempotente)
+- USAR `--backup` para criar backup com timestamp antes da deleção
+- USAR `--preserve-timestamps` para preservar mtime/atime original
+- Resposta é NDJSON com `type: "result"`, `action: "deleted"` ou `"already_missing"`
+### Padrão Correto — Deletar Chave
+```bash
+atomwrite --workspace . del config.toml dependencies.deprecated
+```
+### Padrão Correto — Deleção Idempotente
+```bash
+atomwrite --workspace . del --force-missing config.toml features.experimental
+# Retorna: {"type":"result","action":"already_missing",...} se a chave já estava ausente
+```
+
+
+## Operações Case (v14 Tier 3 — v0.1.12)
+### OBRIGATÓRIO
+- USAR `case` para converter case de identificadores em arquivos fonte (refatorar convenção de naming)
+- ACEITAR um ou mais `[PATHS]` como argumentos posicionais
+- USAR `--to <STYLE>` para definir alvo: `snake` (padrão), `camel`, `pascal`, `kebab`, `screaming-snake`
+- USAR `--subvert OLD NEW` (repetível) para renomear identificadores específicos que não devem seguir a regra global
+- USAR `--backup` para criar backups com timestamp antes da modificação
+- Resposta é NDJSON com `type: "result"`, `files_modified`, `identifiers_renamed`
+### PROIBIDO
+- NUNCA rodar `case` sem `--dry-run` primeiro em uma base de código grande
+- NUNCA usar `case` em arquivos gerados (ex. `target/`, `dist/`)
+### Padrão Correto — Snake Case (Padrão)
+```bash
+atomwrite --workspace . case --to snake --dry-run src/
+atomwrite --workspace . case --to snake src/
+```
+### Padrão Correto — Camel Case Com Exceções
+```bash
+# Converter snake_case para camelCase, mas manter constantes SCREAMING_SNAKE
+atomwrite --workspace . case --to camel --subvert MAX_POOL MAX_POOL src/
+```
+
+
+## Operações Query (v14 Tier 3 — v0.1.12)
+### OBRIGATÓRIO
+- USAR `query` para inspecionar a estrutura AST de um único arquivo fonte via tree-sitter
+- ACEITAR `<PATH>` como argumento posicional
+- USAR `--kinds` para listar todos os node kinds nomeados no arquivo (com contagens de ocorrência)
+- USAR `--tree` para imprimir a árvore de parse completa
+- USAR `--query <PATTERN>` (curto `-Q`) para rodar uma query S-expression tree-sitter
+- USAR `--positions` para incluir byte offsets e posições de início para cada match
+- USAR `--language <LANG>` para sobrescrever auto-detecção por extensão
+- Auto-detecta linguagem pela extensão do arquivo; suporta 24 linguagens via `tree-sitter-language-pack`
+- Resposta é NDJSON com `type: "kinds" | "tree" | "matches"` dependendo do modo
+### PROIBIDO
+- NUNCA usar `--query` (S-expression) em arquivos de linguagens não suportadas (retorna resultado vazio silenciosamente)
+- NUNCA passar arquivos grandes (acima de `--max-filesize`) por `query` sem escopo
+### Padrão Correto — Listar Node Kinds
+```bash
+atomwrite --workspace . query --kinds src/main.rs
+# Retorna: {"type":"kinds","kinds":[{"name":"function_item","count":42},...]}
+```
+### Padrão Correto — Imprimir Árvore Completa
+```bash
+atomwrite --workspace . query --tree src/main.rs
+```
+### Padrão Correto — Query Com Posições
+```bash
+atomwrite --workspace . query -Q '(function_item name: (identifier) @name)' --positions src/main.rs
+```
+
+
+## Operações Outline (v14 Tier 3 — v0.1.12)
+### OBRIGATÓRIO
+- USAR `outline` para extrair estrutura de alto nível (funções, classes, structs, enums) de um arquivo fonte
+- ACEITAR `<PATH>` como argumento posicional
+- USAR `--kind <KIND>` (repetível) para filtrar por node kind: `function_item`, `struct_item`, `enum_item`, `impl_item`, `class_definition`, `function_definition`, etc.
+- USAR `--positions` para incluir byte offsets e posições de início/fim
+- USAR `--language <LANG>` para sobrescrever auto-detecção por extensão
+- Resposta é NDJSON com `type: "result"`, `items: [{kind, name, range, ...}]`
+### PROIBIDO
+- NUNCA usar `outline` em arquivos binários (use `read --stat` em vez disso)
+- NUNCA encadear `outline` para `replace` sem revisar o output primeiro
+### Padrão Correto — Outline Completo
+```bash
+atomwrite --workspace . outline src/main.rs
+# Retorna: {"type":"result","items":[{"kind":"function_item","name":"main","range":[...]},...]}
+```
+### Padrão Correto — Filtrar por Kind
+```bash
+atomwrite --workspace . outline --kind function_item --kind struct_item src/lib.rs
+```
+### Padrão Correto — Outline Com Posições
+```bash
+atomwrite --workspace . outline --kind function_item --positions src/main.rs | jaq '.items[] | {name, start: .range.start}'
+```
+
+
 ## Pipelines Comuns
 ### Padrão Correto — Locking Otimista (Read, Modify, Write)
 ```bash
@@ -556,6 +712,59 @@ atomwrite --workspace . edit src/main.rs --old "antigo" --new "novo" | jaq -r '.
 # Comportamento padrão do edit atualiza o mtime, então cargo/make/cmake detectam a mudança
 atomwrite --workspace . edit src/main.rs --old "antigo" --new "novo"
 cargo build
+```
+### Padrão Correto — v0.1.12 Editor de Config TOML Com Locking Otimista
+```bash
+CS=$(atomwrite --workspace . read --stat config.toml | jaq -r '.checksum')
+atomwrite --workspace . set --backup --preserve-timestamps config.toml database.pool.max 20
+# Ou verifique antes de escrever:
+atomwrite --workspace . get config.toml database.pool.max  # confirma valor atual
+atomwrite --workspace . set config.toml database.pool.max 20
+```
+### Padrão Correto — v0.1.12 Query AST e Extrair Posições
+```bash
+# Listar todas as definições de função em um arquivo Rust com suas posições
+atomwrite --workspace . query -Q '(function_item name: (identifier) @name)' --positions src/main.rs \\
+  | jaq -c '{name: .matches[].captures.name.text, line: .matches[].range.start.line}'
+# Contar funções por arquivo
+for f in src/*.rs; do
+  count=$(atomwrite --workspace . query --kinds "$f" | jaq '.kinds[] | select(.name=="function_item") | .count')
+  echo "$f: $count funções"
+done
+```
+### Padrão Correto — v0.1.12 Outline Com Filtro de Kind
+```bash
+# Obter todos os structs e enums em lib.rs
+atomwrite --workspace . outline --kind struct_item --kind enum_item src/lib.rs
+# Encontrar a função mais longa em main.rs
+atomwrite --workspace . outline --kind function_item --positions src/main.rs \\
+  | jaq -c '.items[] | {name, length: (.range.end.byte - .range.start.byte)}' \\
+  | sort -t: -k2 -rn | head -1
+```
+### Padrão Correto — v0.1.12 Recovery WAL Consultivo
+```bash
+# Detectar journals órfãos antes de retomar trabalho
+ls -la .atomwrite.journal.*.json 2>/dev/null | head
+# Use a API Rust para controle total:
+# let report = atomwrite::wal::recover_orphan_journals(Path::new("src/"))?;
+# println!("{}", report.to_json()?);
+# Decisão do agente: replay committed, abort in-progress, ou skip stale
+```
+### Padrão Correto — v0.1.12 Renomeação de Case Com Auditoria
+```bash
+# Dry-run primeiro, depois aplicar
+atomwrite --workspace . case --to kebab --dry-run src/
+# Capturar a contagem de arquivos que MUDARIAM
+atomwrite --workspace . case --to kebab --dry-run src/ | jaq -s 'map(select(.type=="result") | .files_modified) | add'
+# Se aceitável, aplicar
+atomwrite --workspace . case --to kebab --backup src/
+```
+### Padrão Correto — v0.1.12 Verificação de Sintaxe Pre-Commit
+```bash
+# Verificar sintaxe de arquivo Rust antes do commit
+atomwrite --workspace . write --syntax-check src/lib.rs < new_lib.rs
+# Exit 88 (SyntaxError) se tree-sitter detectar sintaxe inválida
+# Use em hooks pre-commit ou CI linting
 ```
 
 
@@ -620,34 +829,45 @@ fi
 ```
 
 
-## Suporte ao Windows 10/11 (v0.1.4)
+## Suporte ao Windows 10/11 (v0.1.12)
 ### OBRIGATÓRIO
 - VERIFICAR que Visual Studio 2019+ Build Tools com workload C++ está instalado antes de `cargo install atomwrite`
 - VERIFICAR que Rust 1.88 ou posterior está instalado
 - USAR Windows Terminal ou PowerShell 7+ para output UTF-8 e sequências ANSI adequadas
 - CONFIAR que `init_console` define code page 65001 e `ENABLE_VIRTUAL_TERMINAL_PROCESSING` automaticamente
+- ESTAR CIENTE de que `tree-sitter-language-pack` 1.8 com feature `download` requer acesso de rede no primeiro build — o script postinstall baixa parsers do GitHub
+- ESPERAR que o primeiro `cargo install atomwrite` no Windows pode levar 5-10 minutos devido aos downloads de parsers
+- CONFIAR que os 5 novos códigos de erro (83, 88, 91, 92, 93) funcionam no Windows — são testados nos gates de cross-compile
 ### PROIBIDO
 - NUNCA usar console legado `cmd.exe` para output (mojibake esperado)
 - NUNCA depender de `cargo install atomwrite` funcionando na v0.1.3 (quebrado no Windows 10/11; fix está na v0.1.4)
-### Padrão Correto — Instalação Windows
+- NUNCA usar `query` no Windows sem antes garantir que os parsers foram baixados (use `--language` para sobrescrever se auto-detect falhar)
+### Padrão Correto — Instalação Windows (v0.1.12)
 ```powershell
 rustup default stable
 rustup target add x86_64-pc-windows-msvc
-cargo install atomwrite --locked --version '^0.1.4'
+cargo install atomwrite --locked --version '^0.1.12'
 atomwrite --version  # Saída NDJSON
+# Primeira execução pode levar alguns segundos para inicializar parsers tree-sitter
 ```
 
 
-## Validação Cross-Compile (v0.1.4)
+## Validação Cross-Compile (v0.1.12)
 ### OBRIGATÓRIO
 - EXECUTAR `cargo test --test cross_compile_check -- --ignored` antes de qualquer release que toque código `#[cfg(windows)]`
 - INSTALAR targets Windows: `rustup target add x86_64-pc-windows-gnu` e `i686-pc-windows-gnu`
 - NO Linux, INSTALAR mingw-w64: `mingw64-gcc` (Fedora) ou `mingw-w64` (Ubuntu) e `mingw32-gcc` para 32-bit
 - CONFIAR que o gate falha em qualquer regressão de `E0433`, `E0308`, ou `E0507` em código Windows-only
-### Padrão Correto — Gate de Cross-Compile
+- VERIFICAR que os 10 novos arquivos de teste da v0.1.12 compilam em todos os 3 targets de cross-compile — `cli_set`, `cli_case`, `cli_query`, `cli_outline`, `cli_get_del`, `cli_v012_syntax_check`, `cli_v012_wal`, `cli_v012_audit_regressions`, `cli_v012_xattr_reflink`, `cli_v012_batch4_regressions`
+- ESTAR CIENTE de que `tree-sitter-language-pack` é baixado em build time, então cross-compile offline requer pré-baixar os parsers
+### Padrão Correto — Gate de Cross-Compile (v0.1.12)
 ```bash
 rustup target add x86_64-pc-windows-gnu i686-pc-windows-gnu x86_64-pc-windows-msvc
 cargo test --test cross_compile_check -- --ignored
+# Verificar que os 10 arquivos de teste da v0.1.12 compilam em todos os 3 targets Windows
+cargo check --target x86_64-pc-windows-gnu --tests
+cargo check --target i686-pc-windows-gnu --tests
+cargo check --target x86_64-pc-windows-msvc --tests
 ```
 
 
@@ -665,8 +885,13 @@ cargo test --test cross_compile_check -- --ignored
 - `78` — configuração inválida (configuração malformada)
 - `81` — verificação de checksum falhou (mismatch de hash BLAKE3 em read ou hash)
 - `82` — state drift (checksum mismatch, locking otimista falhou)
+- `83` — timeout de lock (v0.1.12+)
 - `85` — FIFO detectado (named pipe não pode ser escrito atomicamente)
 - `86` — arquivo de dispositivo detectado (bloco ou caractere)
+- `88` — erro de sintaxe detectado (v0.1.12+, verificação G72 tree-sitter falhou)
+- `91` — fallback EXDEV desabilitado (v0.1.12+, --strict-atomic proíbe copy-fallback)
+- `92` — verificação BLAKE3 do copy-back falhou (v0.1.12+)
+- `93` — journal órfão detectado (v0.1.12+, recuperação consultiva G114)
 - `126` — violação do jail do workspace (caminho escapa à raiz do workspace)
 - `127` — symlink bloqueado (alvo do symlink fora do workspace)
 - `128` — imutável (arquivo marcado como imutável)
@@ -687,24 +912,30 @@ cargo test --test cross_compile_check -- --ignored
 - `retryable` (bool) — se a operação pode ser retentada
 - `suggestion` (string, opcional) — passo de remediação acionável (context-aware para `WorkspaceJail`)
 - `workspace` (string, opcional) — raiz atual do jail do workspace (v0.1.4+, fix do GAP 13)
-### OBRIGATÓRIO — Lista Completa de Códigos de Erro (20 codes)
+### OBRIGATÓRIO — Lista Completa de Códigos de Erro (25 codes a partir da v0.1.12)
 - `WORKSPACE_JAIL` (exit 126, precondition_failed, não retentável)
 - `SYMLINK_BLOCKED` (exit 127, precondition_failed, não retentável)
 - `FILE_NOT_FOUND` (exit 4, permanent, não retentável)
 - `PERMISSION_DENIED` (exit 13, transient, retentável via `persist_with_retry` no Windows)
 - `CHECKSUM_VERIFY_FAILED` (exit 81, conflict, não retentável)
 - `STATE_DRIFT` (exit 82, conflict, não retentável)
+- `LOCK_TIMEOUT` (exit 83, transient, retentável com backoff — v0.1.12+, contenção de arquivo de lock G54)
+- `FIFO_DETECTED` (exit 85, precondition_failed, não retentável)
+- `DEVICE_FILE` (exit 86, precondition_failed, não retentável)
+- `SYNTAX_ERROR` (exit 88, permanent, não retentável — v0.1.12+, validação tree-sitter G72 falhou)
+- `EXDEV_FALLBACK_DISABLED` (exit 91, precondition_failed, não retentável — v0.1.12+, modo atômico estrito G90 proíbe fallback de cópia cross-device)
+- `COPY_BACK_BLAKE3_FAILED` (exit 92, conflict, retentável após reler — v0.1.12+, verificação de checksum de copy-back cross-device G114 falhou)
+- `ORPHAN_JOURNAL` (exit 93, precondition_failed, não retentável — v0.1.12+, sidecar WAL órfão G114 detectado; chame `recover_orphan_journals` consultivamente)
 - `DISK_FULL` (exit 28, transient, retentável)
 - `QUOTA_EXCEEDED` (exit 30, transient, retentável)
 - `CROSS_DEVICE` (exit 73, permanent, não retentável)
 - `IO_ERROR` (exit 74, transient, retentável)
-- `FIFO_DETECTED` (exit 85, precondition_failed, não retentável)
-- `DEVICE_FILE` (exit 86, precondition_failed, não retentável)
+- `CONFIG_INVALID` (exit 78, permanent, não retentável)
 - `FILE_IMMUTABLE` (exit 128, precondition_failed, não retentável)
-- `BINARY_FILE` (exit 65, permanent, não retentável)
+- `BINARY_FILE` (exit 65, permanent, não retentável — use `read --format raw` para ignorar envelope JSON)
+- `FILE_TOO_LARGE` (exit 65, permanent, não retentável — arquivo excede limite `--max-filesize`)
 - `NO_MATCHES` (exit 1, permanent, não retentável — por design, não é um erro)
 - `INVALID_INPUT` (exit 65, permanent, não retentável)
-- `CONFIG_INVALID` (exit 78, permanent, não retentável)
 - `BROKEN_PIPE` (exit 141, transient, não retentável — SIGPIPE não é acionável)
 - `INTERNAL_ERROR` (exit 255, permanent, não retentável — reporte um bug)
 ### OBRIGATÓRIO — Estratégia de Retry por Classe
@@ -745,22 +976,67 @@ atomwrite search --json-schema
 ```
 
 
-## Schemas Versionados (v0.1.4)
+## Schemas Versionados (v0.1.12)
 ### OBRIGATÓRIO
 - SABER que schemas JSON estáveis estão commitados em `docs/schemas/`
 - SABER que `error-output.schema.json` é o contrato para todos os envelopes de erro
 - SABER que o campo `workspace` (string, opcional) foi adicionado em v0.1.4
 - USAR o schema versionado para validar respostas no pipeline do agente
 - NÃO inventar suas próprias regras de parsing; confiar no schema versionado como fonte de verdade
+### Obrigatório — Índice de Schemas (29 schemas a partir da v0.1.12)
+- `error-output.schema.json` — envelope para todas as respostas `error: true` (v0.1.4)
+- `write-output.schema.json` — resposta do comando `write`
+- `read-output.schema.json` — resposta do comando `read` com metadados
+- `search-output.schema.json` — matches NDJSON do comando `search`
+- `replace-output.schema.json` — resposta batch do comando `replace`
+- `edit-output.schema.json` — resposta do comando `edit` com `mtime_preserved`
+- `transform-output.schema.json` — resposta de refator AST do `transform`
+- `scope-output.schema.json` — resposta de scoping gramatical do `scope`
+- `batch-output.schema.json` — resultado transacional do `batch`
+- `hash-output.schema.json` — resposta de checksum BLAKE3 do `hash`
+- `delete-output.schema.json` — confirmação de remoção do `delete`
+- `diff-output.schema.json` — hunks de diff estruturado do `diff`
+- `move-output.schema.json` — confirmação de renomeação do `move`
+- `copy-output.schema.json` — resposta de verificação do `copy`
+- `list-output.schema.json` — listagem de diretório do `list`
+- `count-output.schema.json` — contagem de arquivos e linhas do `count`
+- `extract-output.schema.json` — extração de campos do `extract`
+- `calc-output.schema.json` — cálculo matemático e conversão de unidades do `calc`
+- `regex-output.schema.json` — padrão gerado pelo `regex`
+- `backup-output.schema.json` — backup com timestamp do `backup`
+- `rollback-output.schema.json` — restauração do `rollback`
+- `apply-output.schema.json` — aplicação de patch do `apply`
+- `set-result.schema.json` — v14 Tier 3 do `set` (v0.1.12, NOVO)
+- `get-result.schema.json` — v14 Tier 3 do `get` (v0.1.12, NOVO)
+- `del-result.schema.json` — v14 Tier 3 do `del` (v0.1.12, NOVO)
+- `case-result.schema.json` — v14 Tier 3 do `case` (v0.1.12, NOVO)
+- `query-output.schema.json` — v14 Tier 3 do `query` (oneOf 3: kinds/tree/matches, v0.1.12, NOVO)
+- `outline-output.schema.json` — v14 Tier 3 do `outline` (oneOf 2: items/empty, v0.1.12, NOVO)
+- `wal-recovery.schema.json` — relatório de recovery WAL (v0.1.12, NOVO)
+### Obrigatório — Exemplo de Validação Programática
+```bash
+# Validar resposta NDJSON contra seu schema usando ajv-cli
+echo '{"type":"result","checksum":"abc...","bytes_written":42}' | \\
+  ajv validate -s docs/schemas/write-output.schema.json -d /dev/stdin
+# Ou com Python jsonschema:
+python3 -c "import json, jsonschema; \\
+  s = json.load(open('docs/schemas/write-output.schema.json')); \\
+  d = json.loads('{\"type\":\"result\",\"checksum\":\"abc\",\"bytes_written\":42}'); \\
+  jsonschema.validate(d, s); print('OK')"
+```
 
 
-## Testes e Gates de Qualidade (v0.1.4)
+## Testes e Gates de Qualidade (v0.1.12)
 ### OBRIGATÓRIO — Postura de Qualidade
-- 300+ testes em 34 suítes de teste passam com zero regressões
+- **445 testes em 43 suítes de teste passam com zero regressões** a partir da v0.1.12
+- **Decomposição da contagem de testes**: 320 baseline (v0.1.10) + +29 (v0.1.11) + +96 (v0.1.12) = 445 total
+- **Novos arquivos de teste v0.1.12 (10)**: `cli_set`, `cli_case`, `cli_query`, `cli_outline`, `cli_get_del`, `cli_v012_syntax_check`, `cli_v012_wal`, `cli_v012_audit_regressions` (27 testes), `cli_v012_xattr_reflink`, `cli_v012_batch4_regressions` (23 testes)
+- **Cobertura de teste v0.1.12 por categoria**: G72 syntax check (16 testes), G114 WAL (8 testes), v14 query/outline (10 testes), TOML dotted path (6 testes), set/get/del/case (15 testes), regressões de auditoria (50 testes)
 - 8 gates oficiais passam em cada commit: `fmt`, `clippy`, `build`, `test`, `doc`, `deny`, `audit`, `msrv`
 - 3 targets de cross-compile passam: `x86_64-pc-windows-gnu`, `i686-pc-windows-gnu`, `x86_64-pc-windows-msvc`
 - Cargo deny e cargo audit reportam zero vulnerabilidades (time 0.3.47+ resolveu RUSTSEC-2026-0009 via DEPTH_LIMIT=32)
 - MSRV é Rust 1.88 stable
+- Cobertura via `cargo tarpaulin`: 20.19% cobertura de linha (935/4631 linhas) — cobertura é pesada em testes de integração
 ### PROIBIDO
 - NUNCA publicar uma release sem todos os 8 gates passando
 - NUNCA publicar uma release sem os 3 targets de cross-compile passando
@@ -778,3 +1054,136 @@ atomwrite search --json-schema
 - Novos testes: 7 testes unitários + 1 teste de integração para contexto de sugestão de erro
 - Docs bilíngues: 22 arquivos markdown atualizados em 3 rodadas de auditoria
 - NÃO atualizar de v0.1.3 para v0.1.4 se você depende do comportamento phantom `--force-text`
+## Migração v0.1.12 Referência Rápida
+### OBRIGATÓRIO — Saiba O Que Mudou Desde v0.1.11
+- **6 novos subcomandos ADITIVOS**: `set`, `get`, `del`, `case`, `query`, `outline` (editores estruturados v14 Tier 3 + ferramentas AST tree-sitter). Nenhum subcomando existente foi renomeado ou removido
+- **5 novas variantes de erro ADITIVAS**: `LockTimeout` (83), `SyntaxError` (88), `ExdevFallbackDisabled` (91), `CopyBackBlake3Failed` (92), `OrphanJournal` (93). Todas bilíngues com sugestões acionáveis
+- **`atomwrite write --syntax-check` é OPT-IN**: comportamento padrão de `write` não mudou. Verificação de sintaxe G72 REAL via tree-sitter (24 linguagens)
+- **Sidecar WAL é apenas consultivo**: `atomic_write` escreve `.atomwrite.journal.<target>.atomwrite.journal.json` apenas quando `ATOMWRITE_WAL=1` está definido OU `--strict-atomic` é passado. `write` padrão NÃO escreve o sidecar. `recover_orphan_journals(dir)` é consultivo
+- **445 testes passam em 43 suites** (eram 320 em v0.1.10). Cobertura completa entre todos os 28 subcomandos
+- **7 ADRs adicionados** em `docs/decisions/` (0019-0025) e 7 novos JSON Schemas em `docs/schemas/`
+- **Nova dependência**: `tree-sitter-language-pack = "1.8"` com features `download` + `dynamic-loading`. Footprint da instalação fica em torno de 5-10 MB
+
+
+## Fluxo de Recovery WAL (v0.1.12)
+### OBRIGATÓRIO
+- SABER que `atomic_write` só escreve um sidecar WAL quando a env var `ATOMWRITE_WAL=1` está definida OU a flag CLI `--strict-atomic` é passada
+- SABER que o caminho do sidecar é `.atomwrite.journal.<target_basename>.atomwrite.journal.json`
+- SABER que `recover_orphan_journals(dir)` é CONSULTIVO — NÃO faz replay nem delete automático
+- SABER que cada sidecar contém `JournalEntry::{Started, Committed, Aborted}` com `op_id` e `pid`
+### Obrigatório — Árvore de Decisão de Recovery
+1. **Detectar órfãos**: escanear diretório por arquivos `*.atomwrite.journal.json`
+2. **Ler entradas**: parsear cada sidecar para determinar quais operações foram `Started` mas não `Committed`/`Aborted`
+3. **Decidir por entrada**:
+   - `Committed` → seguro deletar sidecar (operação completou com sucesso)
+   - `Aborted` → seguro deletar sidecar (operação foi revertida)
+   - `Started` sem `Committed`/`Aborted` → AMBÍGUO: consulte o usuário ou verifique o inode do arquivo alvo
+4. **Ação atômica**: aplicar decisão via API Rust `recover_orphan_journals`
+### Obrigatório — Padrão da API Rust
+```rust
+use atomwrite::wal::{recover_orphan_journals, OrphanJournalReport};
+use std::path::Path;
+
+let report: OrphanJournalReport = recover_orphan_journals(Path::new("src/"))?;
+// Inspecionar report.entries: Vec<JournalEntry>
+// Aplicar sua lógica de decisão por entrada
+// Usar atomwrite delete com --force para limpar sidecars reconciliados
+```
+### PROIBIDO
+- NUNCA deletar sidecars automaticamente sem confirmação do usuário
+- NUNCA fazer replay de entradas WAL sem verificar o estado atual do arquivo alvo
+- NUNCA tratar WAL como única fonte de verdade para atomicidade (a syscall rename é a primitiva atômica real; WAL é apenas para forense de crash)
+
+
+## Gaps Fechados na v0.1.12
+### OBRIGATÓRIO — Saber Quais Eram os 20 Gaps
+A release v0.1.12 fecha 20 gaps técnicos nomeados de `gaps.md`. Cada gap tem um ADR em `docs/decisions/0019-0025` e um teste em `tests/`.
+- **G72 — Verificação de sintaxe REAL via tree-sitter**: `atomwrite write --syntax-check` valida conteúdo contra 24 linguagens via `tree_sitter_language_pack`. Substitui verificação heurística de balanceamento de colchetes. Retorna `SyntaxError` (88) em falha
+- **G90 — Fallback de cópia EXDEV controlado**: modo `--strict-atomic` proíbe fallback de cópia em moves cross-device. Retorna `ExdevFallbackDisabled` (91) quando acionado
+- **G114 — Sidecar WAL consultivo**: `ATOMWRITE_WAL=1` ou `--strict-atomic` escreve `.atomwrite.journal.<target>.json`. `recover_orphan_journals` é a API de recovery consultivo
+- **G114 — Verificação BLAKE3 do copy-back**: copy-back cross-device verifica o checksum do destino antes de deletar a origem. Retorna `CopyBackBlake3Failed` (92) em mismatch
+- **G54 — Arquivo de lock com timeout**: cada write adquire lock de arquivo com 30s de timeout. Retorna `LockTimeout` (83) em contenção
+- **G44 — Transform multirule**: `transform --rules <PATH>` e `--inline-rules <JSON>` aceitam múltiplas regras
+- **G66 — Search/replace literal**: `--literal` (`-F`) trata pattern como string literal, sem escape de regex
+- **G64 — Detecção de reflink**: `--no-reflink` em `copy`/`move` desabilita otimização de reflink (copy-on-write)
+- **G68 — max-filesize e max-columns**: `--max-filesize <BYTES>` cap global; `--max-columns <N>` limita largura de saída do `search`
+- **G56 — Inclusão de FIFO**: `--include-fifo` em `search` atravessa FIFO/named pipes
+- **G39 — Preservação de xattr**: `--preserve-xattr` em `copy`/`move` mantém extended attributes
+- **G41 — Tratamento binário**: `read --format raw` emite bytes crus sem envelope JSON, evita `BinaryFile` (65) para conteúdo conhecido como binário
+- **G58 — Normalização de line ending**: `--line-ending lf|crlf|cr|auto` em `write` e `edit`
+- **G76 — Escolha de algoritmo de diff**: `diff --algorithm myers|patience|lcs` seleciona algoritmo
+- **G74 — Threads paralelas**: `--threads <N>` / `-j <N>` flag global controla pool Rayon
+- **G80 — Restauração de SIGPIPE**: SIGPIPE é restaurado para disposição default em Unix para que pipes para `head`/`wc`/`jaq` terminem limpos
+- **G55 — Preservação de hardlink**: `--preserve-hardlinks` em `move` mantém contagem de hardlinks
+- **G77 — Tamanho de stream de batch**: `--batch-size <N>` controla tamanho de chunk do `batch` para manifestos grandes
+- **G81 — Formato raw de read**: `read --format raw` emite conteúdo cru, pula parsing JSON
+- **v14 Tier 3 — 6 novos subcomandos**: `set`, `get`, `del`, `case`, `query`, `outline` (esta release)
+
+
+## Notas sobre Tree-sitter-language-pack (v0.1.12)
+### OBRIGATÓRIO
+- SABER que `tree-sitter-language-pack = "1.8"` é a única nova dependência de runtime
+- SABER que a feature `download` puxa parsers do GitHub no primeiro uso
+- SABER que a feature `dynamic-loading` carrega parsers como bibliotecas compartilhadas (.so/.dll/.dylib) em runtime
+- SABER que 24 linguagens têm cobertura de parser built-in: bash, c, cpp, css, elixir, go, html, java, javascript, json, kotlin, lua, markdown, ocaml, php, python, ql, ruby, rust, scala, sql, swift, toml, typescript, yaml
+- SABER que 305+ linguagens adicionais estão disponíveis via dynamic-loading
+- SABER que no Windows, o passo de download requer acesso de rede durante o primeiro `cargo install` ou `cargo build`
+- SABER que no Linux, parsers são cacheados em `~/.cache/tree-sitter-language-pack/` (ou `$XDG_CACHE_HOME`)
+- SABER que no macOS, o dynamic loader procura em `/usr/local/lib/` e `DYLD_LIBRARY_PATH`
+### PROIBIDO
+- NUNCA depender de parsers tree-sitter estarem disponíveis offline a menos que você os tenha pré-baixado
+- NUNCA chamar `query` em arquivo com extensão não mapeada para uma linguagem (retornará erro)
+
+
+## Resumo de Changelog v0.1.5-v0.1.11
+### OBRIGATÓRIO — O Que Mudou Em Releases Intermediárias
+Esta seção consolida mudanças das releases v0.1.5 até v0.1.11 que a skill pulava anteriormente. Para detalhes completos, veja `CHANGELOG.md`.
+- **v0.1.5**: Adicionada flag global `--color auto|always|never`; corrigido bug de fall-through de locale em mensagens de erro
+- **v0.1.6**: Adicionado `--follow-symlinks` aos comandos de travessia; allowlist de licenças do `cargo deny` expandida
+- **v0.1.7**: Corrigido `RUSTSEC-2026-0009` via `time = "0.3.47+" DEPTH_LIMIT=32`; adicionado `--invert` ao `search`
+- **v0.1.8**: Adicionado `--sort` ao `search` e `count --by-size`; semântica de `--max-count` melhorada
+- **v0.1.9**: Adicionada flag global `--max-filesize`; `transform` reescrito com contexto de erro adequado
+- **v0.1.10**: Adicionado `--batch-size` ao `batch`; adicionado gate miri no CI (apenas nightly); baseline de 320 testes
+- **v0.1.11**: Adicionado esqueleto de `set`, `get`, `del` (incompleto — completado na v0.1.12); `--preserve-timestamps` ao `edit`; +29 testes
+- **v0.1.12**: Esta release. +96 testes, 5 novos códigos de erro, 6 novos subcomandos, sidecar WAL, tree-sitter, 7 ADRs, 7 schemas
+
+
+## Padrões Agent-First v0.1.12
+### Obrigatório — Padrões Específicos v0.1.12
+- USAR `set`/`get`/`del` em vez de parsear TOML/JSON manualmente no código do agente
+- USAR `query --kinds` primeiro para descobrir node kinds antes de rodar queries S-expression custosas
+- USAR `outline --kind` para extrair assinaturas de função sem parsear código fonte
+- USAR `case --dry-run` antes de qualquer renomeação em massa, depois capturar a contagem de arquivos do output do dry-run
+- USAR `--syntax-check` em `write` ao modificar arquivos fonte, para falhar rápido em erros de sintaxe
+- USAR `recover_orphan_journals` consultivamente — nunca fazer replay ou delete automático
+- USAR os novos exit codes 83, 88, 91, 92, 93 na lógica de retry: LockTimeout é retentável, SyntaxError não é, OrphanJournal requer decisão do usuário
+- USAR download offline do `tree-sitter-language-pack` como pre-flight em CI: `cargo install --locked atomwrite` baixará parsers no primeiro uso
+
+### Obrigatório — Padrão: Pre-Flight de Verificação de Sintaxe
+```bash
+# Validar fonte Rust antes do commit
+atomwrite --workspace . write --syntax-check src/lib.rs < new_lib.rs
+# Exit 0 em sucesso, exit 88 (SyntaxError) em falha
+```
+
+### Obrigatório — Padrão: Batch de Update de Config Com Locking
+```bash
+# Atualizar múltiplas chaves TOML atomicamente com locking otimista
+{
+  echo '{"op":"set","target":"config.toml","key_path":"database.pool.max","value":"20"}'
+  echo '{"op":"set","target":"config.toml","key_path":"features.experimental","value":"true"}'
+} | atomwrite --workspace . batch --transaction --dry-run
+```
+
+### Obrigatório — Padrão: Busca AST-Aware
+```bash
+# Encontrar todas as funções nomeadas "main" na base de código
+atomwrite --workspace . query -Q '(function_item name: (identifier) @name (#eq? @name "main"))' src/
+```
+
+### Obrigatório — Padrão: Revisão de Código Baseada em Outline
+```bash
+# Obter um mapa rápido de todos os itens top-level em um arquivo
+atomwrite --workspace . outline src/lib.rs | jaq '.items[] | "\(.kind): \(.name)"'
+```
+

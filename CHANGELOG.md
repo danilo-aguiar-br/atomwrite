@@ -8,7 +8,50 @@
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
-## [Unreleased]
+## [0.1.12] - 2026-06-07
+
+#### Atomic write pipeline (G55, G39)
+- **Hardlink preservation (G55, CRITICAL)** — `atomwrite edit/write/replace/copy` now auto-detects when the target has `nlink > 1` (Unix) or is a symlink, and switches to in-place `ftruncate(0) + write_all + fsync_data` instead of `rename(2)`. Both the file and any hardlinks point to the same inode after the write, so BorgBackup / restic / Nix store / git-annex stay consistent. NDJSON gains `write_strategy: "rename" | "inplace" | "copyback"` and `hardlink_nlink` fields.
+- **xattr preservation (G39)** — macOS `com.apple.quarantine` (Gatekeeper), Linux `security.selinux` (SELinux), `security.capability` (POSIX caps), and arbitrary `user.*` attributes are now saved before the write and restored after. Best-effort (FAT32 / tmpfs / overlayfs return `EOPNOTSUPP` and we log a warning, not an error). New module `src/xattr_restore.rs`. NDJSON gains `xattr_preserved` and `xattr_count`.
+
+#### Detection (G41, G56, G90)
+- **UTF-16LE-aware binary detection (G41)** — `is_binary` is now backed by the `content_inspector` crate (0.2.x, 11M+ downloads). UTF-16LE / UTF-16BE files without BOM (Windows `.reg` exports, Excel CSV) are no longer misclassified as binary. New `ContentType` enum with `Utf8 | Utf16Le | Utf16Be | Binary` variants.
+- **FIFO skip in `search` (G56)** — `atomwrite search` no longer hangs on `/tmp/*.fifo` (CI, Docker). New `--include-fifo` opt-in restores the legacy behavior. Walker's `filter_entry` rejects FIFO files by default.
+- **EXDEV copy-fallback (G90)** — `rename(2)` across filesystems (Docker overlay2 + named volumes, NFS) now falls back to `read tempfile → copy stream → fsync target → delete tempfile` automatically. New `--strict-atomic` flag aborts with exit 91 instead of fallback.
+
+#### Locking (G54)
+- **Advisory file locking (G54)** — new global `--lock` flag (with `--lock-timeout <ms>`, default 5000) takes an exclusive `flock(2)` on a `.<target>.atomwrite.lock` sidecar before the atomic write. Two atomwrite processes editing the same file now serialize instead of silently losing the first write. Implemented via `nix::fcntl::flock` with `LockExclusiveNonblock` polling. New exit code 83 (`LOCK_TIMEOUT`).
+
+#### Performance and limits (G64, G68, G77)
+- **Reflink on backup/copy (G64)** — `atomwrite backup` and `atomwrite copy` now use `reflink_copy::reflink_or_copy` for O(1) copy-on-write on APFS / btrfs / XFS. Falls back to `fs::copy` on unsupported filesystems. New `--no-reflink` opt-out.
+- **`search --max-filesize` and `--max-columns` (G68)** — `search` now skips files larger than 10 MiB by default (overridable via `--max-filesize N`), and truncates matches longer than 500 columns (overridable via `--max-columns N`). Eliminates `node_modules/.cache`, `target/`, minified `bundle.js` from blowing up LLM context windows.
+- **`batch --batch-size` (G77)** — explicit hint for NDJSON streaming. Default 100. (atomwrite was already streaming line-by-line; this flag documents the behavior.)
+
+#### Refactoring (G116, G44)
+- **Fuzzy match strategy 9: context-aware (G116)** — `edit --old/--new` now uses `strsim::normalized_levenshtein` (threshold 0.80) to find a sliding window of the target pattern in the content. Catches edits where leading AND trailing context are also wrong (e.g. when an LLM adds comments near the match). Only active in `--fuzzy auto` or `aggressive`.
+- **Multi-rule YAML for `transform` (G44)** — new `--rules PATH` and `--inline-rules "YAML"` flags let you apply multiple AST refactoring rules in a single atomwrite call. YAML format: `[{language, pattern, rewrite, id?}]`. Emits `rule_begin` and `rule_error` events so consumers can correlate matches with the rule that produced them.
+
+#### v14 Tier 3: structured config editors
+- **`set <path> <key-path> <value>`** — sets a value at a dotted path in a TOML or JSON file, preserving comments and key order in TOML (via `toml_edit`) and rewriting JSON canonically. NDJSON: `{type: "set", key_path, old_value, new_value, format, comments_preserved}`.
+- **`get <path> <key-path>`** — reads a value at a dotted path. NDJSON: `{type: "get", key_path, value, found, format}`.
+- **`del <path> <key-path>`** — removes a key. Preserves formatting. `--force-missing` flag treats missing keys as a no-op success.
+- **`case <paths...> --subvert OLD NEW --to <style>`** — renames identifiers across multiple files. Supports `snake_case`, `camelCase`, `PascalCase`, `kebab-case`, and `SCREAMING_SNAKE_CASE` via the `heck` crate. NDJSON: `{type: "case", before, after, from_style, to_style}`.
+
+#### v14 Tier 3 (continued): tree-sitter AST via `tree-sitter-language-pack`
+- **`query <path> [--kinds|--query <KIND>|-Q <PATTERN>|--tree] [--positions]`** — walks a tree-sitter parse of the file and emits AST nodes as NDJSON (`query_match` lines + final `query_summary`). `--kinds` aggregates all node kinds with counts; `--query <KIND>` emits nodes matching one kind name (overloaded short flag `-Q` to avoid clash with the global `--quiet/-q`); `--tree` dumps every named node in pre-order DFS. 305 languages supported via download-on-demand (parsers cache locally). Iterative DFS via `Vec<Node>` stack — no stack overflow on large files. Schema: `docs/schemas/query-output.schema.json`.
+- **`outline <path> [--kind <KIND>] [--positions]`** — extracts the high-level structure (functions, classes, structs, enums, traits, modules, top-level consts) as one `outline_item` NDJSON line per item + final `outline_summary`. Iterative DFS via `Vec<Node>`. Schema: `docs/schemas/outline-output.schema.json`.
+- **G72 REAL syntax check via tree-sitter** — `--syntax-check` flag on `atomwrite write` (and `AtomicWriteOptions::syntax_check` for library users) now invokes the actual tree-sitter parser via `tree-sitter-language-pack` instead of the previous bracket-balance heuristic. Walks the tree counting `is_error` and `is_missing` nodes; reports the first one (line, column, kind, message) as a `SYNTAX_ERROR_DETECTED` NDJSON error (exit 88). Languages covered: rust, python, javascript, typescript, tsx, go, c, cpp, java, ruby, php, bash, html, css, json, yaml, toml, markdown, lua, scala, swift, kotlin, sql. Files with no parser available fall back to the legacy heuristic. New module `src/syntax_check.rs` (16 unit tests).
+- **G114 WAL sidecar for crash recovery** — `atomic_write` now appends a `Started` entry to `.atomwrite.journal.<target>.atomwrite.journal.json` before the rename, and a `Committed` entry after success. On crash (SIGKILL, OOM, power loss), the orphan journal surfaces a structured `wal_recovery` report with `target`, `expected_new_checksum`, `op_id` (16-hex-char correlation ID), `started_at_unix`, and `pid`. New module `src/wal.rs` (8 unit tests). Recovery is consultative — `recover_orphan_journals(dir)` reads sidecars and reports orphans without touching the filesystem. Schema: `docs/schemas/wal-recovery.schema.json`.
+
+#### Error model
+- **5 new error variants**: `LockTimeout` (83), `SyntaxError` (88), `ExdevFallbackDisabled` (91), `CopyBackBlake3Failed` (92), `OrphanJournal` (93). All have bilingual (EN/PT-BR) messages with actionable suggestions via `ErrorContext`.
+
+#### i18n
+- 5 new `error.*` keys and 5 new `suggestion.*` keys in `locales/en.toml` and `locales/pt-BR.toml`. `AtomwriteError::suggestion` for the new variants is fully translated.
+
+#### Dependencies
+- Added 8 direct dependencies: `xattr = "1"`, `content_inspector = "0.2"`, `strsim = "0.11"`, `heck = "0.5"`, `serde_yaml = "0.9"`, `indexmap = { version = "2", features = ["serde"] }`, `toml_edit = "0.22"`, `reflink-copy = "0.1"`. Linux-only `rustix = "0.38"`. v0.1.12 final: `tree-sitter-language-pack = "1.8"` with `download` + `dynamic-loading` features (parsers download on first use; install footprint stays small because the 305 grammars are NOT bundled — only the loader library is).
+- Removed from declared deps: `fd-lock = "4"` (was incompatible with the project's `#![deny(unsafe_code)]` due to the `RwLockWriteGuard` self-referential pattern; advisory locking re-implemented via `nix::fcntl::flock` which is safe to call).
 
 ### Fixed (CI Failures - GAP 23 Windows path backslash in JSON manifests)
 - **11 `cli_batch` tests no longer fail on `windows-2025-vs2026`** — Tests were building the NDJSON manifest via `format!` + `Path::display()`. On Windows the platform-native path uses backslashes (`C:\Users\...\Temp\.tmpXXXX\file.txt`), and `format!` does not escape them. The result is a JSON string with invalid escape sequences (`\U`, `\r`, `\A`, `\L`, `\T`), which `serde_path_to_error::deserialize` rejects with `invalid escape`. `cmd_batch` then returns `bail!` and exits non-zero, failing the `assert!(output.status.success())` check. The test was passing on Linux/macOS only because their paths use forward slashes, which are valid in JSON strings without escaping.

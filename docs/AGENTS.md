@@ -4,6 +4,68 @@
 [Leia em Portugues](AGENTS.pt-BR.md)
 
 
+## What's New in v0.1.12
+
+This section summarizes v0.1.12 changes that are most relevant to AI agents using atomwrite as a tool. All 13 gaps from the PRD audit that were closed in v0.1.11+v0.1.12 are listed below.
+
+### Subcommands Added (v14 Tier 3)
+
+- `set <PATH> <KEY_PATH> <VALUE>` — write a value at a dotted path in a TOML or JSON file, preserving comments and key order via `toml_edit`. Use this instead of rewriting the entire config file (saves tokens, preserves formatting).
+- `get <PATH> <KEY_PATH>` — read a value at a dotted path. NDJSON: `{"type":"get","key_path","value","found","format"}`. Use this instead of reading the whole config file.
+- `del <PATH> <KEY_PATH>` — remove a key. `--force-missing` flag treats missing keys as a no-op success. Use this for idempotent cleanup scripts.
+- `case <PATHS...> --subvert OLD NEW --to <style>` — rename identifiers across multiple files via `heck`. Styles: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`. Use this for renaming 1-N identifiers across an entire module in a single call.
+- `query <PATH> [--kinds|--query <KIND>|-Q <KIND>|--tree] [--positions]` — walk a tree-sitter AST and emit nodes as NDJSON. 305 languages via `tree-sitter-language-pack`. Use this for semantic code analysis.
+- `outline <PATH> [--kind <KIND>] [--positions]` — extract high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON. Use this for code maps before refactoring.
+
+### Flags Added (Critical for Agents)
+
+- `--format raw` (alias `--raw`) on `read` — emit raw bytes for Unix composability with `sed`, `awk`, `diff`, `patch`. G81.
+- `--syntax-check` on `write` — invoke tree-sitter parser (24 languages) to validate code. Exit 88 on syntax error. G72.
+- `--max-filesize <BYTES>` on `search` — skip files larger than limit (default 10 MiB). G68.
+- `--max-columns <N>` on `search` — truncate matches with >N columns (default 500). G68.
+- `--literal` (alias `-F`) on `replace` — disable regex interpretation. G66.
+- `--rules <file.yaml>` and `--inline-rules <YAML>` on `transform` — multi-rule YAML for cascading refactors. G44.
+- `--batch-size <N>` on `batch` — control peak memory (default 100). G77.
+- `--no-reflink` on `backup`/`copy` — disable CoW for filesystems without support. G64.
+- `--include-fifo` on `write` — allow writing to named pipes. G56.
+- `--strict-atomic` on `write` — abort on EXDEV instead of copy fallback. G90.
+- `--lock` and `--lock-timeout <ms>` on `write`/`edit` — advisory file lock via `flock`. G54.
+
+### Error Codes Added (5 New)
+
+- 83 `LockTimeout` (G54 advisory file lock via flock exceeded)
+- 88 `SyntaxError` (G72 `--syntax-check` via tree-sitter parser)
+- 91 `ExdevFallbackDisabled` (G90 `--strict-atomic` opted out of Docker/NFS fallback)
+- 92 `CopyBackBlake3Failed` (G114 in-place write lost checksum integrity)
+- 93 `OrphanJournal` (G114 WAL sidecar left over from crash)
+- See REQUIRED -- Exit Codes below for the full table including all 25 codes.
+
+### Crash Recovery (G114)
+
+- `atomic_write` writes `.atomwrite.journal.<target>.atomwrite.journal.json` with `Started`/`Committed` entries.
+- `recover_orphan_journals(dir)` is consultive (no auto-replay, no auto-delete).
+- The agent receives `{"type":"wal_recovery","orphan_journals":[...]}` events and decides.
+
+### Gaps Closed (13 of Top 20 from PRD)
+
+G39 xattr, G41 binary detect (content_inspector), G54 advisory lock, G56 FIFO skip, G58 line endings, G64 reflink CoW, G66 --literal, G68 --max-filesize, G72 syntax check, G74 --threads, G76 --diff-algorithm, G77 --batch-size, G80 SIGPIPE, G81 --format raw, G90 EXDEV fallback, G116 fuzzy match, v14 Tier 3 (set/get/del/case/query/outline).
+
+### Dependencies Added
+
+- `tree-sitter-language-pack = "1.8"` (305 languages, download + dynamic-loading, ~5-10MB footprint)
+- `toml_edit` (preserves TOML formatting)
+- `heck = "0.5"` (case conversion)
+- `reflink-copy = "0.1"` (CoW backup)
+- `content_inspector = "0.2"` (UTF-16 detection)
+- `xattr = "1"` (extended attributes)
+
+### Test Coverage
+
+- **445 tests passing** (was 320 baseline, +125 new in v0.1.11+v0.1.12)
+- 7 new ADRs in `docs/decisions/` (0019-0025)
+- 7 new JSON schemas in `docs/schemas/` (set, get, del, case, query, outline, wal-recovery)
+- See [docs/decisions/README.md](README.md) for architectural decisions
+
 ## Why atomwrite
 - Your agent makes dozens of tool calls to read, write, search and replace files
 - Each call costs tokens, latency and context window space
@@ -50,15 +112,16 @@
 cargo install atomwrite
 echo "hello" | atomwrite write src/hello.txt
 atomwrite read src/hello.txt
+atomwrite read --format raw src/hello.txt | wc -l
 atomwrite search 'hello' src/
 atomwrite replace 'hello' 'world' src/
 atomwrite calc "2 hours + 30 minutes to seconds"
 ```
 
 
-## 22 Subcommands
-- `read` -- read files with metadata, checksum, optional content
-- `write` -- create or overwrite files atomically via stdin
+## 28 Subcommands
+- `read` -- read files with metadata, checksum, optional content; `--format raw` (alias `--raw`) emits raw bytes for Unix composability (G81); `--grep <REGEX>` filters returned lines
+- `write` -- create or overwrite files atomically via stdin; `--syntax-check` validates with tree-sitter after write (G72, exit 88)
 - `edit` -- surgically edit by line number, text marker or exact match; `--fuzzy auto|off|aggressive` for fuzzy matching; `--multi` for NDJSON multi-edit
 - `search` -- search file contents in parallel (ripgrep engine); supports `--context N`, `--max-count N`, `--invert`, `--sort path`, `--fixed`, `--word`, `--case-insensitive`, `--include`, `--exclude`
 - `replace` -- replace text across files with atomic writes
@@ -79,6 +142,12 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `apply` -- apply patches from stdin with auto-format detection (unified diff, SEARCH/REPLACE blocks, markdown-fenced, full file); `--format` to force format, `--backup` for safety, `--dry-run` for preview
 - `batch` -- execute multiple operations from NDJSON manifest (write, replace, delete, edit, hash, move, copy); supports `--transaction` for all-or-nothing
 - `completions` -- generate shell completions; use `--install` to install to XDG data directory
+- `set` -- (v0.1.12, v14 Tier 3) write a value at a dotted path in a TOML or JSON file via `toml_edit`; auto-coerces int/bool/float/string
+- `get` -- (v0.1.12, v14 Tier 3) read a value at a dotted path; NDJSON: `{"type":"get","key_path","value","found","format"}`
+- `del` -- (v0.1.12, v14 Tier 3) remove a key; `--force-missing` flag treats missing keys as a no-op success
+- `case` -- (v0.1.12, v14 Tier 3) rename identifiers across multiple files via `heck`; styles: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`
+- `query` -- (v0.1.12, v14 Tier 3, G72) walk a tree-sitter AST and emit nodes as NDJSON; 305 languages via `tree-sitter-language-pack`; modes: `--kinds`, `--query <KIND>`, `-Q <KIND>`, `--tree`, `--positions`
+- `outline` -- (v0.1.12, v14 Tier 3) extract high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON
 
 
 ## REQUIRED -- Output Contract
@@ -181,8 +250,13 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - 78: config invalid
 - 81: checksum verification failed (hash --verify mismatch)
 - 82: state drift (checksum mismatch on write)
+- 83: lock timeout (G54 advisory file lock via flock, `--lock-timeout` exceeded)
 - 85: FIFO detected (named pipe cannot be atomically written)
 - 86: device file detected (block or character device)
+- 88: syntax error detected (G72 `--syntax-check` via tree-sitter parser)
+- 91: EXDEV fallback disabled (`--strict-atomic` opted out of G90 Docker/NFS fallback)
+- 92: copy-back BLAKE3 failed (G114 in-place write lost checksum integrity)
+- 93: orphan journal recovered (G114 WAL sidecar left over from crash)
 - 126: workspace jail violated
 - 127: symlink blocked
 - 128: file immutable
@@ -198,7 +272,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `error_class` values: `permanent`, `transient`, `conflict`, `precondition_failed`
 - `retryable` is true for `transient` and `conflict` classes
 - `workspace` field appears only on `WORKSPACE_JAIL` errors and reports the resolved workspace root
-- All 20 error variants carry actionable `suggestion` text (added in v0.1.4, GAP 13)
+- All 25 error variants carry actionable `suggestion` text (added in v0.1.4, GAP 13)
 - `WorkspaceJail` suggestion is **context-aware**: when `--workspace` or `ATOMWRITE_WORKSPACE` is already set, the suggestion says "use a path inside the workspace (<root>)" rather than re-prompting the flag
 - The `BinaryFile` suggestion recommends `read --stat` for metadata-only reads (the previous phantom `--force-text` reference is removed)
 - The `FileImmutable` suggestion mentions `chattr -i` (Unix) and `fsutil` (Windows)

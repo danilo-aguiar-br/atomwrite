@@ -4,6 +4,78 @@
 [Leia em Portugues](TESTING.pt-BR.md)
 
 
+## What's New in v0.1.12
+
+This section summarizes the test-relevant changes in v0.1.12. The release added 96 new tests (was 320 baseline) for a total of **445 tests in 43 test suites**.
+
+### New Test Files (10 Added in v0.1.11+v0.1.12)
+
+- `tests/cli_v012_regressions.rs` -- 11 tests for v0.1.2 through v0.1.4 regressions
+- `tests/cli_v012_audit_regressions.rs` -- 27 tests for the v0.1.12 G72/G114 audit
+- `tests/cli_v012_batch4_regressions.rs` -- 23 tests for the v0.1.12 final batch
+- `tests/cli_v012_syntax_check.rs` -- 5 tests for G72 tree-sitter validation
+- `tests/cli_v012_wal.rs` -- 8 tests for G114 WAL sidecar
+- `tests/cli_v012_xattr_reflink.rs` -- 3 tests for G39 xattr + G64 reflink
+- `tests/cli_set.rs` -- 6 tests for v14 Tier 3 set subcommand
+- `tests/cli_get_del.rs` -- 5 tests for v14 Tier 3 get/del subcommands
+- `tests/cli_query.rs` -- 5 tests for v14 Tier 3 query subcommand
+- `tests/cli_outline.rs` -- 5 tests for v14 Tier 3 outline subcommand
+- `tests/cli_case.rs` -- 3 tests for v14 Tier 3 case subcommand
+
+### New Tests in Existing Files
+
+- 12 tests in `src/binary_detect.rs::tests` (G41 content_inspector)
+- 16 tests in `src/syntax_check.rs::tests` (G72 tree-sitter)
+- 8 tests in `src/wal.rs::tests` (G114 WAL)
+- 3 tests in `src/xattr_restore.rs::tests` (G39 xattr)
+- 3 tests in `src/lock.rs::tests` (G54 advisory lock)
+- 3 tests in `src/atomic.rs::tests` (WriteStrategy: rename/inplace/copyback)
+
+### Test Suite Organization
+
+- Total: 43 test suites (was 34 in v0.1.10)
+- Unit tests in `src/`
+- Integration tests in `tests/cli_*.rs`
+- Property-based tests in `tests/proptest_*.rs`
+- Snapshot tests via `insta`
+- Signal tests (SIGINT, SIGTERM, SIGPIPE)
+- Cross-compile gate (Windows GNU/MSVC targets)
+
+### How to Run
+
+```bash
+# Run all 445 tests
+cargo test
+
+# Run only the v0.1.12 regression suite
+cargo test --test cli_v012_regressions
+cargo test --test cli_v012_audit_regressions
+cargo test --test cli_v012_batch4_regressions
+
+# Run with output visible for debugging
+cargo test --test cli_v012_syntax_check -- --nocapture
+
+# Run the cross-compile gate
+cargo test --test cross_compile_check -- --ignored
+```
+
+### Coverage
+
+- 20.19% line coverage via `cargo tarpaulin` (935/4631 lines covered)
+- Lower than ideal because tarpaulin only counts unit tests, not CLI integration tests
+- The integration test suite is the primary coverage metric (445 tests across 43 suites)
+
+### Dependencies Added
+
+- `tree-sitter-language-pack = "1.8"` -- 305 languages for query/outline/syntax-check
+- All test dependencies are already in the dev-dependencies section
+
+### ADRs and Schemas
+
+- 7 new ADRs in `docs/decisions/` (0019-0025) explain the architectural decisions behind the v0.1.12 features
+- 7 new JSON schemas in `docs/schemas/` (set, get, del, case, query, outline, wal-recovery)
+- See [docs/decisions/README.md](README.md) for the full list of ADRs
+
 ## Why Categorized Tests
 - Each test category validates a different layer of the system
 - Unit tests verify pure logic in isolation
@@ -14,12 +86,28 @@
 
 
 ## Current Stats
-- 65+ Rust files across `src/` and `tests/`
-- 300+ tests total across 34 test suites (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile)
-- 10 regression tests in `tests/cli_v012_regressions.rs` (added in v0.1.2, expanded in v0.1.4 with `gap13_jail_suggestion_when_workspace_supplied_says_inside` and updated `jail_suggestion_mentions_workspace_flag`)
-- 2 mtime regression tests in `src/atomic.rs::tests` (added in v0.1.3)
-- 7 GAP 13 error-suggestion tests in `src/error.rs::tests` (added in v0.1.4)
-- 3 cross-compile gate tests in `tests/cross_compile_check.rs` (added in v0.1.4): `cross_compile_windows_gnu_x64_succeeds`, `cross_compile_windows_gnu_i686_succeeds`, `cross_compile_windows_msvc_succeeds`
+- 70+ Rust files across `src/` and `tests/`
+- **445 tests total across 43 test suites** (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency)
+- **96 new tests added in v0.1.11+v0.1.12**:
+  - 11 tests in `tests/cli_v012_regressions.rs` (GAP 13, GAP 14, GAP 18 fixes)
+  - 27 tests in `tests/cli_v012_audit_regressions.rs` (v0.1.12 G72/G114 audit)
+  - 23 tests in `tests/cli_v012_batch4_regressions.rs` (v0.1.12 final batch)
+  - 5 tests in `tests/cli_v012_syntax_check.rs` (G72 tree-sitter)
+  - 8 tests in `tests/cli_v012_wal.rs` (G114 WAL sidecar)
+  - 3 tests in `tests/cli_v012_xattr_reflink.rs` (G39 xattr + G64 reflink)
+  - 6 tests in `tests/cli_set.rs` (v14 Tier 3)
+  - 5 tests in `tests/cli_get_del.rs` (v14 Tier 3)
+  - 5 tests in `tests/cli_query.rs` (v14 Tier 3)
+  - 5 tests in `tests/cli_outline.rs` (v14 Tier 3)
+  - 3 tests in `tests/cli_case.rs` (v14 Tier 3)
+  - 3 mtime regression tests in `src/atomic.rs::tests`
+  - 7 GAP 13 error-suggestion tests in `src/error.rs::tests`
+  - 3 cross-compile gate tests in `tests/cross_compile_check.rs`
+  - 16 tests in `src/syntax_check.rs::tests` (G72 tree-sitter)
+  - 8 tests in `src/wal.rs::tests` (G114 WAL)
+- 12 tests in `src/binary_detect.rs::tests` (G41 content_inspector)
+- 3 tests in `src/xattr_restore.rs::tests` (G39)
+- 3 tests in `src/lock.rs::tests` (G54 advisory lock)
 - 9 snapshot files in `tests/snapshots/`
 - 2 proptest regression files
 - 2 fuzz targets in `fuzz/fuzz_targets/`

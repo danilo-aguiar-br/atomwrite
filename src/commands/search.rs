@@ -54,6 +54,9 @@ pub fn cmd_search(
     let context_lines = args.context;
     let invert = args.invert;
     let max_count = args.max_count;
+    let include_fifo = args.include_fifo;
+    let max_filesize = args.max_filesize;
+    let max_columns = args.max_columns;
 
     let shutdown_flag = shutdown.flag();
     let walker_thread = std::thread::spawn(move || {
@@ -87,6 +90,41 @@ pub fn cmd_search(
                     return ignore::WalkState::Continue;
                 }
 
+                // G56: skip FIFO/named pipe files unless --include-fifo is set.
+                // `open()` on a FIFO blocks indefinitely until the other end
+                // connects, which can cause atomwrite to hang in environments
+                // that have FIFOs in /tmp or /var (CI, Docker, system dirs).
+                if !include_fifo {
+                    if let Some(ft) = entry.file_type() {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::FileTypeExt;
+                            if ft.is_fifo() {
+                                tracing::debug!(
+                                    path = %entry.path().display(),
+                                    "skipping FIFO (G56); pass --include-fifo to opt in"
+                                );
+                                return ignore::WalkState::Continue;
+                            }
+                        }
+                        #[cfg(not(unix))]
+                        let _ = ft; // no-op on Windows
+                    }
+                }
+
+                // G68: skip files larger than --max-filesize.
+                if let Ok(meta) = entry.metadata() {
+                    if meta.len() > max_filesize {
+                        tracing::debug!(
+                            path = %entry.path().display(),
+                            size = meta.len(),
+                            max = max_filesize,
+                            "skipping oversized file (G68)"
+                        );
+                        return ignore::WalkState::Continue;
+                    }
+                }
+
                 fv.fetch_add(1, Ordering::Relaxed);
 
                 let path: Arc<std::path::Path> = Arc::from(entry.path());
@@ -103,6 +141,7 @@ pub fn cmd_search(
                     tx: &tx,
                     file_matches: &mut file_matches,
                     file_lines: &mut file_lines,
+                    max_columns,
                 };
 
                 let sink_result = searcher.search_path(&matcher, &*path, &mut sink);
@@ -328,6 +367,7 @@ struct SearchSink<'a> {
     tx: &'a crossbeam_channel::Sender<SearchEvent>,
     file_matches: &'a mut u64,
     file_lines: &'a mut u64,
+    max_columns: usize,
 }
 
 impl<'a> Sink for SearchSink<'a> {
@@ -341,8 +381,20 @@ impl<'a> Sink for SearchSink<'a> {
         *self.file_lines += 1;
         *self.file_matches += 1;
 
-        let line_text = std::str::from_utf8(mat.bytes()).unwrap_or("");
-        let subs = extract_submatches(self.matcher, line_text);
+        let raw_line = std::str::from_utf8(mat.bytes()).unwrap_or("");
+        // G68: truncate lines longer than --max-columns to avoid blowing up
+        // LLM context windows with minified bundle.js / styles.min.css.
+        let line_text = if raw_line.len() > self.max_columns {
+            // Find a safe UTF-8 boundary near max_columns.
+            let mut cut = self.max_columns;
+            while cut > 0 && !raw_line.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            format!("{}...[truncated]", &raw_line[..cut])
+        } else {
+            raw_line.to_owned()
+        };
+        let subs = extract_submatches(self.matcher, &line_text);
 
         // Receiver may have dropped during shutdown — send failure is expected
         let _ = self.tx.send(SearchEvent::Match {
@@ -361,7 +413,17 @@ impl<'a> Sink for SearchSink<'a> {
         _searcher: &grep_searcher::Searcher,
         ctx: &SinkContext<'_>,
     ) -> Result<bool, Self::Error> {
-        let line_text = std::str::from_utf8(ctx.bytes()).unwrap_or("");
+        let raw_line = std::str::from_utf8(ctx.bytes()).unwrap_or("");
+        // G68: also truncate context lines.
+        let line_text = if raw_line.len() > self.max_columns {
+            let mut cut = self.max_columns;
+            while cut > 0 && !raw_line.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            format!("{}...[truncated]", &raw_line[..cut])
+        } else {
+            raw_line.to_owned()
+        };
 
         let _ = self.tx.send(SearchEvent::Context {
             path: Arc::clone(&self.path),

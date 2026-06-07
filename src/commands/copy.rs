@@ -134,9 +134,12 @@ fn copy_file_atomic(
 
     let opts = AtomicWriteOptions {
         backup: args.backup,
+        syntax_check: false,
         retention: 5,
         preserve_timestamps: args.preserve,
         backup_output_dir: None,
+        strategy: None,
+        strict_atomic: false,
     };
 
     let result = atomic_write(target, &content, &opts, workspace)?;

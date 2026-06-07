@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "atomwrite outline subcommand output",
+  "description": "Streamed NDJSON output of `atomwrite outline` — emits one `outline_item` per structural node (function/struct/enum/etc.) followed by a final `outline_summary` line.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["type", "path", "language", "kind", "name", "signature", "start_line", "end_line"],
+      "properties": {
+        "type": { "const": "outline_item" },
+        "path": { "type": "string" },
+        "language": { "type": "string" },
+        "kind": { "type": "string", "description": "Tree-sitter node kind (function_item, struct_item, class_definition, ...)." },
+        "name": { "type": "string", "description": "Identifier name (best-effort from name field or first named child)." },
+        "signature": { "type": "string", "description": "First line of the node, trimmed (e.g. `fn add(a: i32, b: i32) -> i32`)." },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "path", "language", "items", "elapsed_ms"],
+      "properties": {
+        "type": { "const": "outline_summary" },
+        "path": { "type": "string" },
+        "language": { "type": "string" },
+        "items": { "type": "integer", "minimum": 0, "description": "Number of structural items emitted." },
+        "elapsed_ms": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

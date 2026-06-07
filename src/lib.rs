@@ -34,6 +34,8 @@ pub mod file_io;
 pub mod lang_utils;
 /// Line ending detection and normalization.
 pub mod line_endings;
+/// Advisory file locking for concurrent edit protection (G54).
+pub mod lock;
 /// NDJSON output type definitions.
 pub mod ndjson_types;
 /// NDJSON output writer utilities.
@@ -44,6 +46,12 @@ pub mod path_safety;
 pub mod platform;
 /// Graceful shutdown signal handling.
 pub mod signal;
+/// G72 — Real syntax check via `tree-sitter-language-pack` (v0.1.12).
+pub mod syntax_check;
+/// G114 — Write-Ahead Log (WAL) sidecar for crash recovery (v0.1.12).
+pub mod wal;
+/// Extended attribute (xattr) save and restore for atomic writes (G39).
+pub mod xattr_restore;
 
 use std::io::{Read, Write};
 
@@ -76,6 +84,12 @@ fn emit_json_schema(command: &Commands, mut out: impl Write) -> Result<()> {
         Commands::Backup(_) => schemars::schema_for!(ndjson_types::BackupResult),
         Commands::Rollback(_) => schemars::schema_for!(ndjson_types::RollbackResult),
         Commands::Apply(_) => schemars::schema_for!(ndjson_types::ApplyResult),
+        Commands::Set(_) => schemars::schema_for!(ndjson_types::WriteOutput),
+        Commands::Get(_) => schemars::schema_for!(ndjson_types::WriteOutput),
+        Commands::Del(_) => schemars::schema_for!(ndjson_types::WriteOutput),
+        Commands::Case(_) => schemars::schema_for!(ndjson_types::WriteOutput),
+        Commands::Query(_) => schemars::schema_for!(ndjson_types::WriteOutput),
+        Commands::Outline(_) => schemars::schema_for!(ndjson_types::WriteOutput),
         Commands::Completions(_) => schemars::schema_for!(ndjson_types::CalcOutput),
     };
     serde_json::to_writer_pretty(&mut out, &schema)?;
@@ -114,7 +128,13 @@ pub fn emit_schema_by_name(name: &str, mut out: impl Write) -> Result<bool> {
         "backup" => schemars::schema_for!(ndjson_types::BackupResult),
         "rollback" => schemars::schema_for!(ndjson_types::RollbackResult),
         "apply" => schemars::schema_for!(ndjson_types::ApplyResult),
-        "completions" => schemars::schema_for!(ndjson_types::CalcOutput),
+        "set" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "get" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "del" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "case" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "query" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "outline" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "completions" => schemars::schema_for!(ndjson_types::WriteOutput),
         _ => return Ok(false),
     };
     serde_json::to_writer_pretty(&mut out, &schema)?;
@@ -132,13 +152,12 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
     if cli.global.json_schema {
         return emit_json_schema(&cli.command, stdout);
     }
+    if let Commands::Completions(args) = &cli.command {
+        return generate_completions(args, stdout);
+    }
 
     if cli.global.json {
         tracing::debug!("--json is a no-op; output is always NDJSON");
-    }
-
-    if let Commands::Completions(args) = &cli.command {
-        return generate_completions(args, stdout);
     }
 
     if let Some(threads) = cli.global.threads {
@@ -204,6 +223,12 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
             commands::rollback::cmd_rollback(args, &cli.global, &mut writer)
         }
         Commands::Apply(args) => commands::apply::cmd_apply(args, &cli.global, stdin, &mut writer),
+        Commands::Set(args) => commands::set::cmd_set(args, &cli.global, &mut writer),
+        Commands::Get(args) => commands::get::cmd_get(args, &cli.global, &mut writer),
+        Commands::Del(args) => commands::del::cmd_del(args, &cli.global, &mut writer),
+        Commands::Case(args) => commands::case::cmd_case(args, &cli.global, &mut writer),
+        Commands::Query(args) => commands::query::cmd_query(args, &cli.global, &mut writer),
+        Commands::Outline(args) => commands::outline::cmd_outline(args, &cli.global, &mut writer),
         Commands::Completions(_) => unreachable!("completions handled in prescan_json_schema"),
     };
 

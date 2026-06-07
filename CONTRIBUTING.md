@@ -21,7 +21,7 @@
 
 ## Development Setup
 ### Prerequisites
-- Rust 1.88 or later (edition 2024)
+- Rust 1.88 or later (edition 2024) — MSRV bumped in v0.1.7
 - Git
 
 ### Build
@@ -77,14 +77,37 @@ cargo fmt -- --check
 - Use `insta` for snapshot testing of NDJSON output
 - Use `proptest` for property-based testing where applicable
 - Target at least 80% coverage for new code
-- Run the full suite before submitting: `cargo test`
+- Run the full suite before submitting: `cargo test` (445 tests in v0.1.12)
 
 
 ## Documentation
 - Update the README when adding or changing commands
 - Update AGENTS.md when modifying the output contract or exit codes
+- Update CHANGELOG.md (English) and CHANGELOG.pt-BR.md (Portuguese) for any user-visible change
+- For non-trivial architecture decisions, add an ADR in `docs/decisions/` following the Michael Nygard format (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit). See `docs/decisions/README.md` for the index
+- For new NDJSON output envelopes, add a JSON Schema in `docs/schemas/` (versioned per release)
 - Add doc comments to all public functions and types
 - Keep code examples in docs tested and up to date
+
+
+## Architecture Decision Records (ADRs)
+- atomwrite uses ADRs in `docs/decisions/` to document non-trivial design choices
+- 7 ADRs were added in v0.1.12 (0019-0025), all following the Michael Nygard format
+- Each new architecture decision should add a new ADR file and update `docs/decisions/README.md`
+- ADRs are NOT updated once written — instead, supersede with a new ADR
+
+
+## Adding a New Subcommand
+- Add a module under `src/commands/your_subcommand.rs`
+- Register the subcommand in `src/commands/mod.rs`
+- Define the argument struct in `src/cli_args.rs` with `clap` derives
+- Add the dispatch arm in `src/lib.rs`
+- Add an entry to `Commands` enum in `src/cli.rs`
+- Add a corresponding JSON Schema in `docs/schemas/`
+- Add the subcommand to the README and llms.txt inventories
+- Write at least 3 integration tests in `tests/cli_your_subcommand.rs`
+- Update llms-full.txt to reference the new subcommand in the right category
+- v0.1.12 has 28 subcommands; the count must stay in sync across all docs
 
 
 ## Report Bugs
@@ -104,9 +127,10 @@ cargo fmt -- --check
 ## Release Process
 - Maintainers handle releases
 - Version follows Semantic Versioning 2.0.0
-- Changelog updated before each release
+- Changelog updated before each release (both EN and PT-BR)
 - Tags follow the format `vX.Y.Z`
 - Published to crates.io after CI passes
+- v0.1.12 was published on 2026-06-07 with commit 6af0d76
 
 
 ## Recognition
@@ -117,7 +141,7 @@ cargo fmt -- --check
 ## Quality Gates
 - Run `cargo fmt --check` before committing
 - Run `cargo clippy --all-targets -- -D warnings` for lint checks
-- Run `cargo test` for the full test suite
+- Run `cargo test` for the full test suite (445 tests in v0.1.12)
 - Run `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` for documentation checks
 - Run `cargo audit` for security advisories
 - Run `cargo deny check` for license and dependency policy (see `deny.toml`)
@@ -131,6 +155,11 @@ cargo fmt -- --check
 - The gate fails on any `E0433`, `E0308`, or `E0507` regression in `#[cfg(windows)]` blocks
 - Required for any change that touches `src/atomic.rs`, `src/platform.rs`, `src/signal.rs`, or other Windows-only code
 - The gate is a defense against the GAP 14 regression: `cargo install atomwrite` was broken on Windows 10/11 in v0.1.3 because three Windows-only compile errors were not caught by the Linux-only CI
+
+## v0.1.12 Specific Gates
+- If you add a new subcommand, update the subcommand count in ALL of: `README.md`, `README.pt-BR.md`, `llms.txt`, `llms.pt-BR.txt`, `llms-full.txt`, `docs/AGENTS.md`, `docs/AGENTS.pt-BR.md`, `docs/MIGRATION.md`, `docs/MIGRATION.pt-BR.md`, `CHANGELOG.md`, `CHANGELOG.pt-BR.md`, `skill/atomwrite-en/SKILL.md`, `skill/atomwrite-pt/SKILL.md`
+- If you add a new error variant, update the exit codes in: `README.md`, `README.pt-BR.md`, `llms-full.txt`, `docs/AGENTS.md`, `docs/AGENTS.pt-BR.md`, `skill/atomwrite-en/SKILL.md`, `skill/atomwrite-pt/SKILL.md`, `locales/en.toml`, `locales/pt-BR.toml`
+- The single source of truth for the subcommand count is the binary: `atomwrite --help | rg "^  [a-z]" | wc -l` (currently 29 in v0.1.12 = 28 user-facing + `help`)
 
 
 ## Questions

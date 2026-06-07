@@ -165,6 +165,9 @@ pub fn cmd_replace(
                     retention: 5,
                     preserve_timestamps,
                     backup_output_dir: None,
+                    strategy: None,
+                    strict_atomic: false,
+                    syntax_check: false,
                 };
 
                 match atomic_write(&path, replaced.as_bytes(), &opts, &ws) {

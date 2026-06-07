@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "atomwrite"
-version = "0.1.11"
+version = "0.1.12"
 edition = "2024"
 rust-version = "1.88"
 description = "Atomic file operations CLI for LLM agents — read, write, edit, search, replace with NDJSON output"
@@ -66,15 +66,39 @@ same-file = "1"
 unicode-normalization = "0.1"
 sys-locale = "0.3"
 rust-i18n = "4"
+# v0.1.12 — new dependencies for resolving the Top 12 gaps + v14 Tier 3
+reflink-copy = "0.1"   # G64: O(1) copy-on-write backup on APFS/btrfs/XFS
+content_inspector = "0.2"  # G41: accurate binary/text detection (UTF-16LE aware)
+strsim = "0.11"        # G116: fuzzy match cascade strategy 9 (context-aware)
+heck = "0.5"           # v14 Tier 3: identifier case conversion (case subcommand)
+serde_yaml = "0.9"     # G44: multi-rule YAML for transform subcommand
+indexmap = { version = "2", features = ["serde"] }  # v14 Tier 3: preserve JSON key order
+toml_edit = "0.22"     # v14 Tier 3: TOML editor preserving comments/formatting
+# v0.1.12 — tree-sitter-language-pack for G72 real syntax check + v14 query/outline.
+# Downloads parsers on first use (cache local); keeps install footprint small while
+# enabling AST validation across 305 languages. See src/syntax_check.rs and
+# src/commands/query.rs/outline.rs.
+tree-sitter-language-pack = { version = "1.8", default-features = false, features = ["download", "dynamic-loading"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["fs"] }
 libc = "0.2"
 signal-hook = "0.4"
+xattr = "1"            # G39: extended attribute preservation (macOS/Linux)
+# fd-lock 4 is not used directly: the project's #![deny(unsafe_code)] policy
+# is incompatible with fd-lock's RwLockWriteGuard self-referential pattern.
+# G54 advisory locking is implemented via nix::fcntl::flock (Unix) and a
+# no-op stub (Windows) in src/lock.rs.
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Console"] }
 ctrlc = "3.5"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "0.38", features = ["fs"] }  # G114: ftruncate for in-place inode-preserving writes
+nix = { version = "0.31", features = ["fs"] }
+libc = "0.2"
+signal-hook = "0.4"
 
 [dev-dependencies]
 assert_cmd = "2"

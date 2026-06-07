@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "atomwrite query subcommand output",
+  "description": "Streamed NDJSON output of `atomwrite query` — emits AST nodes from a tree-sitter parse of a source file. Each emitted line is either a `query_match` (one matching node), a `query_kind` (one node kind with its count, in --kinds mode), or a final `query_summary` line.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["type", "path", "language", "kind", "count"],
+      "properties": {
+        "type": { "const": "query_kind" },
+        "path": { "type": "string" },
+        "language": { "type": "string" },
+        "kind": { "type": "string", "description": "Tree-sitter node kind name." },
+        "count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "path", "language", "kind", "is_named", "text"],
+      "properties": {
+        "type": { "const": "query_match" },
+        "path": { "type": "string" },
+        "language": { "type": "string" },
+        "kind": { "type": "string" },
+        "is_named": { "type": "boolean" },
+        "text": { "type": "string", "description": "Matched source text (trimmed at 240 chars)." },
+        "start_byte": { "type": "integer" },
+        "end_byte": { "type": "integer" },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "start_column": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "end_column": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "path", "language", "matches", "total_nodes", "elapsed_ms"],
+      "properties": {
+        "type": { "const": "query_summary" },
+        "path": { "type": "string" },
+        "language": { "type": "string" },
+        "matches": { "type": "integer", "minimum": 0, "description": "Number of nodes matching the filter, or distinct kinds in --kinds mode." },
+        "total_nodes": { "type": "integer", "minimum": 0 },
+        "elapsed_ms": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

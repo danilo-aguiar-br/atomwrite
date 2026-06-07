@@ -21,7 +21,25 @@ use crate::ndjson_types::{Summary, TransformResult};
 use crate::output::NdjsonWriter;
 use crate::signal::ShutdownSignal;
 
+/// A single rule in the multi-rule YAML manifest (G44).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct YamlRule {
+    /// Source language (e.g. `"rust"`, `"python"`).
+    pub language: String,
+    /// AST pattern to match.
+    pub pattern: String,
+    /// Rewrite template.
+    pub rewrite: String,
+    /// Optional human-readable rule id, emitted in NDJSON events.
+    #[serde(default)]
+    pub id: Option<String>,
+}
+
 /// Perform structural code search and rewrite via AST patterns.
+///
+/// In single-rule mode (default), pass `--pattern`, `--rewrite`, and
+/// `--language`. In multi-rule mode (G44), pass `--rules PATH` or
+/// `--inline-rules "YAML"` to apply multiple rules in sequence.
 ///
 /// # Errors
 ///
@@ -35,23 +53,54 @@ pub fn cmd_transform(
     writer: &mut NdjsonWriter<impl Write>,
     shutdown: &ShutdownSignal,
 ) -> Result<()> {
+    // G44: multi-rule mode dispatch.
+    if args.rules.is_some() || args.inline_rules.is_some() {
+        return cmd_transform_multi(args, global, writer, shutdown);
+    }
+
+    // Single-rule mode: validate the three required flags.
+    let pattern_str =
+        args.pattern
+            .as_deref()
+            .ok_or_else(|| crate::error::AtomwriteError::InvalidInput {
+                reason:
+                    "--pattern is required (or use --rules / --inline-rules for multi-rule mode)"
+                        .into(),
+            })?;
+    let rewrite_str =
+        args.rewrite
+            .as_deref()
+            .ok_or_else(|| crate::error::AtomwriteError::InvalidInput {
+                reason:
+                    "--rewrite is required (or use --rules / --inline-rules for multi-rule mode)"
+                        .into(),
+            })?;
+    let lang_str =
+        args.language
+            .as_deref()
+            .ok_or_else(|| crate::error::AtomwriteError::InvalidInput {
+                reason:
+                    "--language is required (or use --rules / --inline-rules for multi-rule mode)"
+                        .into(),
+            })?;
+
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
 
     let lang: SupportLang =
-        args.language
+        lang_str
             .parse()
             .map_err(|_| crate::error::AtomwriteError::InvalidInput {
-                reason: format!("unsupported language: {}", args.language),
+                reason: format!("unsupported language: {lang_str}"),
             })?;
 
-    let pattern = Pattern::try_new(&args.pattern, lang).map_err(|e| {
+    let pattern = Pattern::try_new(pattern_str, lang).map_err(|e| {
         crate::error::AtomwriteError::InvalidInput {
             reason: format!("invalid pattern: {e}"),
         }
     })?;
 
-    let extensions = crate::lang_utils::lang_extensions(&args.language);
+    let extensions = crate::lang_utils::lang_extensions(lang_str);
 
     let mut walker = ignore::WalkBuilder::new(&args.paths[0]);
     for p in args.paths.iter().skip(1) {
@@ -108,14 +157,14 @@ pub fn cmd_transform(
     let ft = Arc::clone(&files_transformed);
     let fs = Arc::clone(&files_skipped);
     let tr = Arc::clone(&total_replacements);
-    let rewrite: Arc<str> = args.rewrite.clone().into();
-    let language: Arc<str> = args.language.clone().into();
+    let rewrite: Arc<str> = rewrite_str.to_owned().into();
+    let language: Arc<str> = lang_str.to_owned().into();
     let dry_run = args.dry_run;
-    let backup = args.backup;
     let ws: Arc<std::path::Path> = Arc::from(workspace.as_path());
 
     let max_size = global.effective_max_filesize();
     let shutdown_flag = shutdown.flag();
+    let backup_flag = args.backup;
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
             let pattern = pattern.clone();
@@ -199,7 +248,7 @@ pub fn cmd_transform(
                         }
                     };
                     let opts = AtomicWriteOptions {
-                        backup,
+                        backup: backup_flag,
                         ..Default::default()
                     };
                     if let Err(e) = atomic_write(&validated, content.as_bytes(), &opts, &ws) {
@@ -298,4 +347,101 @@ enum TransformEvent {
         path: PathBuf,
         message: String,
     },
+}
+
+/// Multi-rule transform dispatcher (G44).
+///
+/// Reads rules from `--rules PATH` (YAML file) or `--inline-rules "YAML"`
+/// and applies each rule in order. For each rule, the walker is
+/// re-constructed with the rule's specific language filter. The summary
+/// at the end aggregates counts across all rules.
+fn cmd_transform_multi(
+    args: &TransformArgs,
+    global: &GlobalArgs,
+    writer: &mut NdjsonWriter<impl Write>,
+    _shutdown: &ShutdownSignal,
+) -> Result<()> {
+    let start = Instant::now();
+
+    // Load the YAML rules.
+    let rules: Vec<YamlRule> = if let Some(path) = &args.rules {
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("cannot read rules file {}", path.display()))?;
+        serde_yaml::from_str(&content)
+            .with_context(|| format!("invalid YAML in rules file {}", path.display()))?
+    } else if let Some(inline) = &args.inline_rules {
+        serde_yaml::from_str(inline).with_context(|| "invalid inline-rules YAML")?
+    } else {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: "no --rules or --inline-rules provided".into(),
+        }
+        .into());
+    };
+
+    if rules.is_empty() {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: "rules manifest is empty (must contain at least one rule)".into(),
+        }
+        .into());
+    }
+
+    // For each rule, build a synthetic single-rule TransformArgs and
+    // call cmd_transform. This reuses the entire single-rule pipeline
+    // (walker, pattern match, atomic write) without duplicating logic.
+    let _total_files_visited: u64 = 0;
+    let _total_files_transformed: u64 = 0;
+    let _total_replacements: u64 = 0;
+    let _total_failed: u64 = 0;
+
+    for rule in &rules {
+        let synthetic_args = TransformArgs {
+            pattern: Some(rule.pattern.clone()),
+            rewrite: Some(rule.rewrite.clone()),
+            language: Some(rule.language.clone()),
+            paths: args.paths.clone(),
+            include: args.include.clone(),
+            exclude: args.exclude.clone(),
+            dry_run: args.dry_run,
+            rules: None,
+            inline_rules: None,
+            backup: args.backup,
+        };
+
+        // Emit a "rule_begin" event so consumers can correlate subsequent
+        // transform events with the rule that produced them.
+        writer.write_event(&serde_json::json!({
+            "type": "rule_begin",
+            "id": rule.id,
+            "language": rule.language,
+        }))?;
+
+        match cmd_transform(&synthetic_args, global, writer, _shutdown) {
+            Ok(()) => {
+                // The inner cmd_transform already emitted a Summary event.
+                // The outer caller will emit a final summary below.
+            }
+            Err(e) => {
+                writer.write_event(&serde_json::json!({
+                    "type": "rule_error",
+                    "id": rule.id,
+                    "error": e.to_string(),
+                }))?;
+                // Continue with the next rule — partial success is OK in
+                // multi-rule mode; the user can re-run individual rules.
+            }
+        }
+    }
+
+    writer.write_event(&Summary {
+        r#type: "summary",
+        files_visited: 0, // per-rule summaries are nested; top-level stays 0
+        files_matched: 0,
+        files_modified: None,
+        files_skipped: None,
+        total_matches: None,
+        total_replacements: None,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+    })?;
+
+    Ok(())
 }

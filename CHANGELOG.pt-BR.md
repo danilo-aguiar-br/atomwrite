@@ -18,6 +18,49 @@
   - Adicionado teste de regressão `batch_write_escapes_backslash_in_target_path` que constrói uma string de path com barra invertida forçada em qualquer plataforma, para que o bug seja capturado em toda execução de CI, não apenas no Windows.
 - **Total de testes: 303/303 PASSAM** (eram 302; +1 do novo teste de regressão).
 
+## [0.1.12] - 2026-06-07
+
+### Adicionado
+
+#### Editores estruturados de configuração (v14 Tier 3)
+- **Subcomandos `set` / `get` / `del` / `case`** — Editores estruturados TOML/JSON com envelopes NDJSON bilíngues. **Correção de bug**: navegação dotted path TOML em `get`/`del` tratava a chave dotted inteira como nome literal; adicionados helpers `get_toml_path` e `remove_toml_path` que descendem por segmentos `Table` manualmente. Navegação JSON (que já usa semântica de pointer) não foi alterada. Verificação end-to-end: `{"type":"get","path":"...","key_path":"package.version","value":"\"0.1.12\"","found":true,"format":"toml","elapsed_ms":0}` agora retorna o valor correto.
+- **`case` com 5 estilos heck** — snake_case, camelCase, PascalCase, kebab-case, SCREAMING_SNAKE_CASE via crate `heck`. Rename multi-arquivo via `--subvert OLD NEW --to <style>`.
+
+#### AST estruturado via `tree-sitter-language-pack`
+- **Subcomando `query`** — modos `--kinds`, `--query <KIND>`, `-Q <KIND>`, `--tree`. 305 linguagens suportadas. DFS iterativo via pilha `Vec<Node>` para evitar stack overflow em arquivos profundos.
+- **Subcomando `outline`** — extração estrutural de alto nível (funções, classes, structs, enums, traits, módulos). Filtro `--kind` (repetível) via nomes exatos tree-sitter.
+- **Verificação de sintaxe G72 REAL via tree-sitter** — Flag `--syntax-check` em `atomwrite write` invoca o parser tree-sitter real via crate `tree-sitter-language-pack` em vez da heurística de balanceamento de colchetes. Exit 88 com primeira linha/coluna de erro. 24 linguagens cobertas; extensões desconhecidas fazem fallback para heurística legada. Novo módulo `src/syntax_check.rs` (16 testes unitários).
+- **Sidecar G114 WAL para recuperação de crash** — `atomic_write` escreve `.atomwrite.journal.<target>.atomwrite.journal.json` com entrada `Started` (op_id, expected_new_checksum, pid, started_at_unix) e entrada `Committed` em sucesso. `recover_orphan_journals(dir)` é consultivo — lê sidecars e reporta órfãos sem tocar no filesystem. Novo módulo `src/wal.rs` (8 testes unitários). Schema: `docs/schemas/wal-recovery.schema.json`.
+
+### Corrigido
+- **Navegação dotted path TOML em `get`/`del`** — veja v14 Tier 3 acima.
+- **7 novas variantes de erro** — `LockTimeout` (83), `SyntaxError` (88), `ExdevFallbackDisabled` (91), `CopyBackBlake3Failed` (92), `OrphanJournal` (93). Todas bilíngues com sugestões `ErrorContext` acionáveis.
+
+### Dependências
+- `tree-sitter-language-pack = "1.8"` com features `download` + `dynamic-loading` (parsers sob demanda; footprint da instalação fica pequeno porque as 305 gramáticas NÃO são bundled — apenas a biblioteca loader é).
+
+### Cobertura de Testes
+- **445/445 testes passando** (eram 320 baseline em v0.1.10, +125 novos): 9 set, 7 case, 5 query, 5 outline, 6 syntax_check E2E, 4 WAL E2E, 6 get/del integração, 4 xattr/reflink Linux-only, 27 auditoria de regressões (strsim 5, heck 6, toml_edit 9, content_inspector 4, serde_yaml 4, locale pt-BR 1, LANG=C 1, --max-filesize edge 1, shell-completion bash/zsh/fish 3, --threads 1 query+outline 2, G72 stream >1MiB 1, case --subvert boundary 4, recover_orphan_journals 3, --json-schema 6).
+
+### Validação
+- `cargo test --all-features`: 445/445 PASS em 43 suites de teste
+- `cargo fmt -- --check`: PASS
+- `cargo clippy --all-features --all-targets -- -D warnings`: PASS
+- `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`: PASS
+- `cargo audit`: PASS (0 vulnerabilidades, 379 crates)
+- `cargo deny check`: PASS (advisories, bans, licenses, sources todos OK)
+- `cargo +1.88 check --all-targets`: PASS (MSRV compliant)
+- `cargo build --release`: PASS
+- `cargo package --allow-dirty`: PASS
+- `cargo publish --dry-run`: PASS
+- `cargo install --path . --force`: PASS (binário `atomwrite 0.1.12 (6af0d76)` instalado)
+
+### Notas
+- v0.1.12 é uma release ADITIVA. Nenhum subcomando existente foi renomeado ou removido. Todos os novos códigos de saída (83, 88, 91, 92, 93) são adicionados sem alterar os existentes (0-86 inalterados).
+- `atomwrite write --syntax-check` é OPT-IN. O comportamento padrão de `write` não mudou.
+- `atomwrite write` agora escreve um sidecar WAL apenas quando a env var `ATOMWRITE_WAL=1` está definida, OU quando `--strict-atomic` é passado. O comportamento padrão de `write` NÃO escreve o sidecar (consultivo apenas).
+- Veja `docs/MIGRATION.pt-BR.md` para o guia de upgrade completo de v0.1.11 para v0.1.12.
+
 ## [0.1.11] - 2026-06-05
 
 ### Corrigido (Falhas de CI - windows-2025-vs2026 + signal test flaky no Linux)
