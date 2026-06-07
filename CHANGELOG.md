@@ -8,6 +8,19 @@
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.13] - 2026-06-07
+
+#### CI cross-platform (windows-2025-vs2026 build fix)
+- **`unused import: Duration` fix in `src/lock.rs`** — `std::time::Duration` is now gated by `#[cfg(unix)]` since it is only consumed by the `flock`-based retry loop in `try_acquire_loop`. On Windows the import is omitted, eliminating the `unused_imports` warning that escalated to a build error under `RUSTFLAGS=-Dwarnings`.
+- **`unused variable: strict_atomic` fix in `src/atomic.rs`** — the `strict_atomic` parameter of `write_rename_path` is consumed exclusively inside the `#[cfg(unix)]` EXDEV fallback branch. The parameter is now annotated with `#[cfg_attr(not(unix), allow(unused_variables))]`, mirroring the pattern established in `src/signal.rs:15-17` (GAP 06 fix).
+- **`dead_code: copy_tempfile_to_target` fix in `src/atomic.rs`** — the EXDEV copy-fallback helper is only invoked from the `#[cfg(unix)]` branch of `write_rename_path`. The function itself is now gated by `#[cfg(unix)]`, removing it entirely from the Windows compilation unit.
+- **`clippy::unnecessary_literal_unwrap` fix in `src/atomic.rs:195`** — the `hardlink_nlink.unwrap_or(1) > 1` heuristic was rewritten as `hardlink_nlink.is_some_and(|n| n > 1)`. The new form has identical semantics on both platforms (returns `false` when `None`, returns the boolean comparison when `Some(n)`) and avoids triggering clippy 1.94+ on the `None.unwrap_or(1)` path that Windows produces when hardlink detection is unavailable.
+
+#### Validation
+- Linux CI: `cargo build --all-features`, `cargo clippy --all-features -- -D warnings`, `cargo test --all-features` (150 lib tests passing) — all green
+- Windows CI: the four `RUSTFLAGS=-Dwarnings` errors are eliminated by gating the unix-only symbols with `cfg(unix)` / `cfg_attr(not(unix), allow(...))`
+
+
 ## [0.1.12] - 2026-06-07
 
 #### Atomic write pipeline (G55, G39)

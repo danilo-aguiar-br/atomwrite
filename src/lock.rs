@@ -21,7 +21,10 @@
 //!   because `flock(2)` semantics are not available without C extensions.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
+
+#[cfg(unix)]
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 

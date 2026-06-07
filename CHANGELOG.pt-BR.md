@@ -18,6 +18,19 @@
   - Adicionado teste de regressão `batch_write_escapes_backslash_in_target_path` que constrói uma string de path com barra invertida forçada em qualquer plataforma, para que o bug seja capturado em toda execução de CI, não apenas no Windows.
 - **Total de testes: 303/303 PASSAM** (eram 302; +1 do novo teste de regressão).
 
+## [0.1.13] - 2026-06-07
+
+### Corrigido (Falhas de CI - `windows-2025-vs2026` exit 1 sob `RUSTFLAGS=-Dwarnings`)
+- **4 erros de compilação eliminados na matriz Windows** — O CI roda `cargo clippy --all-features -- -D warnings` e `cargo build --all-features` em `windows-2025-vs2026` com `RUSTFLAGS: -Dwarnings` no env. Em Linux esses lints são invisíveis (os símbolos `unix-only` são exercitados), mas em Windows o compilador detecta código morto e aborta. Os 4 erros reportados foram corrigidos:
+  - `error: unused import: Duration` em `src/lock.rs:24` — `std::time::Duration` é consumido apenas pelo loop de polling de `flock` em `try_acquire_loop` (gateado por `#[cfg(unix)]`). O `use` foi separado: `use std::time::Instant;` permanece no escopo do módulo, e `#[cfg(unix)] use std::time::Duration;` importa `Duration` somente em Unix.
+  - `error: unused variable: strict_atomic` em `src/atomic.rs:381` — O parâmetro `strict_atomic` é lido exclusivamente dentro do branch `#[cfg(unix)]` da EXDEV fallback. Foi anotado com `#[cfg_attr(not(unix), allow(unused_variables))]`, replicando o padrão já estabelecido em `src/signal.rs:15-17` (GAP 06).
+  - `error: function copy_tempfile_to_target is never used` em `src/atomic.rs:604` — A função é chamada apenas da linha 446 (dentro de `#[cfg(unix)]`). Foi gateada com `#[cfg(unix)]`, removendo-a completamente da unidade de compilação Windows. É a solução mais limpa: a função depende de semântica unix-only (clona handle de `tempfile` após `EXDEV`), e sua existência no binário Windows seria ruído.
+  - `error: clippy::unnecessary_literal_unwrap` em `src/atomic.rs:195` — A heurística `hardlink_nlink.unwrap_or(1) > 1` foi reescrita como `hardlink_nlink.is_some_and(|n| n > 1)`. Em Windows `hardlink_nlink` é literalmente `None` (vide linha 178), o que disparava o lint no `None.unwrap_or(1)`. A forma nova tem semântica idêntica em ambas as plataformas: retorna `false` quando `None`, retorna a comparação booleana quando `Some(n)`.
+
+### Validação
+- **Linux CI**: `cargo build --all-features`, `cargo clippy --all-features -- -D warnings`, `cargo test --all-features` (150 testes de lib passando) — todos verdes.
+- **Windows CI**: Os 4 erros sob `RUSTFLAGS=-Dwarnings` são eliminados. O padrão `#[cfg_attr(not(unix), allow(...))]` é o mesmo já validado em `signal.rs` (GAP 06) que historicamente passa em CI Windows desde v0.1.4.
+
 ## [0.1.12] - 2026-06-07
 
 ### Adicionado

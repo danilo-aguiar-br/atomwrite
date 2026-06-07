@@ -192,7 +192,7 @@ pub fn atomic_write(
     let strategy = match opts.strategy {
         Some(s) => s,
         None => {
-            if hardlink_nlink.unwrap_or(1) > 1 || is_symlink {
+            if hardlink_nlink.is_some_and(|n| n > 1) || is_symlink {
                 WriteStrategy::InPlace
             } else {
                 WriteStrategy::Rename
@@ -378,7 +378,11 @@ pub fn atomic_write(
 /// Write via tempfile + rename with EXDEV fallback (G90).
 ///
 /// Returns `true` if the EXDEV copy-fallback path was used.
-fn write_rename_path(target: &Path, content: &[u8], strict_atomic: bool) -> Result<bool> {
+fn write_rename_path(
+    target: &Path,
+    content: &[u8],
+    #[cfg_attr(not(unix), allow(unused_variables))] strict_atomic: bool,
+) -> Result<bool> {
     // Step 6: create tempfile in same directory
     let parent = target.parent().unwrap_or(Path::new("."));
     let mut builder = tempfile::Builder::new();
@@ -601,6 +605,7 @@ fn strip_string_literals(text: &str) -> String {
     }
     out
 }
+#[cfg(unix)]
 fn copy_tempfile_to_target(temp: &std::fs::File, target: &Path, _content: &[u8]) -> Result<()> {
     use std::io::{Read, Seek, Write};
     let mut temp_handle = temp.try_clone().context("cannot clone tempfile handle")?;
