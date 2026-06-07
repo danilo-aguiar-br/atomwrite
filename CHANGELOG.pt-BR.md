@@ -8,6 +8,21 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.14] - 2026-06-07
+
+### Corrigido (Falha de CI - `windows-2025-vs2026` no teste `write_creates_file_with_ndjson_output`)
+- **Causa raiz** — O teste escreve 12 bytes de input (`"hello world\n"`) e espera `bytes_written == 12`. No Windows o v0.1.13 retornava 13 bytes porque o branch de fallback em `normalize_line_endings` retornava `LineEnding::CrLf` quando o arquivo alvo não existia e o SO host era Windows. A chamada subsequente `line_endings::normalize(..., CrLf)` inseria um `\r` antes de cada `\n`. Linux e macOS não eram afetados (o fallback delas retornava `LineEnding::Lf`, que preservava a contagem de bytes do input).
+- **Solução** — Os branches de fallback que retornavam `LineEnding::CrLf` no Windows (quando o arquivo alvo não existia ou não podia ser lido) foram removidos. `Auto` agora cumpre a sua docstring (`Preserve the dominant ending of the original file`): quando não há original, os bytes do input passam adiante sem modificação. Isso torna o CLI determinístico entre Linux, macOS e Windows para o mesmo conteúdo de stdin.
+- **Paridade de round-trip para input CRLF** — Um bug adicional foi descoberto ao escrever os testes de regressão: o fallback antigo não apenas convertia LF para CRLF, ele também *removia* o `\r` de input CRLF ao resolver `Auto` → `Lf` e depois executar a etapa de canonicalização de `normalize`. Com o novo comportamento, input CRLF em arquivo novo agora permanece CRLF byte a byte. Isso preserva o round-trip de `--expect-checksum` quando o usuário fornece conteúdo CRLF.
+- **Dois novos testes de regressão em `src/commands/write.rs::tests`** — `auto_on_new_file_preserves_lf_input` e `auto_on_new_file_preserves_crlf_input`. Eles exercitam o branch `Auto` com input LF e CRLF e afirmam que a saída é igual ao input byte a byte. Os testes são agnósticos de plataforma e teriam pego tanto o bug `cfg!(windows) ? CrLf : Lf` quanto o bug de canonicalização em qualquer runner de CI.
+- **Nenhuma mudança na lógica de detecção existente** — Quando o arquivo alvo existe, `Auto` ainda chama `line_endings::detect(&existing)` e aplica o estilo dominante. Quando o usuário passa um `--line-ending lf|cr-lf|cr` explícito, o valor explícito ainda é aplicado como antes. Apenas o branch `Auto` + arquivo alvo inexistente mudou.
+
+### Validação
+- CI Linux: `cargo build --all-features`, `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features` (152 lib tests + suites de integração + 3 doctests) — todos verdes
+- Cross-check Windows CI: `cargo check --target x86_64-pc-windows-gnu --lib` com `RUSTFLAGS=-Dwarnings` e stub de `cc` para o linker mingw-gcc ausente — zero erros, zero warnings
+- 8/8 testes de integração `cli_write` passam, incluindo a falha que era exclusiva do Windows
+
+
 ## [Unreleased]
 
 ### Corrigido (Falhas de CI - GAP 23 barra invertida Windows em manifestos JSON)

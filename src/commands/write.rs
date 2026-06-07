@@ -173,25 +173,14 @@ fn normalize_line_endings(
                 if let Ok(existing) = std::fs::read(target) {
                     line_endings::detect(&existing)
                 } else {
-                    if cfg!(windows) {
-                        LineEnding::CrLf
-                    } else {
-                        LineEnding::Lf
-                    }
+                    return content.to_vec();
                 }
             } else {
-                if cfg!(windows) {
-                    LineEnding::CrLf
-                } else {
-                    LineEnding::Lf
-                }
+                return content.to_vec();
             }
         }
         other => other,
     };
-    if matches!(target_ending, LineEnding::Auto) {
-        return content.to_vec();
-    }
     match std::str::from_utf8(content) {
         Ok(text) => line_endings::normalize(text, target_ending).into_bytes(),
         Err(_) => content.to_vec(),
@@ -214,4 +203,45 @@ fn verify_checksum(target: &std::path::Path, expected: &str, max_size: u64) -> R
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_line_endings;
+    use crate::line_endings::LineEnding;
+    use std::path::PathBuf;
+
+    /// `Auto` on a non-existent target must preserve the input bytes verbatim,
+    /// regardless of the host OS. This guarantees `bytes_written` round-trips
+    /// across Linux, macOS, and Windows for new files (issue: v0.1.13
+    /// `write_creates_file_with_ndjson_output` failed on windows-2025-vs2026
+    /// because the legacy fallback returned `LineEnding::CrLf` on Windows,
+    /// inflating the byte count by 1).
+    #[test]
+    fn auto_on_new_file_preserves_lf_input() {
+        let target = PathBuf::from("does-not-exist-atomwrite-test-12345.txt");
+        let input = b"hello world\n";
+        let out = normalize_line_endings(input, LineEnding::Auto, &target);
+        assert_eq!(
+            out,
+            input,
+            "Auto on new file must be a no-op (got {} bytes, expected {})",
+            out.len(),
+            input.len()
+        );
+    }
+
+    #[test]
+    fn auto_on_new_file_preserves_crlf_input() {
+        let target = PathBuf::from("does-not-exist-atomwrite-test-67890.txt");
+        let input = b"hello world\r\n";
+        let out = normalize_line_endings(input, LineEnding::Auto, &target);
+        assert_eq!(
+            out,
+            input,
+            "Auto on new file must be a no-op (got {:?}, expected {:?})",
+            String::from_utf8_lossy(&out),
+            String::from_utf8_lossy(input)
+        );
+    }
 }
