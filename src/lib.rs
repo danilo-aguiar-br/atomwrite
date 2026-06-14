@@ -90,6 +90,8 @@ fn emit_json_schema(command: &Commands, mut out: impl Write) -> Result<()> {
         Commands::Case(_) => schemars::schema_for!(ndjson_types::WriteOutput),
         Commands::Query(_) => schemars::schema_for!(ndjson_types::WriteOutput),
         Commands::Outline(_) => schemars::schema_for!(ndjson_types::WriteOutput),
+        Commands::WalStats(_) => schemars::schema_for!(ndjson_types::WalStats),
+        Commands::WalHeal(_) => schemars::schema_for!(ndjson_types::AutoHealReport),
         Commands::Completions(_) => schemars::schema_for!(ndjson_types::CalcOutput),
     };
     serde_json::to_writer_pretty(&mut out, &schema)?;
@@ -172,7 +174,41 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
 
     let mut writer = NdjsonWriter::new(stdout);
     let shutdown = signal::get_or_install_handlers()?;
-    let _workspace = cli.global.resolve_workspace()?;
+    let workspace = cli.global.resolve_workspace()?;
+
+    // G119 L3 — autonomous startup `wal-heal` pass. Walks the workspace
+    // once, removes every `Committed`/`Aborted` sidecar older than
+    // `threshold_secs` (default 3600s = 1h), and is bounded by a
+    // 100ms wall-clock budget so the per-invocation overhead is
+    // predictable. Disabled via `--no-auto-heal` or
+    // `ATOMWRITE_WAL_NO_AUTO_HEAL=1` for tight CI loops and benchmarks.
+    // `Started` journals are NEVER removed automatically — they are the
+    // orphans worth operator attention.
+    if !cli.global.no_auto_heal {
+        match crate::wal::auto_heal_on_startup(&workspace, 3600, 100) {
+            Ok(report) if report.removed > 0 || report.malformed > 0 => {
+                tracing::info!(
+                    removed = report.removed,
+                    preserved = report.preserved,
+                    malformed = report.malformed,
+                    bytes_reclaimed = report.bytes_reclaimed,
+                    "G119 L3: startup wal-heal reaped stale sidecars"
+                );
+            }
+            Ok(_) => {
+                tracing::debug!("G119 L3: startup wal-heal found nothing to reap");
+            }
+            Err(e) => {
+                // Best-effort: a failed heal pass must never block the
+                // actual subcommand. Operators see the warning on stderr.
+                tracing::warn!(
+                    error = %e,
+                    workspace = %workspace.display(),
+                    "G119 L3: startup wal-heal failed; continuing without reaping"
+                );
+            }
+        }
+    }
 
     let result = match &cli.command {
         Commands::Read(args) => commands::read::cmd_read(args, &cli.global, &mut writer),
@@ -180,7 +216,7 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
             commands::write::cmd_write(args, &cli.global, stdin, &mut writer, &shutdown)
         }
         Commands::Edit(args) => {
-            commands::edit::cmd_edit(args, &cli.global, stdin, &mut writer, &_workspace)
+            commands::edit::cmd_edit(args, &cli.global, stdin, &mut writer, &workspace)
         }
         Commands::Search(args) => {
             commands::search::cmd_search(args, &cli.global, &mut writer, &shutdown)
@@ -229,6 +265,12 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
         Commands::Case(args) => commands::case::cmd_case(args, &cli.global, &mut writer),
         Commands::Query(args) => commands::query::cmd_query(args, &cli.global, &mut writer),
         Commands::Outline(args) => commands::outline::cmd_outline(args, &cli.global, &mut writer),
+        Commands::WalStats(args) => {
+            commands::wal_stats::cmd_wal_stats(args, &cli.global, &mut writer)
+        }
+        Commands::WalHeal(args) => {
+            commands::wal_stats::cmd_wal_heal(args, &cli.global, &mut writer)
+        }
         Commands::Completions(_) => unreachable!("completions handled in prescan_json_schema"),
     };
 

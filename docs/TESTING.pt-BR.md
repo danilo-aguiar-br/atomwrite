@@ -6,7 +6,7 @@
 
 ## O Que Há de Novo na v0.1.12
 
-Esta seção resume as mudanças relevantes para testes em v0.1.12. A release adicionou 96 novos testes (eram 320 baseline) para um total de **445 testes em 43 suítes**.
+Esta seção resume as mudanças relevantes para testes em v0.1.12. A release adicionou 96 novos testes (eram 320 baseline) para um total de **445 testes em 43 suítes**. A v0.1.15 eleva o total para **502 testes** (+2 testes unitários na v0.1.14, +8 do G117 em `tests/cli_edit.rs`, +6 do G118 em `tests/cli_write.rs`).
 
 ### Novos Arquivos de Teste (10 Adicionados em v0.1.11+v0.1.12)
 
@@ -39,12 +39,18 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 - Testes property-based em `tests/proptest_*.rs`
 - Testes de snapshot via `insta`
 - Testes de sinal (SIGINT, SIGTERM, SIGPIPE)
-- Gate de cross-compile (targets Windows GNU/MSVC)
+
+## O Que Há de Novo na v0.1.18 (Atual)
+
+- 502 testes passando (461 baseline v0.1.15 + 8 casos de borda G117 v0.1.18 + 2 pré-validação replace G118 v0.1.18 + 16 incrementos cross-platform/WAL/auditoria v0.1.16-v0.1.18 + 15 testes de contrato NDJSON v0.1.16-v0.1.18)
+- 30 subcomandos (28 baseline + `wal-heal` + `wal-stats` da v0.1.15)
+- 12 ADRs em docs/decisions/ (0019-0030)
+
 
 ### Como Executar
 
 ```bash
-# Executar todos os 445 testes
+# Executar todos os 502 testes
 cargo test
 
 # Executar apenas a suíte de regressão v0.1.12
@@ -63,7 +69,7 @@ cargo test --test cross_compile_check -- --ignored
 
 - 20.19% cobertura de linhas via `cargo tarpaulin` (935/4631 linhas cobertas)
 - Menor que o ideal porque tarpaulin conta apenas testes unitários, não testes de integração CLI
-- A suíte de testes de integração é a métrica primária de cobertura (445 testes em 43 suítes)
+- A suíte de testes de integração é a métrica primária de cobertura (502 testes em 43 suítes)
 
 ### Dependências Adicionadas
 
@@ -87,7 +93,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ## Estatísticas Atuais
 - 70+ arquivos Rust em `src/` e `tests/`
-- **445 testes no total em 43 suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
+- **502 testes no total em 43 suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
 - **96 novos testes adicionados em v0.1.11+v0.1.12**:
   - 11 testes em `tests/cli_v012_regressions.rs` (fixes GAP 13, GAP 14, GAP 18)
   - 27 testes em `tests/cli_v012_audit_regressions.rs` (auditoria v0.1.12 G72/G114)

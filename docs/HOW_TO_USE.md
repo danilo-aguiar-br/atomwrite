@@ -8,6 +8,53 @@
 
 ## What's New in v0.1.12
 
+## Quickstart: WAL Cleanup (G119)
+
+v0.1.15 ships a three-layer WAL management system (G119). The new `wal-stats` subcommand is read-only telemetry. The new `wal-heal` subcommand is scoped reaping. The new `--wal-policy` flag controls sidecar creation per write. Use the global `--no-auto-heal` to disable automatic healing during sensitive workflows.
+
+### Inspect with `wal-stats`
+
+```bash
+atomwrite --workspace . wal-stats
+# {"type":"result","journals_total":0,...,"reclaimable":0,...}
+```
+
+### Heal with `wal-heal`
+
+```bash
+# Remove all terminal journals (skips Started entries)
+atomwrite --workspace . wal-heal --threshold-secs 0
+```
+
+### Choose a `--wal-policy`
+
+```bash
+# Default: let the build decide
+atomwrite --workspace . write src/lib.rs < new.rs
+
+# Forbid any sidecar creation (CI hygiene)
+atomwrite --workspace . write --wal-policy never ci-output.txt < data.txt
+```
+
+### Disable Auto-Heal Globally
+
+When running scripted batch workflows or forensic captures, disable automatic healing so the script controls when reaping happens.
+
+```bash
+atomwrite --workspace . --no-auto-heal wal-stats
+```
+
+### Policy Decision Table
+
+| Workload | `--wal-policy` | Rationale |
+|---|---|---|
+| Local dev / interactive use | `auto` (default) | Optimized for general use; balanced trade-off |
+| CI builds and ephemeral jobs | `never` | Sidecars have no consumer; skip the overhead |
+| Production deploys / audit trails | `always` | Forensic metadata required for postmortem |
+| Bulk migrations and batch jobs | `never` + `--no-auto-heal` | Speed and explicit control of reaping |
+| Forensic analysis / debugging | `always` + manual `wal-heal` | Keep all sidecars; reap only when you decide |
+
+
 This section summarizes how-to-use-relevant changes in v0.1.12.
 
 ### New Subcommands (Tier 3)
@@ -61,8 +108,8 @@ See the Advanced Commands section below for detailed documentation of each.
 
 ### Test Coverage
 
-- 445 tests passing (was 320 baseline, +125 new in v0.1.11+v0.1.12)
-- 7 new ADRs in `docs/decisions/` (0019-0025)
+- 502 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118 in v0.1.15)
+- 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/`
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
@@ -105,6 +152,7 @@ echo "data" | atomwrite write --expect-checksum abc123 src/file.txt
 - Use `--backup` to create a timestamped backup before overwriting
 - Use `--expect-checksum` for optimistic locking on concurrent edits
 - Use `--line-ending lf|crlf|cr|auto` to normalize line endings (default: auto preserves original)
+- Since v0.1.15 append/prepend, line-ending auto-detection, and `--expect-checksum` resolve the target against `--workspace` (G118); on v0.1.14 and earlier keep CWD = workspace, or relative targets truncate on append and skip checksum verification
 - Use `--dry-run` to preview the operation without writing
 - Use `--syntax-check` to validate the file with tree-sitter after writing (G72, exit 88 on error)
 - Use `--preserve-timestamps` to keep the original mtime (default: mtime is updated so cargo/make/cmake rebuild)
@@ -145,6 +193,9 @@ atomwrite edit src/main.rs --old "old_text" --new "new_text"
 ```
 
 - Use `--fuzzy auto|off|aggressive` for fuzzy text matching when exact match fails (9 strategies in cascade, G116)
+- Since v0.1.15 repeated `--old`/`--new` pairs also run the fuzzy cascade per pair (G117); responses include `pairs_total` and per-pair `pair_results`, and failures report `failed_pair_index`
+- Use `--partial` (v0.1.15) to apply the matching pairs and report the rest; zero applied pairs exits 1 (`NO_MATCHES`) without writing
+- Never pipe `edit` into `jaq` without `-e`: the error envelope goes to stdout, so `| jaq '.edits'` masks exit 65 as `null` — use `jaq -e '.edits'` or `${PIPESTATUS[0]}`
 - Use `--multi` to apply multiple NDJSON edits in a single atomic write via stdin
 - Use `--line-ending lf|crlf|cr|auto` to normalize line endings (default: auto preserves original)
 - Use `--preserve-timestamps` to keep the original mtime of the file (default: mtime is updated to reflect the edit)

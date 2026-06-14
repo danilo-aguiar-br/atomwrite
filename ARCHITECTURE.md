@@ -16,7 +16,7 @@
 
 ### Entry Point
 - `src/main.rs` — binary entry: signal setup, tracing init, dispatch
-- `src/lib.rs` — library root: module declarations and `run()` dispatcher
+- `src/lib.rs` — library root: module declarations and `run()` dispatcher. Wires the G119 L3 startup `wal-heal` pass via `auto_heal_on_startup` before any subcommand dispatch
 - `src/cli.rs` — clap `#[derive(Parser)]` with global flags
 - `src/cli_args.rs` — per-subcommand argument structs and value enums
 
@@ -32,8 +32,10 @@
 - `src/error.rs` — domain error enum with exit codes, error classification, and retryable flag
 - `src/lock.rs` — advisory file locking via flock(2) on `.<target>.atomwrite.lock` sidecar
 
-### Crash Recovery (v0.1.12, G114)
-- `src/wal.rs` — WAL sidecar writer: appends `Started` and `Committed` entries to `.atomwrite.journal.<target>.atomwrite.journal.json`. Provides `recover_orphan_journals(dir)` consultative recovery. 8 unit tests.
+### Crash Recovery (v0.1.12, G114 + v0.1.15-v0.1.18, G119)
+- `src/wal.rs` — WAL sidecar writer: appends `Started` and `Committed` entries to `.atomwrite.journal.<target>.atomwrite.journal.json`. Provides `recover_orphan_journals(dir)` consultative recovery. 8 unit tests. Hosts the `WalPolicy` enum and `JournalGuard` RAII from G119 L1/L2
+- `src/wal/heuristics.rs` — G119 L4 HeuristicsEngine: 5 composable functions (`h1_ttl`, `h2_lru_within_cap`, `h3_rate_limit`, `h4_sentinel`, `h5_archive`) aggregated via `heuristics_should_preserve`
+- `src/commands/wal_stats.rs` — G119 L5 telemetry subcommand: total_journals, by_state, oldest_age, total_size, by_directory, auto_heal_recommended, estimated_reclaim_bytes
 
 ### Syntax Check (v0.1.12, G72)
 - `src/syntax_check.rs` — REAL tree-sitter syntax check via `tree-sitter-language-pack`. Replaces the v0.1.11 bracket-balance heuristic. Supports 24 languages out-of-the-box. Falls back to legacy heuristic for unknown extensions. 16 unit tests.
@@ -51,11 +53,12 @@
 - `src/reflink.rs` — reflink (copy-on-write) helper via `reflink-copy`
 
 ### Subcommand Handlers
-- `src/commands/` — 28 subcommand implementations, each in its own module
+- `src/commands/` — 30 subcommand implementations, each in its own module
 - Each handler receives parsed args, global config, an NDJSON writer, and shutdown signal
 - All handlers follow the same signature: `fn cmd_*(args, global, writer, shutdown) -> Result<()>`
 - **v0.1.11 baseline (22)**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, completions
 - **v0.1.12 added (6)**: set, get, del, case, query, outline
+- **v0.1.15 added (2)**: wal-heal (G119 L3), wal-stats (G119 L5)
 
 
 ## Data Flow
@@ -92,6 +95,17 @@ v0.1.12 additions:
                           └──> [after rename] ──> wal.rs (Committed entry)
   query/outline ──> tree-sitter parse ──> iterative DFS ──> NDJSON events
   set/get/del/case ──> toml_edit / heck ──> NDJSON events
+
+v0.1.15 additions (G119):
+  wal-heal ──> scan workspace for stale .atomwrite.journal.*.json
+                  │
+                  └──> heuristics_should_preserve ──> reap or skip
+  wal-stats ──> aggregate by_state, by_directory, age, size ──> NDJSON
+
+v0.1.18 additions (G118 universal resolve-first):
+  write/edit/copy/apply/move/rollback/set/del/case/replace ──> validate_path (jail)
+                          │
+                          └──> WORKSPACE_JAIL (exit 126) on first violation
 ```
 
 
@@ -150,6 +164,27 @@ v0.1.12 additions:
 - `case` uses `heck` crate for 5 identifier-case styles
 - `query/outline` use iterative DFS via `Vec<Node>` stack to avoid stack overflow on deep files (compared to recursive `TreeCursor` traversal)
 
+### L1 WalPolicy + L4 HeuristicsEngine (v0.1.16, G119, ADR-0028)
+- `WalPolicy { Auto, Always, Never }` lets callers tune when the WAL sidecar is written; `Auto` skips it for trivial writes (size under 1 MiB, not Edit/Replace, dir under Git, write under 4 KiB)
+- `crate::wal::heuristics` aggregates 5 composable functions via `heuristics_should_preserve(target, committed_at_unix, count, rank)`; env vars `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS` tune each lever
+- `wal_policy` field on `WriteOutput` NDJSON exposes the decision per call
+
+### L3 startup auto-heal (v0.1.17, G119, ADR-0028)
+- `atomwrite` runs an autonomous `wal-heal` pass on startup via `lib.rs::auto_heal_on_startup`, with 3600s threshold and 100ms budget
+- Opt-out via `--skip-startup-wal-heal` (see `src/cli.rs`); logs structured info when reaping, debug when nothing to reap, warn on failure
+
+### 4-layer empty-stdin guard (v0.1.16, G120, ADR-0029)
+- L1 rejects 0 bytes from stdin by default in `read_stdin_content` with opt-out `--allow-empty-stdin`
+- L2 rejects empty stdin in `handle_append_prepend`
+- L3 emits `tracing::info!` warning when `--append` + `--expect-checksum` + empty stdin combine ambiguously; opt-out via `--no-checksum-when-empty`
+- L4 always emits `stdin_bytes_read: u64` on `WriteOutput` NDJSON for late CI/agent gating
+
+### G118 universal resolve-first + G117 edge cases (v0.1.18, ADR-0030)
+- 10 mutating commands now pre-validate root paths via `validate_path` before constructing any walker or worker: `write`, `edit`, `copy`, `apply`, `move`, `rollback`, `set`, `del`, `case`, `replace`
+- `replace /etc/passwd` aborts in microseconds with a single `WORKSPACE_JAIL` envelope instead of walking the entire filesystem
+- 3 new G117 edge-case regression tests: Unicode exact-match (UTF-8 diacritics), CRLF line-ending preservation after replace, multi-pair where the same `--old` appears twice
+- 1 new G120 L3 integration test: `--append + --expect-checksum + --allow-empty-stdin` cross-flag combination is now covered end-to-end
+
 ### Internationalization
 - Translations embedded at compile time via rust-i18n
 - Locale detection via sys-locale on startup
@@ -176,7 +211,7 @@ v0.1.12 additions:
 
 ## Architectural Decision Records (ADRs)
 - See `docs/decisions/README.md` for the full ADR index
-- 7 ADRs were added in v0.1.12 (0019-0025), all following the Michael Nygard format (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
+- 12 ADRs have been added since v0.1.12 (0019-0030), all following the Michael Nygard format (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
 - 0019 — tree-sitter-language-pack choice
 - 0020 — WAL sidecar path and JSONL shape
 - 0021 — v14 query/outline accepts only kind names, not S-expressions
@@ -184,10 +219,15 @@ v0.1.12 additions:
 - 0023 — G114 WAL is consultive, not auto-replay
 - 0024 — get/del TOML path uses manual Table descent
 - 0025 — positions is opt-in in query/tree only
+- 0026 — G117 multi-pair edit: fuzzy parity, per-pair reporting, opt-in --partial (v0.1.15)
+- 0027 — G118 write resolves the target before pre-steps (v0.1.15)
+- 0028 — G119 5-layer WAL cleanup: L1 WalPolicy, L2 JournalGuard, L3 startup auto-heal, L4 HeuristicsEngine, L5 wal-stats telemetry (v0.1.15-v0.1.17)
+- 0029 — G120 4-layer empty-stdin guard: L1 read_stdin_content, L2 handle_append_prepend, L3 cross-validation warning, L4 stdin_bytes_read telemetry (v0.1.16)
+- 0030 — v0.1.18 trio: replace pre-validates root paths, G120 L3 cross-flag test, G117 Unicode/CRLF/multi-pair edge cases
 
 
 ## Test Architecture
-- 445 tests in 43 integration test suites + 150+ unit tests inside `src/`
+- 502 tests across 43 test suites (152 unit tests inside `src/` + integration suites + doctests)
 - Unit tests are colocated with the code under `#[cfg(test)]` modules
 - Integration tests live in `tests/` and use `assert_cmd` + `predicates` for shell-out tests
 - Property-based tests via `proptest` for checksum and backup

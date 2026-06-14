@@ -140,6 +140,7 @@ fn copy_file_atomic(
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
+        wal_policy: crate::wal::WalPolicy::Auto,
     };
 
     let result = atomic_write(target, &content, &opts, workspace)?;

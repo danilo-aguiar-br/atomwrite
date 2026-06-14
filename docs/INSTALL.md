@@ -1,7 +1,7 @@
 # Installation Guide
 
 - Complete instructions for installing atomwrite on Linux, macOS, and Windows
-- Current target version: v0.1.12 (fixes Windows 10/11 compilation, adds context-aware error suggestions, 6 new subcommands, G72 real syntax check, G114 WAL sidecar, 5 new error codes, reflink copy, EXDEV fallback)
+- Current target version: v0.1.18 (fixes Windows 10/11 compilation, adds context-aware error suggestions, 6 new subcommands, G72 real syntax check, G114 WAL sidecar, 5 new error codes, reflink copy, EXDEV fallback)
 - Sections ordered by platform, with prerequisites and troubleshooting
 
 
@@ -50,8 +50,8 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 
 ### Test Coverage
 
-- 445 tests passing (was 320 baseline, +125 new in v0.1.11+v0.1.12)
-- 7 new ADRs in `docs/decisions/` (0019-0025)
+- 502 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118 in v0.1.15)
+- 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/`
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
@@ -64,7 +64,7 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Install atomwrite v0.1.12 from crates.io
+# Install atomwrite v0.1.18 from crates.io
 cargo install atomwrite --locked --version "^0.1.12"
 
 # Verify
@@ -211,6 +211,46 @@ If the command is not found, ensure `~/.cargo/bin` (Linux/macOS) or
 
 
 ## Building from Source (all platforms)
+
+
+## Health Check (G119)
+
+After installing v0.1.15 or later, run the WAL health commands to confirm the new subcommands are wired correctly. These are read-only or scoped-repair operations that are safe to run in CI and post-install smoke tests.
+
+### Inspect WAL State (read-only)
+
+```bash
+atomwrite --workspace . wal-stats
+```
+
+Expected NDJSON envelope (truncated):
+
+```json
+{"type":"result","journals_total":0,"journals_started":0,"journals_committed":0,"journals_aborted":0,"stale_threshold_secs":86400,"reclaimable":0,"action":"stats","elapsed_ms":3}
+```
+
+The `reclaimable` field counts terminal journals (Committed or Aborted) older than the stale threshold. A non-zero value indicates orphan sidecars eligible for safe cleanup.
+
+### Reap Terminal Journals
+
+The G119 L3 layer adds `wal-heal` to remove terminal journals (Committed and Aborted). It never touches Started entries.
+
+```bash
+# Remove all terminal journals regardless of age (safe: skips Started)
+atomwrite --workspace . wal-heal --threshold-secs 0
+```
+
+Use this command in post-install smoke tests, CI pre-build hooks, or after a crash recovery sweep.
+
+### CI Recommendation
+
+Add a `wal-stats` check to your CI pipeline before `cargo test`. A non-zero `reclaimable` count signals sidecar accumulation that should be inspected or healed.
+
+```bash
+# Pre-build hygiene in CI
+atomwrite --workspace . wal-stats | jaq -e '.reclaimable == 0' || { echo "WAL drift detected"; exit 1; }
+```
+
 
 ```bash
 git clone https://github.com/daniloaguiarbr/atomwrite.git

@@ -13,13 +13,41 @@
 
 ## O Que É
 - Um único binário Rust que resolve toda operação de arquivo que um agente LLM precisa
-- **28 subcomandos**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, completions
+- **30 subcomandos**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions
 - Toda escrita é atômica: tempfile, fsync, rename, fsync do diretório
 - Toda resposta é NDJSON: um objeto JSON por linha, legível por máquina
 - Todo arquivo recebe checksum BLAKE3: detecta drift, verifica integridade, habilita locking otimista
 
 
-## O Que Há De Novo Na v0.1.12 (2026-06-07)
+## O Que Há De Novo Na v0.1.18 (2026-06-14)
+- **502 testes passando** (461 na v0.1.15 + 6 na v0.1.16 + 8 na v0.1.17 + 27 na v0.1.18). 43 suítes de teste, 0 falhas
+- **G118 resolve-first universal**: o pre-flight `validate_path` adicionado ao `write` na v0.1.15 agora está propagado para 10 comandos mutantes: `write`, `edit`, `copy`, `apply`, `move`, `rollback`, `set`, `del`, `case` e `replace`. `replace /etc/passwd` agora aborta em microssegundos com um único envelope `WORKSPACE_JAIL` em vez de caminhar o filesystem emitindo um evento por arquivo
+- **G119 limpeza inteligente de WAL em 5 camadas**: `WalPolicy { Auto, Always, Never }` (L1), `JournalGuard` RAII (L2), `wal-heal` no startup (L3), submódulo `heuristics` com 5 funções (L4), telemetria `wal-stats` (L5). 2 novos subcomandos: `wal-heal` e `wal-stats`. ADR-0028
+- **G120 guard de stdin vazio em 4 camadas**: `read_stdin_content` rejeita 0 bytes por padrão com opt-out `--allow-empty-stdin` (L1), `handle_append_prepend` rejeita stdin vazio (L2), warning de cross-validation quando `--append` + `--expect-checksum` + stdin vazio (L3), telemetria `stdin_bytes_read` no NDJSON (L4). ADR-0029
+- **Casos de borda follow-up G117**: 3 novos testes de regressão cobrindo exact-match Unicode (diacríticos UTF-8), preservação de line ending CRLF após replace, e multi-par onde o mesmo `--old` aparece duas vezes
+- **GAP 18A — `replace` pré-valida paths raiz**: o último comando mutante que dependia de validação por entrada agora falha rápido com `WORKSPACE_JAIL` (exit 126) antes de construir o `WalkBuilder`
+
+
+## O Que Houve De Novo Na v0.1.17 (2026-06-13)
+- **L3 auto-heal no startup**: `atomwrite` executa um passe autônomo de `wal-heal` no startup com threshold de 3600s e budget de 100ms. O passe é opt-out via `--skip-startup-wal-heal` (ver `src/cli.rs`). O subcomando explícito `wal-heal` aterrissou na v0.1.15; v0.1.17 conecta a mesma lógica em `lib.rs::run` antes do despacho de qualquer subcomando
+
+
+## O Que Houve De Novo Na v0.1.16 (2026-06-13)
+- **L1 WalPolicy**: `enum WalPolicy { Auto, Always, Never }` em `src/wal.rs`, exposto via flag `--wal-policy` em `write` e `edit`. Default `Auto` pula o sidecar WAL para escritas triviais (tamanho sob 1 MiB, não-Edit/Replace, diretório sob Git, escrita sob 4 KiB)
+- **L4 HeuristicsEngine**: submódulo `crate::wal::heuristics` com 5 funções componíveis (`h1_ttl`, `h2_lru_within_cap`, `h3_rate_limit`, `h4_sentinel`, `h5_archive`). Env vars: `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS`. Campo de telemetria `wal_policy` em `WriteOutput` NDJSON
+
+
+## O Que Houve De Novo Na v0.1.15 (2026-06-11)
+- **G117 corrigido — `edit` multi-par alcança paridade fuzzy com o caminho de par único**: pares repetidos `--old`/`--new` agora rodam a cascata fuzzy completa de 9 estratégias por par, em vez de busca exata apenas
+- **Relato por par**: envelopes de sucesso ganham `pairs_total` e `pair_results` (`index` 1-based, `matched`, `strategy`, `similarity`); envelopes de erro ganham `failed_pair_index`, `pairs_total` e `pair_results` — sem mais bisseção manual de lotes falhos
+- **Nova flag `--partial` (opt-in)**: aplica os pares que casam e relata os demais com `matched: false`; zero pares aplicados sai com 1 (`NO_MATCHES`) sem escrever; o padrão continua all-or-nothing
+- **Receita anti-mascaramento**: `edit ... | jaq '.edits'` esconde o exit 65 como `{"edits": null}` — use sempre `jaq -e '.edits'` ou verifique `${PIPESTATUS[0]}`
+- **G118 corrigido — `write` resolve o alvo contra o workspace antes de cada pré-passo**: com CWD fora do workspace, `--append`/`--prepend` truncava o arquivo, `--expect-checksum` era silenciosamente pulado e `--line-ending auto` perdia a detecção (dupla identidade de caminho, CWE-367); divergência de checksum agora sai com 82 (`STATE_DRIFT`) e alvo fora do jail falha cedo com exit 126 (ADR-0027)
+- **GAP 18 corrigido — CI Windows verde de novo**: o snapshot do write agora redige `dir_fsync` como `[platform_dir_fsync]` (Windows emite `best_effort`, Unix `sync_all`)
+- **Job de MSRV alinhado**: o CI agora testa o MSRV documentado 1.88 (o job estava pinado em 1.85)
+- **461 testes passando** (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118). 43 suítes de teste, 0 falhas
+
+## O Que Houve De Novo Na v0.1.12 (2026-06-07)
 - **6 novos subcomandos (v14 Tier 3)**: `set`, `get`, `del`, `case`, `query`, `outline` para edição estruturada de configuração e análise AST
 - **G72 verificação de sintaxe REAL** -- `atomwrite write --syntax-check` invoca o parser `tree-sitter` real (24 linguagens cobertas) no lugar da heurística de balanceamento de colchetes. Código de saída 88 no primeiro erro de sintaxe
 - **G114 sidecar WAL para recuperação de crash** -- `atomic_write` escreve `.atomwrite.journal.<target>.atomwrite.journal.json` com entradas `Started` e `Committed`. `recover_orphan_journals(dir)` é consultivo: relata órfãos sem auto-replay
@@ -39,106 +67,107 @@ Veja `docs/HOW_TO_USE.pt-BR.md` para o quickstart completo da v0.1.12 e `docs/MI
 
 
 ## O Que Houve De Novo Na v0.1.10 (2026-06-05)
-- **GAP 20 follow-up**: `signal_test::shutdown_message_on_stderr` faz flush da mensagem via `io::stderr().lock()`. A correção do v0.1.8 moveu `eprintln!` do signal handler para a main thread mas usou `writeln!(io::stderr(), ...)` que é fully buffered quando stderr é redirecionado para um pipe. A correção usa o guard `StderrLock` que faz flush no Drop
+- **GAP 20 follow-up**: `signal_test::shutdown_message_on_stderr` faz flush da mensagem de shutdown via `io::stderr().lock()`. A correção v0.1.8 moveu `eprintln!` do signal handler para a main thread mas usava `writeln!(io::stderr(), ...)` que é totalmente bufferizado quando stderr é redirecionado para um pipe. A correção usa o guard `StderrLock` que faz flush no Drop
 
 
 ## O Que Houve De Novo Na v0.1.8 (2026-06-05)
-- **`signal_test::shutdown_message_on_stderr` não falha mais no CI Linux** — `eprintln!` removido dos handlers SIGINT/SIGTERM conforme POSIX.1-2017 `signal-safety(7)`. Mensagem agora emitida pela main thread em `src/main.rs` após `atomwrite::run` retornar
-- **`atomic::tests::create_backup_and_retention` não falha mais no CI Windows** — `platform::fsync_file_best_effort` registra warning e continua em `ERROR_ACCESS_DENIED`
-- **Matriz de CI fixada em `windows-2025-vs2026`** — Substituído `windows-latest` para silenciar NOTICE de migração
+- **`signal_test::shutdown_message_on_stderr` não falha mais no CI Linux** — `eprintln!` removido dos signal handlers SIGINT/SIGTERM conforme POSIX.1-2017 `signal-safety(7)`. Mensagem agora emitida pela main thread em `src/main.rs` após `atomwrite::run` retornar
+- **`atomic::tests::create_backup_and_retention` não falha mais no CI Windows** — `platform::fsync_file_best_effort` registra um warning e continua em `ERROR_ACCESS_DENIED`
+- **Matriz CI pinada em `windows-2025-vs2026`** — Substituiu `windows-latest` para silenciar NOTICE de migração
 
 
 ## O Que Houve De Novo Na v0.1.7 (2026-06-05)
-- **CI do GitHub Actions 100% verde** — Todos os 6 jobs (check matrix x3, deny, doc, msrv, security) passam após corrigir 4 falhas distintas
-- **MSRV bumped para 1.88** — Necessário para permitir `time` 0.3.47 que resolve RUSTSEC-2026-0009
-- **GitHub Actions pronto para Node 24** — `actions/checkout@v6`, `actions/cache@v5`, `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`
+- **CI GitHub Actions totalmente verde** — Todos os 6 jobs (check matrix x3, deny, doc, msrv, security) passam após corrigir 4 falhas distintas
+- **MSRV elevado para 1.88** — Necessário para permitir `time` 0.3.47 que resolve RUSTSEC-2026-0009
+- **GitHub Actions Node 24 pronto** — `actions/checkout@v6`, `actions/cache@v5`, `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`
+- **Cross-compile Windows validado localmente no macOS** — Ambos `x86_64-pc-windows-gnu` e `i686-pc-windows-gnu` passam `cargo check`, `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings` e `cargo test --no-run`
 
 
 ## O Que Houve De Novo Na v0.1.4
-- **`cargo install atomwrite` funciona no Windows 10/11** — Três erros de compilação em `#[cfg(windows)]` corrigidos (E0433, E0507, E0308)
-- **Sugestões de erro context-aware** — Sugestão de `WorkspaceJail` se adapta quando `--workspace` já foi fornecido
+- **`cargo install atomwrite` funciona no Windows 10/11** — Três erros de compilação em blocos `#[cfg(windows)]` foram corrigidos (E0433, E0507, E0308)
+- **Sugestões de erro context-aware** — Sugestão de `WorkspaceJail` se adapta quando `--workspace` já é fornecido
 - **Gate de cross-compile** — `tests/cross_compile_check.rs` falha em qualquer regressão `E0433`, `E0308` ou `E0507` em blocos `cfg(windows)`
 
 
 ## O Que Houve De Novo Na v0.1.3
-- Flag `--preserve-timestamps` em `edit` e `replace` para controlar o mtime do arquivo
-- Campo `mtime_preserved` nas respostas NDJSON de `EditOutput` e `ReplaceResult`
-- BREAKING: escrita atômica não preserva mais o mtime original por padrão
+- Flag `--preserve-timestamps` em `edit` e `replace` para controlar mtime do arquivo (padrão: mtime é atualizado para refletir a mudança)
+- Campo `mtime_preserved` nas respostas NDJSON `EditOutput` e `ReplaceResult`
+- BREAKING: escrita atômica não preserva mais o mtime original do arquivo por padrão. Corrige um no-op silencioso em `cargo build` / `make` / `cmake` / `gradle`
 
 
-## Por Que
-- Agentes LLM usam dezenas de comandos shell para manipular arquivos
-- Uma única falha de energia ou crash no meio da escrita corrompe o arquivo
+## Por Quê
+- Agentes LLM gerenciam dezenas de comandos shell para manipular arquivos
+- Uma única falha de energia ou crash no meio de uma escrita corrompe o arquivo
 - Parsear saída não estruturada de CLI desperdiça tokens e causa alucinações
-- Agentes precisam de checksums para detectar edições concorrentes mas raramente os calculam
-- atomwrite resolve os quatro problemas com um único `cargo install`
+- Agentes precisam de checksums para detectar edições concorrentes mas raramente os computam
+- atomwrite resolve todos os quatro problemas com um único `cargo install`
 
 
 ## Superpoderes
 ### Escritas Atômicas
-- Usa tempfile + fsync + rename + fsync do diretório em toda escrita
-- Garante tudo-ou-nada: o arquivo nunca fica meio escrito
-- Sobrevive a queda de energia, OOM kill e SIGKILL
-- Verificação de sintaxe G72 REAL via tree-sitter opcional (flag `--syntax-check` em `write`)
+- Usa tempfile + fsync + rename + fsync do diretório em cada escrita
+- Garante all-or-nothing: o arquivo nunca fica meio escrito
+- Sobrevive a perda de energia, OOM kills e SIGKILL
+- Verificação de sintaxe G72 REAL opcional via tree-sitter (flag `--syntax-check` em `write`)
 - Sidecar WAL G114 opcional para recuperação de crash (`.atomwrite.journal.<target>.atomwrite.journal.json`)
 
 ### Saída NDJSON
 - stdout é SEMPRE JSON estruturado, um objeto por linha
-- Todo objeto carrega um campo discriminador `"type"`
-- Agentes parseiam a saída sem regex ou scraping frágil de texto
+- Cada objeto carrega um campo discriminador `"type"`
+- Agentes parseiam saída sem regex ou scraping frágil de texto
 - Erros também emitem JSON com `error: true` no stdout
 
 ### Checksums BLAKE3
-- Toda resposta de `read` e `write` inclui um hash BLAKE3
+- Cada resposta de `read` e `write` inclui um hash BLAKE3
 - Use `--expect-checksum` para locking otimista em edições concorrentes
-- Detecte drift de estado antes de aplicar mudanças
+- Detecte state drift antes de aplicar mudanças
 
 ### Busca Paralela
-- Construída sobre o motor do ripgrep para busca em conteúdo de arquivos
+- Construída sobre o engine ripgrep para busca em conteúdo de arquivos
 - Respeita `.gitignore` automaticamente
 - Retorna matches estruturados com arquivo, linha, coluna e contexto
 
-### Transformações por AST
-- Busca e reescrita estrutural com ast-grep
+### Transformações AST-Aware
+- Busca estrutural e reescrita powered by ast-grep
 - Cobre 306 linguagens de programação
-- Refatore código pela árvore sintática, não por regex frágil
+- Refatore código pela árvore sintática, não regex frágil
 - Novos subcomandos `query` e `outline` caminham ASTs tree-sitter (305 linguagens) via `tree-sitter-language-pack`
 
 ### Scoping Gramatical
 - Selecione categorias AST como comentários, funções, classes e strings
 - Aplique ações: delete, uppercase, lowercase, titlecase, squeeze ou replace
 - Cobre Rust, Python, JavaScript, TypeScript e Go com queries preparadas
-- Use `--pattern` para padrões AST customizados além das queries embutidas
+- Use `--pattern` para padrões AST customizados além das queries built-in
 
 ### Operações em Lote
-- Execute operações de write, replace, delete, edit, hash, move e copy a partir de um manifesto NDJSON
-- Use `--transaction` para execução tudo-ou-nada com rollback automático
+- Execute operações write, replace, delete, edit, hash, move e copy a partir de um manifesto NDJSON
+- Use `--transaction` para execução all-or-nothing com rollback automático
 - Todas as operações em um lote compartilham as mesmas garantias atômicas
 
-### Edição Estruturada de Configuração (v0.1.12)
-- `set` escreve um valor em um caminho dotted em arquivos TOML ou JSON (preserva comentários via `toml_edit`)
-- `get` lê um valor em um caminho dotted com formato auto-detectado
-- `del` remove uma chave (com `--force-missing` para tratar chaves ausentes como no-op success)
+### Edição Estruturada de Config (v0.1.12)
+- `set` escreve um valor em um dotted path em arquivos TOML ou JSON (preserva comentários via `toml_edit`)
+- `get` lê um valor em um dotted path com formato auto-detectado
+- `del` remove uma chave (com `--force-missing` para tratar chaves ausentes como sucesso no-op)
 - `case` renomeia identificadores em múltiplos arquivos via `heck` (snake, camel, pascal, kebab, screaming-snake)
 
 
-## Início Rápido
+## Quick Start
 ```bash
 cargo install atomwrite
 
-# Escrever arquivo atomicamente a partir do stdin
+# Escrever um arquivo atomicamente via stdin
 echo "hello world" | atomwrite --workspace . write src/hello.txt
 
 # Ler de volta com checksum
 atomwrite --workspace . read src/hello.txt
 
-# Buscar em um diretório
+# Buscar através de um diretório
 atomwrite --workspace . search 'hello' src/
 
 # Substituir texto com escritas atômicas
 atomwrite --workspace . replace 'hello' 'world' src/
 
-# Avaliar expressões matemáticas e conversões
+# Avaliar matemática e conversões de unidades
 atomwrite calc "2 hours + 30 minutes to seconds"
 
 # v0.1.12: definir um valor em um arquivo TOML (preserva comentários)
@@ -152,6 +181,12 @@ atomwrite --workspace . outline src/app.py
 
 # v0.1.12: verificação de sintaxe tree-sitter REAL antes de commitar
 echo "fn broken(" | atomwrite --workspace . write --syntax-check src/x.rs
+
+# v0.1.15: relatar sidecars obsoletos e estimar reclaim
+atomwrite --workspace . wal-stats
+
+# v0.1.15: colher journals mais antigos que o threshold
+atomwrite --workspace . wal-heal --threshold-secs 3600
 ```
 
 
@@ -161,7 +196,7 @@ echo "fn broken(" | atomwrite --workspace . write --syntax-check src/x.rs
 cargo install atomwrite
 ```
 
-### Da fonte
+### Do source
 ```bash
 git clone https://github.com/daniloaguiarbr/atomwrite.git
 cd atomwrite
@@ -184,56 +219,60 @@ atomwrite completions fish > ~/.config/fish/completions/atomwrite.fish
 ## Uso
 - Toda saída vai para stdout como NDJSON
 - Todos os logs vão para stderr (apenas com `--verbose`)
-- Use `--workspace <DIR>` para restringir operações a uma raiz de projeto
-- Use `ATOMWRITE_WORKSPACE` para definir a raiz do workspace via variável de ambiente
+- Use `--workspace <DIR>` para restringir operações à raiz do projeto
+- Use `ATOMWRITE_WORKSPACE` para definir a raiz do workspace via env var
 - Use `--dry-run` antes de operações destrutivas
 - Use `--expect-checksum <HASH>` para locking otimista
-- Use `--lang <LOCALE>` para substituir o idioma de exibição (en, pt-BR)
-- Faça pipe de stdin para os comandos `write` e `batch`
+- Use `--lang <LOCALE>` para sobrescrever o idioma de exibição (en, pt-BR)
+- Pipe stdin para `write` e `batch`
 
 
-## Comandos (28 no total)
+## Comandos (30 no total)
 
-### I/O Principal
+### I/O Central
 - `read` — ler arquivos com metadados, checksum, conteúdo opcional
 - `write` — criar ou sobrescrever arquivos atomicamente via stdin
 - `edit` — editar cirurgicamente por número de linha, marcador de texto ou match exato
 - `delete` — deletar arquivos com backup opcional
 - `copy` — copiar arquivos com verificação de checksum
-- `move` — mover ou renomear arquivos atomicamente (EXDEV copy-fallback)
+- `move` — mover ou renomear arquivos atomicamente (fallback copy em EXDEV)
 - `apply` — aplicar patches do stdin (unified diff, search/replace, full, markdown)
 
-### Busca e substituição
-- `search` — buscar conteúdo de arquivos em paralelo (motor ripgrep)
+### Buscar e substituir
+- `search` — buscar conteúdo de arquivos em paralelo (engine ripgrep)
 - `replace` — substituir texto entre arquivos com escritas atômicas
 - `transform` — refatoração AST via ast-grep (306 linguagens)
 
 ### Inspeção
 - `hash` — calcular checksums BLAKE3
 - `count` — contar linhas, arquivos por extensão
-- `diff` — comparar dois arquivos (unified, stat ou mudanças)
-- `list` — listar arquivos em uma árvore de diretórios
+- `diff` — comparar dois arquivos (unified, stat ou changes)
+- `list` — listar arquivos em uma árvore de diretório
 - `extract` — extrair campos de entrada NDJSON via pipe
 - `scope` — scoping gramatical (deletar todos os comentários, etc.)
 - `regex` — gerar regex a partir de exemplos
 - `calc` — matemática e conversões de unidades
 - `completions` — gerar completions de shell (bash, zsh, fish, elvish, powershell)
 
-### Backup e recuperação
-- `backup` — criar backups com timestamp com checksums BLAKE3
-- `rollback` — restaurar de um backup anterior
+### Backup e recovery
+- `backup` — criar backups com timestamp e checksums BLAKE3
+- `rollback` — restaurar a partir de um backup anterior
 - `batch` — operações em lote dirigidas por NDJSON (transacional)
 
-### Editores estruturados de configuração (v0.1.12, v14 Tier 3)
-- `set <PATH> <KEY_PATH> <VALUE>` — escrever um valor em um caminho dotted em um arquivo TOML ou JSON. Preserva comentários e ordem das chaves via `toml_edit`. Auto-coage int/bool/float/string.
-- `get <PATH> <KEY_PATH>` — ler um valor em um caminho dotted. NDJSON: `{"type":"get","key_path","value","found","format"}`.
-- `del <PATH> <KEY_PATH>` — remover uma chave. Flag `--force-missing` trata chaves ausentes como no-op success.
+### Editores de config estruturada (v0.1.12, v14 Tier 3)
+- `set <PATH> <KEY_PATH> <VALUE>` — escrever um valor em um dotted path em um arquivo TOML ou JSON. Preserva comentários e ordem de chaves via `toml_edit`. Auto-coerce int/bool/float/string.
+- `get <PATH> <KEY_PATH>` — ler um valor em um dotted path. NDJSON: `{"type":"get","key_path","value","found","format"}`.
+- `del <PATH> <KEY_PATH>` — remover uma chave. Flag `--force-missing` trata chaves ausentes como sucesso no-op.
 - `case <PATHS...> --subvert OLD NEW --to <style>` — renomear identificadores em múltiplos arquivos via `heck`. Estilos: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`.
 
 ### Ferramentas AST (v0.1.12, v14 Tier 3 + G72, via tree-sitter-language-pack)
 - `query <PATH> [--kinds|--query <KIND>|-Q <KIND>|--tree] [--positions]` — caminhar um AST tree-sitter e emitir nós como NDJSON. 305 linguagens suportadas.
 - `outline <PATH> [--kind <KIND>] [--positions]` — extrair estrutura de alto nível (funções, classes, structs, enums, traits, módulos) como NDJSON.
-- `write --syntax-check` — verificação de sintaxe G72 REAL via tree-sitter. 24 linguagens cobertas. Exit 88 com primeira linha/coluna/kind/mensagem de erro.
+- `write --syntax-check` — verificação de sintaxe REAL G72 via tree-sitter. 24 linguagens cobertas. Exit 88 com primeira linha/coluna/kind/mensagem de erro.
+
+### Limpeza WAL (v0.1.15, G119)
+- `wal-stats` — snapshot de telemetria: total de journals, breakdown por estado, idade do mais antigo, tamanho total, breakdown por diretório, recomendação de auto-heal, bytes estimados de reclaim
+- `wal-heal [--threshold-secs N] [--budget-ms N]` — colher journals terminais obsoletos mais antigos que o threshold. Seguro e idempotente
 
 ### Padrões comuns para cada subcomando
 
@@ -300,7 +339,7 @@ atomwrite --workspace . backup src/config.toml
 atomwrite --workspace . rollback src/config.toml
 
 # apply
-echo "novo conteudo" | atomwrite --workspace . apply src/file.txt --format full
+echo "novo conteúdo" | atomwrite --workspace . apply src/file.txt --format full
 
 # set (v0.1.12)
 atomwrite --workspace . set Cargo.toml package.version 0.2.0
@@ -321,6 +360,12 @@ atomwrite --workspace . query src/main.rs -Q function_item --positions
 # outline (v0.1.12)
 atomwrite --workspace . outline src/app.py
 
+# wal-stats (v0.1.15)
+atomwrite --workspace . wal-stats
+
+# wal-heal (v0.1.15)
+atomwrite --workspace . wal-heal --threshold-secs 3600 --budget-ms 100
+
 # completions
 atomwrite completions bash
 ```
@@ -328,33 +373,34 @@ atomwrite completions bash
 
 ## Variáveis de Ambiente
 - `NO_COLOR`: desabilita saída colorida quando definida com qualquer valor
-- `RUST_LOG`: controla verbosidade dos logs (ex: `RUST_LOG=debug`)
-- `ATOMWRITE_LANG`: substitui o locale para mensagens traduzidas (ex: `en`, `pt-BR`)
+- `RUST_LOG`: controla verbosidade de log (ex., `RUST_LOG=debug`)
+- `ATOMWRITE_LANG`: sobrescreve locale para mensagens traduzidas (ex., `en`, `pt-BR`)
 - `ATOMWRITE_WORKSPACE`: define a raiz do workspace para validação de path jail (alternativa a `--workspace`)
-- `RAYON_NUM_THREADS`: substitui número de threads paralelas para search, replace, transform e scope
+- `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS`: knobs do G119 L4 HeuristicsEngine (v0.1.16+)
+- `RAYON_NUM_THREADS`: sobrescreve número de threads paralelas para search, replace, transform e scope
 
 
 ## Códigos de Saída
 - `0`: sucesso
-- `1`: nenhum match encontrado (search, não é um erro)
+- `1`: zero matches encontrados (search, não é um erro)
 - `4`: arquivo não encontrado
 - `13`: permissão negada
-- `28`: disco cheio (sem espaço restante no dispositivo)
+- `28`: disco cheio (sem espaço no dispositivo)
 - `30`: cota excedida
-- `65`: entrada inválida (argumentos incorretos ou dados malformados)
-- `73`: rename entre dispositivos (fronteira de filesystem)
+- `65`: entrada inválida (argumentos ruins ou dados malformados, incluindo stdin vazio sem `--allow-empty-stdin` desde v0.1.16)
+- `73`: rename cross-device (limite de filesystem)
 - `74`: erro de I/O
 - `78`: configuração inválida
 - `81`: verificação de checksum falhou
-- `82`: drift de estado (checksum não confere, lock otimista falhou)
+- `82`: state drift (mismatch de checksum, lock otimista falhou)
 - `83`: timeout de lock (v0.1.12+)
 - `85`: FIFO detectado (named pipe não pode ser escrito atomicamente)
 - `86`: arquivo de dispositivo detectado (bloco ou caractere)
 - `88`: erro de sintaxe detectado (v0.1.12+, `--syntax-check` falhou)
-- `91`: fallback EXDEV desabilitado (v0.1.12+, `--strict-atomic` proíbe copy-fallback entre devices)
+- `91`: fallback EXDEV desabilitado (v0.1.12+, `--strict-atomic` proíbe fallback de cópia cross-device)
 - `92`: verificação BLAKE3 do copy-back falhou (v0.1.12+)
-- `93`: journal órfão detectado (v0.1.12+, recuperação consultiva G114)
-- `126`: jail de workspace violada (caminho escapa do workspace)
+- `93`: journal órfão detectado (v0.1.12+, recovery consultivo G114)
+- `126`: violação do jail do workspace (caminho escapa do workspace)
 - `127`: symlink bloqueado (alvo do symlink fora do workspace)
 - `128`: arquivo imutável (não pode modificar)
 - `130`: interrompido por SIGINT
@@ -363,9 +409,19 @@ atomwrite completions bash
 - `255`: erro interno
 
 
-## Tratamento de Erros
+## Tratamento de Sinal
+- Unix: SIGINT (Ctrl+C) e SIGTERM interceptados para shutdown gracioso
+- Unix: SIGPIPE resetado para SIG_DFL para comportamento padrão de pipe (exit 141)
+- Windows: Ctrl+C interceptado via console handler
+- Primeiro sinal: define flag de shutdown, imprime "shutting down..." no stderr
+- Segundo sinal: terminação imediata via `_exit` (Unix) ou `exit` (Windows)
+- Threads de walker (search, replace, transform, scope) param entre arquivos
+- Operações em lote param entre operações
+
+
+## Tratamento de Erro
 - Todos os erros emitem um objeto JSON no stdout com `error: true`
-- Campos do erro: `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`, `workspace`
+- Campos de erro: `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`, `workspace`
 - Classes de erro: `permanent`, `transient`, `conflict`, `precondition_failed`
 - 25 variantes de erro no total (20 baseline de v0.1.4 + 5 adicionadas em v0.1.12)
 - Erros transient e conflict definem `retryable: true`
@@ -374,64 +430,69 @@ atomwrite completions bash
 
 
 ## Performance
-- Binário estático único sem dependências de runtime
-- Builds release usam LTO, codegen unit único e stripping de símbolos
-- Leitura de arquivos via memory-map com `memmap2` para arquivos grandes
-- Busca paralela via rayon e o motor ripgrep
-- Latência típica de operação de arquivo: abaixo de 5 ms para arquivos pequenos
+- Binário estático único com zero dependências de runtime
+- Builds de release usam LTO, codegen unit único e stripping de símbolos
+- Leituras de arquivo via mmap com `memmap2` para arquivos grandes
+- Busca paralela via rayon e engine ripgrep
+- Latência típica de operação de arquivo: sob 5 ms para arquivos pequenos
 
 
-## FAQ de Solução de Problemas
+## FAQ de Troubleshooting
 
 ### atomwrite write trava sem saída
-- Certifique-se de estar fazendo pipe de conteúdo para stdin
-- `write` lê do stdin e aguarda EOF
+- Garanta que está pipeando conteúdo para o stdin
+- `write` lê do stdin e espera EOF
 - Exemplo: `echo "content" | atomwrite --workspace . write file.txt`
 
-### search retorna código de saída 1
-- Código de saída 1 significa zero matches encontrados
-- Este é o comportamento esperado, não um erro
+### search retorna exit code 1
+- Exit code 1 significa zero matches encontrados
+- Este é comportamento esperado, não um erro
 - Verifique o padrão e o caminho alvo
 
-### rename entre dispositivos falha com exit 73
+### rename cross-device falha com exit 73
 - A origem e o destino estão em filesystems diferentes
-- atomwrite faz fallback para copy+delete no `move` entre dispositivos
+- atomwrite cai no fallback de copy+delete para `move` entre devices
 - Use `copy` seguido de `delete` como alternativa
 
-### checksum não confere com exit 82
+### mismatch de checksum com exit 82
 - Outro processo modificou o arquivo entre read e write
 - Releia o arquivo para obter o checksum atual
-- Repita a operação com o `--expect-checksum` atualizado
+- Retente a operação com o `--expect-checksum` atualizado
 
-### jail de workspace violada com exit 126
-- O caminho alvo resolve para fora do limite do `--workspace`
-- Verifique se o caminho não contém travessias `..` ou symlinks escapando do workspace
+### violação do jail do workspace com exit 126
+- O caminho alvo resolve fora do limite do `--workspace`
+- Verifique que o caminho não contém travessias `..` ou symlinks escapando do workspace
 
 ### verificação de sintaxe falhou com exit 88 (v0.1.12+)
-- A verificação G72 REAL tree-sitter encontrou um erro de sintaxe no arquivo
+- A verificação de sintaxe tree-sitter REAL G72 encontrou um erro de sintaxe no arquivo
 - Inspecione a primeira linha/coluna/kind/mensagem de erro no envelope JSON de erro
-- Corrija a sintaxe e repita, ou remova `--syntax-check` para contornar
+- Corrija a sintaxe e retente, ou remova `--syntax-check` para bypassar
+
+### stdin vazio rejeitado com exit 65 (v0.1.16+)
+- O guard G120 L1 rejeitou 0 bytes do stdin como provável falha de pipeline upstream
+- Passe `--allow-empty-stdin` para confirmar que a entrada vazia é intencional
+- Ou pipe conteúdo real: `echo "x" | atomwrite --workspace . write file`
 
 
 ## Arquitetura
-- Veja [ARCHITECTURE.pt-BR.md](ARCHITECTURE.pt-BR.md) para mapa de módulos, fluxo de dados e decisões de projeto
-- Veja [docs/decisions/](docs/decisions/README.md) para 7 ADRs cobrindo a arquitetura v0.1.12 (G72, G114, v14 Tier 3)
+- Veja [ARCHITECTURE.pt-BR.md](ARCHITECTURE.pt-BR.md) para mapa de módulos, fluxo de dados e decisões de design
+- Veja [docs/decisions/](docs/decisions/README.md) para 12 ADRs cobrindo arquitetura a partir de v0.1.12 (G72, G114, v14 Tier 3, G117, G118, G119, G120, trio v0.1.18)
 - Veja [docs/schemas/](docs/schemas/README.md) para 22 contratos estáveis de JSON Schema para toda saída NDJSON
 
 
 ## Contribuindo
-- Veja [CONTRIBUTING.pt-BR.md](CONTRIBUTING.pt-BR.md) para setup de desenvolvimento e diretrizes
+- Veja [CONTRIBUTING.pt-BR.md](CONTRIBUTING.pt-BR.md) para setup de desenvolvimento e guidelines
 - Veja [docs/decisions/README.md](docs/decisions/README.md) para o log de decisões
 
 
 ## Segurança
-- Veja [SECURITY.pt-BR.md](SECURITY.pt-BR.md) para reporte de vulnerabilidades
-- Veja a seção "Known Security Advisories" do SECURITY.pt-BR.md para advisories resolvidas e ativas
+- Veja [SECURITY.pt-BR.md](SECURITY.pt-BR.md) para relato de vulnerabilidades
+- Veja seção "Known Security Advisories" em SECURITY.pt-BR.md para advisories resolvidos e ativos
 
 
 ## Changelog
-- Veja [CHANGELOG.md](CHANGELOG.md) para histórico de releases em inglês
-- Veja [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md) para histórico de releases em português
+- Veja [CHANGELOG.md](CHANGELOG.md) para o histórico de releases em inglês
+- Veja [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md) para o histórico de releases em português
 
 
 ## Licença

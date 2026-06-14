@@ -10,7 +10,7 @@
 ### Schema Index
 - `write-output.schema.json` -- output of `atomwrite write`
 - `read-output.schema.json` -- output of `atomwrite read`
-- `edit-output.schema.json` -- output of `atomwrite edit`
+- `edit-output.schema.json` -- output of `atomwrite edit` (v0.1.15: adds `pairs_total` and `pair_results` -- G117)
 - `search-match.schema.json` -- output of `atomwrite search` (per-match event)
 - `replace-result.schema.json` -- output of `atomwrite replace` (per-file event)
 - `delete-output.schema.json` -- output of `atomwrite delete`
@@ -29,7 +29,8 @@
 - `backup-result.schema.json` -- output of `atomwrite backup` (per-file event)
 - `rollback-result.schema.json` -- output of `atomwrite rollback`
 - `apply-result.schema.json` -- output of `atomwrite apply`
-- `error-output.schema.json` -- error envelope emitted by all subcommands
+- `error-output.schema.json` -- error envelope emitted by all subcommands (v0.1.15: adds `failed_pair_index`, `pairs_total`, `pair_results` -- G117)
+- `wal-stats-output.schema.json` -- output of `atomwrite wal-stats` (v0.1.16: G119 L5 telemetry; `total_journals`, `by_state`, `oldest_journal_age_secs`, `total_size_bytes`, `by_directory`, `auto_heal_recommended`, `estimated_reclaim_bytes`)
 
 
 ## Portugues
@@ -41,7 +42,7 @@
 ### Índice de Schemas
 - `write-output.schema.json` -- saída do `atomwrite write`
 - `read-output.schema.json` -- saída do `atomwrite read`
-- `edit-output.schema.json` -- saída do `atomwrite edit`
+- `edit-output.schema.json` -- saída do `atomwrite edit` (v0.1.15: adiciona `pairs_total` e `pair_results` -- G117)
 - `search-match.schema.json` -- saída do `atomwrite search` (evento por match)
 - `replace-result.schema.json` -- saída do `atomwrite replace` (evento por arquivo)
 - `delete-output.schema.json` -- saída do `atomwrite delete`
@@ -60,4 +61,4 @@
 - `backup-result.schema.json` -- saída do `atomwrite backup` (evento por arquivo)
 - `rollback-result.schema.json` -- saída do `atomwrite rollback`
 - `apply-result.schema.json` -- saída do `atomwrite apply`
-- `error-output.schema.json` -- envelope de erro emitido por todos os subcomandos
+- `error-output.schema.json` -- envelope de erro emitido por todos os subcomandos (v0.1.15: adiciona `failed_pair_index`, `pairs_total`, `pair_results` -- G117)

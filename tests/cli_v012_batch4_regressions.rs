@@ -17,7 +17,6 @@
 #![allow(clippy::needless_raw_string_hashes)]
 
 use assert_cmd::Command;
-use std::io::Write;
 use tempfile::tempdir;
 
 fn aw() -> Command {
@@ -188,7 +187,9 @@ fn recover_orphan_journals_with_committed_entry() {
         "set should succeed: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // A sidecar must exist after a successful set
+    // G119 L2: the Drop guard removes the sidecar on normal scope exit
+    // after the `Committed` entry is written. The sidecar must NOT
+    // survive a successful set — that is the whole point of L2.
     let sidecars: Vec<_> = std::fs::read_dir(dir.path())
         .unwrap()
         .filter_map(|e| e.ok())
@@ -201,15 +202,9 @@ fn recover_orphan_journals_with_committed_entry() {
         })
         .collect();
     assert!(
-        !sidecars.is_empty(),
-        "successful set should leave a WAL sidecar"
-    );
-    // The sidecar should contain a Committed entry
-    let content = std::fs::read_to_string(sidecars[0].path()).unwrap();
-    assert!(
-        content.contains("Committed") || content.contains("committed"),
-        "sidecar should record Committed phase, got: {}",
-        content
+        sidecars.is_empty(),
+        "successful set must NOT leave a WAL sidecar (G119 L2 Drop guard), found: {:?}",
+        sidecars.iter().map(|e| e.path()).collect::<Vec<_>>()
     );
 }
 
@@ -340,14 +335,12 @@ fn syntax_check_large_streaming_file() {
     let dir = tempdir().unwrap();
     let f = dir.path().join("big.rs");
     // Generate a > 1 MiB Rust source with valid syntax
-    {
-        let mut h = std::fs::File::create(&f).unwrap();
-        writeln!(h, "fn big() {{").unwrap();
-        for i in 0..50000 {
-            writeln!(h, "    let v{} = {};", i, i).unwrap();
-        }
-        writeln!(h, "}}").unwrap();
+    let mut payload = String::from("fn big() {\n");
+    for i in 0..50000 {
+        payload.push_str(&format!("    let v{} = {};\n", i, i));
     }
+    payload.push_str("}\n");
+    std::fs::write(&f, &payload).unwrap();
     // Verify size before syntax check (the write would update mtime, not size)
     let meta_before = std::fs::metadata(&f).unwrap();
     assert!(meta_before.len() > 1_000_000, "test file should be > 1 MiB");
@@ -358,6 +351,7 @@ fn syntax_check_large_streaming_file() {
         .arg("write")
         .arg("--syntax-check")
         .arg(&f)
+        .write_stdin(payload)
         .output()
         .expect("write --syntax-check big");
     // Syntax is valid: success (exit 0)

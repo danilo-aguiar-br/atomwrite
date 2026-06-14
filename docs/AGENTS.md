@@ -4,6 +4,12 @@
 [Leia em Portugues](AGENTS.pt-BR.md)
 
 
+## What Is New in v0.1.15 (extended in v0.1.18)
+
+- G117: multi-pair `edit --old/--new` now runs the same 9-strategy fuzzy cascade as the single-pair path, per pair. Success envelopes gain `pairs_total` and `pair_results[{index, matched, strategy, similarity}]`; failures gain `failed_pair_index` (exit 65, file untouched). New opt-in `--partial` applies the pairs that match and reports the rest.
+- G118: `write` resolves the target against `--workspace` BEFORE append/prepend, line-ending auto-detection, and `--expect-checksum`. With a divergent CWD, checksum drift now exits 82 (`STATE_DRIFT`) instead of silently overwriting, and out-of-jail targets exit 126 early.
+- 502 tests passing; ADRs 0026-0030 document the five-gap closure across v0.1.15-v0.1.18.
+
 ## What's New in v0.1.12
 
 This section summarizes v0.1.12 changes that are most relevant to AI agents using atomwrite as a tool. All 13 gaps from the PRD audit that were closed in v0.1.11+v0.1.12 are listed below.
@@ -61,8 +67,8 @@ G39 xattr, G41 binary detect (content_inspector), G54 advisory lock, G56 FIFO sk
 
 ### Test Coverage
 
-- **445 tests passing** (was 320 baseline, +125 new in v0.1.11+v0.1.12)
-- 7 new ADRs in `docs/decisions/` (0019-0025)
+- **502 tests passing** (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 cross-platform/WAL/audit increments v0.1.16-v0.1.18)
+- 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/` (set, get, del, case, query, outline, wal-recovery)
 - See [docs/decisions/README.md](README.md) for architectural decisions
 

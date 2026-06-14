@@ -171,3 +171,85 @@ fn replace_summary_has_correct_counts() {
     assert!(summary["files_visited"].as_u64().unwrap() >= 3);
     assert!(summary["total_replacements"].as_u64().unwrap() >= 3);
 }
+
+/// G118 (path resolution): `replace` with a root path that escapes the
+/// workspace jail (absolute `/etc/passwd` or relative `../escape`)
+/// must fail with exit 126 BEFORE the WalkBuilder is constructed.
+/// Pre-fix: the walker would resolve the path against the CWD and
+/// emit one `JailViolation` event per file walked; the user-facing
+/// diagnostic was buried under hundreds of error events.
+#[test]
+fn replace_root_path_outside_workspace_exits_126() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "inside.txt", "x\n");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "replace",
+            "x",
+            "y",
+        ])
+        .arg("/etc/passwd")
+        .output()
+        .expect("run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(126),
+        "absolute /etc/passwd must abort with exit 126 WORKSPACE_JAIL"
+    );
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events[0]["error"], true);
+    assert_eq!(events[0]["code"], "WORKSPACE_JAIL");
+    assert!(
+        events[0]["path"]
+            .as_str()
+            .unwrap_or("")
+            .contains("/etc/passwd"),
+        "error envelope must surface the offending path, got: {:?}",
+        events[0]["path"]
+    );
+}
+
+/// G118 (path resolution): `replace` with a relative `..` root that
+/// escapes the workspace must abort before any walk, even when CWD
+/// differs from the workspace. This is the CWE-367-style race the
+/// G118 fix is designed to close.
+#[test]
+fn replace_relative_dotdot_root_outside_workspace_exits_126() {
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+    let outside = tempfile::tempdir().expect("outside tempdir");
+    common::create_test_file(outside.path(), "secret.txt", "should not be touched\n");
+
+    // CWD is `outside`; workspace is a different dir. A `../<workspace>`
+    // path from `outside` would land INSIDE the workspace, but the
+    // relevant case is `../outside` evaluated against the workspace
+    // — which is a relative-traversal that escapes.
+    let escape_path = format!(
+        "../{}",
+        outside.path().file_name().unwrap().to_str().unwrap()
+    );
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            workspace.path().to_str().unwrap(),
+            "replace",
+            "touched",
+            "left_alone",
+        ])
+        .arg(&escape_path)
+        .output()
+        .expect("run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(126),
+        "`{}` must be rejected as a jail violation",
+        escape_path
+    );
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events[0]["code"], "WORKSPACE_JAIL");
+}

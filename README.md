@@ -13,13 +13,41 @@
 
 ## What Is It
 - A single Rust binary that handles every file operation an LLM agent needs
-- **28 subcommands**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, completions
+- **30 subcommands**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions
 - Every write is atomic: tempfile, fsync, rename, fsync directory
 - Every response is NDJSON: one JSON object per line, machine-readable by default
 - Every file gets a BLAKE3 checksum: detect drift, verify integrity, enable optimistic locking
 
 
-## What Is New In v0.1.12 (2026-06-07)
+## What Is New In v0.1.18 (2026-06-14)
+- **502 tests passing** (461 in v0.1.15 + 6 in v0.1.16 + 8 in v0.1.17 + 27 in v0.1.18). 43 test suites, 0 failures
+- **G118 universal resolve-first**: the `validate_path` pre-flight added to `write` in v0.1.15 is now propagated to 10 mutating commands: `write`, `edit`, `copy`, `apply`, `move`, `rollback`, `set`, `del`, `case`, and `replace`. `replace /etc/passwd` now aborts in microseconds with a single `WORKSPACE_JAIL` envelope instead of walking the filesystem and emitting one event per file
+- **G119 intelligent 5-layer WAL cleanup**: `WalPolicy { Auto, Always, Never }` (L1), `JournalGuard` RAII (L2), startup `wal-heal` (L3), `heuristics` submodule with 5 functions (L4), `wal-stats` telemetry (L5). 2 new subcommands: `wal-heal` and `wal-stats`. ADR-0028
+- **G120 4-layer empty-stdin guard**: `read_stdin_content` rejects 0 bytes by default with `--allow-empty-stdin` opt-out (L1), `handle_append_prepend` rejects empty stdin (L2), cross-validation warning when `--append` + `--expect-checksum` + empty stdin (L3), `stdin_bytes_read` telemetry in NDJSON (L4). ADR-0029
+- **G117 follow-up edge cases**: 3 new regression tests covering Unicode exact-match (UTF-8 diacritics), CRLF line-ending preservation after replace, and multi-pair where the same `--old` appears twice
+- **GAP 18A — `replace` pre-validates root paths**: the last mutating command relying on per-entry validation now fails fast with `WORKSPACE_JAIL` (exit 126) before constructing the `WalkBuilder`
+
+
+## What Was New In v0.1.17 (2026-06-13)
+- **L3 startup auto-heal**: `atomwrite` runs an autonomous `wal-heal` pass on startup with a 3600s threshold and 100ms budget. The pass is opt-out via `--skip-startup-wal-heal` (see `src/cli.rs`). The explicit `wal-heal` subcommand landed in v0.1.15; v0.1.17 wires the same logic into `lib.rs::run` before any subcommand dispatch
+
+
+## What Was New In v0.1.16 (2026-06-13)
+- **L1 WalPolicy**: `enum WalPolicy { Auto, Always, Never }` in `src/wal.rs`, exposed via `--wal-policy` flag on `write` and `edit`. Default `Auto` skips the WAL sidecar for trivial writes (size under 1 MiB, not Edit/Replace, directory under Git, write under 4 KiB)
+- **L4 HeuristicsEngine**: `crate::wal::heuristics` submodule with 5 composable functions (`h1_ttl`, `h2_lru_within_cap`, `h3_rate_limit`, `h4_sentinel`, `h5_archive`). Env vars: `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS`. Telemetry field `wal_policy` on `WriteOutput` NDJSON
+
+
+## What Was New In v0.1.15 (2026-06-11)
+- **G117 fixed — multi-pair `edit` reaches fuzzy parity with the single-pair path**: repeated `--old`/`--new` pairs now run the full 9-strategy fuzzy cascade per pair instead of exact-only matching
+- **Per-pair reporting**: success envelopes gain `pairs_total` and `pair_results` (1-based `index`, `matched`, `strategy`, `similarity`); error envelopes gain `failed_pair_index`, `pairs_total`, and `pair_results` — no more manual bisection of failed batches
+- **New `--partial` flag (opt-in)**: applies the matching pairs and reports the rest with `matched: false`; zero applied pairs exits 1 (`NO_MATCHES`) without writing; the default stays all-or-nothing
+- **Anti-masking recipe**: `edit ... | jaq '.edits'` hides exit 65 as `{"edits": null}` — always use `jaq -e '.edits'` or check `${PIPESTATUS[0]}`
+- **G118 fixed — `write` resolves the target against the workspace before every pre-step**: with a CWD outside the workspace, `--append`/`--prepend` truncated the file, `--expect-checksum` was silently skipped, and `--line-ending auto` lost detection (CWE-367 double path identity); checksum drift now exits 82 (`STATE_DRIFT`) and out-of-jail targets fail early with exit 126 (ADR-0027)
+- **GAP 18 fixed — Windows CI is green again**: the write snapshot now redacts `dir_fsync` as `[platform_dir_fsync]` (Windows reports `best_effort`, Unix `sync_all`)
+- **MSRV job aligned**: CI now tests the documented MSRV 1.88 (the job was previously pinned to 1.85)
+- **461 tests passing** (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118). 43 test suites, 0 failures
+
+## What Was New In v0.1.12 (2026-06-07)
 - **6 new subcommands (v14 Tier 3)**: `set`, `get`, `del`, `case`, `query`, `outline` for structured config editing and AST analysis
 - **G72 REAL syntax check** -- `atomwrite write --syntax-check` invokes the real `tree-sitter` parser (24 languages covered) instead of the bracket-balance heuristic. Exit code 88 on the first syntax error
 - **G114 WAL sidecar for crash recovery** -- `atomic_write` writes `.atomwrite.journal.<target>.atomwrite.journal.json` with `Started` and `Committed` entries. `recover_orphan_journals(dir)` is consultative: reports orphans without auto-replay
@@ -35,7 +63,7 @@ See `docs/HOW_TO_USE.md` for the full v0.1.12 quickstart and `docs/MIGRATION.md`
 ## What Was New In v0.1.11 (2026-06-05)
 - **`signal_test::shutdown_message_on_stderr` no longer fails on Windows CI (windows-2025-vs2026)** — `libc::write(STDERR_FILENO, ...)` was moved from `src/main.rs` to `src/signal.rs` and gated by `#[cfg(unix)]`. The Windows `ctrlc` path was kept as-is. Also added an `EAGAIN` and `EINTR` retry loop to make the write robust against interrupted syscalls and tight pipe buffer limits in CI sandboxes
 - **Race-free readiness detection in `signal_test`** — The test now sets `ATOMWRITE_READY_FILE` to a path under the tempdir, and atomwrite writes its PID there as soon as `install_handlers_early` returns. The test polls the file with a 10 s deadline before sending SIGINT, eliminating the microsecond window where SIGINT could race with `posix_spawn` and arrive before the kernel's `sigaction` is configured
-- **Idempotent signal-handler installation** — `install_handlers_early` and `install_handlers` now share a single `Arc<ShutdownSignal>` via a `OnceCell`. Previously each function created its own instance, and only the first instance was flipped by the signal-hook chain, so the main thread's `is_shutdown()` check stayed `false` and the banner was never written
+- **Idempotent signal-handler installation** — `install_handlers_early` and `install_handlers` now share a single `Arc<ShutdownSignal>` via `OnceCell`. Previously each function created its own instance, and only the first instance was flipped by the signal-hook chain, so the main thread's `is_shutdown()` check stayed `false` and the banner was never written
 
 
 ## What Was New In v0.1.10 (2026-06-05)
@@ -153,6 +181,12 @@ atomwrite --workspace . outline src/app.py
 
 # v0.1.12: REAL tree-sitter syntax check before committing
 echo "fn broken(" | atomwrite --workspace . write --syntax-check src/x.rs
+
+# v0.1.15: report stale sidecars and estimate reclaim
+atomwrite --workspace . wal-stats
+
+# v0.1.15: reap journals older than the threshold
+atomwrite --workspace . wal-heal --threshold-secs 3600
 ```
 
 
@@ -193,7 +227,7 @@ atomwrite completions fish > ~/.config/fish/completions/atomwrite.fish
 - Pipe stdin for `write` and `batch` commands
 
 
-## Commands (28 total)
+## Commands (30 total)
 
 ### Core I/O
 - `read` — read files with metadata, checksum, optional content
@@ -235,6 +269,10 @@ atomwrite completions fish > ~/.config/fish/completions/atomwrite.fish
 - `query <PATH> [--kinds|--query <KIND>|-Q <KIND>|--tree] [--positions]` — walk a tree-sitter AST and emit nodes as NDJSON. 305 languages supported.
 - `outline <PATH> [--kind <KIND>] [--positions]` — extract high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON.
 - `write --syntax-check` — G72 REAL syntax check via tree-sitter. 24 languages covered. Exit 88 with first error line/column/kind/message.
+
+### WAL cleanup (v0.1.15, G119)
+- `wal-stats` — telemetry snapshot: total journals, by-state breakdown, oldest age, total size, by-directory breakdown, auto-heal recommendation, estimated reclaim bytes
+- `wal-heal [--threshold-secs N] [--budget-ms N]` — reap stale terminal journals older than the threshold. Safe and idempotent
 
 ### Common patterns for each subcommand
 
@@ -322,6 +360,12 @@ atomwrite --workspace . query src/main.rs -Q function_item --positions
 # outline (v0.1.12)
 atomwrite --workspace . outline src/app.py
 
+# wal-stats (v0.1.15)
+atomwrite --workspace . wal-stats
+
+# wal-heal (v0.1.15)
+atomwrite --workspace . wal-heal --threshold-secs 3600 --budget-ms 100
+
 # completions
 atomwrite completions bash
 ```
@@ -332,6 +376,7 @@ atomwrite completions bash
 - `RUST_LOG`: control log verbosity (e.g., `RUST_LOG=debug`)
 - `ATOMWRITE_LANG`: override locale for translated messages (e.g., `en`, `pt-BR`)
 - `ATOMWRITE_WORKSPACE`: set the workspace root for path jail validation (alternative to `--workspace`)
+- `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS`: G119 L4 HeuristicsEngine knobs (v0.1.16+)
 - `RAYON_NUM_THREADS`: override number of parallel threads for search, replace, transform and scope
 
 
@@ -342,7 +387,7 @@ atomwrite completions bash
 - `13`: permission denied
 - `28`: disk full (no space left on device)
 - `30`: quota exceeded
-- `65`: invalid input (bad arguments or malformed data)
+- `65`: invalid input (bad arguments or malformed data, including empty stdin without `--allow-empty-stdin` since v0.1.16)
 - `73`: cross-device rename (filesystem boundary)
 - `74`: I/O error
 - `78`: configuration invalid
@@ -423,10 +468,15 @@ atomwrite completions bash
 - Inspect the first error line/column/kind/message in the JSON error envelope
 - Fix the syntax and retry, or remove `--syntax-check` to bypass
 
+### empty stdin rejected with exit 65 (v0.1.16+)
+- The G120 L1 guard rejected 0 bytes from stdin as a likely upstream-pipeline failure
+- Pass `--allow-empty-stdin` to confirm the empty input is intentional
+- Or pipe real content: `echo "x" | atomwrite --workspace . write file`
+
 
 ## Architecture
 - See [ARCHITECTURE.md](ARCHITECTURE.md) for module map, data flow, and design decisions
-- See [docs/decisions/](docs/decisions/README.md) for 7 ADRs covering v0.1.12 architecture (G72, G114, v14 Tier 3)
+- See [docs/decisions/](docs/decisions/README.md) for 12 ADRs covering v0.1.12 onward architecture (G72, G114, v14 Tier 3, G117, G118, G119, G120, v0.1.18 trio)
 - See [docs/schemas/](docs/schemas/README.md) for 22 stable JSON Schema contracts for all NDJSON output
 
 

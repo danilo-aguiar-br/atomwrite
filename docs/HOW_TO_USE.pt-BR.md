@@ -8,6 +8,53 @@
 
 ## O Que Há de Novo na v0.1.12
 
+## Início Rápido: Limpeza de WAL (G119)
+
+A v0.1.15 entrega um sistema de gerenciamento de WAL em três camadas (G119). O novo subcomando `wal-stats` é telemetria read-only. O novo subcomando `wal-heal` é reap escopado. A nova flag `--wal-policy` controla a criação do sidecar por escrita. Use a flag global `--no-auto-heal` para desabilitar a healing automática durante workflows sensíveis.
+
+### Inspecionar com `wal-stats`
+
+```bash
+atomwrite --workspace . wal-stats
+# {"type":"result","journals_total":0,...,"reclaimable":0,...}
+```
+
+### Heal com `wal-heal`
+
+```bash
+# Remove todos os journals terminais (ignora entradas Started)
+atomwrite --workspace . wal-heal --threshold-secs 0
+```
+
+### Escolher um `--wal-policy`
+
+```bash
+# Padrão: deixa o build decidir
+atomwrite --workspace . write src/lib.rs < new.rs
+
+# Proibir qualquer criação de sidecar (higiene de CI)
+atomwrite --workspace . write --wal-policy never ci-output.txt < data.txt
+```
+
+### Desabilitar Auto-Heal Globalmente
+
+Ao rodar workflows em batch via scripts ou capturas forenses, desabilite a healing automática para que o script controle quando o reap acontece.
+
+```bash
+atomwrite --workspace . --no-auto-heal wal-stats
+```
+
+### Tabela de Decisão de Política
+
+| Carga de Trabalho | `--wal-policy` | Justificativa |
+|---|---|---|
+| Dev local / uso interativo | `auto` (padrão) | Otimizado para uso geral; trade-off balanceado |
+| Builds de CI e jobs efêmeros | `never` | Sidecars não têm consumidor; pula o overhead |
+| Deploys de produção / trilha de auditoria | `always` | Metadados forenses exigidos para postmortem |
+| Migrações em massa e jobs em batch | `never` + `--no-auto-heal` | Velocidade e controle explícito do reap |
+| Análise forense / debugging | `always` + `wal-heal` manual | Mantém todos os sidecars; reap só quando você decide |
+
+
 Esta seção resume as mudanças relevantes para uso em v0.1.12.
 
 ### Novos Subcomandos (Tier 3)
@@ -61,8 +108,8 @@ Veja a seção Comandos Avançados abaixo para documentação detalhada de cada.
 
 ### Cobertura de Testes
 
-- 445 testes passando (era 320 baseline, +125 novos em v0.1.11+v0.1.12)
-- 7 novos ADRs em `docs/decisions/` (0019-0025)
+- 502 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118 na v0.1.15)
+- 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/`
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 
@@ -105,6 +152,7 @@ echo "data" | atomwrite write --expect-checksum abc123 src/file.txt
 - Use `--backup` para criar backup com timestamp antes de sobrescrever
 - Use `--expect-checksum` para locking otimista em edições concorrentes
 - Use `--line-ending lf|crlf|cr|auto` para normalizar line endings (padrão: auto preserva o original)
+- Desde a v0.1.15 append/prepend, detecção automática de line ending e `--expect-checksum` resolvem o alvo contra o `--workspace` (G118); na v0.1.14 e anteriores mantenha CWD = workspace, ou alvos relativos truncam no append e pulam a verificação de checksum
 - Use `--dry-run` para visualizar a operação sem escrever
 - Use `--syntax-check` para validar o arquivo com tree-sitter após escrita (G72, exit 88 em erro)
 - Use `--preserve-timestamps` para manter o mtime original (padrão: mtime é atualizado para cargo/make/cmake rebuild)
@@ -145,6 +193,9 @@ atomwrite edit src/main.rs --old "old_text" --new "new_text"
 ```
 
 - Use `--fuzzy auto|off|aggressive` para matching fuzzy quando match exato falhar (9 estratégias em cascata, G116)
+- Desde a v0.1.15 pares repetidos `--old`/`--new` também rodam a cascata fuzzy por par (G117); respostas incluem `pairs_total` e `pair_results` por par, e falhas relatam `failed_pair_index`
+- Use `--partial` (v0.1.15) para aplicar os pares que casam e relatar os demais; zero pares aplicados sai com 1 (`NO_MATCHES`) sem escrever
+- Nunca faça pipe de `edit` para `jaq` sem `-e`: o envelope de erro vai para o stdout, então `| jaq '.edits'` mascara o exit 65 como `null` — use `jaq -e '.edits'` ou `${PIPESTATUS[0]}`
 - Use `--multi` para aplicar múltiplas edições NDJSON em uma escrita atômica via stdin
 - Use `--line-ending lf|crlf|cr|auto` para normalizar line endings (padrão: auto preserva o original)
 - Use `--preserve-timestamps` para manter o mtime original do arquivo (padrão: mtime é atualizado para refletir a edição)

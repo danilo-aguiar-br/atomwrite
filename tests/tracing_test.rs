@@ -21,6 +21,10 @@ fn structured_error_emits_error_field() {
 
 #[traced_test]
 #[test]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "release build strips debug-level tracing via release_max_level_info feature (Cargo.toml)"
+)]
 fn debug_level_includes_filter_info() {
     tracing::debug!(filter = "debug", "tracing initialized");
     assert!(logs_contain("tracing initialized"));
@@ -29,6 +33,10 @@ fn debug_level_includes_filter_info() {
 
 #[traced_test]
 #[test]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "release build strips debug-level tracing via release_max_level_info feature (Cargo.toml)"
+)]
 fn span_captures_path_field() {
     let _span = tracing::debug_span!("process_file", path = "/test/file.rs").entered();
     tracing::debug!("processing");

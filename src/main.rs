@@ -75,6 +75,9 @@ fn main() -> ExitCode {
                         retryable: false,
                         suggestion,
                         workspace: None,
+                        failed_pair_index: None,
+                        pairs_total: None,
+                        pair_results: None,
                     };
                     let mut out = io::stdout().lock();
                     if let Err(e) = serde_json::to_writer(&mut out, &ej) {

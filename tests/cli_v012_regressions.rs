@@ -79,16 +79,33 @@ fn replace_jail_violation_does_not_inflate_counter() {
         .output()
         .expect("replace");
 
-    // The outside path is not in workspace, so replace should skip it
-    // and not increment total_replacements
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("\"files_skipped\":1") || stdout.contains("files_skipped\": 1"),
-        "expected files_skipped=1 for out-of-jail path, got: {stdout}"
+    // v0.1.18 (G118 fix): replace now pre-validates caller-supplied root
+    // paths against the workspace jail BEFORE constructing the
+    // WalkBuilder. The legacy per-entry behaviour (v0.1.12 through
+    // v0.1.17) emitted one JailViolation event per file walked and
+    // returned exit 0 with `files_skipped=1`. The new contract aborts
+    // with exit 126 and a single structured error envelope so the
+    // user sees the failure immediately instead of buried in N events.
+    assert_eq!(
+        output.status.code(),
+        Some(126),
+        "v0.1.18+: out-of-jail path must abort with exit 126, not skip"
     );
-    // Original outside file should be unchanged
+
+    // Original outside file must be unchanged (no partial walk).
     let outside_content = std::fs::read_to_string(&outside).expect("read outside");
     assert_eq!(outside_content, "foo baz\n");
+
+    // Inside file must also be unchanged (replace aborted before walk).
+    let inside_content = std::fs::read_to_string(&inside).expect("read inside");
+    assert_eq!(inside_content, "foo bar\n");
+
+    // Structured error envelope surfaces the offending path.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("WORKSPACE_JAIL"),
+        "error envelope must report WORKSPACE_JAIL, got: {stdout}"
+    );
 }
 
 #[test]

@@ -133,7 +133,7 @@ fn sigterm_during_search_exits_143() {
 fn batch_interrupted_by_signal() {
     use std::io::Write;
     use std::process::{Command, Stdio};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     let dir = tempfile::tempdir().unwrap();
 
@@ -146,11 +146,13 @@ fn batch_interrupted_by_signal() {
     }
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
+    let ready_path = dir.path().join("ready");
     let mut child = Command::new(&bin)
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        .env("ATOMWRITE_READY_FILE", &ready_path)
         .spawn()
         .unwrap();
 
@@ -160,7 +162,11 @@ fn batch_interrupted_by_signal() {
     }
     drop(child.stdin.take());
 
-    std::thread::sleep(Duration::from_millis(20));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready_path.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
     unsafe {
         libc::kill(child.id() as i32, libc::SIGINT);
     }

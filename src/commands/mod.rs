@@ -54,5 +54,7 @@ pub mod search;
 pub mod set;
 /// Structural AST code search and rewrite.
 pub mod transform;
+/// G119 L5 — snapshot of WAL sidecar state (read-only, no I/O side effects).
+pub mod wal_stats;
 /// Atomic file creation and overwrite.
 pub mod write;

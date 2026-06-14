@@ -37,6 +37,27 @@ pub fn cmd_replace(
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
 
+    // G118 (CWD-relative path resolution for replace): validate every
+    // caller-supplied root path against the workspace jail BEFORE
+    // constructing the WalkBuilder. Without this, a relative path like
+    // `../escape` would be resolved against the CWD (not the workspace)
+    // and the per-entry validation in the worker thread would only emit
+    // a `JailViolation` event per file walked — wasting work, spamming
+    // stderr, and violating the G118 invariant that the workspace root
+    // (not the CWD) is the path resolution origin.
+    //
+    // We do this even for absolute paths inside the workspace so a typo
+    // like `/etc/passwd` aborts the entire run with exit 126 instead of
+    // walking the entire system and emitting one error per file.
+    for path in &args.paths {
+        crate::path_safety::validate_path(path, &workspace).with_context(|| {
+            format!(
+                "replace: path '{}' escapes workspace jail (G118); use --workspace to set a different root",
+                path.display()
+            )
+        })?;
+    }
+
     let pattern = compile_pattern(args)?;
 
     let walker = build_walker(args, global)?;
@@ -168,6 +189,7 @@ pub fn cmd_replace(
                     strategy: None,
                     strict_atomic: false,
                     syntax_check: false,
+                    wal_policy: crate::wal::WalPolicy::Auto,
                 };
 
                 match atomic_write(&path, replaced.as_bytes(), &opts, &ws) {

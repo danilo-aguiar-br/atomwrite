@@ -77,7 +77,7 @@ cargo fmt -- --check
 - Use `insta` para testes de snapshot de saída NDJSON
 - Use `proptest` para testes property-based onde aplicável
 - Mire em pelo menos 80% de cobertura para código novo
-- Rode a suite completa antes de submeter: `cargo test` (445 testes em v0.1.12)
+- Rode a suite completa antes de submeter: `cargo test` (461 testes em v0.1.15)
 
 
 ## Documentação
@@ -141,7 +141,7 @@ cargo fmt -- --check
 ## Quality Gates
 - Rode `cargo fmt --check` antes de commitar
 - Rode `cargo clippy --all-targets -- -D warnings` para checagens de lint
-- Rode `cargo test` para a suite completa (445 testes em v0.1.12)
+- Rode `cargo test` para a suite completa (461 testes em v0.1.15)
 - Rode `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` para checagens de documentação
 - Rode `cargo audit` para advisories de segurança
 - Rode `cargo deny check` para política de licenças e dependências (veja `deny.toml`)

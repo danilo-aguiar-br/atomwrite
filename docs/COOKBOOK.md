@@ -58,8 +58,8 @@ This section summarizes recipe-relevant changes in v0.1.12. The v0.1.12 release 
 
 ### Test Coverage
 
-- 445 tests passing (was 320 baseline, +125 new in v0.1.11+v0.1.12)
-- 7 new ADRs in `docs/decisions/` (0019-0025)
+- 502 tests passing (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 cross-platform/WAL/audit increments v0.1.16-v0.1.18)
+- 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/`
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
@@ -443,6 +443,7 @@ atomwrite diff --stat src/old.rs src/new.rs
 
 
 ## How to Use Optimistic Locking
+- Since v0.1.15 the target is resolved against `--workspace` before verification (G118); on v0.1.14 and earlier, run with CWD = workspace or a relative target silently skips the checksum check
 - Read a file and capture the checksum:
 
 ```bash
@@ -832,4 +833,78 @@ done
 
 echo "Failed after $max_attempts attempts" >&2
 exit 1
+```
+
+
+## How to Batch Multiple Edit Pairs Safely (v0.1.15, G117)
+
+
+## WAL Journal Management (v0.1.15+)
+
+The G119 effort introduces three new layers for managing sidecar WAL journals. These recipes show practical usage of the new subcommands and flags.
+
+### How to Reap Stale Journals Before Commit
+
+The `wal-heal` subcommand (G119 L3) safely removes terminal journals (Committed and Aborted). Wire it into a pre-commit hook to keep the working tree clean.
+
+```bash
+# .git/hooks/pre-commit
+atomwrite --workspace . wal-heal --threshold-secs 0 \
+  | jaq -e '.removed_count >= 0' \
+  || { echo "wal-heal failed"; exit 1; }
+```
+
+The `--threshold-secs 0` flag removes terminal journals of any age. `wal-heal` NEVER touches `Started` entries. For a more conservative sweep, raise the threshold to retain recent journals for forensic analysis.
+
+### How to Configure WAL Policy per Workload
+
+The `--wal-policy` flag (G119 L1) on `write` and `edit` controls when the sidecar journal is written. Three values are accepted:
+
+- `auto` (default) -- the policy chosen by the build, optimized for general use
+- `always` -- always write the sidecar journal (forensic-grade audit trail)
+- `never` -- never write the sidecar journal (fastest path, no recovery metadata)
+
+```bash
+# CI builds: skip journal overhead, sidecars have no consumer there
+atomwrite --workspace . write --wal-policy never ci-config.toml < config.toml
+
+# Production deploys: audit trail matters, force the sidecar
+atomwrite --workspace . write --wal-policy always /etc/myapp/config.toml < prod.toml
+
+# General agent use: let the default decide
+atomwrite --workspace . write src/lib.rs < new_lib.rs
+```
+
+### How to Inspect Journal Health
+
+The `wal-stats` subcommand (G119 L5) emits read-only telemetry about the current WAL state. Pair it with `jaq` to gate CI or post-build scripts.
+
+```bash
+# Full telemetry as NDJSON
+atomwrite --workspace . wal-stats
+
+# Gate on zero reclaimable journals
+atomwrite --workspace . wal-stats | jaq -e '.reclaimable == 0' || { echo "drift"; exit 1; }
+
+# Extract just the stale threshold for diagnostics
+atomwrite --workspace . wal-stats | jaq -r '.stale_threshold_secs'
+```
+
+
+- Repeated `--old`/`--new` pairs run the full 9-strategy fuzzy cascade per pair
+- The default is all-or-nothing: a failed pair aborts the batch with exit 65, no write, and `failed_pair_index` in the error envelope
+- `--partial` applies the matching pairs and reports the rest with `matched: false`
+
+```bash
+# All-or-nothing with per-pair ground truth
+atomwrite --workspace . edit src/main.rs --old "foo" --new "bar" --old "baz" --new "qux" \
+  | jaq -e '.pair_results'
+
+# Partial application: keep the valid work, list the misses
+atomwrite --workspace . edit --partial src/main.rs --old "foo" --new "bar" --old "maybe" --new "x" \
+  | jaq -e '{edits, pairs_total, missing: [.pair_results[] | select(.matched | not) | .index]}'
+
+# Anti-masking: a bare pipe hides exit 65 as {"edits": null} with pipeline exit 0
+atomwrite --workspace . edit src/main.rs --old "missing" --new "x" | jaq -e '.edits' \
+  || echo "edit failed: ${PIPESTATUS[0]}" >&2
 ```

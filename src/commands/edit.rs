@@ -18,7 +18,7 @@ use crate::error::AtomwriteError;
 fn find_str(haystack: &str, needle: &str) -> Option<usize> {
     memchr::memmem::find(haystack.as_bytes(), needle.as_bytes())
 }
-use crate::ndjson_types::EditOutput;
+use crate::ndjson_types::{EditOutput, PairResult};
 use crate::output::NdjsonWriter;
 
 struct FuzzyInfo {
@@ -91,9 +91,9 @@ pub fn cmd_edit(
         );
     }
 
-    let (edited, mode, fuzzy_info) = if !args.old.is_empty() {
-        let (e, m, fi) = edit_old_new(&original, args)?;
-        (e, m, Some(fi))
+    let (edited, mode, fuzzy_info, multi_report) = if !args.old.is_empty() {
+        let (e, m, fi, report) = edit_old_new(&original, args)?;
+        (e, m, Some(fi), report)
     } else if args.after_line.is_some()
         || args.before_line.is_some()
         || args.range.is_some()
@@ -101,11 +101,11 @@ pub fn cmd_edit(
     {
         let max_size = global.effective_max_filesize();
         let (e, m) = edit_by_line(&lines, args, stdin, max_size)?;
-        (e, m, None)
+        (e, m, None, None)
     } else if args.after_match.is_some() || args.before_match.is_some() || args.between.is_some() {
         let max_size = global.effective_max_filesize();
         let (e, m) = edit_by_marker(&original, &lines, args, stdin, max_size)?;
-        (e, m, None)
+        (e, m, None, None)
     } else {
         bail!(
             "no edit mode specified: use --old/--new, --after-line, --before-line, --range, --delete-range, --after-match, --before-match, or --between"
@@ -143,6 +143,7 @@ pub fn cmd_edit(
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
+        wal_policy: args.wal_policy,
     };
 
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
@@ -158,10 +159,19 @@ pub fn cmd_edit(
         None => (None, None, None, None),
     };
 
+    let (edits, pairs_total, pair_results) = match multi_report {
+        Some(report) => (
+            report.applied,
+            Some(report.pairs_total),
+            Some(report.pair_results),
+        ),
+        None => (1, None, None),
+    };
+
     let output = EditOutput {
         r#type: "edit",
         path: path_str,
-        edits: 1,
+        edits,
         mode,
         bytes_before: original.len() as u64,
         bytes_after: edited.len() as u64,
@@ -174,6 +184,8 @@ pub fn cmd_edit(
         strategy,
         strategies_tried,
         similarity,
+        pairs_total,
+        pair_results,
         mtime_preserved: Some(args.preserve_timestamps),
     };
 
@@ -385,6 +397,7 @@ fn cmd_edit_multi(
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
+        wal_policy: args.wal_policy,
     };
 
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
@@ -405,6 +418,8 @@ fn cmd_edit_multi(
         strategy: None,
         strategies_tried: None,
         similarity: None,
+        pairs_total: None,
+        pair_results: None,
         mtime_preserved: Some(args.preserve_timestamps),
     };
 
@@ -414,25 +429,55 @@ fn cmd_edit_multi(
 
 // ─── old/new with fuzzy cascade ──────────────────────────────────────────────
 
-fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, FuzzyInfo)> {
+/// Per-pair diagnostics produced by multi-pair `--old`/`--new` editing (G117).
+struct MultiReport {
+    pair_results: Vec<PairResult>,
+    pairs_total: u64,
+    applied: u64,
+}
+
+fn edit_old_new(
+    original: &str,
+    args: &EditArgs,
+) -> Result<(String, String, FuzzyInfo, Option<MultiReport>)> {
     if args.old.len() > 1 {
         return edit_old_new_multi(original, args);
     }
     let old = &args.old[0];
     let new = args.new.first().map(|s| s.as_str()).unwrap_or("");
-    let fuzzy_mode = args.fuzzy;
+    match match_pair(original, old, new, args.fuzzy) {
+        Ok((edited, info)) => {
+            let mode = if info.strategy == "exact" {
+                "exact".into()
+            } else {
+                "old_new".into()
+            };
+            Ok((edited, mode, info, None))
+        }
+        // --partial semantics with a single pair: zero applicable pairs maps
+        // to NO_MATCHES (exit 1) instead of INVALID_INPUT (exit 65).
+        Err(_) if args.partial => Err(AtomwriteError::NoMatches.into()),
+        Err(err) => Err(err.into()),
+    }
+}
 
+/// Match a single `old` string in `content` via the 9-strategy fuzzy cascade
+/// and return the edited content with `new` substituted.
+///
+/// Shared by the single-pair and multi-pair `--old`/`--new` paths so both
+/// have identical fuzzy behavior (G117 fix: the multi path previously used
+/// exact matching only).
+fn match_pair(
+    content: &str,
+    old: &str,
+    new: &str,
+    fuzzy_mode: FuzzyMode,
+) -> std::result::Result<(String, FuzzyInfo), AtomwriteError> {
     // Strategy 1: exact match
-    if let Some(pos) = find_str(original, old.as_str()) {
-        let edited = format!(
-            "{}{}{}",
-            &original[..pos],
-            new,
-            &original[pos + old.len()..]
-        );
+    if let Some(pos) = find_str(content, old) {
+        let edited = format!("{}{}{}", &content[..pos], new, &content[pos + old.len()..]);
         return Ok((
             edited,
-            "exact".into(),
             FuzzyInfo {
                 fuzzy: false,
                 strategy: "exact".into(),
@@ -444,20 +489,18 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
 
     if matches!(fuzzy_mode, FuzzyMode::Off) {
         return Err(AtomwriteError::InvalidInput {
-            reason: format!("old string not found in file (fuzzy=off): {:?}", old),
-        }
-        .into());
+            reason: format!("old string not found in file (fuzzy=off): {old:?}"),
+        });
     }
 
     let old_lines: Vec<&str> = old.lines().collect();
-    let content_lines: Vec<&str> = original.lines().collect();
+    let content_lines: Vec<&str> = content.lines().collect();
 
     // Strategy 2: line-trimmed
     if let Some((start, end)) = match_line_trimmed(&content_lines, &old_lines) {
-        let edited = apply_replacement(original, &content_lines, start, end, new);
+        let edited = apply_replacement(content, &content_lines, start, end, new);
         return Ok((
             edited,
-            "old_new".into(),
             FuzzyInfo {
                 fuzzy: true,
                 strategy: "line_trimmed".into(),
@@ -469,10 +512,9 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
 
     // Strategy 3: whitespace-normalized
     if let Some((start, end)) = match_whitespace_normalized(&content_lines, &old_lines) {
-        let edited = apply_replacement(original, &content_lines, start, end, new);
+        let edited = apply_replacement(content, &content_lines, start, end, new);
         return Ok((
             edited,
-            "old_new".into(),
             FuzzyInfo {
                 fuzzy: true,
                 strategy: "whitespace_normalized".into(),
@@ -484,10 +526,9 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
 
     // Strategy 3.5: punctuation-whitespace-normalized
     if let Some((start, end)) = match_punctuation_normalized(&content_lines, &old_lines) {
-        let edited = apply_replacement(original, &content_lines, start, end, new);
+        let edited = apply_replacement(content, &content_lines, start, end, new);
         return Ok((
             edited,
-            "old_new".into(),
             FuzzyInfo {
                 fuzzy: true,
                 strategy: "punctuation_normalized".into(),
@@ -499,10 +540,9 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
 
     // Strategy 4: indent-flexible
     if let Some((start, end)) = match_indent_flexible(&content_lines, &old_lines) {
-        let edited = apply_replacement(original, &content_lines, start, end, new);
+        let edited = apply_replacement(content, &content_lines, start, end, new);
         return Ok((
             edited,
-            "old_new".into(),
             FuzzyInfo {
                 fuzzy: true,
                 strategy: "indent_flexible".into(),
@@ -513,16 +553,10 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
     }
 
     // Strategy 5: escape-normalized
-    if let Some((orig_start, orig_end)) = match_escape_normalized(original, old) {
-        let edited = format!(
-            "{}{}{}",
-            &original[..orig_start],
-            new,
-            &original[orig_end..]
-        );
+    if let Some((orig_start, orig_end)) = match_escape_normalized(content, old) {
+        let edited = format!("{}{}{}", &content[..orig_start], new, &content[orig_end..]);
         return Ok((
             edited,
-            "old_new".into(),
             FuzzyInfo {
                 fuzzy: true,
                 strategy: "escape_normalized".into(),
@@ -534,10 +568,9 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
 
     // Strategy 7: trimmed-boundary
     if let Some((start, end)) = match_trimmed_boundary(&content_lines, &old_lines) {
-        let edited = apply_replacement(original, &content_lines, start, end, new);
+        let edited = apply_replacement(content, &content_lines, start, end, new);
         return Ok((
             edited,
-            "old_new".into(),
             FuzzyInfo {
                 fuzzy: true,
                 strategy: "trimmed_boundary".into(),
@@ -553,10 +586,9 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
         _ => 0.70,
     };
     if let Some((start, end, ratio)) = match_block_anchor(&content_lines, &old_lines, min_ratio) {
-        let edited = apply_replacement(original, &content_lines, start, end, new);
+        let edited = apply_replacement(content, &content_lines, start, end, new);
         return Ok((
             edited,
-            "old_new".into(),
             FuzzyInfo {
                 fuzzy: true,
                 strategy: "block_anchor".into(),
@@ -575,10 +607,9 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
         if let Some((start, end, similarity)) =
             match_context_aware(&content_lines, &old_lines, 0.80)
         {
-            let edited = apply_replacement(original, &content_lines, start, end, new);
+            let edited = apply_replacement(content, &content_lines, start, end, new);
             return Ok((
                 edited,
-                "old_new".into(),
                 FuzzyInfo {
                     fuzzy: true,
                     strategy: "context_aware".into(),
@@ -590,12 +621,8 @@ fn edit_old_new(original: &str, args: &EditArgs) -> Result<(String, String, Fuzz
     }
 
     Err(AtomwriteError::InvalidInput {
-        reason: format!(
-            "old string not found after fuzzy cascade (9 strategies tried): {:?}",
-            old
-        ),
-    }
-    .into())
+        reason: format!("old string not found after fuzzy cascade (9 strategies tried): {old:?}"),
+    })
 }
 
 // ─── matching strategies ─────────────────────────────────────────────────────
@@ -616,29 +643,89 @@ fn match_line_trimmed(content: &[&str], pattern: &[&str]) -> Option<(usize, usiz
     None
 }
 
-fn edit_old_new_multi(original: &str, args: &EditArgs) -> Result<(String, String, FuzzyInfo)> {
+fn edit_old_new_multi(
+    original: &str,
+    args: &EditArgs,
+) -> Result<(String, String, FuzzyInfo, Option<MultiReport>)> {
+    let pairs_total = args.old.len() as u64;
     let mut content = original.to_string();
-    let mut total_edits = 0u64;
-    for (old, new) in args.old.iter().zip(args.new.iter()) {
-        if let Some(pos) = find_str(&content, old.as_str()) {
-            content.replace_range(pos..pos + old.len(), new);
-            total_edits += 1;
-        } else {
-            return Err(crate::error::AtomwriteError::InvalidInput {
-                reason: format!("old string not found in file: {old:?}"),
+    let mut pair_results: Vec<PairResult> = Vec::with_capacity(args.old.len());
+    let mut applied = 0u64;
+    let mut any_fuzzy = false;
+    let mut max_strategies_tried = 0u64;
+
+    for (i, (old, new)) in args.old.iter().zip(args.new.iter()).enumerate() {
+        let index = (i + 1) as u64;
+        match match_pair(&content, old, new, args.fuzzy) {
+            Ok((edited, info)) => {
+                content = edited;
+                applied += 1;
+                any_fuzzy |= info.fuzzy;
+                max_strategies_tried = max_strategies_tried.max(info.strategies_tried);
+                pair_results.push(PairResult {
+                    index,
+                    matched: true,
+                    strategy: Some(info.strategy),
+                    similarity: info.similarity,
+                });
             }
-            .into());
+            Err(_) if args.partial => {
+                pair_results.push(PairResult {
+                    index,
+                    matched: false,
+                    strategy: None,
+                    similarity: None,
+                });
+            }
+            Err(err) => {
+                let reason = match err {
+                    AtomwriteError::InvalidInput { reason } => reason,
+                    other => other.to_string(),
+                };
+                pair_results.push(PairResult {
+                    index,
+                    matched: false,
+                    strategy: None,
+                    similarity: None,
+                });
+                // All-or-nothing default: pairs after `index` were never
+                // attempted and are therefore absent from `pair_results`.
+                return Err(AtomwriteError::EditPairFailed {
+                    index,
+                    total: pairs_total,
+                    reason,
+                    pair_results,
+                }
+                .into());
+            }
         }
     }
+
+    if applied == 0 {
+        // --partial with zero applicable pairs: no write, same exit semantics
+        // as `replace` with zero matches.
+        return Err(AtomwriteError::NoMatches.into());
+    }
+
+    let (mode, strategy) = if any_fuzzy {
+        (format!("fuzzy-multi({applied})"), "fuzzy-multi")
+    } else {
+        (format!("exact-multi({applied})"), "exact-multi")
+    };
     Ok((
         content,
-        format!("exact-multi({total_edits})"),
+        mode,
         FuzzyInfo {
-            fuzzy: false,
-            strategy: "exact-multi".into(),
-            strategies_tried: 1,
+            fuzzy: any_fuzzy,
+            strategy: strategy.into(),
+            strategies_tried: max_strategies_tried,
             similarity: None,
         },
+        Some(MultiReport {
+            pair_results,
+            pairs_total,
+            applied,
+        }),
     ))
 }
 

@@ -54,7 +54,7 @@ Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
 
 ### Cobertura de Testes
 
-- 445 testes passando (era 320 baseline, +125 novos em v0.1.11+v0.1.12)
+- 502 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118 na v0.1.15)
 - Gate de cross-compile: `cargo test --test cross_compile_check -- --ignored` valida targets Windows GNU/MSVC
 - 5 testes de sinal em `tests/signal_test.rs` cobrem SIGINT/SIGTERM/SIGPIPE/batch/shutdown
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
@@ -85,6 +85,7 @@ Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
 ### Windows (Suporte Completo a partir da v0.1.4)
 - Fsync de arquivo: `FlushFileBuffers` via `sync_all()`
 - Fsync de diretório: best-effort (Windows não tem `fsync` para diretórios)
+- **Correção v0.1.15 (GAP 18)**: o teste de snapshot do write redige `platform.dir_fsync` como `[platform_dir_fsync]` porque o Windows reporta `best_effort` enquanto o Unix reporta `sync_all`; o job de CI windows-2025 voltou ao verde.
 - Rename atômico via `MoveFileExW` com `MOVEFILE_REPLACE_EXISTING`
 - NTFS fornece garantias razoáveis de durabilidade
 - **Fix v0.1.4 (GAP 14)**: `cargo install atomwrite` agora funciona no Windows 10/11. Três erros de compilação em blocos `#[cfg(windows)]` quebravam a release v0.1.3 no Windows foram resolvidos.

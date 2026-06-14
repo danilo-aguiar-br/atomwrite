@@ -327,6 +327,40 @@ pub struct WriteArgs {
     )]
     pub line_ending: crate::line_endings::LineEnding,
 
+    /// Allow zero-byte stdin (default: reject empty stdin as invalid input,
+    /// G120 L1 guard). Use this flag to confirm the empty write is intentional
+    /// (e.g. truncating a file to zero bytes).
+    #[arg(
+        long,
+        help = "Allow zero-byte stdin (G120 L1 guard; default: reject empty stdin)"
+    )]
+    pub allow_empty_stdin: bool,
+
+    /// Skip the `--expect-checksum` verification when the resolved
+    /// stdin payload is empty (G120 L3 cross-validation). Use this
+    /// when the combination `--append --expect-checksum <HASH> < /dev/null`
+    /// is intentional (no-op append, checksum match preserved).
+    #[arg(
+        long,
+        help = "Allow --expect-checksum to be skipped when stdin is empty (G120 L3)"
+    )]
+    pub no_checksum_when_empty: bool,
+
+    /// WAL sidecar creation policy (G119 L1 prevention).
+    ///
+    /// `auto` (default) skips the sidecar for trivial writes (small file in
+    /// a git-tracked directory, plain write, set/del). `always` forces the
+    /// sidecar even for trivial cases (legacy semantics, equivalent to
+    /// `--strict-atomic`). `never` suppresses sidecar creation entirely,
+    /// even when `--strict-atomic` is set or `ATOMWRITE_WAL=1`.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = crate::wal::WalPolicy::Auto,
+        help = "WAL sidecar policy: auto (default), always, never (G119 L1)"
+    )]
+    pub wal_policy: crate::wal::WalPolicy,
+
     /// Preview without writing.
     #[arg(long, help = "Show what would be done without writing")]
     pub dry_run: bool,
@@ -427,6 +461,29 @@ pub struct EditArgs {
     /// detect source changes (cargo, make, cmake, gradle).
     #[arg(long, help = "Preserve original mtime (default: update mtime to now)")]
     pub preserve_timestamps: bool,
+
+    /// Apply only the `--old`/`--new` pairs that match instead of failing the
+    /// whole batch (G117). Default (off) is all-or-nothing: any unmatched pair
+    /// aborts with exit 65 and no write. With `--partial`, unmatched pairs are
+    /// reported in `pair_results` with `matched: false`; if zero pairs apply,
+    /// the command exits 1 (`NO_MATCHES`) without writing.
+    #[arg(
+        long,
+        help = "Apply matching --old/--new pairs and report the rest (default: all-or-nothing)"
+    )]
+    pub partial: bool,
+
+    /// WAL sidecar creation policy (G119 L1 prevention). See `write` for
+    /// the full description; the same enum applies to edit operations
+    /// (which by default DO create a sidecar because they lack native
+    /// atomicity).
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = crate::wal::WalPolicy::Auto,
+        help = "WAL sidecar policy: auto (default), always, never (G119 L1)"
+    )]
+    pub wal_policy: crate::wal::WalPolicy,
 }
 
 /// Arguments for the search subcommand.
@@ -1039,4 +1096,48 @@ pub struct OutlineArgs {
     /// Show byte offsets and start positions.
     #[arg(long, help = "Include byte offsets and start positions")]
     pub positions: bool,
+}
+
+/// Arguments for the `wal-stats` subcommand (G119 L5 telemetry).
+///
+/// Computes a snapshot of all `.atomwrite.journal.*.json` sidecars
+/// under the workspace, classified by terminal state (`Started`/
+/// `Committed`/`Aborted`/malformed) and broken down by directory.
+/// Read-only and safe to call from any context.
+#[derive(Args, Debug)]
+pub struct WalStatsArgs {
+    /// Preview without scanning the workspace.
+    #[arg(long, help = "Show what would be done without scanning")]
+    pub dry_run: bool,
+}
+
+/// Arguments for the `wal-heal` subcommand (G119 L3 auto-heal).
+///
+/// Removes stale `Committed`/`Aborted` journals older than the
+/// threshold. Preserves `Started` journals (potential orphans) and
+/// malformed journals (manual inspection required). Bounded by a
+/// wall-clock budget to keep startup cost predictable.
+#[derive(Args, Debug)]
+pub struct WalHealArgs {
+    /// Minimum age in seconds for a terminal journal to be reaped.
+    /// Defaults to 3600 (1h) to match the v0.1.17 auto-heal default.
+    #[arg(
+        long,
+        default_value_t = 3600,
+        help = "Minimum age (seconds) for removal"
+    )]
+    pub threshold_secs: u64,
+
+    /// Wall-clock budget for the walk (milliseconds). The pass stops
+    /// once this budget is exceeded so startup cost is bounded.
+    #[arg(
+        long,
+        default_value_t = 100,
+        help = "Wall-clock budget (ms) for the walk"
+    )]
+    pub max_duration_ms: u64,
+
+    /// Preview without removing any sidecar.
+    #[arg(long, help = "Show what would be removed without writing")]
+    pub dry_run: bool,
 }

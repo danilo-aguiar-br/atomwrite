@@ -23,6 +23,9 @@ fn write_ndjson_structure_snapshot() {
     event["path"] = serde_json::json!("[redacted]");
     event["checksum"] = serde_json::json!("[redacted]");
     event["platform"]["fsync"] = serde_json::json!("[platform_fsync]");
+    // GAP 18: Windows reports `best_effort` for directory fsync while Unix
+    // reports `sync_all`; redact so the snapshot is platform-agnostic.
+    event["platform"]["dir_fsync"] = serde_json::json!("[platform_dir_fsync]");
 
     insta::assert_json_snapshot!("write_output_structure", event);
 }

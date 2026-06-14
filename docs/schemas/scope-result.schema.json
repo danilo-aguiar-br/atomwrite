@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ScopeResult",
+  "description": "NDJSON output for the atomwrite scope subcommand. Emits one per-file event (type: scoped) when the scope matches, followed by a final summary event (type: summary).",
+  "type": "object",
+  "required": ["type"],
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "description": "Event discriminator. 'scoped' for the per-file event, 'summary' for the final rollup, 'error' on failure.",
+      "type": "string",
+      "enum": ["scoped", "summary", "error"]
+    },
+    "path": {
+      "description": "Absolute path of the file that was scoped (absent in summary events).",
+      "type": "string"
+    },
+    "language": {
+      "description": "Language used to parse the file (e.g. rust, python, javascript).",
+      "type": "string"
+    },
+    "query": {
+      "description": "Prepared query name (e.g. comments, fn, struct) or custom AST pattern that was applied.",
+      "type": "string"
+    },
+    "action": {
+      "description": "Action applied to the matched scopes: delete, upper, lower, titlecase, squeeze, or replace-with.",
+      "type": "string"
+    },
+    "scopes_matched": {
+      "description": "Number of AST scopes that matched the query in this file.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytes_before": {
+      "description": "File size in bytes before the scope action was applied.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytes_after": {
+      "description": "File size in bytes after the scope action was applied.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "checksum_before": {
+      "description": "BLAKE3 checksum of the file before the scope action.",
+      "type": "string"
+    },
+    "checksum_after": {
+      "description": "BLAKE3 checksum of the file after the scope action.",
+      "type": "string"
+    },
+    "mtime_preserved": {
+      "description": "Whether the original mtime was preserved (true) or updated to reflect the change (false). Default is false since v0.1.3+.",
+      "type": "boolean"
+    },
+    "dry_run": {
+      "description": "True if the scope action was previewed without writing.",
+      "type": "boolean"
+    },
+    "elapsed_ms": {
+      "description": "Operation duration in milliseconds.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_visited": {
+      "description": "Total files examined (present in summary event).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_matched": {
+      "description": "Files where at least one scope matched (present in summary event).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_skipped": {
+      "description": "Files where no scope matched or that were excluded (present in summary event).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "error": {
+      "description": "Error message string when type is 'error'.",
+      "type": "string"
+    },
+    "code": {
+      "description": "Machine-readable error code when type is 'error'.",
+      "type": "string"
+    }
+  }
+}

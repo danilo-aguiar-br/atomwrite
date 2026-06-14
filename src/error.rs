@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use crate::ndjson_types::PairResult;
+
 /// Classification of error recoverability for retry decisions.
 ///
 /// Used by callers to determine whether an operation can be retried.
@@ -249,6 +251,23 @@ pub enum AtomwriteError {
         /// Description of why the journal could not be applied.
         reason: String,
     },
+
+    /// A `--old`/`--new` pair in multi-pair edit mode failed to match (G117).
+    ///
+    /// Carries per-pair diagnostics so agents can locate the failing pair
+    /// without bisecting the batch. Reuses the `INVALID_INPUT` code and
+    /// exit 65 of [`Self::InvalidInput`].
+    #[error("edit pair {index} of {total} failed: {reason}")]
+    EditPairFailed {
+        /// 1-based index of the pair that failed to match.
+        index: u64,
+        /// Total number of pairs in the invocation.
+        total: u64,
+        /// Description of why the pair did not match.
+        reason: String,
+        /// Per-pair results accumulated up to and including the failed pair.
+        pair_results: Vec<PairResult>,
+    },
 }
 
 impl AtomwriteError {
@@ -281,6 +300,7 @@ impl AtomwriteError {
             Self::ExdevFallbackDisabled { .. } => 91,
             Self::CopyBackBlake3Failed { .. } => 92,
             Self::OrphanJournal { .. } => 93,
+            Self::EditPairFailed { .. } => 65,
         }
     }
 
@@ -361,6 +381,7 @@ impl AtomwriteError {
             Self::ExdevFallbackDisabled { .. } => "EXDEV_FALLBACK_DISABLED",
             Self::CopyBackBlake3Failed { .. } => "COPY_BACK_BLAKE3_FAILED",
             Self::OrphanJournal { .. } => "ORPHAN_JOURNAL",
+            Self::EditPairFailed { .. } => "INVALID_INPUT",
         }
     }
 
@@ -388,6 +409,7 @@ impl AtomwriteError {
             | Self::CopyBackBlake3Failed { path }
             | Self::OrphanJournal { journal: path, .. } => Some(path),
             Self::InvalidInput { .. }
+            | Self::EditPairFailed { .. }
             | Self::Io { .. }
             | Self::ConfigInvalid { .. }
             | Self::NoMatches
@@ -421,6 +443,16 @@ pub struct ErrorJson {
     /// Workspace root used for jail validation, if applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
+    /// 1-based index of the failed `--old`/`--new` pair (multi-pair edit, G117).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_pair_index: Option<u64>,
+    /// Total number of `--old`/`--new` pairs in the invocation (multi-pair edit, G117).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairs_total: Option<u64>,
+    /// Per-pair diagnostics up to and including the failed pair (multi-pair edit, G117).
+    /// Pairs after the failure were never attempted and are absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pair_results: Option<Vec<PairResult>>,
 }
 
 impl ErrorJson {
@@ -450,6 +482,15 @@ impl ErrorJson {
             }
             _ => None,
         };
+        let (failed_pair_index, pairs_total, pair_results) = match err {
+            AtomwriteError::EditPairFailed {
+                index,
+                total,
+                pair_results,
+                ..
+            } => (Some(*index), Some(*total), Some(pair_results.clone())),
+            _ => (None, None, None),
+        };
         Self {
             error: true,
             code: err.error_code(),
@@ -460,6 +501,9 @@ impl ErrorJson {
             retryable: err.is_retryable(),
             suggestion: suggestion_for(err, ctx),
             workspace,
+            failed_pair_index,
+            pairs_total,
+            pair_results,
         }
     }
 }
@@ -487,6 +531,9 @@ pub struct ErrorContext {
 fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
     match err {
         AtomwriteError::NotFound { .. } => Some("verify the file path exists".into()),
+        AtomwriteError::EditPairFailed { index, .. } => Some(format!(
+            "pair {index} did not match; fix that pair, retry with --fuzzy aggressive, or pass --partial to apply the matching pairs and report the rest"
+        )),
         AtomwriteError::InvalidInput { reason } => Some(format!(
             "review the {reason}; check arguments and input content for syntax errors"
         )),
@@ -1054,8 +1101,14 @@ mod tests {
                 journal: PathBuf::from("/x"),
                 reason: "x".into(),
             },
+            AtomwriteError::EditPairFailed {
+                index: 2,
+                total: 3,
+                reason: "x".into(),
+                pair_results: vec![],
+            },
         ];
-        assert_eq!(variants.len(), 25);
+        assert_eq!(variants.len(), 26);
         for err in &variants {
             let json = ErrorJson::from_error(err);
             if matches!(err, AtomwriteError::BrokenPipe) {

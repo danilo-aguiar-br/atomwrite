@@ -4,7 +4,7 @@
 
 atomwrite is a Rust CLI that provides 31 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
-**Latest release: v0.1.12** (2026-06-07) — G72 REAL syntax check via tree-sitter (24 languages), G114 WAL sidecar for crash recovery, v14 Tier 3 structured config editors (set/get/del/case), v14 Tier 3 AST tools (query/outline via tree-sitter-language-pack with 305 languages), 5 new error variants, 445 tests passing across 43 test suites. See `CHANGELOG.md` for the full release notes and `docs/decisions/` for the 7 ADRs that drove the architecture.
+**Latest release: v0.1.15** (2026-06-11) — G117 fixed: multi-pair `edit --old/--new` gains fuzzy parity (9-strategy cascade per pair), per-pair `pair_results` reporting, `failed_pair_index` on errors, and an opt-in `--partial` flag; GAP 18 fixed (Windows CI snapshot redacts `dir_fsync`); CI MSRV job aligned to 1.88. G118 fixed: `write` resolves the target against the workspace before `--append`/`--prepend`, `--expect-checksum`, and `--line-ending auto` — with a divergent CWD, append no longer truncates and checksum drift exits 82 instead of silently overwriting (ADR-0027). Previous highlights (v0.1.12): G72 REAL syntax check via tree-sitter (24 languages), G114 WAL sidecar for crash recovery, v14 Tier 3 structured config editors (set/get/del/case) and AST tools (query/outline). See `CHANGELOG.md` for full release notes and `docs/decisions/` for the ADRs (0019-0027).
 
 **Previous release: v0.1.11** (2026-06-05) — Windows E0433 fix (libc was gated by cfg(unix) but referenced in main.rs), signal_test race fix (ShutdownSignal singleton, ATOMWRITE_READY_FILE for race-free readiness), 11 cli_batch Windows path backslash fix.
 
@@ -21,7 +21,7 @@ Parsers for 305 languages are NOT bundled; they are downloaded on first use by `
 ### Core I/O
 - `read` -- read files with metadata, checksum, optional content
 - `write` -- create or overwrite files atomically via stdin
-- `edit` -- surgically edit by line number, text marker, or exact match
+- `edit` -- surgically edit by line number, text marker, or exact/fuzzy match; multi-pair `--old`/`--new` has per-pair fuzzy + `pair_results` + `--partial` (v0.1.15)
 - `delete` -- delete files with optional backup
 - `copy` -- copy files with checksum verification (reflink on APFS/btrfs/XFS)
 - `move` -- move or rename files atomically (EXDEV copy-fallback)
@@ -198,7 +198,7 @@ cat patch.diff | atomwrite --workspace . apply src/file.rs
 - [HOW_TO_USE](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/HOW_TO_USE.md): Quickstart guide
 - [COOKBOOK](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/COOKBOOK.md): Recipes for common tasks
 - [AGENTS.md](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget
-- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.md): 445 tests across 43 test suites
+- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.md): 461 tests across 43 test suites
 - [MIGRATION](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/MIGRATION.md): Migration guide between versions
 - [INSTALL](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/INSTALL.md): Platform-specific install instructions
 - [CROSS_PLATFORM](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/CROSS_PLATFORM.md): macOS, Linux, Windows quirks

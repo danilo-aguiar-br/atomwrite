@@ -8,6 +8,34 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.15] - 2026-06-11
+
+#### G117 — `edit --old/--new` multi-par: paridade fuzzy, relato por par e `--partial` opt-in
+- **Paridade fuzzy** — o caminho multi-par usava apenas busca exata `find_str`, então um par com whitespace divergente que a cascata fuzzy do par único resgata derrubava o lote inteiro. A cascata foi extraída para `match_pair` e compartilhada pelos dois caminhos: cada par roda a cascata completa de 9 estratégias (`exact`, `line_trimmed`, `whitespace_normalized`, `punctuation_normalized`, `indent_flexible`, `escape_normalized`, `trimmed_boundary`, `block_anchor`, `context_aware`). `--fuzzy off` preserva o comportamento exato pré-G117.
+- **Relato por par** — envelopes de sucesso ganham `pairs_total` e `pair_results` (array de `{index (1-based), matched, strategy, similarity}`); `mode` vira `fuzzy-multi(N)` quando algum par casou via fuzzy e permanece `exact-multi(N)` caso contrário. Envelopes de erro ganham `failed_pair_index`, `pairs_total` e `pair_results` via a nova variante `AtomwriteError::EditPairFailed`, que reutiliza o code `INVALID_INPUT` e o exit 65 (nenhum code novo). Pares após o índice falho nunca foram tentados e ficam ausentes do array.
+- **Nova flag `--partial` (opt-in)** — aplica os pares que casam em uma escrita atômica (exit 0, `edits < pairs_total`) e relata os ausentes com `matched: false`. Zero pares aplicados sai com 1 (`NO_MATCHES`) sem escrever, igual à semântica do `replace`. O padrão continua all-or-nothing: quando a atomicidade é possível, ela é estritamente melhor que relato de falha parcial.
+- **Orientação anti-mascaramento** — o envelope de erro NDJSON vai para o stdout por contrato, então `edit ... | jaq '.edits'` mascarava o exit 65 como `{"edits": null}` com exit 0 no pipeline. README, SKILL, COOKBOOK e HOW_TO_USE (ambos os idiomas) agora documentam a receita `jaq -e '.edits'` / `${PIPESTATUS[0]}`.
+- **Schemas regenerados** — `docs/schemas/edit-output.schema.json` foi regenerado de `edit --json-schema` (agora inclui `mtime_preserved`, `pairs_total`, `pair_results`); `docs/schemas/error-output.schema.json` ganha os três campos do G117 mais os cinco error codes introduzidos na v0.1.12 que faltavam no enum (`LOCK_TIMEOUT`, `SYNTAX_ERROR_DETECTED`, `EXDEV_FALLBACK_DISABLED`, `COPY_BACK_BLAKE3_FAILED`, `ORPHAN_JOURNAL`).
+- **Nota de escopo** — o modo `--multi` (NDJSON via stdin) permanece inalterado; o G117 cobre apenas pares repetidos `--old`/`--new`. Veja `docs/decisions/0026-g117-edit-multi-pair-fuzzy-partial.md`.
+
+#### G118 — `write` resolve o alvo contra o workspace antes de todos os pré-passos
+- **Bug (dupla identidade de caminho, CWE-367)** — `cmd_write` entregava o caminho CRU da CLI (relativo ao CWD) a `handle_append_prepend`, `normalize_line_endings` (auto) e `verify_checksum`, enquanto só `atomic_write` resolvia via `validate_path`. Com alvo relativo e CWD diferente do `--workspace`, append/prepend TRUNCAVA silenciosamente o arquivo, a detecção automática de line ending era pulada e o `--expect-checksum` era pulado por inteiro (qualquer hash aceito, exit 0). Detectado em produção: o `gaps.md` deste repositório foi truncado e recuperado via `rollback --latest --verify`.
+- **Correção** — o alvo é resolvido UMA vez no início de `cmd_write` e o caminho resolvido alimenta os 3 pré-passos e o `atomic_write`. Drift de checksum com CWD divergente agora falha com `STATE_DRIFT` (exit 82); alvo fora do jail falha cedo com `WORKSPACE_JAIL` (exit 126). O campo `path` do NDJSON continua ecoando o caminho do usuário. Ver `docs/decisions/0027-g118-write-path-resolution.md`.
+- **Por que os testes nunca pegaram** — a suíte só usava alvos ABSOLUTOS, imunes ao CWD. Cinco testes de regressão agora usam alvo RELATIVO com `current_dir` fora do workspace (append, prepend, drift exit 82, checksum correto, detecção CRLF), mais um teste-guarda de conformidade garantindo que `&args.target` aparece exatamente uma vez em `write.rs`.
+
+#### GAP 18 — CI Windows verde de novo
+- `tests/snapshot_write.rs` agora redige `platform.dir_fsync` como `[platform_dir_fsync]`, a mesma técnica já usada para `platform.fsync`. O snapshot fixava `"dir_fsync": "sync_all"`, que o Windows reporta como `best_effort`, mantendo o job `windows-2025-vs2026` vermelho desde a v0.1.12.
+
+#### Job de MSRV alinhado ao manifesto
+- O job de CI chamado `MSRV 1.85` (toolchain pinado em 1.85) agora testa o MSRV documentado: `MSRV 1.88` com `dtolnay/rust-toolchain@1.88`, casando com `rust-version = "1.88"` do `Cargo.toml`.
+
+#### Validação
+- 8 novos testes de integração em `tests/cli_edit.rs` (21 no total na suíte): par fuzzy no multi, compat do mode `exact-multi(N)`, `pair_results` no sucesso, `failed_pair_index`/`pairs_total`/`pair_results` no erro com arquivo intacto, compat de `--fuzzy off`, caminho feliz do `--partial`, `--partial` com zero matches sai com 1, `--partial --dry-run` não escreve
+- `cargo test --lib` 152 passando (cobertura de suggestion por variante estendida a `EditPairFailed`); `cargo test --test snapshot_write` 9 passando
+- Reprodução determinística do `gaps.md` re-executada contra o binário novo: lote misto reporta `failed_pair_index: 2` com arquivo intacto; `--partial` aplica o par 1 com `edits: 1`; `| jaq -e '.edits'` sai com 1 no envelope de erro
+- G118: 6 testes de integração novos em `tests/cli_write.rs` (14 no total); reprodução determinística re-executada com CWD divergente: append preserva todas as linhas, o checksum de 64 zeros agora sai com 82 e o arquivo permanece intacto
+- Suíte completa após o G118: 461 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118), 0 falhas; `fmt`/`clippy -D warnings`/`doc`/`deny`/`audit` verdes; cross-check Windows `x86_64-pc-windows-gnu` com `RUSTFLAGS=-Dwarnings` limpo
+
 ## [0.1.14] - 2026-06-07
 
 ### Corrigido (Falha de CI - `windows-2025-vs2026` no teste `write_creates_file_with_ndjson_output`)
@@ -21,6 +49,35 @@
 - CI Linux: `cargo build --all-features`, `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features` (152 lib tests + suites de integração + 3 doctests) — todos verdes
 - Cross-check Windows CI: `cargo check --target x86_64-pc-windows-gnu --lib` com `RUSTFLAGS=-Dwarnings` e stub de `cc` para o linker mingw-gcc ausente — zero erros, zero warnings
 - 8/8 testes de integração `cli_write` passam, incluindo a falha que era exclusiva do Windows
+
+
+## [0.1.18] - 2026-06-14
+
+#### G118 — `replace` pré-valida caminhos raiz contra o jail do workspace
+- **`cmd_replace` resolve-first para todas as raízes** — após `global.resolve_workspace()`, o comando itera sobre `args.paths` e chama `path_safety::validate_path(path, &workspace)?` para CADA raiz ANTES de construir o `WalkBuilder`. Falha rápida com `WORKSPACE_JAIL` (exit 126) na primeira violação. Comportamento legado per-entry (v0.1.12-v0.1.17) emitia um evento `JailViolation` por arquivo caminhado e o usuário via o diagnóstico enterrado sob N eventos. Agora `replace /etc/passwd` aborta em microssegundos com um único envelope de erro estruturado.
+- **Convenção resolve-first agora universal** — `write` (ADR-0027), `edit`, `copy`, `apply`, `move`, `rollback`, `set`, `del`, `case` e agora `replace` todos validam o alvo contra o jail workspace ANTES de qualquer `exists()` ou read. Um único modelo mental para todos os comandos mutantes.
+- **Teste de regressão atualizado** — `replace_jail_violation_does_not_inflate_counter` em `tests/cli_v012_regressions.rs` agora afirma exit 126 + envelope `WORKSPACE_JAIL` + arquivos inside/outside inalterados.
+- **2 novos testes integrados** em `tests/cli_replace.rs`: `replace_root_path_outside_workspace_exits_126` e `replace_relative_dotdot_root_outside_workspace_exits_126`.
+
+#### G120 L3 — cobertura de teste para cross-validação
+- **2 novos testes integrados** em `tests/cli_write.rs`:
+  - `g120_l3_append_empty_stdin_with_matching_checksum_succeeds` — verifica o caminho `--append --allow-empty-stdin --expect-checksum <HASH> < /dev/null` end-to-end.
+  - `g120_l3_append_empty_stdin_without_opt_in_rejects_at_l1` — sem opt-in, L1 dispara primeiro (exit 65).
+
+#### G117 follow-up — cobertura de edge cases
+- **3 novos testes integrados** em `tests/cli_edit.rs`:
+  - `edit_unicode_old_new_exact_match` — diacríticos UTF-8 com casamento byte-a-byte.
+  - `edit_crlf_line_endings_preserve_eol_after_replace` — preservação de `\r\n` byte-a-byte.
+  - `edit_multi_pair_same_old_appears_twice_applies_both` — multi-par com mesmo `--old` em pares consecutivos.
+
+#### ADR
+- **`docs/decisions/0030-v0-1-18-g118-replace-pre-validation-g120-l3-tests-g117-edge-cases.md`** — documenta as 3 decisões e gatilhos para revisitar.
+
+#### Validação
+- `cargo build --release` OK
+- `cargo clippy --all-targets -- -D warnings` OK
+- Suíte completa: 502 testes passando, 0 regressões
+- 2 flakes pré-existentes não relacionados (`signal_test`, `tracing_test`)
 
 
 ## [Unreleased]

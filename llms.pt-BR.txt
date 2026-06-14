@@ -4,7 +4,7 @@
 
 atomwrite é um CLI Rust que fornece 28 subcomandos para manipulação de arquivos com garantias de escrita atômica. Toda escrita usa tempfile + fsync + rename + fsync do diretório. Toda resposta é NDJSON com checksums BLAKE3. Construído para agentes LLM que precisam de operações de arquivo confiáveis e estruturadas sem risco de corrupção.
 
-**Release mais recente: v0.1.12** (2026-06-07) — Verificação de sintaxe G72 REAL via tree-sitter (24 linguagens), sidecar G114 WAL para recuperação de crash, editores de configuração estruturada v14 Tier 3 (set/get/del/case), ferramentas AST v14 Tier 3 (query/outline via tree-sitter-language-pack com 305 linguagens), 5 novas variantes de erro, 445 testes passando em 43 suites. Veja `CHANGELOG.pt-BR.md` para as notas completas de release e `docs/decisions/` para os 7 ADRs que conduziram a arquitetura.
+**Release mais recente: v0.1.15** (2026-06-11) — G117 corrigido: `edit --old/--new` multi-par ganha paridade fuzzy (cascata de 9 estratégias por par), relato por par em `pair_results`, `failed_pair_index` nos erros e a flag opt-in `--partial`; GAP 18 corrigido (snapshot do CI Windows redige `dir_fsync`); job de MSRV do CI alinhado a 1.88. G118 corrigido: `write` resolve o alvo contra o workspace antes de `--append`/`--prepend`, `--expect-checksum` e `--line-ending auto` — com CWD divergente, o append não trunca mais e a divergência de checksum sai com 82 em vez de sobrescrever silenciosamente (ADR-0027). Destaques anteriores (v0.1.12): verificação de sintaxe G72 REAL via tree-sitter (24 linguagens), sidecar G114 WAL, editores de configuração v14 Tier 3 (set/get/del/case) e ferramentas AST (query/outline). Veja `CHANGELOG.pt-BR.md` para as notas completas e `docs/decisions/` para os ADRs (0019-0027).
 
 **Release anterior: v0.1.11** (2026-06-05) — Correção de E0433 no Windows (libc estava gated por cfg(unix) mas referenciado em main.rs), correção de race no signal_test (ShutdownSignal singleton, ATOMWRITE_READY_FILE para readiness sem race), correção de barra invertida em 11 testes cli_batch do Windows.
 
@@ -13,7 +13,7 @@ atomwrite é um CLI Rust que fornece 28 subcomandos para manipulação de arquiv
 ### I/O Principal (7)
 - `read` — ler arquivos com metadados, checksum, conteúdo opcional
 - `write` — criar ou sobrescrever arquivos atomicamente via stdin
-- `edit` — editar cirurgicamente por número de linha, marcador de texto ou match exato
+- `edit` — editar cirurgicamente por número de linha, marcador de texto ou match exato/fuzzy; multi-par `--old`/`--new` tem fuzzy por par + `pair_results` + `--partial` (v0.1.15)
 - `delete` — deletar arquivos com backup opcional
 - `copy` — copiar arquivos com verificação de checksum
 - `move` — mover ou renomear arquivos atomicamente (EXDEV copy-fallback)
@@ -59,7 +59,7 @@ Além da verificação de sintaxe G72 em `write --syntax-check` (24 linguagens, 
 - **Sidecar G114 WAL** para recuperação de crash: `.atomwrite.journal.<target>.atomwrite.journal.json` com entradas `Started`/`Committed`. `recover_orphan_journals(dir)` é consultivo
 - **5 novas variantes de erro**: `LockTimeout` (83), `SyntaxError` (88), `ExdevFallbackDisabled` (91), `CopyBackBlake3Failed` (92), `OrphanJournal` (93). Todas bilíngues EN/PT-BR com sugestões acionáveis em `ErrorContext`
 - **Dependência**: `tree-sitter-language-pack = "1.8"` com features `download` + `dynamic-loading`. Parsers baixam no primeiro uso
-- **445 testes passando** (eram 320 baseline em v0.1.10, +125 novos). 43 suites de testes de integração, 0 falhas
+- **461 testes passando** (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118). 43 suites de testes de integração, 0 falhas
 - **7 ADRs** em `docs/decisions/` (0019-0025): escolha de tree-sitter-language-pack, design do WAL sidecar, query/outline apenas kind-name, G72 substitui heurística, G114 consultivo, get_toml_path manual, positions opt-in
 
 ## Migração De v0.1.11 Para v0.1.12
@@ -76,7 +76,7 @@ Além da verificação de sintaxe G72 em `write --syntax-check` (24 linguagens, 
 - [HOW_TO_USE](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/HOW_TO_USE.pt-BR.md): Guia de início rápido
 - [COOKBOOK](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/COOKBOOK.pt-BR.md): Receitas para tarefas comuns
 - [AGENTS](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.pt-BR.md): Arquivo de descoberta de agente com contrato de saída e budget de tokens
-- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.pt-BR.md): 445 testes em 43 suites de teste
+- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.pt-BR.md): 461 testes em 43 suites de teste
 - [MIGRATION](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/MIGRATION.pt-BR.md): Guia de migração entre versões
 - [INSTALL](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/INSTALL.pt-BR.md): Instruções de instalação por plataforma
 - [CROSS_PLATFORM](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/CROSS_PLATFORM.pt-BR.md): Quirks de macOS, Linux, Windows

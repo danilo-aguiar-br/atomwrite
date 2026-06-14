@@ -18,6 +18,13 @@ use crate::signal::ShutdownSignal;
 
 /// Create or overwrite a file atomically from stdin content.
 ///
+/// The target is resolved against the workspace once, up front, so
+/// append/prepend, line-ending auto-detection, and `--expect-checksum`
+/// operate on the same path identity as the final atomic write. Before
+/// v0.1.15 these pre-steps used the raw CLI path relative to the CWD,
+/// which truncated appends and skipped checksum verification whenever
+/// the CWD differed from the workspace (G118, CWE-367).
+///
 /// # Errors
 ///
 /// Returns `AtomwriteError::NotFound` if reading stdin fails.
@@ -34,8 +41,14 @@ pub fn cmd_write(
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
+    let resolved = crate::path_safety::validate_path(&args.target, &workspace)?;
 
-    let mut content = read_stdin_content(stdin, args.max_size)?;
+    let stdin_bytes_read;
+    let mut content = {
+        let (buf, n) = read_stdin_content(stdin, args.max_size, args.allow_empty_stdin)?;
+        stdin_bytes_read = n;
+        buf
+    };
 
     if shutdown.is_shutdown() {
         bail!("interrupted before write");
@@ -43,17 +56,50 @@ pub fn cmd_write(
 
     if args.append || args.prepend {
         content = handle_append_prepend(
-            &args.target,
+            &resolved,
             &content,
             args.append,
             global.effective_max_filesize(),
+            args.allow_empty_stdin,
         )?;
     }
 
-    content = normalize_line_endings(&content, args.line_ending, &args.target);
+    content = normalize_line_endings(&content, args.line_ending, &resolved);
 
+    // G120 L3: cross-validation. When the caller combines
+    // `--append` (or `--prepend`) with `--expect-checksum` and the stdin
+    // is empty, the situation is ambiguous: the checksum is for the
+    // pre-mutation state but the empty append is effectively a no-op.
+    // We emit a structured warning on stderr so the agent and operator
+    // can audit the decision, but DO NOT abort — the user explicitly
+    // opted into empty stdin with `--allow-empty-stdin`.
     if let Some(ref expected) = args.expect_checksum {
-        verify_checksum(&args.target, expected, global.effective_max_filesize())?;
+        if stdin_bytes_read == 0 && (args.append || args.prepend) {
+            if args.no_checksum_when_empty {
+                tracing::warn!(
+                    path = %resolved.display(),
+                    expected = %expected,
+                    "G120 L3: --append/--prepend + --expect-checksum with empty stdin; \
+                     skipping checksum verification per --no-checksum-when-empty"
+                );
+            } else {
+                // Default: still verify against the pre-mutation state.
+                // If the pre-mutation file exists and matches, this
+                // passes and the empty append is a no-op. If it does
+                // not exist, verify_checksum's `if !target.exists()`
+                // short-circuit returns Ok — the same legacy behaviour
+                // as pre-v0.1.15, but now explicitly logged.
+                tracing::info!(
+                    path = %resolved.display(),
+                    expected = %expected,
+                    "G120 L3: --append/--prepend + --expect-checksum with empty stdin; \
+                     verifying pre-mutation state. Pass --no-checksum-when-empty to skip."
+                );
+                verify_checksum(&resolved, expected, global.effective_max_filesize())?;
+            }
+        } else {
+            verify_checksum(&resolved, expected, global.effective_max_filesize())?;
+        }
     }
 
     let target_str = args.target.display().to_string();
@@ -78,9 +124,10 @@ pub fn cmd_write(
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
+        wal_policy: args.wal_policy,
     };
 
-    let result = atomic_write(&args.target, &content, &opts, &workspace)?;
+    let result = atomic_write(&resolved, &content, &opts, &workspace)?;
 
     let output = WriteOutput {
         r#type: "write",
@@ -91,6 +138,8 @@ pub fn cmd_write(
         checksum_before: result.checksum_before,
         backup_path: result.backup_path,
         elapsed_ms: start.elapsed().as_millis() as u64,
+        stdin_bytes_read,
+        wal_policy: args.wal_policy.as_str(),
         platform: result.platform,
     };
 
@@ -98,27 +147,45 @@ pub fn cmd_write(
     Ok(())
 }
 
-fn read_stdin_content(stdin: impl Read, max_size: Option<u64>) -> Result<Vec<u8>> {
+/// Read all bytes from stdin, applying optional `max_size` cap and the G120
+/// L1 guard for empty input. Returns the buffer plus the actual byte count
+/// read so the caller can include `stdin_bytes_read` in the NDJSON envelope
+/// (G120 L4 telemetry).
+///
+/// The empty-stdin guard defaults to ON because accepting 0 bytes as a valid
+/// payload is a frequent source of silent data loss when the upstream
+/// command in a pipe produces no output (`cat missing.txt`, a heredoc that
+/// expands to nothing, a failing `find`, etc.). Callers that genuinely
+/// intend to write zero bytes (e.g. truncating a file to empty) must pass
+/// `--allow-empty-stdin` to make the intent explicit.
+fn read_stdin_content(
+    stdin: impl Read,
+    max_size: Option<u64>,
+    allow_empty: bool,
+) -> Result<(Vec<u8>, u64)> {
     let mut reader = BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
     let mut buf = Vec::with_capacity(crate::constants::STDIN_INITIAL_CAPACITY);
-    reader
+    let n = reader
         .read_to_end(&mut buf)
         .context("failed to read stdin")?;
 
+    if !allow_empty && n == 0 {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "stdin produced 0 bytes; pass --allow-empty-stdin to confirm an empty write is intentional".into(),
+        }
+        .into());
+    }
+
     if let Some(max) = max_size {
-        if buf.len() as u64 > max {
+        if n as u64 > max {
             return Err(AtomwriteError::InvalidInput {
-                reason: format!(
-                    "stdin exceeds max size {} bytes (got {} bytes)",
-                    max,
-                    buf.len()
-                ),
+                reason: format!("stdin exceeds max size {} bytes (got {} bytes)", max, n),
             }
             .into());
         }
     }
 
-    Ok(buf)
+    Ok((buf, n as u64))
 }
 
 fn handle_append_prepend(
@@ -126,6 +193,7 @@ fn handle_append_prepend(
     new_content: &[u8],
     is_append: bool,
     max_size: u64,
+    allow_empty: bool,
 ) -> Result<Vec<u8>> {
     if !target.exists() {
         return Ok(new_content.to_vec());
@@ -133,6 +201,16 @@ fn handle_append_prepend(
 
     let existing = crate::file_io::read_file_bytes(target, max_size)
         .with_context(|| format!("cannot read {} for append/prepend", target.display()))?;
+
+    if new_content.is_empty() && !allow_empty {
+        return Err(AtomwriteError::InvalidInput {
+            reason: format!(
+                "--{} received 0 bytes from stdin; pass --allow-empty-stdin if you want a no-op, or check why the upstream command produced no output",
+                if is_append { "append" } else { "prepend" }
+            ),
+        }
+        .into());
+    }
 
     let total = existing
         .len()

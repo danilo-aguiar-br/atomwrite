@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApplyResult",
+  "description": "NDJSON output for the atomwrite apply subcommand. Emits one event per file (type: applied) followed by a final summary event (type: summary).",
+  "type": "object",
+  "required": ["type", "path"],
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "description": "Event discriminator. 'applied' for the per-file event, 'summary' for the final rollup, 'error' on failure.",
+      "type": "string",
+      "enum": ["applied", "summary", "error"]
+    },
+    "path": {
+      "description": "Absolute path of the target file (absent in summary events).",
+      "type": "string"
+    },
+    "format_detected": {
+      "description": "Patch format that was detected and applied (unified, search-replace, full, markdown, or auto).",
+      "type": "string"
+    },
+    "hunks_applied": {
+      "description": "Number of patch hunks successfully applied to the file.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytes_before": {
+      "description": "File size in bytes before applying the patch.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytes_after": {
+      "description": "File size in bytes after applying the patch.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "checksum_before": {
+      "description": "BLAKE3 checksum of the file before applying the patch.",
+      "type": "string"
+    },
+    "checksum_after": {
+      "description": "BLAKE3 checksum of the file after applying the patch.",
+      "type": "string"
+    },
+    "mtime_preserved": {
+      "description": "Whether the original mtime was preserved (true) or updated to reflect the change (false). Default is false since v0.1.3+.",
+      "type": "boolean"
+    },
+    "dry_run": {
+      "description": "True if the patch was previewed without writing.",
+      "type": "boolean"
+    },
+    "elapsed_ms": {
+      "description": "Operation duration in milliseconds.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_modified": {
+      "description": "Number of files modified (present in summary event).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_skipped": {
+      "description": "Number of files skipped (present in summary event).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_failed": {
+      "description": "Number of files that failed (present in summary event).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "error": {
+      "description": "Error message string when type is 'error'.",
+      "type": "string"
+    },
+    "code": {
+      "description": "Machine-readable error code (e.g. SYNTAX_ERROR) when type is 'error'.",
+      "type": "string"
+    }
+  }
+}

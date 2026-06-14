@@ -58,8 +58,8 @@ Esta seção resume as mudanças relevantes para receitas em v0.1.12. A release 
 
 ### Cobertura de Testes
 
-- 445 testes passando (era 320 baseline, +125 novos em v0.1.11+v0.1.12)
-- 7 novos ADRs em `docs/decisions/` (0019-0025)
+- 502 testes passando (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 incrementos cross-platform/WAL/auditoria v0.1.16-v0.1.18)
+- 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/`
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 
@@ -443,6 +443,7 @@ atomwrite diff --stat src/old.rs src/new.rs
 
 
 ## Como Usar Locking Otimista
+- Desde a v0.1.15 o alvo é resolvido contra o `--workspace` antes da verificação (G118); na v0.1.14 e anteriores, execute com CWD = workspace ou um alvo relativo pula silenciosamente a checagem de checksum
 - Leia um arquivo e capture o checksum:
 
 ```bash
@@ -832,4 +833,78 @@ done
 
 echo "Falhou após $max_attempts tentativas" >&2
 exit 1
+```
+
+
+## Como Aplicar Múltiplos Pares de Edit Com Segurança (v0.1.15, G117)
+
+
+## Gerenciamento de Journals WAL (v0.1.15+)
+
+O esforço G119 introduz três novas camadas para gerenciar os journals sidecar do WAL. Estas receitas mostram o uso prático dos novos subcomandos e flags.
+
+### Como Reap de Journals Stale Antes do Commit
+
+O subcomando `wal-heal` (G119 L3) remove com segurança journals terminais (Committed e Aborted). Integre-o a um hook de pre-commit para manter a working tree limpa.
+
+```bash
+# .git/hooks/pre-commit
+atomwrite --workspace . wal-heal --threshold-secs 0 \
+  | jaq -e '.removed_count >= 0' \
+  || { echo "wal-heal falhou"; exit 1; }
+```
+
+A flag `--threshold-secs 0` remove journals terminais de qualquer idade. `wal-heal` NUNCA toca em entradas Started. Para uma varredura mais conservadora, eleve o threshold para reter journals recentes para análise forense.
+
+### Como Configurar Política de WAL por Carga de Trabalho
+
+A flag `--wal-policy` (G119 L1) em `write` e `edit` controla quando o journal sidecar é escrito. Três valores são aceitos:
+
+- `auto` (padrão) -- política escolhida pelo build, otimizada para uso geral
+- `always` -- sempre escreve o journal sidecar (trilha de auditoria forense)
+- `never` -- nunca escreve o journal sidecar (caminho mais rápido, sem metadados de recovery)
+
+```bash
+# Builds de CI: pula overhead de journal, sidecars não têm consumidor lá
+atomwrite --workspace . write --wal-policy never ci-config.toml < config.toml
+
+# Deploys de produção: trilha de auditoria importa, força o sidecar
+atomwrite --workspace . write --wal-policy always /etc/myapp/config.toml < prod.toml
+
+# Uso geral por agente: deixa o padrão decidir
+atomwrite --workspace . write src/lib.rs < new_lib.rs
+```
+
+### Como Inspecionar Saúde dos Journals
+
+O subcomando `wal-stats` (G119 L5) emite telemetria read-only sobre o estado atual do WAL. Combine-o com `jaq` para gatear CI ou scripts pós-build.
+
+```bash
+# Telemetria completa como NDJSON
+atomwrite --workspace . wal-stats
+
+# Gate em journals com reclaimable zero
+atomwrite --workspace . wal-stats | jaq -e '.reclaimable == 0' || { echo "drift"; exit 1; }
+
+# Extrai apenas o stale threshold para diagnóstico
+atomwrite --workspace . wal-stats | jaq -r '.stale_threshold_secs'
+```
+
+
+- Pares repetidos `--old`/`--new` rodam a cascata fuzzy completa de 9 estratégias por par
+- O padrão é all-or-nothing: um par falho aborta o lote com exit 65, sem escrita, e `failed_pair_index` no envelope de erro
+- `--partial` aplica os pares que casam e relata os demais com `matched: false`
+
+```bash
+# All-or-nothing com ground truth por par
+atomwrite --workspace . edit src/main.rs --old "foo" --new "bar" --old "baz" --new "qux" \
+  | jaq -e '.pair_results'
+
+# Aplicação parcial: preserva o trabalho válido e lista os ausentes
+atomwrite --workspace . edit --partial src/main.rs --old "foo" --new "bar" --old "talvez" --new "x" \
+  | jaq -e '{edits, pairs_total, ausentes: [.pair_results[] | select(.matched | not) | .index]}'
+
+# Anti-mascaramento: pipe sem -e esconde o exit 65 como {"edits": null} com exit 0 no pipeline
+atomwrite --workspace . edit src/main.rs --old "ausente" --new "x" | jaq -e '.edits' \
+  || echo "edit falhou: ${PIPESTATUS[0]}" >&2
 ```

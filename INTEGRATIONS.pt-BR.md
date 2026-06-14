@@ -6,7 +6,7 @@
 > atomwrite funciona com todo agente LLM que pode executar comandos shell
 
 
-## Agentes Compatíveis (v0.1.12)
+## Agentes Compatíveis (v0.1.15)
 - atomwrite requer apenas acesso a `bash` para funcionar
 - Qualquer agente que pode executar um comando shell pode usar atomwrite
 - Saída NDJSON é parseável por todo LLM principal sem adaptadores customizados
@@ -14,6 +14,7 @@
 - **28 subcomandos** a partir da v0.1.12 (6 novos: set, get, del, case, query, outline)
 - A partir da v0.1.12, atomwrite roda em Windows 10/11, Linux e macOS com contrato NDJSON idêntico
 - A release v0.1.12 adicionou 5 novas variantes de erro e 445 testes em 43 suites
+- A release v0.1.15 corrigiu o G117 (`edit` multi-par com paridade fuzzy, `pair_results`, `failed_pair_index`, `--partial` opt-in) e o G118 (`write` resolve o alvo contra o workspace — append/checksum seguros com CWD divergente); 461 testes em 43 suítes
 
 
 ## Tabela Resumida

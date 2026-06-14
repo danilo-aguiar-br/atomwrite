@@ -50,8 +50,8 @@ O fix do Windows 10/11 de v0.1.4 é preservado (cargo install agora funciona). v
 
 ### Cobertura de Testes
 
-- 445 testes passando (era 320 baseline, +125 novos em v0.1.11+v0.1.12)
-- 7 novos ADRs em `docs/decisions/` (0019-0025)
+- 502 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118 na v0.1.15)
+- 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/`
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 
@@ -64,7 +64,7 @@ O fix do Windows 10/11 de v0.1.4 é preservado (cargo install agora funciona). v
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Instalar atomwrite v0.1.12 do crates.io
+# Instalar atomwrite v0.1.18 do crates.io
 cargo install atomwrite --locked --version "^0.1.12"
 
 # Verificar
@@ -212,6 +212,46 @@ ou `%USERPROFILE%\.cargo\bin` (Windows) está no seu `PATH`.
 
 
 ## Compilando do Código Fonte (todas plataformas)
+
+
+## Verificação de Saúde (G119)
+
+Após instalar v0.1.15 ou posterior, execute os comandos de saúde do WAL para confirmar que os novos subcomandos estão cabeados corretamente. Estas operações são read-only ou de reparo escopado, seguras para uso em CI e smoke tests pós-instalação.
+
+### Inspecionar Estado do WAL (read-only)
+
+```bash
+atomwrite --workspace . wal-stats
+```
+
+Envelope NDJSON esperado (truncado):
+
+```json
+{"type":"result","journals_total":0,"journals_started":0,"journals_committed":0,"journals_aborted":0,"stale_threshold_secs":86400,"reclaimable":0,"action":"stats","elapsed_ms":3}
+```
+
+O campo `reclaimable` conta journals terminais (Committed ou Aborted) mais antigos que o threshold de obsolescência. Um valor não-zero indica sidecars órfãos elegíveis para limpeza segura.
+
+### Reap de Journals Terminais
+
+A camada G119 L3 adiciona `wal-heal` para remover journals terminais (Committed e Aborted). Nunca toca em entradas Started.
+
+```bash
+# Remover todos os journals terminais independentemente da idade (seguro: ignora Started)
+atomwrite --workspace . wal-heal --threshold-secs 0
+```
+
+Use este comando em smoke tests pós-instalação, hooks de pre-build em CI, ou após uma varredura de recuperação de crash.
+
+### Recomendação para CI
+
+Adicione uma checagem de `wal-stats` ao seu pipeline de CI antes de `cargo test`. Um `reclaimable` não-zero sinaliza acumulação de sidecars que deve ser inspecionada ou healada.
+
+```bash
+# Higiene pré-build em CI
+atomwrite --workspace . wal-stats | jaq -e '.reclaimable == 0' || { echo "drift de WAL detectado"; exit 1; }
+```
+
 
 ```bash
 git clone https://github.com/daniloaguiarbr/atomwrite.git

@@ -31,7 +31,12 @@
         "DEVICE_FILE",
         "NO_MATCHES",
         "BROKEN_PIPE",
-        "INTERNAL_ERROR"
+        "INTERNAL_ERROR",
+        "LOCK_TIMEOUT",
+        "SYNTAX_ERROR_DETECTED",
+        "EXDEV_FALLBACK_DISABLED",
+        "COPY_BACK_BLAKE3_FAILED",
+        "ORPHAN_JOURNAL"
       ]
     },
     "exit": {
@@ -61,6 +66,50 @@
     "workspace": {
       "type": ["string", "null"],
       "description": "Workspace root used for jail validation. Appears on WORKSPACE_JAIL errors (and may appear on any error in future releases) to help the caller diagnose path resolution."
+    },
+    "failed_pair_index": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "1-based index of the failed --old/--new pair. Present only on multi-pair edit failures (G117, v0.1.15+)."
+    },
+    "pairs_total": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Total number of --old/--new pairs in the invocation. Present only on multi-pair edit failures (G117, v0.1.15+)."
+    },
+    "pair_results": {
+      "type": ["array", "null"],
+      "description": "Per-pair diagnostics up to and including the failed pair. Pairs after the failure were never attempted and are absent (all-or-nothing default). Present only on multi-pair edit failures (G117, v0.1.15+).",
+      "items": {
+        "$ref": "#/definitions/PairResult"
+      }
+    }
+  },
+  "definitions": {
+    "PairResult": {
+      "type": "object",
+      "required": ["index", "matched"],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based position of the pair in the --old/--new invocation order"
+        },
+        "matched": {
+          "type": "boolean",
+          "description": "Whether the pair matched and was applied to the content"
+        },
+        "strategy": {
+          "type": "string",
+          "description": "Matching strategy that succeeded (e.g. exact, whitespace_normalized)"
+        },
+        "similarity": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Similarity score of the fuzzy match (block-anchor and context-aware only)"
+        }
+      }
     }
   }
 }

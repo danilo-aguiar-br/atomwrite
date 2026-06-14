@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RollbackResult",
+  "description": "NDJSON output for the atomwrite rollback subcommand. Emits one event per restored file (type: rollback) followed by a final summary event (type: summary).",
+  "type": "object",
+  "required": ["type", "path"],
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "description": "Event discriminator. 'rollback' for the per-file event, 'summary' for the final rollup, 'error' on failure.",
+      "type": "string",
+      "enum": ["rollback", "summary", "error"]
+    },
+    "path": {
+      "description": "Absolute path of the file that was restored.",
+      "type": "string"
+    },
+    "restored_from": {
+      "description": "Absolute path of the backup file used as the source of restoration.",
+      "type": "string"
+    },
+    "timestamp": {
+      "description": "Backup timestamp (YYYYMMDD_HHMMSS) used for the restore, when --timestamp was passed explicitly.",
+      "type": "string"
+    },
+    "checksum_before": {
+      "description": "BLAKE3 checksum of the file before the rollback (i.e. the on-disk state being overwritten).",
+      "type": "string"
+    },
+    "checksum_after": {
+      "description": "BLAKE3 checksum of the file after the rollback (i.e. the restored content).",
+      "type": "string"
+    },
+    "verified": {
+      "description": "True if --verify was passed and the BLAKE3 post-restore check succeeded.",
+      "type": "boolean"
+    },
+    "dry_run": {
+      "description": "True if the rollback was previewed without writing.",
+      "type": "boolean"
+    },
+    "elapsed_ms": {
+      "description": "Operation duration in milliseconds.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_restored": {
+      "description": "Number of files restored (present in summary event).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_failed": {
+      "description": "Number of files that failed to restore (present in summary event).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "error": {
+      "description": "Error message string when type is 'error'.",
+      "type": "string"
+    },
+    "code": {
+      "description": "Machine-readable error code when type is 'error'.",
+      "type": "string"
+    }
+  }
+}

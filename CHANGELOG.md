@@ -8,6 +8,131 @@
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.18] - 2026-06-14
+
+#### G118 — `replace` pre-validates root paths against the workspace jail
+- **`cmd_replace` resolve-first para todas as raízes** — após `global.resolve_workspace()`, o comando itera sobre `args.paths` e chama `path_safety::validate_path(path, &workspace)?` para CADA raiz ANTES de construir o `WalkBuilder`. Falha rápida com `WORKSPACE_JAIL` (exit 126) na primeira violação. Comportamento legado per-entry (v0.1.12-v0.1.17) emitia um evento `JailViolation` por arquivo caminhado e o usuário via o diagnóstico enterrado sob N eventos. Agora `replace /etc/passwd` aborta em microssegundos com um único envelope de erro estruturado.
+- **Convenção resolve-first agora universal** — `write` (ADR-0027), `edit`, `copy`, `apply`, `move`, `rollback`, `set`, `del`, `case` e agora `replace` todos validam o alvo contra o jail workspace ANTES de qualquer `exists()` ou read. Um único modelo mental para todos os comandos mutantes.
+- **Teste de regressão atualizado** — `replace_jail_violation_does_not_inflate_counter` em `tests/cli_v012_regressions.rs` agora afirma exit 126 + envelope `WORKSPACE_JAIL` + arquivos inside/outside inalterados. O nome é preservado (a invariante subjacente — "jail violation não pode inflar o counter de substituições" — é mantida) mas o corpo da asserção mudou.
+- **2 novos testes integrados** em `tests/cli_replace.rs`: `replace_root_path_outside_workspace_exits_126` (caminho absoluto `/etc/passwd`) e `replace_relative_dotdot_root_outside_workspace_exits_126` (caminho relativo `../escape`).
+
+#### G120 L3 — cobertura de teste para cross-validação
+- **2 novos testes integrados** em `tests/cli_write.rs`:
+  - `g120_l3_append_empty_stdin_with_matching_checksum_succeeds` — escreve arquivo seed, hasheia, roda `write --append --allow-empty-stdin --expect-checksum <HASH> < /dev/null`, afirma exit 0 + `stdin_bytes_read: 0` + arquivo inalterado (no-op append preserva checksum).
+  - `g120_l3_append_empty_stdin_without_opt_in_rejects_at_l1` — sem `--allow-empty-stdin`, a guarda L1 dispara primeiro (exit 65) e o arquivo é preservado. Documenta que L3 é inalcançável sem opt-in explícita.
+
+#### G117 follow-up — cobertura de edge cases
+- **3 novos testes integrados** em `tests/cli_edit.rs`:
+  - `edit_unicode_old_new_exact_match` — diacríticos UTF-8 (`ção` → `AÇÃO`) com casamento exato byte-a-byte. Documenta o contrato de single-pair (substitui apenas a PRIMEIRA ocorrência; multi-pair para múltiplas).
+  - `edit_crlf_line_endings_preserve_eol_after_replace` — input com `\r\n`, replace, afirma preservação byte-a-byte (sem colapso para `\n`).
+  - `edit_multi_pair_same_old_appears_twice_applies_both` — multi-par onde ambos os pares referenciam o mesmo token `--old`. Garante que o segundo par consome a versão pós-primeiro-substituição (proteção contra off-by-one).
+
+#### ADR
+- **`docs/decisions/0030-v0-1-18-g118-replace-pre-validation-g120-l3-tests-g117-edge-cases.md`** — registra as 3 decisões, alternativas consideradas e gatilhos para revisitar.
+
+#### Validation
+- `cargo build --release` OK
+- `cargo clippy --all-targets -- -D warnings` OK
+- Suíte completa de testes: 502 testes passando, 0 falhas, 0 regressões introduzidas pelas 3 mudanças
+- 2 flakes pré-existentes confirmados como não relacionados (`signal_test::batch_interrupted_by_signal`, `tracing_test::span_captures_path_field` + `tracing_test::debug_level_includes_filter_info`) — falhas idênticas no baseline `git stash` antes das mudanças
+
+
+## [0.1.17] - 2026-06-13
+
+#### G119 — wires L3 startup auto-heal and L4 into the Drop guard
+- **L3 startup pass** — every invocation now calls `auto_heal_on_startup(&workspace, threshold_secs=3600, max_duration_ms=100)` once, BEFORE dispatching the subcommand. Default threshold is 1h, budget is 100ms, and `Started` orphans are NEVER reaped (only `Committed`/`Aborted` older than the threshold). On a 60-stale-sidecar workspace the pass reaps all of them in <5ms; on a 10k workspace the budget still bounds cost.
+- **New global flag `--no-auto-heal`** — disables the L3 pass for tight CI loops, benchmarks, and forensics. Also bound to env `ATOMWRITE_WAL_NO_AUTO_HEAL=1`. Exists to keep per-invocation overhead predictable when the workspace has 0 sidecars (avoids the walk+parse cost on every command).
+- **L4 wired into `JournalGuard::drop`** — the drop now consults `heuristics_should_preserve` before removing. `h1_ttl`, `h3_rate_limit`, `h4_sentinel`, `h5_archive` all vote; `h2_lru_within_cap` is intentionally bypassed (no cheap way to know global count from a per-file drop) by passing `u64::MAX` for both `workspace_committed_count` and `age_rank`. OR-composition: any preserve vote wins.
+- **New field `committed_at_unix: Option<u64>` on `JournalGuard`** — `release()` stamps the current Unix timestamp so the L4 heuristics that reason about post-commit age (h1_ttl, h5_archive) have data. The inert guard and the `keep()` path leave it `None` (no Committed entry existed).
+- **Test fixes** — 2 tests in `tests/cli_v012_wal.rs` (`wal_heal_reaps_stale_committed_journals`, `wal_stats_counts_committed_orphans_malformed`) and 2 in `tests/cli_wal.rs` (`g119_l5_wal_stats_reports_journal_state`, `g119_l5_wal_stats_reports_zeros_on_empty_workspace`) now pass `--no-auto-heal` to prevent the L3 startup pass from reaping pre-seeded stale sidecars before the assertion runs.
+- **AdR update** — `docs/decisions/0028-g119-wal-cleanup-intelligent.md` gained a "Atualização v0.1.17 — Fiação de L3 startup + L4 no Drop guard" section documenting the `u64::MAX` trick, the `committed_at_unix` field, and the test-isolation rationale.
+
+#### Validation
+- `cargo fmt --check` clean
+- `cargo clippy --bin atomwrite --lib --all-targets -- -D warnings` clean (0 warnings)
+- 6 new unit tests in `src/wal.rs::tests` for L3 (`l3_auto_heal_on_empty_workspace_reports_zero`, `l3_auto_heal_reaps_old_committed_preserves_started`, `l3_auto_heal_respects_budget`) and L4 (`l4_release_records_committed_at_unix`, `l4_drop_preserves_sidecar_when_h4_sentinel_votes`, `l4_drop_removes_sidecar_when_no_heuristic_preserves`)
+- 3 new integration tests in `tests/cli_wal.rs` (`g119_l3_startup_auto_heal_reaps_stale_committed`, `g119_l3_no_auto_heal_preserves_stale_committed`, `g119_l4_sentinel_preserves_sidecar_on_successful_write`)
+- Full suite: 474 tests passing, 0 failures, 0 regressions
+
+
+## [0.1.16] - 2026-06-13
+
+#### G119 — closes the 5-layer autonomous cleanup (L1 prevention + L4 heuristics)
+- **L1 — `WalPolicy` enum + `--wal-policy` flag** — `Auto` (default) skips the sidecar for trivial writes (file ≤ 1 MiB AND not Edit/Replace AND parent dir under git AND file size ≤ 4 KiB). `Always` forces the sidecar (legacy semantics, equivalent to `--strict-atomic`). `Never` suppresses sidecar creation even when `--strict-atomic` is set. Decision happens inside `atomic_write` BEFORE `journal_started_with_guard`; cost is O(0) when the policy votes "no sidecar". Expected reduction: 60-80% of sidecars for typical agent LLM workloads.
+- **L4 — `HeuristicsEngine` with 5 composable rules** — `h1_ttl` (preserve for N seconds after `Committed`, default 0), `h2_lru_within_cap` (preserve within count cap, default 100), `h3_rate_limit` (throttle when >K sidecars/min, default 10), `h4_sentinel` (`.atomwrite_no_wal` file disables per-directory), `h5_archive` (flag for archival when older than 7 days). Env vars: `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS`. H3 uses lock-free `AtomicU64` for the 60s window. `heuristics_should_preserve(target, committed_at_unix, count, rank)` composes via OR.
+- **`AtomicWriteOptions.wal_policy: WalPolicy`** — new field defaulting to `Auto`. All 16 call-sites in `src/commands/` (write, edit, set, get, del, case, copy, replace, transform, scope, apply, rollback, batch×4) updated to pass the policy through.
+- **Telemetry** — `WriteOutput` NDJSON envelope gains `wal_policy: "auto" | "always" | "never"` so callers can audit which policy was applied.
+- **AdR** — `docs/decisions/0028-g119-wal-cleanup-intelligent.md` documents the 5-layer architecture and the OR-composition semantics of the L4 engine.
+- **New unit tests** — 12 tests in `src/wal.rs::tests`: `l1_never_policy_always_returns_false`, `l1_always_policy_always_returns_true`, `l1_auto_policy_returns_true_for_large_file`, `l1_auto_policy_returns_true_for_edit_op`, `l1_auto_policy_skips_trivial_file`, `l4_h1_ttl_default_zero_returns_false`, `l4_h2_lru_within_cap_returns_true_when_count_low`, `l4_h2_lru_returns_true_when_count_at_or_below_default_cap`, `l4_h3_rate_limit_returns_false_below_threshold`, `l4_h4_sentinel_returns_true_when_file_exists`, `l4_h4_sentinel_returns_false_when_absent`, `l4_h5_archive_returns_false_for_recent_journal_under_default`, `l4_h5_archive_returns_true_for_journal_older_than_7_days`, `l4_engine_returns_false_when_all_heuristics_disabled`.
+
+#### G120 — closes the 4-layer content validation (L3 cross-validation)
+- **L3 — `--append`/`--prepend` + `--expect-checksum` + empty stdin emits structured warning** — when the caller combines an append/prepend flag with `--expect-checksum` AND the stdin is empty (the L1-bypass case via `--allow-empty-stdin`), `cmd_write` logs a `tracing::info!` warning that names the cross-flag combination and proceeds to `verify_checksum` (which still validates the pre-mutation state). Operators monitoring stderr get an explicit signal without changing the exit code.
+- **L3 opt-out — `--no-checksum-when-empty`** — caller that INTENDS the empty-stdin + checksum combination (no-op append with locking guarantee) can pass this flag to skip `verify_checksum` entirely. Emits `tracing::warn!` recording the decision.
+- **L1+L2 unchanged** — `read_stdin_content` still rejects empty stdin by default (exit 65); `handle_append_prepend` still rejects empty stdin when `--append`/`--prepend` is set. L3 is the third layer that runs only when L1+L2 are explicitly bypassed.
+- **AdR** — `docs/decisions/0029-g120-empty-stdin-guard.md` documents the L3 warning semantics and the opt-out flag.
+
+#### Validation
+- `cargo fmt --check` clean
+- `cargo clippy --bin atomwrite --lib` clean (0 warnings)
+- Full suite: 487 tests passing (469 baseline v0.1.15 + 18 new in `src/wal.rs::tests`), 0 failures, 0 regressions
+- New `WalPolicy` exported from `crate::wal` and registered in clap's `ValueEnum` derive
+- `WriteOutput` schema regenerated to include `wal_policy` field; `tests/snapshots/snapshot_write__write_output_structure.snap` updated
+
+
+## [0.1.15] - 2026-06-11
+
+#### G119 — WAL sidecar cleanup in 3 layers (L2 Drop guard + L3 `wal-heal` + L5 `wal-stats`)
+- **L2 — Drop guard** — the sidecar `.atomwrite.journal.<basename>.json` is now wrapped in a `JournalGuard` (RAII, modeled on `tempfile::TempPath`). The `Committed` entry's append calls `wal_guard.release()`; if the rename succeeds the sidecar is removed on scope exit. On panic or early return the guard is `keep()`'d and the sidecar survives for `recover_orphan_journals`. 60+ pre-existing sidecars observed in this repository's working tree during the G119 audit are now reaped by the next invocation.
+- **L3 — `wal-heal` subcommand** — the explicit operator-facing version of the auto-heal pass. Walks the workspace with a `--max-duration-ms` budget (default 100ms), reaps every `Committed`/`Aborted` sidecar older than `--threshold-secs` (default 3600s), and emits `{"removed":N,"preserved":N,"malformed":N,"bytes_reclaimed":N,"threshold_secs":N}`. `Started` orphans are NEVER removed automatically — they are the only signal worth operator attention.
+- **L5 — `wal-stats` subcommand** — read-only snapshot: `total_journals`, `by_state{started,committed,aborted,malformed}`, `oldest_journal_age_secs`, `total_size_bytes`, `by_directory` (top 10), and `auto_heal_recommended` (true when total > 100 OR oldest > 7d). Used by CI gates and agent health checks to detect accumulating junk before it pollutes `git status --porcelain`.
+- **Sidecar pattern shared** — `JournalGuard`, `WalStats`, and `AutoHealReport` re-export through `ndjson_types` for `--json-schema` introspection. Schemas regen in `docs/schemas/`.
+
+#### G120 — empty-stdin guard in 3 layers (L1 stdin guard + L2 append guard + L4 telemetry)
+- **L1 — `read_stdin_content` rejects `&[]` by default** — the upstream-pipe failure mode (`cat missing.txt`, heredoc that expands to nothing, a failing `find`) silently produced a "success" exit with 0 bytes written. Default is now exit 65 `INVALID_INPUT` with an actionable message naming the opt-out flag. Callers that genuinely intend to write zero bytes (`echo -n`, intentional truncate) must pass `--allow-empty-stdin`.
+- **L2 — `handle_append_prepend` rejects empty stdin with `--append`/`--prepend`** — second line of defence for the L1-bypass case. Error message names the operation so the caller can tell which flag the empty stream hit.
+- **L4 — `stdin_bytes_read: u64` field in the `write` NDJSON envelope** — telemetry that lets CI/agent gates validate `if .stdin_bytes_read == 0 then fail` even when the operation succeeded. Always present (not behind `Option`).
+- **Schema regenerated** — `docs/schemas/write-output.schema.json` now includes `stdin_bytes_read`. Snapshot test updated.
+- **Anti-masking guidance** — combined with the G117 `jaq -e '.edits'` recipe, callers should validate `.stdin_bytes_read > 0` for non-truncation writes.
+- **Cross-flag note** — `--append` + `--expect-checksum` is legitimate (locking otimista de append); the G120 guard does NOT interfere with this combination. The pre-existing G118 path-resolution fix means the checksum is now compared against the real file even when CWD diverges from workspace.
+
+#### Test-legacy cleanup (G119 L2 side effect)
+- `recover_orphan_journals_with_committed_entry` and `wal_journal_created_on_set` flipped from "sidecar must exist" to "sidecar must NOT exist" — the new behavior is the G119 L2 contract.
+- `syntax_check_large_streaming_file` updated to pipe its 1 MiB payload via `write_stdin` instead of relying on the now-rejected empty-stdin default.
+- All other legacy tests preserved verbatim.
+
+#### Validation
+- 8 new integration tests in `tests/cli_write.rs` (G120 L1+L2+L4) and `tests/cli_wal.rs` (G119 L2+L3+L5): empty-stdin reject, empty-stdin opt-in truncate, append empty-stdin reject, stdin bytes telemetry, drop-guard on success, drop-guard on failure, `wal-stats` empty/non-empty, `wal-heal` reap-stale-preserve-started, `wal-stats` state counts
+- 1 new unit test for `parse_journal_state` classification
+- Full suite: 469 tests passing (461 in baseline v0.1.15 + 8 new), 0 failures
+- `cargo fmt --check` clean, `cargo clippy --bin atomwrite --lib --all-features` clean (0 warnings)
+- End-to-end smoke test: `wal-heal --threshold-secs 0` on a 60-sidecar workspace reports `{"removed":60,"preserved":0,"malformed":0,"bytes_reclaimed":47624}` and leaves 0 sidecars
+
+#### G117 — multi-pair `edit --old/--new`: fuzzy parity, per-pair reporting, and opt-in `--partial`
+- **Fuzzy parity** — the multi-pair path previously used exact `find_str` matching only, so a whitespace-divergent pair that the single-pair fuzzy cascade rescues killed the whole batch. The cascade is now extracted into `match_pair` and shared by both paths: every pair runs the full 9-strategy cascade (`exact`, `line_trimmed`, `whitespace_normalized`, `punctuation_normalized`, `indent_flexible`, `escape_normalized`, `trimmed_boundary`, `block_anchor`, `context_aware`). `--fuzzy off` preserves the exact-only pre-G117 behavior.
+- **Per-pair reporting** — success envelopes gain `pairs_total` and `pair_results` (array of `{index (1-based), matched, strategy, similarity}`); `mode` becomes `fuzzy-multi(N)` when any pair matched fuzzily and stays `exact-multi(N)` otherwise. Error envelopes gain `failed_pair_index`, `pairs_total`, and `pair_results` via the new `AtomwriteError::EditPairFailed` variant, which reuses the `INVALID_INPUT` code and exit 65 (no new error code). Pairs after the failed index were never attempted and are absent from the array.
+- **New `--partial` flag (opt-in)** — applies the matching pairs in one atomic write (exit 0, `edits < pairs_total`) and reports the unmatched ones with `matched: false`. Zero applied pairs exits 1 (`NO_MATCHES`) without writing, matching `replace` semantics. The default remains all-or-nothing: when atomicity is possible it is strictly better than partial-failure reporting.
+- **Anti-masking guidance** — the NDJSON error envelope goes to stdout by contract, so `edit ... | jaq '.edits'` masked exit 65 as `{"edits": null}` with pipeline exit 0. README, SKILL, COOKBOOK, and HOW_TO_USE (both languages) now document the `jaq -e '.edits'` / `${PIPESTATUS[0]}` recipe.
+- **Schemas regenerated** — `docs/schemas/edit-output.schema.json` is regenerated from `edit --json-schema` (now includes `mtime_preserved`, `pairs_total`, `pair_results`); `docs/schemas/error-output.schema.json` gains the three G117 fields plus the five error codes introduced in v0.1.12 that were missing from its enum (`LOCK_TIMEOUT`, `SYNTAX_ERROR_DETECTED`, `EXDEV_FALLBACK_DISABLED`, `COPY_BACK_BLAKE3_FAILED`, `ORPHAN_JOURNAL`).
+- **Scope note** — the `--multi` NDJSON-stdin mode is unchanged; G117 covers only repeated `--old`/`--new` pairs. See `docs/decisions/0026-g117-edit-multi-pair-fuzzy-partial.md`.
+
+#### G118 — `write` resolves the target against the workspace before all pre-steps
+- **Bug (double path identity, CWE-367)** — `cmd_write` handed the raw CLI path (relative to the CWD) to `handle_append_prepend`, `normalize_line_endings` (auto), and `verify_checksum`, while only `atomic_write` resolved it via `validate_path`. With a relative target and a CWD different from `--workspace`, append/prepend silently TRUNCATED the file, line-ending auto-detection was skipped, and `--expect-checksum` was skipped entirely (any hash accepted, exit 0). Detected in production: this repository's `gaps.md` was truncated and recovered via `rollback --latest --verify`.
+- **Fix** — the target is resolved once at the top of `cmd_write` and the resolved path feeds all three pre-steps and `atomic_write`. Checksum drift with a divergent CWD now fails with `STATE_DRIFT` (exit 82); out-of-jail targets fail early with `WORKSPACE_JAIL` (exit 126). The NDJSON `path` field still echoes the user-supplied path. See `docs/decisions/0027-g118-write-path-resolution.md`.
+- **Why tests never caught it** — the suite only used ABSOLUTE targets, which are immune to the CWD. Five regression tests now use a RELATIVE target with `current_dir` outside the workspace (append, prepend, drift exit 82, matching checksum, CRLF auto-detection), plus a conformance guard asserting `&args.target` appears exactly once in `write.rs`.
+
+#### GAP 18 — Windows CI green again
+- `tests/snapshot_write.rs` now redacts `platform.dir_fsync` as `[platform_dir_fsync]`, the same technique already used for `platform.fsync`. The snapshot previously pinned `"dir_fsync": "sync_all"`, which Windows reports as `best_effort`, keeping the `windows-2025-vs2026` job red since v0.1.12.
+
+#### MSRV job aligned with the manifest
+- The CI job named `MSRV 1.85` (toolchain pinned at 1.85) now tests the documented MSRV: `MSRV 1.88` with `dtolnay/rust-toolchain@1.88`, matching `Cargo.toml` `rust-version = "1.88"`.
+
+#### Validation
+- 8 new integration tests in `tests/cli_edit.rs` (21 total in the suite): fuzzy pair in multi, `exact-multi(N)` mode compat, `pair_results` on success, `failed_pair_index`/`pairs_total`/`pair_results` on error with file intact, `--fuzzy off` compat, `--partial` happy path, `--partial` zero matches exits 1, `--partial --dry-run` writes nothing
+- `cargo test --lib` 152 passed (variant-suggestion coverage extended to `EditPairFailed`); `cargo test --test snapshot_write` 9 passed
+- Deterministic reproduction from `gaps.md` re-run against the new binary: mixed batch reports `failed_pair_index: 2` with the file intact; `--partial` applies pair 1 with `edits: 1`; `| jaq -e '.edits'` exits 1 on the error envelope
+- G118: 6 new integration tests in `tests/cli_write.rs` (14 total); deterministic reproduction re-run with divergent CWD: append preserves all lines, the all-zeros checksum now exits 82 with the file intact
+- Full suite after G118: 461 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118), 0 failures; `fmt`/`clippy -D warnings`/`doc`/`deny`/`audit` green; Windows cross-check `x86_64-pc-windows-gnu` with `RUSTFLAGS=-Dwarnings` clean
+
 ## [0.1.14] - 2026-06-07
 
 #### Cross-platform parity for `write --line-ending auto` on new files

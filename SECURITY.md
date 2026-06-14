@@ -11,7 +11,10 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 0.1.12  | Yes                |
+| 0.1.15  | Yes                |
+| 0.1.14  | Best-effort        |
+| 0.1.13  | Best-effort        |
+| 0.1.12  | Best-effort        |
 | 0.1.11  | Best-effort        |
 | 0.1.10  | Best-effort        |
 | 0.1.9   | Best-effort        |
@@ -69,13 +72,13 @@
 - **Action taken**: MSRV bumped from 1.85 to 1.88 in v0.1.7. The `ignore` entry in `deny.toml` and the `cargo audit --ignore` flag were both removed. Advisory no longer applies
 - **Reference**: `CHANGELOG.md` v0.1.7 entry
 
-### No active advisories in v0.1.12
-- `cargo audit` reports 0 vulnerabilities across 379 crates
+### No active advisories in v0.1.18
+- `cargo audit` reports 0 vulnerabilities across 640 crates
 - `cargo deny check` reports 4/4 OK (advisories, bans, licenses, sources)
 - All transitive dependencies with security notes have been either upgraded or replaced
 
 
-## Dependency Security Posture (v0.1.12)
+## Dependency Security Posture (v0.1.18)
 - **Memory safety**: 0 unsafe code blocks in `src/` (denied via `#![deny(unsafe_code)]` in lib root)
 - **BLAKE3**: Used for checksums only, not for cryptographic security
 - **tree-sitter-language-pack**: Parsers are downloaded on first use from the official `tree-sitter` GitHub releases via the `download` feature. The downloaded parsers are dynamically loaded but not executed as code

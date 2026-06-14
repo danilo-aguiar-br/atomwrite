@@ -6,7 +6,7 @@
 
 ## What's New in v0.1.12
 
-This section summarizes the test-relevant changes in v0.1.12. The release added 96 new tests (was 320 baseline) for a total of **445 tests in 43 test suites**.
+This section summarizes the test-relevant changes in v0.1.12. The release added 96 new tests (was 320 baseline) for a total of **445 tests in 43 test suites**. v0.1.15 raises the total to **502 tests** (+2 unit tests in v0.1.14, +8 G117 tests in `tests/cli_edit.rs`, +6 G118 tests in `tests/cli_write.rs`).
 
 ### New Test Files (10 Added in v0.1.11+v0.1.12)
 
@@ -39,12 +39,18 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 - Property-based tests in `tests/proptest_*.rs`
 - Snapshot tests via `insta`
 - Signal tests (SIGINT, SIGTERM, SIGPIPE)
-- Cross-compile gate (Windows GNU/MSVC targets)
+
+## What's New in v0.1.18 (Current)
+
+- 502 tests passing (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 cross-platform/WAL/audit increments v0.1.16-v0.1.18 + 15 NDJSON contract tests v0.1.16-v0.1.18)
+- 30 subcommands (28 baseline + `wal-heal` + `wal-stats` from v0.1.15)
+- 12 ADRs in docs/decisions/ (0019-0030)
+
 
 ### How to Run
 
 ```bash
-# Run all 445 tests
+# Run all 502 tests
 cargo test
 
 # Run only the v0.1.12 regression suite
@@ -63,7 +69,7 @@ cargo test --test cross_compile_check -- --ignored
 
 - 20.19% line coverage via `cargo tarpaulin` (935/4631 lines covered)
 - Lower than ideal because tarpaulin only counts unit tests, not CLI integration tests
-- The integration test suite is the primary coverage metric (445 tests across 43 suites)
+- The integration test suite is the primary coverage metric (502 tests across 43 suites)
 
 ### Dependencies Added
 
@@ -72,7 +78,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ### ADRs and Schemas
 
-- 7 new ADRs in `docs/decisions/` (0019-0025) explain the architectural decisions behind the v0.1.12 features
+- 12 new ADRs in `docs/decisions/` (0019-0025) explain the architectural decisions behind the v0.1.12 features
 - 7 new JSON schemas in `docs/schemas/` (set, get, del, case, query, outline, wal-recovery)
 - See [docs/decisions/README.md](README.md) for the full list of ADRs
 
@@ -87,7 +93,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ## Current Stats
 - 70+ Rust files across `src/` and `tests/`
-- **445 tests total across 43 test suites** (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency)
+- **502 tests total across 43 test suites** (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency)
 - **96 new tests added in v0.1.11+v0.1.12**:
   - 11 tests in `tests/cli_v012_regressions.rs` (GAP 13, GAP 14, GAP 18 fixes)
   - 27 tests in `tests/cli_v012_audit_regressions.rs` (v0.1.12 G72/G114 audit)

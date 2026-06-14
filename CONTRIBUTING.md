@@ -77,7 +77,7 @@ cargo fmt -- --check
 - Use `insta` for snapshot testing of NDJSON output
 - Use `proptest` for property-based testing where applicable
 - Target at least 80% coverage for new code
-- Run the full suite before submitting: `cargo test` (445 tests in v0.1.12)
+- Run the full suite before submitting: `cargo test` (502 tests in v0.1.18)
 
 
 ## Documentation
@@ -92,7 +92,7 @@ cargo fmt -- --check
 
 ## Architecture Decision Records (ADRs)
 - atomwrite uses ADRs in `docs/decisions/` to document non-trivial design choices
-- 7 ADRs were added in v0.1.12 (0019-0025), all following the Michael Nygard format
+- 12 ADRs have been added since v0.1.12 (0019-0030), all following the Michael Nygard format
 - Each new architecture decision should add a new ADR file and update `docs/decisions/README.md`
 - ADRs are NOT updated once written — instead, supersede with a new ADR
 
@@ -107,7 +107,7 @@ cargo fmt -- --check
 - Add the subcommand to the README and llms.txt inventories
 - Write at least 3 integration tests in `tests/cli_your_subcommand.rs`
 - Update llms-full.txt to reference the new subcommand in the right category
-- v0.1.12 has 28 subcommands; the count must stay in sync across all docs
+- v0.1.18 has 30 subcommands; the count must stay in sync across all docs
 
 
 ## Report Bugs
@@ -130,7 +130,7 @@ cargo fmt -- --check
 - Changelog updated before each release (both EN and PT-BR)
 - Tags follow the format `vX.Y.Z`
 - Published to crates.io after CI passes
-- v0.1.12 was published on 2026-06-07 with commit 6af0d76
+- v0.1.12 was published on 2026-06-07 with commit 6af0d76. Note: v0.1.15, v0.1.16, v0.1.17, and v0.1.18 are unreleased as of 2026-06-14. The next crates.io publish will be v0.1.18 after the consolidated 3-agent P2 cleanup is committed and tagged.
 
 
 ## Recognition
@@ -141,7 +141,7 @@ cargo fmt -- --check
 ## Quality Gates
 - Run `cargo fmt --check` before committing
 - Run `cargo clippy --all-targets -- -D warnings` for lint checks
-- Run `cargo test` for the full test suite (445 tests in v0.1.12)
+- Run `cargo test` for the full test suite (502 tests in v0.1.18)
 - Run `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` for documentation checks
 - Run `cargo audit` for security advisories
 - Run `cargo deny check` for license and dependency policy (see `deny.toml`)

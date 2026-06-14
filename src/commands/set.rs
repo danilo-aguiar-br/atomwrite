@@ -72,6 +72,7 @@ pub fn cmd_set(
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
+        wal_policy: crate::wal::WalPolicy::Auto,
     };
 
     let result = atomic_write(&validated, new_content.as_bytes(), &opts, &workspace)?;
@@ -98,6 +99,8 @@ pub fn cmd_set(
         checksum_before: None,
         backup_path: None,
         elapsed_ms: start.elapsed().as_millis() as u64,
+        stdin_bytes_read: new_content.len() as u64,
+        wal_policy: "auto",
         platform: result.platform,
     };
     Ok(())

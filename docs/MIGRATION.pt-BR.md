@@ -6,7 +6,7 @@
 
 ## O Que Há de Novo na v0.1.12
 
-Esta seção resume as mudanças relevantes para migração em v0.1.12. Veja a seção [v0.1.11 para v0.1.12 (Atual)](#v0111-para-v0112-atual) abaixo para o guia de migração completo com exemplos de código.
+Esta seção resume as mudanças relevantes para migração em v0.1.12. Veja a seção [v0.1.11 para v0.1.12](#v0111-para-v0112) abaixo para o guia de migração da v0.1.12 e a seção [v0.1.12 para v0.1.15 (Atual)](#v0112-para-v0115-atual) para a transição mais recente.
 
 ### Novos Subcomandos (6)
 
@@ -68,20 +68,40 @@ Todas aditivas. Nenhuma dependência existente removida.
 
 - Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.12"`
 - Novos subcomandos e flags são opt-in. Nenhuma mudança de código necessária para chamadores existentes.
-- Veja a seção [v0.1.11 para v0.1.12 (Atual)](#v0111-para-v0112-atual) para passos detalhados de migração.
+- Veja a seção [v0.1.12 para v0.1.15 (Atual)](#v0112-para-v0115-atual) para os passos de migração mais recentes.
 
 ### Cobertura de Testes
 
-- 445 testes passando (era 320 baseline, +125 novos em v0.1.11+v0.1.12)
-- 7 novos ADRs em `docs/decisions/` (0019-0025)
+- 502 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118 na v0.1.15)
+- 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/`
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 
 ## Versão Atual
-- atomwrite está na v0.1.12
-- Este documento cobre migração de v0.1.0 a v0.1.12, com seções detalhadas para v0.1.11 a v0.1.12 e grandes transições anteriores
+- atomwrite está na v0.1.15
+- Este documento cobre migração de v0.1.0 a v0.1.15, com seções detalhadas para v0.1.12 a v0.1.15, v0.1.11 a v0.1.12 e grandes transições anteriores
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
 
+
+## v0.1.12 para v0.1.15 (Atual)
+
+### Aditivo (G117)
+
+- O `edit` multi-par `--old`/`--new` roda a cascata fuzzy completa de 9 estratégias por par (antes era somente exato).
+- O envelope de sucesso ganha `pairs_total` e `pair_results`; o envelope de erro ganha `failed_pair_index`, `pairs_total`, `pair_results` (continua `INVALID_INPUT`, exit 65, arquivo intacto).
+- Novo opt-in `edit --partial` aplica os pares que casam e relata os demais; zero matches mapeia para `NO_MATCHES` (exit 1) sem escrita.
+
+### Correção Comportamental (G118)
+
+- O `write` resolve o alvo via jail do workspace ANTES de append/prepend, detecção automática de line ending e `--expect-checksum`.
+- Com CWD fora do workspace: `--append`/`--prepend` não truncam mais, `--line-ending auto` volta a detectar o arquivo existente, e um `--expect-checksum` divergente retorna exit 82 (`STATE_DRIFT`) em vez de sobrescrever silenciosamente. Alvos fora do jail retornam exit 126 cedo.
+- Breaking apenas para chamadores que dependiam da sobrescrita silenciosa do bug.
+
+### Ação de Migração (v0.1.15)
+
+- Atualize o pin de versão: `cargo install atomwrite --locked --version "^0.1.15"`
+- MSRV inalterada em Rust 1.88. Nenhuma mudança de código necessária para chamadores em conformidade.
+- Veja o ADR-0026 e o ADR-0027 em `docs/decisions/` para a justificativa completa.
 
 ## v0.1.3 para v0.1.4 (Histórico)
 
@@ -251,7 +271,7 @@ atomwrite v0.1.2 agora compila no macOS arm64 (Apple Silicon) e macOS x86_64. A 
 - Melhorias de performance
 
 ### Estabilizações Planejadas para 1.0
-- Schemas de saída NDJSON para todos os 28 subcomandos
+- Schemas de saída NDJSON para todos os 30 subcomandos
 - Atribuições de exit codes
 - Strings de código de erro (`FILE_NOT_FOUND`, `STATE_DRIFT`, etc)
 - Nomes e comportamento de flags globais
@@ -416,8 +436,8 @@ atomwrite v0.1.2 agora compila no macOS arm64 (Apple Silicon) e macOS x86_64. A 
 - Recomendado: atualize para v0.1.2 em seguida, que corrige 14 issues introduzidas na v0.1.1
 
 
-## v0.1.11 para v0.1.12 (Atual)
-### v0.1.12 (Atual)
+## v0.1.11 para v0.1.12
+### v0.1.12
 
 A release v0.1.12 fecha 13 dos Top 20 gaps da auditoria PRD v5-v16 (`gaps.md`). É aditiva: todo comportamento de v0.1.11 é preservado.
 
@@ -460,7 +480,11 @@ A release v0.1.12 fecha 13 dos Top 20 gaps da auditoria PRD v5-v16 (`gaps.md`). 
 - Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.12"`
 
 ## Notas de Compatibilidade
-### v0.1.12 (Atual)
+### v0.1.15 (Atual)
+- G117: o `edit` multi-par ganha paridade fuzzy, `pair_results`, `failed_pair_index` e o opt-in `--partial` -- os campos de envelope são aditivos
+- G118: o `write` resolve o alvo contra o workspace antes de append/prepend, detecção automática de line ending e `--expect-checksum` -- exits 82/126 agora disparam onde havia sobrescrita silenciosa
+- Nenhum código de erro novo; MSRV permanece em Rust 1.88
+### v0.1.12
 - 6 novos subcomandos: `set`, `get`, `del`, `case`, `query`, `outline` (v14 Tier 3)
 - G72 verificação de sintaxe REAL via tree-sitter (`atomwrite write --syntax-check`, exit 88)
 - G114 sidecar WAL para recuperação de crash (`.atomwrite.journal.<target>.atomwrite.journal.json`)

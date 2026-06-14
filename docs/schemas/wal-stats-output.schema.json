@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WalStatsOutput",
+  "description": "NDJSON output of the `wal-stats` subcommand (G119 L5). Read-only snapshot of the workspace's WAL sidecar state used by CI gates and agent health checks.",
+  "type": "object",
+  "required": [
+    "total_journals",
+    "by_state",
+    "oldest_journal_age_secs",
+    "total_size_bytes",
+    "by_directory",
+    "auto_heal_recommended",
+    "estimated_reclaim_bytes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "total_journals": {
+      "description": "Total number of sidecar journals found in the workspace.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "by_state": {
+      "description": "Breakdown of journals by terminal state.",
+      "type": "object",
+      "required": ["started", "committed", "aborted", "malformed"],
+      "additionalProperties": false,
+      "properties": {
+        "started": {
+          "description": "Journals whose last entry is `Started` (potential orphans).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "committed": {
+          "description": "Journals whose last entry is `Committed` (safe to clean).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "aborted": {
+          "description": "Journals whose last entry is `Aborted` (safe to clean).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "malformed": {
+          "description": "Journals that could not be parsed (do not auto-clean).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      }
+    },
+    "oldest_journal_age_secs": {
+      "description": "Age of the oldest journal in seconds (0 if no journals found).",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "total_size_bytes": {
+      "description": "Total bytes occupied by all sidecar files in the workspace.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "by_directory": {
+      "description": "Top directories by journal count (up to 10 entries).",
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": ["path", "count"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "description": "Directory path relative to the workspace root.",
+            "type": "string"
+          },
+          "count": {
+            "description": "Number of journals in this directory.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "auto_heal_recommended": {
+      "description": "True when the workspace has accumulated enough journals to warrant an auto-heal pass (total > 100 OR oldest > 7 days).",
+      "type": "boolean"
+    },
+    "estimated_reclaim_bytes": {
+      "description": "Estimated bytes that would be reclaimed by an auto-heal pass (sum of `Committed` + `Aborted` sidecar sizes).",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    }
+  }
+}

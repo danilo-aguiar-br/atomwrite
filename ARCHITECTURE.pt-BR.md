@@ -150,6 +150,38 @@ Adições v0.1.12:
 - `case` usa crate `heck` para 5 estilos de identifier-case
 - `query/outline` usam DFS iterativo via pilha `Vec<Node>` para evitar stack overflow em arquivos profundos (em comparação com travessia recursiva via `TreeCursor`)
 
+### Cascata fuzzy compartilhada para edit multi-par (v0.1.15, G117, ADR-0026)
+- `match_pair(content, old, new, fuzzy_mode)` extrai a cascata de 9 estratégias, compartilhada pelos caminhos de par único e multi-par
+- O multi-par roda a cascata por par; o conteúdo evolui entre pares (a ordem é comportamento definido)
+- Envelopes de sucesso ganham `pairs_total` + `pair_results`; falhas levantam `EditPairFailed` com `failed_pair_index` (reutiliza `INVALID_INPUT`, exit 65)
+- `--partial` (opt-in) aplica os pares que casam; zero pares aplicados mapeia para `NO_MATCHES` (exit 1)
+
+### Resolução antecipada do alvo no write (v0.1.15, G118, ADR-0027)
+- `cmd_write` resolve o alvo via `validate_path` uma única vez, antes de append/prepend, detecção automática de line ending e `--expect-checksum`
+- Elimina a dupla identidade de caminho (CWE-367): com CWD divergente, o append não trunca mais e a divergência de checksum sai com 82
+- Convenção: todo comando mutante DEVE resolver o alvo via `validate_path` antes de qualquer `exists()`/leitura
+
+### L1 WalPolicy + L4 HeuristicsEngine (v0.1.16, G119, ADR-0028)
+- `WalPolicy { Auto, Always, Never }` permite ao caller ajustar quando o sidecar WAL é escrito; `Auto` pula para escritas triviais (tamanho sob 1 MiB, não-Edit/Replace, diretório sob Git, escrita sob 4 KiB)
+- `crate::wal::heuristics` agrega 5 funções componíveis via `heuristics_should_preserve(target, committed_at_unix, count, rank)`; env vars `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS` ajustam cada alavanca
+- Campo `wal_policy` em `WriteOutput` NDJSON expõe a decisão por chamada
+
+### L3 auto-heal no startup (v0.1.17, G119, ADR-0028)
+- `atomwrite` executa um passe autônomo de `wal-heal` no startup via `lib.rs::auto_heal_on_startup`, com threshold de 3600s e budget de 100ms
+- Opt-out via `--skip-startup-wal-heal` (ver `src/cli.rs`); registra info estruturado quando ceifa, debug quando nada para ceifar, warn em falha
+
+### Guard de stdin vazio em 4 camadas (v0.1.16, G120, ADR-0029)
+- L1 rejeita 0 bytes do stdin por padrão em `read_stdin_content` com opt-out `--allow-empty-stdin`
+- L2 rejeita stdin vazio em `handle_append_prepend`
+- L3 emite warning `tracing::info!` quando `--append` + `--expect-checksum` + stdin vazio combinam ambiguamente; opt-out via `--no-checksum-when-empty`
+- L4 sempre emite `stdin_bytes_read: u64` em `WriteOutput` NDJSON para gate tardio de CI/agente
+
+### G118 resolve-first universal + G117 casos de borda (v0.1.18, ADR-0030)
+- 10 comandos mutantes agora pré-validam paths raiz via `validate_path` antes de construir qualquer walker ou worker: `write`, `edit`, `copy`, `apply`, `move`, `rollback`, `set`, `del`, `case`, `replace`
+- `replace /etc/passwd` aborta em microssegundos com um único envelope `WORKSPACE_JAIL` em vez de caminhar o filesystem inteiro
+- 3 novos testes de regressão de caso de borda G117: exact-match Unicode (diacríticos UTF-8), preservação de line ending CRLF após replace, multi-par onde o mesmo `--old` aparece duas vezes
+- 1 novo teste de integração G120 L3: a combinação cross-flag `--append + --expect-checksum + --allow-empty-stdin` agora está coberta end-to-end
+
 ### Internacionalização
 - Traduções embedded em tempo de compilação via rust-i18n
 - Detecção de locale via sys-locale no startup
@@ -176,7 +208,7 @@ Adições v0.1.12:
 
 ## Architecture Decision Records (ADRs)
 - Veja `docs/decisions/README.md` para o índice completo de ADRs
-- 7 ADRs foram adicionados em v0.1.12 (0019-0025), todos seguindo o formato Michael Nygard (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
+- 12 ADRs foram adicionados desde a v0.1.12 (0019-0030), todos seguindo o formato Michael Nygard (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
 - 0019 — escolha de tree-sitter-language-pack
 - 0020 — path do WAL sidecar e shape JSONL
 - 0021 — v14 query/outline aceita apenas kind names, não S-expressions
@@ -184,10 +216,17 @@ Adições v0.1.12:
 - 0023 — G114 WAL é consultivo, não auto-replay
 - 0024 — get/del TOML path usa descida manual de Table
 - 0025 — positions é opt-in em query/tree apenas
+- 0026 — G117 edit multi-par: paridade fuzzy, relato por par, --partial opt-in (v0.1.15)
+- 0027 — G118 write resolve o alvo antes dos pré-passos (v0.1.15)
+- 0028 — G119 limpeza WAL em 5 camadas: L1 WalPolicy, L2 JournalGuard, L3 auto-heal no startup, L4 HeuristicsEngine, L5 telemetria wal-stats (v0.1.15-v0.1.17)
+- 0029 — G120 guard de stdin vazio em 4 camadas: L1 read_stdin_content, L2 handle_append_prepend, L3 warning de cross-validation, L4 telemetria stdin_bytes_read (v0.1.16)
+- 0030 — trio v0.1.18: replace pré-valida paths raiz, G120 L3 teste cross-flag, G117 casos de borda Unicode/CRLF/multi-par
+- 0026 — G117 edit multi-par: paridade fuzzy, relato por par, --partial opt-in (v0.1.15)
+- 0027 — G118 write resolve o alvo antes dos pré-passos (v0.1.15)
 
 
 ## Arquitetura de Testes
-- 445 testes em 43 suites de teste de integração + 150+ testes unitários dentro de `src/`
+- 502 testes em 43 suítes de teste (152 testes unitários dentro de `src/` + suítes de integração + doctests)
 - Testes unitários são colocalizados com o código sob módulos `#[cfg(test)]`
 - Testes de integração vivem em `tests/` e usam `assert_cmd` + `predicates` para testes shell-out
 - Testes property-based via `proptest` para checksum e backup

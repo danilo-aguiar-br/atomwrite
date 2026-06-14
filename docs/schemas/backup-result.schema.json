@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BackupResult",
+  "description": "NDJSON output for the atomwrite backup subcommand. Emits one event per file (type: backup) followed by a final summary event (type: summary).",
+  "type": "object",
+  "required": ["type"],
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "description": "Event discriminator. 'backup' for the per-file event, 'summary' for the final rollup, 'error' on failure.",
+      "type": "string",
+      "enum": ["backup", "summary", "error"]
+    },
+    "path": {
+      "description": "Absolute path of the source file that was backed up (absent in summary events).",
+      "type": "string"
+    },
+    "backup_path": {
+      "description": "Absolute path of the timestamped backup file that was created.",
+      "type": "string"
+    },
+    "checksum": {
+      "description": "BLAKE3 checksum of the backed-up content.",
+      "type": "string"
+    },
+    "bytes": {
+      "description": "Size of the backed-up file in bytes.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "elapsed_ms": {
+      "description": "Operation duration in milliseconds.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_backed_up": {
+      "description": "Number of files successfully backed up (present in summary event).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "total_bytes": {
+      "description": "Total bytes written across all backups (present in summary event).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "dry_run": {
+      "description": "True if the backup was previewed without copying.",
+      "type": "boolean"
+    },
+    "error": {
+      "description": "Error message string when type is 'error'.",
+      "type": "string"
+    },
+    "code": {
+      "description": "Machine-readable error code when type is 'error'.",
+      "type": "string"
+    }
+  }
+}

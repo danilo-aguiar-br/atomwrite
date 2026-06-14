@@ -6,7 +6,7 @@
 
 ## What's New in v0.1.12
 
-This section summarizes the migration-relevant changes in v0.1.12. See the [v0.1.11 to v0.1.12 (Current)](#v0111-to-v0112-current) section below for the full migration guide with code examples.
+This section summarizes the migration-relevant changes in v0.1.12. See the [v0.1.11 to v0.1.12](#v0111-to-v0112) section below for the v0.1.12 migration guide and the [v0.1.12 to v0.1.15 (Current)](#v0112-to-v0115-current) section for the latest transition.
 
 ### New Subcommands (6)
 
@@ -68,20 +68,40 @@ All additive. No existing dependency removed.
 
 - Update version pin: `cargo install atomwrite --locked --version "^0.1.12"`
 - New subcommands and flags are opt-in. No code changes required for existing callers.
-- See the [v0.1.11 to v0.1.12 (Current)](#v0111-to-v0112-current) section for detailed migration steps.
+- See the [v0.1.12 to v0.1.15 (Current)](#v0112-to-v0115-current) section for the latest migration steps.
 
 ### Test Coverage
 
-- 445 tests passing (was 320 baseline, +125 new in v0.1.11+v0.1.12)
-- 7 new ADRs in `docs/decisions/` (0019-0025)
+- 502 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118 in v0.1.15)
+- 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/`
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
 ## Current Version
-- atomwrite is at v0.1.12
-- This document covers migration from v0.1.0 through v0.1.12, with detailed sections for v0.1.11 to v0.1.12 and earlier major transitions
+- atomwrite is at v0.1.15
+- This document covers migration from v0.1.0 through v0.1.15, with detailed sections for v0.1.12 to v0.1.15, v0.1.11 to v0.1.12, and earlier major transitions
 - See the sections below for additive changes and breaking changes in each version
 
+
+## v0.1.12 to v0.1.15 (Current)
+
+### Additive (G117)
+
+- `edit` multi-pair `--old`/`--new` runs the full 9-strategy fuzzy cascade per pair (was exact-only).
+- The success envelope gains `pairs_total` and `pair_results`; the error envelope gains `failed_pair_index`, `pairs_total`, `pair_results` (still `INVALID_INPUT`, exit 65, file untouched).
+- New opt-in `edit --partial` applies the matching pairs and reports the rest; zero matches maps to `NO_MATCHES` (exit 1) with no write.
+
+### Behavioral Fix (G118)
+
+- `write` resolves the target via the workspace jail BEFORE append/prepend, line-ending auto-detection, and `--expect-checksum`.
+- With a CWD outside the workspace: `--append`/`--prepend` no longer truncate, `--line-ending auto` detects the existing file again, and a divergent `--expect-checksum` exits 82 (`STATE_DRIFT`) instead of silently overwriting. Out-of-jail targets exit 126 early.
+- Breaking only for callers that depended on the buggy silent overwrite.
+
+### Migration Action (v0.1.15)
+
+- Update version pin: `cargo install atomwrite --locked --version "^0.1.15"`
+- MSRV unchanged at Rust 1.88. No code changes required for compliant callers.
+- See ADR-0026 and ADR-0027 in `docs/decisions/` for the full rationale.
 
 ## v0.1.3 to v0.1.4 (Historical)
 
@@ -134,7 +154,7 @@ See `gaps.md` sections "GAP 13" and "GAP 14" for the full root-cause analysis an
 
 ## v0.1.2 to v0.1.3
 
-### v0.1.3 (Current)
+### v0.1.3 (Previous)
 
 #### Changed (BREAKING)
 
@@ -251,7 +271,7 @@ atomwrite v0.1.2 now compiles on macOS arm64 (Apple Silicon) and macOS x86_64. T
 - Performance improvements
 
 ### Planned Stabilizations for 1.0
-- NDJSON output schemas for all 28 subcommands
+- NDJSON output schemas for all 30 subcommands
 - Exit code assignments
 - Error code strings (`FILE_NOT_FOUND`, `STATE_DRIFT`, etc)
 - Global flag names and behavior
@@ -416,8 +436,8 @@ atomwrite v0.1.2 now compiles on macOS arm64 (Apple Silicon) and macOS x86_64. T
 - Recommended: upgrade to v0.1.2 next, which fixes 14 issues introduced in v0.1.1
 
 
-## v0.1.11 to v0.1.12 (Current)
-### v0.1.12 (Current)
+## v0.1.11 to v0.1.12
+### v0.1.12
 
 The v0.1.12 release closes 13 of the Top 20 gaps from the PRD v5-v16 audit (`gaps.md`). It is additive: all v0.1.11 behavior is preserved.
 
@@ -460,7 +480,11 @@ The v0.1.12 release closes 13 of the Top 20 gaps from the PRD v5-v16 audit (`gap
 - Update version pin: `cargo install atomwrite --locked --version "^0.1.12"`
 
 ## Compatibility Notes
-### v0.1.12 (Current)
+### v0.1.15 (Current)
+- G117: `edit` multi-pair gains fuzzy parity, `pair_results`, `failed_pair_index`, and opt-in `--partial` -- envelope fields are additive
+- G118: `write` resolves the target against the workspace before append/prepend, line-ending auto-detection, and `--expect-checksum` -- exits 82/126 now fire where a silent overwrite happened
+- No new error codes; MSRV stays at Rust 1.88
+### v0.1.12
 - 6 new subcommands: `set`, `get`, `del`, `case`, `query`, `outline` (v14 Tier 3)
 - G72 REAL syntax check via tree-sitter (`atomwrite write --syntax-check`, exit 88)
 - G114 WAL sidecar for crash recovery (`.atomwrite.journal.<target>.atomwrite.journal.json`)

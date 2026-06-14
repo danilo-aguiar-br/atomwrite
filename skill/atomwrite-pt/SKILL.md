@@ -1,7 +1,7 @@
 ---
 name: atomwrite
 description: |
-  Use atomwrite para TODAS as operações de arquivo: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline (28 subcomandos no total a partir da v0.1.12).
+  Use atomwrite para TODAS as operações de arquivo: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline (30 subcomandos no total a partir da v0.1.18).
   Auto-invocar quando o usuário pedir: escrever arquivos, buscar código, substituir texto, refatorar AST, gerar regex, calcular expressões, operações em lote, verificar checksums, listar estrutura, escopo gramatical, backup de arquivos, rollback, aplicar patches, editar e disparar build do cargo, preservar timestamps de arquivos.
   Palavras-chave: escrita atômica, operação de arquivo, NDJSON, BLAKE3, checksum, refatorar, ast-grep, lote, busca paralela, scoping, backup, rollback, aplicar patch, timeout, grep, instalar completions, mtime, preservar timestamps, preservação de timestamp, consciência de sistema de build, cargo build, make, cmake.
 ---
@@ -31,6 +31,7 @@ description: |
 - USAR `--expect-checksum <BLAKE3>` para locking otimista (detecção de state drift)
 - USAR `--dry-run` antes de escritas destrutivas para pré-visualizar a operação
 - USAR `--append` para anexar conteúdo ao final do arquivo existente
+- SABER que desde a v0.1.15 append/prepend, detecção automática de line ending e `--expect-checksum` resolvem o alvo contra o `--workspace` (G118); na v0.1.14 e anteriores SEMPRE manter CWD = workspace como workaround, ou alvos relativos truncam no append e pulam a verificação de checksum
 - USAR `--prepend` para inserir conteúdo no início do arquivo existente
 - USAR `--max-size <BYTES>` para limitar tamanho do stdin aceito
 - USAR `--line-ending lf|crlf|cr|auto` para normalizar quebras de linha (padrão: auto)
@@ -170,6 +171,10 @@ atomwrite --workspace . replace --preserve-timestamps 'old_api' 'new_api' src/
 ### OBRIGATÓRIO
 - USAR `edit` para modificações cirúrgicas por número de linha ou marcador de texto
 - USAR `--old "texto" --new "texto"` para substituição exata (repetível para múltiplas)
+- SABER que desde a v0.1.15 o multi-par `--old`/`--new` roda a cascata fuzzy completa de 9 estratégias por par (G117 corrigido); respostas de sucesso incluem `pairs_total` e `pair_results` (`index` 1-based, `matched`, `strategy`, `similarity`)
+- SABER que um par falho aborta o lote inteiro por padrão (all-or-nothing, sem escrita) e o envelope de erro carrega `failed_pair_index`, `pairs_total` e `pair_results`; pares após a falha nunca foram tentados e ficam ausentes
+- USAR `--partial` (v0.1.15) para aplicar os pares que casam e relatar os demais com `matched: false`; zero pares aplicados sai com 1 (`NO_MATCHES`) sem escrever
+- NUNCA fazer pipe de `edit` para `jaq` sem verificação: o envelope de erro vai para o stdout, então `| jaq '.edits'` mascara o exit 65 como `{"edits": null}` — use `jaq -e '.edits'` ou verifique `${PIPESTATUS[0]}`
 - USAR `--after-line N` para inserir conteúdo após uma linha específica
 - USAR `--before-line N` para inserir conteúdo antes de uma linha específica
 - USAR `--range N:M` para substituir um intervalo de linhas
@@ -206,6 +211,25 @@ atomwrite --workspace . edit src/main.rs --old "antigo" --new "novo" | jaq 'del(
 ### Padrão Correto — Múltiplas Substituições
 ```bash
 atomwrite --workspace . edit src/main.rs --old "foo" --new "bar" --old "baz" --new "qux"
+```
+### Padrão Correto — Multi-Par Com Verificação Por Par (v0.1.15)
+```bash
+# pair_results é o ground truth por item; jaq -e falha o pipe em envelopes de erro
+atomwrite --workspace . edit src/main.rs --old "foo" --new "bar" --old "baz" --new "qux" \
+  | jaq -e '.pair_results'
+```
+### Padrão Correto — Aplicação Parcial (v0.1.15)
+```bash
+# Aplica os pares que casam e relata os ausentes com matched:false
+atomwrite --workspace . edit --partial src/main.rs --old "foo" --new "bar" --old "talvez" --new "x" \
+  | jaq -e '{edits, pairs_total, ausentes: [.pair_results[] | select(.matched | not) | .index]}'
+```
+### Antipadrão — Pipe Sem Verificação Mascara Falhas do Edit (G117)
+```bash
+# PROIBIDO: o exit 65 morre no pipe e o jaq imprime {"edits": null} com exit 0
+atomwrite --workspace . edit src/main.rs --old "ausente" --new "x" | jaq '{edits: .edits}'
+# OBRIGATÓRIO: jaq -e converte campo ausente em exit 1, ou verifique ${PIPESTATUS[0]}
+atomwrite --workspace . edit src/main.rs --old "ausente" --new "x" | jaq -e '.edits'
 ```
 ### Padrão Correto — Inserir Após Linha
 ```bash
@@ -1028,8 +1052,8 @@ python3 -c "import json, jsonschema; \\
 
 ## Testes e Gates de Qualidade (v0.1.12)
 ### OBRIGATÓRIO — Postura de Qualidade
-- **445 testes em 43 suítes de teste passam com zero regressões** a partir da v0.1.12
-- **Decomposição da contagem de testes**: 320 baseline (v0.1.10) + +29 (v0.1.11) + +96 (v0.1.12) = 445 total
+- **502 testes em 44 suítes de teste passam com zero regressões** a partir da v0.1.18
+- **Decomposição da contagem de testes**: 320 baseline (v0.1.10) + +29 (v0.1.11) + +96 (v0.1.12) + +2 (v0.1.14) + +14 (v0.1.15: 8 G117 + 6 G118) = 461 (v0.1.15) + +41 (v0.1.18: G118 + G119 + G120 + 2 ADRs) = 502 total
 - **Novos arquivos de teste v0.1.12 (10)**: `cli_set`, `cli_case`, `cli_query`, `cli_outline`, `cli_get_del`, `cli_v012_syntax_check`, `cli_v012_wal`, `cli_v012_audit_regressions` (27 testes), `cli_v012_xattr_reflink`, `cli_v012_batch4_regressions` (23 testes)
 - **Cobertura de teste v0.1.12 por categoria**: G72 syntax check (16 testes), G114 WAL (8 testes), v14 query/outline (10 testes), TOML dotted path (6 testes), set/get/del/case (15 testes), regressões de auditoria (50 testes)
 - 8 gates oficiais passam em cada commit: `fmt`, `clippy`, `build`, `test`, `doc`, `deny`, `audit`, `msrv`
@@ -1060,10 +1084,43 @@ python3 -c "import json, jsonschema; \\
 - **5 novas variantes de erro ADITIVAS**: `LockTimeout` (83), `SyntaxError` (88), `ExdevFallbackDisabled` (91), `CopyBackBlake3Failed` (92), `OrphanJournal` (93). Todas bilíngues com sugestões acionáveis
 - **`atomwrite write --syntax-check` é OPT-IN**: comportamento padrão de `write` não mudou. Verificação de sintaxe G72 REAL via tree-sitter (24 linguagens)
 - **Sidecar WAL é apenas consultivo**: `atomic_write` escreve `.atomwrite.journal.<target>.atomwrite.journal.json` apenas quando `ATOMWRITE_WAL=1` está definido OU `--strict-atomic` é passado. `write` padrão NÃO escreve o sidecar. `recover_orphan_journals(dir)` é consultivo
-- **445 testes passam em 43 suites** (eram 320 em v0.1.10). Cobertura completa entre todos os 28 subcomandos
+- **502 testes passam em 44 suites** (eram 320 em v0.1.10). Cobertura completa entre todos os 30 subcomandos
 - **7 ADRs adicionados** em `docs/decisions/` (0019-0025) e 7 novos JSON Schemas em `docs/schemas/`
 - **Nova dependência**: `tree-sitter-language-pack = "1.8"` com features `download` + `dynamic-loading`. Footprint da instalação fica em torno de 5-10 MB
 
+
+## Subcomandos WAL (v0.1.18)
+### OBRIGATÓRIO — wal-stats
+- USAR `wal-stats` para inspecionar o estado do journal WAL para telemetria e debug
+- SABER que `wal-stats` é consultivo: escaneia o workspace e reporta snapshot dos arquivos de journal sem modificar
+- SEMPRE combinar `wal-stats` com `--workspace <DIR>` para delimitar o escopo do scan
+- USAR `--dry-run` para pré-visualizar o que o scan encontraria sem fazer a varredura
+- Resposta é NDJSON com `type: "result"`, contagens de estado terminal, tamanho total, distribuição de idade e breakdown por diretório
+- JSON response: `{action: "scanned", terminal_committed, terminal_aborted, terminal_started, total_bytes, oldest_age_secs, breakdown_by_dir}`
+- USAR para debug de ops quando há suspeita de journals órfãos ou crescimento inesperado de sidecars
+
+### OBRIGATÓRIO — wal-heal
+- USAR `wal-heal` para remover journals terminais órfãos mais antigos que um threshold
+- Threshold padrão é 3600 segundos (1 hora) via `--threshold-secs <N>`
+- Budget padrão de wall-clock é 100ms via `--max-duration-ms <N>`
+- USAR `--threshold-secs` e `--max-duration-ms` para ajustar ao seu ambiente
+- USAR quando o workspace acumula journals terminais de processos interrompidos ou crashados
+- Equivalente em auto-pass roda no startup com threshold de 3600s e budget de 100ms; pular via flag global `--no-auto-heal` ou env `ATOMWRITE_WAL_NO_AUTO_HEAL=1`
+
+### Padrão Correto — Inspecionar Estado WAL
+```bash
+# Snapshot do estado WAL atual do projeto
+atomwrite --workspace . wal-stats
+# Output: {"type":"result","action":"scanned","terminal_committed":42,...}
+```
+
+### Padrão Correto — Curar Journals Órfãos
+```bash
+# Remove journals terminais mais antigos que 1 hora
+atomwrite --workspace . wal-heal --threshold-secs 3600
+# Threshold e budget customizados
+atomwrite --workspace . wal-heal --threshold-secs 7200 --max-duration-ms 500
+```
 
 ## Fluxo de Recovery WAL (v0.1.12)
 ### OBRIGATÓRIO
@@ -1097,7 +1154,7 @@ let report: OrphanJournalReport = recover_orphan_journals(Path::new("src/"))?;
 
 ## Gaps Fechados na v0.1.12
 ### OBRIGATÓRIO — Saber Quais Eram os 20 Gaps
-A release v0.1.12 fecha 20 gaps técnicos nomeados de `gaps.md`. Cada gap tem um ADR em `docs/decisions/0019-0025` e um teste em `tests/`.
+- A release v0.1.12 fecha 20 gaps técnicos nomeados de `gaps.md`. Cada gap tem um ADR em `docs/decisions/0019-0025` e um teste em `tests/`
 - **G72 — Verificação de sintaxe REAL via tree-sitter**: `atomwrite write --syntax-check` valida conteúdo contra 24 linguagens via `tree_sitter_language_pack`. Substitui verificação heurística de balanceamento de colchetes. Retorna `SyntaxError` (88) em falha
 - **G90 — Fallback de cópia EXDEV controlado**: modo `--strict-atomic` proíbe fallback de cópia em moves cross-device. Retorna `ExdevFallbackDisabled` (91) quando acionado
 - **G114 — Sidecar WAL consultivo**: `ATOMWRITE_WAL=1` ou `--strict-atomic` escreve `.atomwrite.journal.<target>.json`. `recover_orphan_journals` é a API de recovery consultivo
@@ -1135,9 +1192,9 @@ A release v0.1.12 fecha 20 gaps técnicos nomeados de `gaps.md`. Cada gap tem um
 - NUNCA chamar `query` em arquivo com extensão não mapeada para uma linguagem (retornará erro)
 
 
-## Resumo de Changelog v0.1.5-v0.1.11
+## Resumo de Changelog v0.1.5-v0.1.14
 ### OBRIGATÓRIO — O Que Mudou Em Releases Intermediárias
-Esta seção consolida mudanças das releases v0.1.5 até v0.1.11 que a skill pulava anteriormente. Para detalhes completos, veja `CHANGELOG.md`.
+- Esta seção consolida mudanças das releases v0.1.5 até v0.1.14 que a skill pulava anteriormente. Para detalhes completos, veja `CHANGELOG.md`
 - **v0.1.5**: Adicionada flag global `--color auto|always|never`; corrigido bug de fall-through de locale em mensagens de erro
 - **v0.1.6**: Adicionado `--follow-symlinks` aos comandos de travessia; allowlist de licenças do `cargo deny` expandida
 - **v0.1.7**: Corrigido `RUSTSEC-2026-0009` via `time = "0.3.47+" DEPTH_LIMIT=32`; adicionado `--invert` ao `search`
@@ -1145,7 +1202,10 @@ Esta seção consolida mudanças das releases v0.1.5 até v0.1.11 que a skill pu
 - **v0.1.9**: Adicionada flag global `--max-filesize`; `transform` reescrito com contexto de erro adequado
 - **v0.1.10**: Adicionado `--batch-size` ao `batch`; adicionado gate miri no CI (apenas nightly); baseline de 320 testes
 - **v0.1.11**: Adicionado esqueleto de `set`, `get`, `del` (incompleto — completado na v0.1.12); `--preserve-timestamps` ao `edit`; +29 testes
-- **v0.1.12**: Esta release. +96 testes, 5 novos códigos de erro, 6 novos subcomandos, sidecar WAL, tree-sitter, 7 ADRs, 7 schemas
+- **v0.1.12**: +96 testes, 5 novos códigos de erro, 6 novos subcomandos, sidecar WAL, tree-sitter, 7 ADRs, 7 schemas
+- **v0.1.13/v0.1.14**: correções de CI Windows (E0433 do libc; `write --line-ending auto` determinístico em arquivos novos); +2 testes unitários
+- **v0.1.15**: Esta release. G117 (edit multi-par com paridade fuzzy + `pair_results` + `--partial`), G118 (`write` resolve o alvo via `validate_path` antes dos pré-passos), GAP 18 (snapshot `dir_fsync` redigido), MSRV do CI 1.85→1.88; 461 testes, ADRs 0026-0027
+- **v0.1.18**: G118 estendido para replace (G118+R), G119 limpeza inteligente de WAL (subcomando wal-heal), G120 guarda de stdin vazio para read/hash/edit/apply, follow-up do GAP 18; 502 testes (44 suítes, 0 falharam, 3 ignorados), ADRs 0028-0030, 30 subcomandos totais
 
 
 ## Padrões Agent-First v0.1.12
@@ -1186,4 +1246,3 @@ atomwrite --workspace . query -Q '(function_item name: (identifier) @name (#eq? 
 # Obter um mapa rápido de todos os itens top-level em um arquivo
 atomwrite --workspace . outline src/lib.rs | jaq '.items[] | "\(.kind): \(.name)"'
 ```
-

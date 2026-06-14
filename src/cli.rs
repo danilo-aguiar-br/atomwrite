@@ -119,6 +119,19 @@ pub struct GlobalArgs {
         help = "Override locale (en, pt-BR)"
     )]
     pub lang: Option<String>,
+
+    /// Skip the on-startup `wal-heal` pass (G119 L3). Default: every
+    /// invocation walks the workspace and reaps stale `Committed`/
+    /// `Aborted` sidecars older than 3600s within a 100ms wall-clock
+    /// budget. Set this flag in tight CI loops or in benchmarks that
+    /// measure the subcommand cost in isolation.
+    #[arg(
+        long,
+        global = true,
+        env = "ATOMWRITE_WAL_NO_AUTO_HEAL",
+        help = "Skip startup wal-heal pass (G119 L3); default: run with 3600s threshold and 100ms budget"
+    )]
+    pub no_auto_heal: bool,
 }
 
 impl GlobalArgs {
@@ -238,6 +251,13 @@ pub enum Commands {
     /// v14 Tier 3 (v0.1.12): extract high-level structure (functions, classes,
     /// structs, enums, etc.) from a source file.
     Outline(crate::cli_args::OutlineArgs),
+
+    /// Snapshot of journal state: count by terminal state, size, age,
+    /// breakdown by directory (G119 L5 telemetry).
+    WalStats(crate::cli_args::WalStatsArgs),
+
+    /// Remove stale terminal journals older than the threshold (G119 L3).
+    WalHeal(crate::cli_args::WalHealArgs),
 
     /// Generate shell completions for bash, zsh, fish, or powershell
     Completions(CompletionsArgs),

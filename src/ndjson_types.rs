@@ -26,6 +26,14 @@ pub struct WriteOutput {
     pub backup_path: Option<String>,
     /// Operation duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Number of bytes read from stdin (G120 L4 telemetry). 0 means the
+    /// caller passed empty stdin and explicitly opted in via
+    /// `--allow-empty-stdin`.
+    pub stdin_bytes_read: u64,
+    /// G119 L1: sidecar creation policy in effect for this write.
+    /// "auto" (default heuristic), "always" (legacy), or "never"
+    /// (suppressed).
+    pub wal_policy: &'static str,
     /// Platform-specific fsync methods used.
     pub platform: PlatformInfo,
 }
@@ -221,6 +229,26 @@ pub struct ReplaceResult {
     pub mtime_preserved: Option<bool>,
 }
 
+/// Outcome of matching a single `--old`/`--new` pair in multi-pair edit mode.
+///
+/// Emitted in `pair_results` on both success and error envelopes so agents
+/// can verify each pair objectively without re-running the edit (G117).
+/// In the default all-or-nothing mode, pairs after the first failure are
+/// never attempted and are absent from the array.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct PairResult {
+    /// 1-based position of the pair in the `--old`/`--new` invocation order.
+    pub index: u64,
+    /// Whether the pair matched and was applied to the content.
+    pub matched: bool,
+    /// Matching strategy that succeeded (e.g. `exact`, `whitespace_normalized`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<String>,
+    /// Similarity score of the fuzzy match, 0.0-1.0 (block-anchor and context-aware only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub similarity: Option<f64>,
+}
+
 /// NDJSON output for a surgical edit operation.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct EditOutput {
@@ -258,6 +286,12 @@ pub struct EditOutput {
     /// Similarity score of the fuzzy match, 0.0-1.0 (only present for `block_anchor` strategy).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub similarity: Option<f64>,
+    /// Total number of `--old`/`--new` pairs requested (multi-pair mode only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairs_total: Option<u64>,
+    /// Per-pair match results (multi-pair mode only) — the per-item ground truth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pair_results: Option<Vec<PairResult>>,
     /// Whether the original modification time was preserved (true) or updated to now (false).
     /// Critical for build systems: false ensures cargo/make/cmake detect the change.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -826,6 +860,12 @@ pub struct TextValuesOutput<'a> {
     pub values: Vec<&'a str>,
 }
 
+// ============================================================================
+// G119 L5 — Re-export of WAL stats for `--json-schema wal-stats` consumers
+// ============================================================================
+
+pub use crate::wal::{AutoHealReport, WalDirEntry, WalStateBreakdown, WalStats};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -855,6 +895,8 @@ mod tests {
             checksum_before: None,
             backup_path: None,
             elapsed_ms: 5,
+            stdin_bytes_read: 42,
+            wal_policy: "auto",
             platform: PlatformInfo {
                 fsync: "sync_data",
                 dir_fsync: "sync_all",
@@ -930,6 +972,13 @@ mod tests {
             strategy: Some("block_anchor".into()),
             strategies_tried: Some(8),
             similarity: Some(0.95),
+            pairs_total: Some(2),
+            pair_results: Some(vec![PairResult {
+                index: 1,
+                matched: true,
+                strategy: Some("exact".into()),
+                similarity: None,
+            }]),
             mtime_preserved: Some(false),
         };
         assert_valid_ndjson_object(&val);
@@ -963,6 +1012,8 @@ mod tests {
             checksum_before: None,
             backup_path: None,
             elapsed_ms: 1,
+            stdin_bytes_read: 10,
+            wal_policy: "auto",
             platform: PlatformInfo {
                 fsync: "sync_data",
                 dir_fsync: "best_effort",

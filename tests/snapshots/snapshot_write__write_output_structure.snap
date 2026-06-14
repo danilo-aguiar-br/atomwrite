@@ -8,9 +8,11 @@ expression: event
   "elapsed_ms": "[redacted]",
   "path": "[redacted]",
   "platform": {
-    "dir_fsync": "sync_all",
+    "dir_fsync": "[platform_dir_fsync]",
     "fsync": "[platform_fsync]"
   },
   "status": "success",
-  "type": "write"
+  "stdin_bytes_read": 17,
+  "type": "write",
+  "wal_policy": "auto"
 }

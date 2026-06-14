@@ -1,7 +1,7 @@
 ---
 name: atomwrite
 description: |
-  Use atomwrite for ALL file operations: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline (28 subcommands total as of v0.1.12).
+  Use atomwrite for ALL file operations: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline (30 subcommands total as of v0.1.18).
   Auto-invoke when user asks to: write files, search code, replace text, refactor AST, generate regex, calculate expressions, batch operations, check checksums, list project structure, scope code by grammar, backup files, rollback changes, apply patches, edit and trigger cargo build, preserve file timestamps.
   Trigger on keywords: atomic write, file operation, NDJSON, BLAKE3, checksum, refactor, ast-grep, batch, search parallel, scope, backup, rollback, apply patch, timeout, grep, install completions, mtime, preserve-timestamps, preserve timestamps, build system aware, cargo build, make, cmake.
 ---
@@ -31,6 +31,7 @@ description: |
 - USE `--expect-checksum <BLAKE3>` for optimistic locking (state drift detection)
 - USE `--dry-run` before destructive writes to preview the operation
 - USE `--append` to append content to end of existing file
+- KNOW that since v0.1.15 append/prepend, line-ending auto-detection, and `--expect-checksum` resolve the target against `--workspace` (G118); on v0.1.14 and earlier ALWAYS keep CWD = workspace as a workaround, or relative targets truncate on append and skip checksum verification
 - USE `--prepend` to insert content at beginning of existing file
 - USE `--max-size <BYTES>` to limit accepted stdin size
 - USE `--line-ending lf|crlf|cr|auto` to normalize line endings (default: auto)
@@ -170,6 +171,10 @@ atomwrite --workspace . replace --preserve-timestamps 'old_api' 'new_api' src/
 ### REQUIRED
 - USE `edit` for surgical modifications by line number or text marker
 - USE `--old "text" --new "text"` for exact text replacement (repeatable for multiple)
+- KNOW that since v0.1.15 multi-pair `--old`/`--new` runs the full 9-strategy fuzzy cascade per pair (G117 fixed); success responses include `pairs_total` and `pair_results` (1-based `index`, `matched`, `strategy`, `similarity`)
+- KNOW that a failed pair aborts the whole batch by default (all-or-nothing, no write) and the error envelope carries `failed_pair_index`, `pairs_total`, and `pair_results`; pairs after the failure were never attempted and are absent
+- USE `--partial` (v0.1.15) to apply the matching pairs and report the rest with `matched: false`; zero applied pairs exits 1 (`NO_MATCHES`) without writing
+- NEVER pipe `edit` into `jaq` without verification: the error envelope goes to stdout, so `| jaq '.edits'` masks exit 65 as `{"edits": null}` — use `jaq -e '.edits'` or check `${PIPESTATUS[0]}`
 - USE `--after-line N` for inserting content after a specific line
 - USE `--before-line N` for inserting content before a specific line
 - USE `--range N:M` for replacing a line range
@@ -206,6 +211,25 @@ atomwrite --workspace . edit src/main.rs --old "old" --new "new" | jaq 'del(.che
 ### Correct Pattern — Multiple Replacements
 ```bash
 atomwrite --workspace . edit src/main.rs --old "foo" --new "bar" --old "baz" --new "qux"
+```
+### Correct Pattern — Multi-Pair With Per-Pair Verification (v0.1.15)
+```bash
+# pair_results is the per-item ground truth; jaq -e fails the pipe on error envelopes
+atomwrite --workspace . edit src/main.rs --old "foo" --new "bar" --old "baz" --new "qux" \
+  | jaq -e '.pair_results'
+```
+### Correct Pattern — Partial Application (v0.1.15)
+```bash
+# Apply matching pairs, report the unmatched ones with matched:false
+atomwrite --workspace . edit --partial src/main.rs --old "foo" --new "bar" --old "maybe" --new "x" \
+  | jaq -e '{edits, pairs_total, missing: [.pair_results[] | select(.matched | not) | .index]}'
+```
+### Forbidden Pattern — Bare Pipe Masks Edit Failures (G117)
+```bash
+# FORBIDDEN: exit 65 dies in the pipe and jaq prints {"edits": null} with exit 0
+atomwrite --workspace . edit src/main.rs --old "missing" --new "x" | jaq '{edits: .edits}'
+# REQUIRED: jaq -e turns the missing field into exit 1, or check ${PIPESTATUS[0]}
+atomwrite --workspace . edit src/main.rs --old "missing" --new "x" | jaq -e '.edits'
 ```
 ### Correct Pattern — Insert After Line
 ```bash
@@ -488,7 +512,7 @@ atomwrite regex -d -w -s -r "example1" "example2"
 - USE `--retention N` to control how many backups to keep (default: 5)
 - USE `--output-dir <DIR>` to direct backups to a specific directory
 - USE `--dry-run` to preview
-- Note: `backup` uses `fs::copy` directly (not the atomic write pipeline), so the backup file inherits the SOURCE mtime, not the moment of backup creation. This is intentional and matches POSIX behavior for file copies
+- Note: `backup` uses `fs::copy` directly (not the atomic write pipeline), so the backup file inherits the SOURCE mtime, not the moment of backup creation. This is intentional and matches POSIbehavior for file copies
 ### Correct Pattern — Backup
 ```bash
 atomwrite --workspace . backup src/config.toml
@@ -1028,8 +1052,8 @@ python3 -c "import json, jsonschema; \\
 
 ## Tests and Quality Gates (v0.1.12)
 ### REQUIRED — Quality Posture
-- **445 tests in 43 test suites pass with zero regressions** as of v0.1.12
-- **Test count decomposition**: 320 baseline (v0.1.10) + +29 (v0.1.11) + +96 (v0.1.12) = 445 total
+- **502 tests in 44 test suites pass with zero regressions** as of v0.1.18
+- **Test count decomposition**: 320 baseline (v0.1.10) + +29 (v0.1.11) + +96 (v0.1.12) + +2 (v0.1.14) + +14 (v0.1.15: 8 G117 + 6 G118) = 461 (v0.1.15) + +41 (v0.1.18: G118 + G119 + G120 + 2 ADRs) = 502 total
 - **v0.1.12 new test files (10)**: `cli_set`, `cli_case`, `cli_query`, `cli_outline`, `cli_get_del`, `cli_v012_syntax_check`, `cli_v012_wal`, `cli_v012_audit_regressions` (27 tests), `cli_v012_xattr_reflink`, `cli_v012_batch4_regressions` (23 tests)
 - **v0.1.12 test coverage by category**: G72 syntax check (16 tests), G114 WAL (8 tests), v14 query/outline (10 tests), TOML dotted path (6 tests), set/get/del/case (15 tests), audit regressions (50 tests)
 - 8 official gates pass on every commit: `fmt`, `clippy`, `build`, `test`, `doc`, `deny`, `audit`, `msrv`
@@ -1061,12 +1085,45 @@ python3 -c "import json, jsonschema; \\
 - **5 new error variants ADDITIVE**: `LockTimeout` (83), `SyntaxError` (88), `ExdevFallbackDisabled` (91), `CopyBackBlake3Failed` (92), `OrphanJournal` (93). All bilingual with actionable suggestions
 - **`atomwrite write --syntax-check` is OPT-IN**: default `write` behavior is unchanged. G72 REAL tree-sitter syntax check (24 languages)
 - **WAL sidecar is consultive only**: `atomic_write` writes `.atomwrite.journal.<target>.atomwrite.journal.json` only when `ATOMWRITE_WAL=1` is set OR `--strict-atomic` is passed. Default `write` does NOT write the sidecar. `recover_orphan_journals(dir)` is consultive
-- **445 tests pass in 43 test suites** (was 320 in v0.1.10). Coverage is full across all 28 subcommands
+- **502 tests pass in 44 test suites** (was 320 in v0.1.10). Coverage is full across all 30 subcommands
 - **7 ADRs added** in `docs/decisions/` (0019-0025): tree-sitter-language-pack, WAL sidecar, query/outline kind-name only, G72 replaces heuristic, G114 consultive, get_toml_path manual, positions opt-in
 - **7 new JSON Schemas** in `docs/schemas/` (set-result, get-result, del-result, case-result, query-output, outline-output, wal-recovery)
 - **New dependency**: `tree-sitter-language-pack = "1.8"` with `download` + `dynamic-loading` features. Install footprint stays around 5-10 MB
 - **DO NOT upgrade from v0.1.11 to v0.1.12 if you parse stderr** looking for the new exit codes 83, 88, 91, 92, 93 — they are emitted in JSON `error: true` envelopes on stdout, not on stderr
 
+
+## WAL Subcommands (v0.1.18)
+### REQUIRED — wal-stats
+- USE `wal-stats` to inspect WAL journal state for telemetry and debugging
+- KNOW that `wal-stats` is consultive: it scans the workspace and reports a snapshot of journal files without modifying them
+- ALWAYS combine `wal-stats` with `--workspace <DIR>` to scope the scan to a specific project
+- USE `--dry-run` to preview what the scan would find without doing the walk
+- Response is NDJSON with `type: "result"`, terminal state counts, total size, age breakdown, and per-directory breakdown
+- JSON response: `{action: "scanned", terminal_committed, terminal_aborted, terminal_started, total_bytes, oldest_age_secs, breakdown_by_dir}`
+- USE this for ops debugging when suspecting stale journals or unexpected sidecar growth
+
+### REQUIRED — wal-heal
+- USE `wal-heal` to remove stale terminal journals older than a threshold
+- DEFAULT threshold is 3600 seconds (1 hour) via `--threshold-secs <N>`
+- DEFAULT wall-clock budget is 100ms via `--max-duration-ms <N>`
+- USE `--threshold-secs` and `--max-duration-ms` to tune for your environment
+- USE this when the workspace accumulates terminal journals from crashed or interrupted processes
+- Auto-pass equivalent runs at startup with 3600s threshold and 100ms budget; skip via `--no-auto-heal` global flag or `ATOMWRITE_WAL_NO_AUTO_HEAL=1` env var
+
+### Correct Pattern — Inspect WAL State
+```bash
+# Snapshot the current WAL state of the project
+atomwrite --workspace . wal-stats
+# Output: {"type":"result","action":"scanned","terminal_committed":42,...}
+```
+
+### Correct Pattern — Heal Stale Journals
+```bash
+# Remove terminal journals older than 1 hour
+atomwrite --workspace . wal-heal --threshold-secs 3600
+# Custom threshold and budget
+atomwrite --workspace . wal-heal --threshold-secs 7200 --max-duration-ms 500
+```
 
 ## WAL Recovery Flow (v0.1.12)
 ### REQUIRED
@@ -1100,7 +1157,7 @@ let report: OrphanJournalReport = recover_orphan_journals(Path::new("src/"))?;
 
 ## v0.1.12 Gaps Closed
 ### REQUIRED — Know What the 20 Gaps Were
-The v0.1.12 release closes 20 named technical gaps from `gaps.md`. Each gap has an ADR in `docs/decisions/0019-0025` and a test in `tests/`.
+- The v0.1.12 release closes 20 named technical gaps from `gaps.md`. Each gap has an ADR in `docs/decisions/0019-0025` and a test in `tests/`.
 - **G72 — Tree-sitter REAL syntax check**: `atomwrite write --syntax-check` validates content against 24 languages via `tree_sitter_language_pack`. Replaces heuristic bracket-balance check. Returns `SyntaxError` (88) on failure
 - **G90 — EXDEV copy-fallback controlled**: `--strict-atomic` mode forbids copy-fallback on cross-device moves. Returns `ExdevFallbackDisabled` (91) when triggered
 - **G114 — WAL sidecar consultive**: `ATOMWRITE_WAL=1` or `--strict-atomic` writes `.atomwrite.journal.<target>.json`. `recover_orphan_journals` is the consultive recovery API
@@ -1138,9 +1195,9 @@ The v0.1.12 release closes 20 named technical gaps from `gaps.md`. Each gap has 
 - NEVER call `query` on a file with an extension not mapped to a language (it will return an error)
 
 
-## v0.1.5-v0.1.11 Changelog Summary
+## v0.1.5-v0.1.14 Changelog Summary
 ### REQUIRED — What Changed In Intermediate Releases
-This section consolidates changes from releases v0.1.5 through v0.1.11 that the skill previously skipped. For full details, see `CHANGELOG.md`.
+- This section consolidates changes from releases v0.1.5 through v0.1.14 that the skill previously skipped. For full details, see `CHANGELOG.md`
 - **v0.1.5**: Added `--color auto|always|never` global flag; fixed locale fall-through bug in error messages
 - **v0.1.6**: Added `--follow-symlinks` to traversal commands; `cargo deny` license allowlist expanded
 - **v0.1.7**: Fixed `RUSTSEC-2026-0009` via `time = "0.3.47+" DEPTH_LIMIT=32`; added `--invert` to `search`
@@ -1148,7 +1205,10 @@ This section consolidates changes from releases v0.1.5 through v0.1.11 that the 
 - **v0.1.9**: Added `--max-filesize` global flag; `transform` rewritten with proper error context
 - **v0.1.10**: Added `--batch-size` to `batch`; miri CI gate added (nightly-only); 320 tests baseline
 - **v0.1.11**: Added `set`, `get`, `del` skeleton (incomplete — completed in v0.1.12); `--preserve-timestamps` to `edit`; +29 tests
-- **v0.1.12**: This release. +96 tests, 5 new error codes, 6 new subcommands, WAL sidecar, tree-sitter, 7 ADRs, 7 schemas
+- **v0.1.12**: +96 tests, 5 new error codes, 6 new subcommands, WAL sidecar, tree-sitter, 7 ADRs, 7 schemas
+- **v0.1.13/v0.1.14**: Windows CI fixes (libc E0433; deterministic `write --line-ending auto` on new files); +2 unit tests
+- **v0.1.15**: This release. G117 (multi-pair edit fuzzy parity + `pair_results` + `--partial`), G118 (`write` resolves the target via `validate_path` before pre-steps), GAP 18 (snapshot `dir_fsync` redacted), CI MSRV 1.85→1.88; 461 tests, ADRs 0026-0027
+- **v0.1.18**: G118 extended to replace (G118+R), G119 intelligent WAL cleanup (wal-heal subcommand), G120 empty-stdin guard for read/hash/edit/apply, GAP 18 follow-up; 502 tests (44 suites, 0 failed, 3 ignored), ADRs 0028-0030, 30 subcommands total
 
 
 ## Agent-First Patterns v0.1.12
