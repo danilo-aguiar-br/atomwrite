@@ -37,30 +37,18 @@ pub fn cmd_replace(
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
 
-    // G118 (CWD-relative path resolution for replace): validate every
-    // caller-supplied root path against the workspace jail BEFORE
-    // constructing the WalkBuilder. Without this, a relative path like
-    // `../escape` would be resolved against the CWD (not the workspace)
-    // and the per-entry validation in the worker thread would only emit
-    // a `JailViolation` event per file walked — wasting work, spamming
-    // stderr, and violating the G118 invariant that the workspace root
-    // (not the CWD) is the path resolution origin.
-    //
-    // We do this even for absolute paths inside the workspace so a typo
-    // like `/etc/passwd` aborts the entire run with exit 126 instead of
-    // walking the entire system and emitting one error per file.
-    for path in &args.paths {
-        crate::path_safety::validate_path(path, &workspace).with_context(|| {
-            format!(
-                "replace: path '{}' escapes workspace jail (G118); use --workspace to set a different root",
-                path.display()
-            )
-        })?;
-    }
+    // G121 (CWD-relative path resolution for replace): centralize via
+    // path_resolution::resolve_paths_against_workspace. This runs
+    // validate_path on every caller-supplied root, COLLECTS the canonical
+    // absolute PathBuf, and returns them so the WalkBuilder receives a
+    // workspace-anchored root instead of the original (CWD-relative) path.
+    let canonical_paths = crate::commands::path_resolution::resolve_paths_against_workspace(
+        &args.paths, &workspace,
+    )?;
 
     let pattern = compile_pattern(args)?;
 
-    let walker = build_walker(args, global)?;
+    let walker = build_walker(args, &canonical_paths, global)?;
 
     let (tx, rx) = crossbeam_channel::bounded::<ReplaceEvent>(1024);
 
@@ -390,10 +378,14 @@ fn apply_replacement<'a>(
     }
 }
 
-fn build_walker(args: &ReplaceArgs, global: &GlobalArgs) -> Result<ignore::WalkBuilder> {
-    let mut builder = ignore::WalkBuilder::new(&args.paths[0]);
+fn build_walker(
+    args: &ReplaceArgs,
+    canonical_paths: &[std::path::PathBuf],
+    global: &GlobalArgs,
+) -> Result<ignore::WalkBuilder> {
+    let mut builder = ignore::WalkBuilder::new(&canonical_paths[0]);
 
-    for path in args.paths.iter().skip(1) {
+    for path in canonical_paths.iter().skip(1) {
         builder.add(path);
     }
 
@@ -413,7 +405,7 @@ fn build_walker(args: &ReplaceArgs, global: &GlobalArgs) -> Result<ignore::WalkB
     }
 
     if !args.include.is_empty() || !args.exclude.is_empty() {
-        let mut overrides = ignore::overrides::OverrideBuilder::new(&args.paths[0]);
+        let mut overrides = ignore::overrides::OverrideBuilder::new(&canonical_paths[0]);
         for glob in &args.include {
             overrides.add(glob)?;
         }

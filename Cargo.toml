@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "atomwrite"
-version = "0.1.18"
+version = "0.1.19"
 edition = "2024"
 rust-version = "1.88"
 description = "Atomic file operations CLI for LLM agents — read, write, edit, search, replace with NDJSON output"
@@ -80,6 +80,8 @@ toml_edit = "0.22"     # v14 Tier 3: TOML editor preserving comments/formatting
 # enabling AST validation across 305 languages. See src/syntax_check.rs and
 # src/commands/query.rs/outline.rs.
 tree-sitter-language-pack = { version = "1.8", default-features = false, features = ["download", "dynamic-loading"] }
+# v0.1.19 G122: direct tree-sitter dep for S-expression Query/QueryCursor APIs (language-pack only re-exports Language).
+tree-sitter = "0.26"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["fs"] }

@@ -36,6 +36,8 @@ pub mod list;
 pub mod r#move;
 /// v14 Tier 3 (v0.1.12): tree-sitter S-expression query against a file.
 pub mod outline;
+/// v0.1.19 G121: workspace-relative path resolution helper for walking commands.
+pub mod path_resolution;
 /// v14 Tier 3 (v0.1.12): tree-sitter S-expression query against a file.
 pub mod query;
 /// File reading with metadata and content.

@@ -51,6 +51,36 @@
 - 8/8 testes de integração `cli_write` passam, incluindo a falha que era exclusiva do Windows
 
 
+## [0.1.19] - 2026-06-14
+
+#### G121 — `search` e `replace` resolvem caminhos raiz contra o workspace
+- **Bug (CWE-367 — TOCTOU/confusão de caminho)** — `cmd_search` e `cmd_replace` recebiam os caminhos raiz do chamador, validavam-nos com `path_safety::validate_path` e em seguida alimentavam o `ignore::WalkBuilder` com o caminho ORIGINAL (relativo ao CWD). `validate_path` retornava o caminho absoluto canônico, mas o resultado da chamada por entrada era descartado. Quando `CWD != --workspace`, o walker ou (a) caminhava silenciosamente pela árvore errada se existisse um caminho com mesmo nome sob o CWD, ou (b) emitia um evento `JailViolation` por arquivo caminhado. A correção G118 em `write.rs:44` (ADR-0027) nunca foi propagada para estes dois comandos porque a `validate_path` por entrada dentro da thread de trabalho mascarava a falta da resolução pré-passo.
+- **Correção — novo helper `path_resolution::resolve_paths_against_workspace`** — `cmd_search` e `cmd_replace` agora chamam este helper uma vez no início do comando (após `global.resolve_workspace()()`) e passam o `Vec<PathBuf>` canônico para `build_walker`. O loop pré-passo `for path in &args.paths { validate_path(path, &workspace)?; }` em `replace.rs` é removido; o `search` ganha uma chamada de resolução paralela. Ambas as assinaturas de `build_walker` ganham o parâmetro `canonical_paths: &[PathBuf]`; elas não leem mais `&args.paths[0]` diretamente.
+- **Consequência** — Search e replace agora honram `CWD != --workspace`. Um caminho relativo como `src/` passado com `--workspace /path/to/ws` caminha por `/path/to/ws/src/` independentemente do CWD do processo. Caminhos fora do jail falham uma única vez com `WORKSPACE_JAIL` (exit 126) no início do comando em vez de por arquivo dentro do worker. Veja `docs/decisions/0031-g121-path-resolution-helper.md`.
+
+#### G122 — Matching real de S-expression no subcomando `query`
+- **Bug (feature silenciosa, documentada mas nunca implementada)** — O subcomando `query` (v14 Tier 3, introduzido na v0.1.12) sempre prometeu suporte a S-expression. Os documentos em `COOKBOOK.md`, `HOW_TO_USE.md` e nos dois SKILLs bilíngues mostram exemplos como `atomwrite --workspace . query src/main.rs --query "(function_item name: (identifier) @name)"`. Na prática, `cmd_query` chamava `walk_kind_filter` que faz `wanted.iter().any(|w| w == &kind)` — comparação literal de STRING com `node.kind()`. A string inteira `"(function_item name: (identifier) @name)"` nunca casou com nenhum `node.kind()` real, então a feature S-expression nunca funcionou.
+- **Correção — novo enum `QueryType` + auto-classificação** — `classify_pattern(pattern) -> QueryType` detecta S-expression pela presença de `(`, `)`, ou `@`. `walk_sexpr` compila o pattern via `tree_sitter::Query::new`, executa via `QueryCursor::matches`, e emite NDJSON `query_match` com o novo campo `capture_name` para cada `@capture`. `cmd_query` ramifica na classificação.
+- **Nova dependência direta `tree-sitter = "0.26"`** — a language-pack reexporta `Language`, mas `Query`/`QueryCursor`/`StreamingIterator` exigem o crate `tree-sitter` em si.
+- **Consequência** — Patterns com `(`, `)`, ou `@` são roteados para `tree_sitter::Query::new`. Erros de parse (ex.: `(unclosed`) retornam exit 1 com mensagem `invalid S-expression pattern: ...` (via `anyhow::Context`). O caminho kind-filter é preservado bit-a-bit: usuários que passavam `--query function_item` (sem caracteres de S-expression) continuam recebendo os mesmos resultados. Veja `docs/decisions/0032-query-sexp-real-implementation.md`.
+
+#### Consolidação de drift na documentação de exit codes (ADR-0033)
+- **Contexto** — Testes de Fase D em 2026-06-14 rodaram 7 probes binários concretos contra a release v0.1.18 e expuseram 7 pontos onde a documentação publicada divergia do comportamento real do binário. Os 7 drifts são:
+  1. `STATE_DRIFT` (82) absorve `CHECKSUM_VERIFY_FAILED` (81) para `--verify-checksum` — ambos são classe conflict, retentáveis. O code 81 é agora histórico (preservado apenas para o mismatch BLAKE3 do caminho `read` no conteúdo do arquivo).
+  2. `--syntax-check` retorna `SYNTAX_ERROR_DETECTED`, NÃO `SYNTAX_ERROR` — o rename aconteceu no rollout do G72 tree-sitter da v0.1.12 mas a documentação não foi atualizada.
+  3. `ORPHAN_JOURNAL` (93) é consultivo, NÃO autodetectado — o portão é `ATOMWRITE_WAL=1` OU `--strict-atomic`. O `write` padrão (v0.1.16 G119 `WalPolicy::Auto`) não escreve sidecar e portanto não pode detectar órfãos.
+  4. `BROKEN_PIPE` (141) exige propagação real de SIGPIPE — um pipe simples `head -1` NÃO o dispara. A restauração de SIGPIPE da v0.1.4+ recoloca a disposição default, então o sinal só é levantado quando o consumidor downstream fecha ativamente o pipe no meio do stream.
+  5. Leituras de arquivo binário retornam exit 0 com metadados `kind: binary`, NÃO exit 65 — a heurística `BINARY_FILE` da v0.1.4 foi alterada para emitir envelope estruturado e exit 0. O caminho do code 65 agora só dispara para `read` sem `--format raw` E com a heurística binária bypassada.
+  6. Argumento posicional ausente retorna `ARGUMENT_PARSE_ERROR` (exit 2), NÃO `INVALID_INPUT` (65) — erros de argumento no nível clap são reportados como exit 2. O code 65 é reservado para validação de conteúdo em runtime (TOML malformado, regex inválida, stdin vazio padrão).
+  7. Falta de `--workspace` cai para CWD, NÃO é erro — `--workspace` é documentado como flag com default CWD, não argumento obrigatório. `WORKSPACE_JAIL` (126) só dispara quando um caminho absoluto resolve fora do jail efetivo.
+- **Decisão** — Aceitar o comportamento do binário como canônico. Consolidar a documentação na v0.1.19 para casar. Veja `docs/decisions/0033-v0-1-19-exit-code-naming-drift-consolidation.md`.
+- **Nota sobre o nome legado `SYNTAX_ERROR`** — a documentação da v0.1.12 usava `SYNTAX_ERROR`; o binário na v0.1.18 emite `SYNTAX_ERROR_DETECTED`. O nome histórico é preservado apenas em prosa para grep-ability.
+
+#### Validação
+- `cargo build --release` OK
+- `cargo clippy --all-targets -- -D warnings` OK
+- 515 testes passando em 46 suítes (acima de 502 em 44 suítes na v0.1.18, +13 novos)
+- 3 novos ADRs: 0031 (helper de resolução de caminho), 0032 (S-expression de query), 0033 (consolidação de drift de exit code)
 ## [0.1.18] - 2026-06-14
 
 #### G118 — `replace` pré-valida caminhos raiz contra o jail do workspace

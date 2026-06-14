@@ -215,7 +215,7 @@ dependencies = [
 
 [[package]]
 name = "atomwrite"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -269,6 +269,7 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "tracing-test",
+ "tree-sitter",
  "tree-sitter-language-pack",
  "unicode-normalization",
  "walkdir",

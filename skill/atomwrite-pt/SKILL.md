@@ -925,6 +925,15 @@ cargo check --target x86_64-pc-windows-msvc --tests
 - `255` — erro interno (falha inesperada)
 
 
+### Notas de Drift v0.1.19 — Consolidação de Exit Code da Fase D
+- DRIFT 1 — `STATE_DRIFT` (82) absorve `CHECKSUM_VERIFY_FAILED` (81) para `--verify-checksum` em reads e writes. Ambos são classe conflict, retentáveis. O code 81 é agora histórico, preservado apenas para o mismatch BLAKE3 do caminho `read` no conteúdo do arquivo. O code 82 cobre a falha de locking otimista incluindo o mismatch de `--expect-checksum` em writes e edits, e o mismatch de `--verify-checksum` em reads.
+- DRIFT 2 — `--syntax-check` retorna `SYNTAX_ERROR_DETECTED`, NÃO `SYNTAX_ERROR`. O rename aconteceu no rollout do G72 tree-sitter da v0.1.12 mas a documentação não foi atualizada. O nome histórico `SYNTAX_ERROR` é preservado apenas em prosa para grep-ability.
+- DRIFT 3 — `ORPHAN_JOURNAL` (93) é consultivo, NÃO autodetectado. O portão é `ATOMWRITE_WAL=1` OU `--strict-atomic`. O `write` padrão (v0.1.16 G119 `WalPolicy::Auto`) não escreve sidecar e portanto não pode detectar órfãos. Invocações padrão nunca veem este code.
+- DRIFT 4 — `BROKEN_PIPE` (141) exige propagação real de SIGPIPE. Um pipe simples `head -1` NÃO o dispara. A restauração de SIGPIPE da v0.1.4+ recoloca a disposição default, então o sinal só é levantado quando o consumidor downstream fecha ativamente o pipe no meio do stream.
+- DRIFT 5 — Leituras de arquivo binário retornam exit 0 com metadados `kind=binary`, NÃO exit 65. A heurística `BINARY_FILE` da v0.1.4 foi alterada para emitir envelope estruturado e exit 0. O caminho do code 65 agora só dispara para `read` sem `--format raw` E com a heurística binária bypassada.
+- DRIFT 6 — Argumento posicional ausente retorna `ARGUMENT_PARSE_ERROR` (exit 2), NÃO `INVALID_INPUT` (65). Erros de argumento no nível clap são reportados como exit 2. O code 65 é reservado para validação de conteúdo em runtime (TOML malformado, regex inválida, stdin vazio padrão).
+- DRIFT 7 — Falta de `--workspace` cai para CWD, NÃO é erro. `--workspace` é uma flag com default CWD, não um argumento obrigatório. `WORKSPACE_JAIL` (126) só dispara quando um caminho absoluto resolve fora do jail efetivo.
+- Veja `docs/decisions/0033-v0-1-19-exit-code-naming-drift-consolidation.md` para a justificativa completa e as consequências de aceitar o comportamento do binário como canônico.
 ## Schema JSON de Erro
 ### OBRIGATÓRIO — Campos
 - `error` (bool) — sempre `true` quando um erro ocorre

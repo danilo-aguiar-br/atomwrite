@@ -925,6 +925,15 @@ cargo check --target x86_64-pc-windows-msvc --tests
 - `255` — internal error (unexpected failure)
 
 
+### v0.1.19 Drift Notes — Phase D Exit Code Consolidation
+- DRIFT 1 — `STATE_DRIFT` (82) absorbs `CHECKSUM_VERIFY_FAILED` (81) for `--verify-checksum` on reads and writes. Both are conflict class, retryable. The 81-code is now historical, preserved only for the `read` path BLAKE3 mismatch on file content. The 82-code covers optimistic-locking failure including `--expect-checksum` mismatch on writes and edits, and `--verify-checksum` mismatch on reads.
+- DRIFT 2 — `--syntax-check` returns `SYNTAX_ERROR_DETECTED`, NOT `SYNTAX_ERROR`. The rename happened in the v0.1.12 G72 tree-sitter rollout but the docs were not updated. The historical name `SYNTAX_ERROR` is preserved only in prose for grep-ability.
+- DRIFT 3 — `ORPHAN_JOURNAL` (93) is consultive, NOT auto-detected. The gate is `ATOMWRITE_WAL=1` OR `--strict-atomic`. The default `write` (v0.1.16 G119 `WalPolicy::Auto`) does not write a sidecar and therefore cannot detect orphans. Default invocations never see this code.
+- DRIFT 4 — `BROKEN_PIPE` (141) requires real SIGPIPE propagation. A simple `head -1` pipe does NOT trigger it. The v0.1.4+ SIGPIPE restoration puts the default disposition back, so the signal is only raised when the downstream consumer actively closes the pipe mid-stream.
+- DRIFT 5 — Binary file reads return exit 0 with `kind=binary` metadata, NOT exit 65. The v0.1.4 `BINARY_FILE` heuristic was changed to emit a structured envelope and exit 0. The 65-code path now only fires for `read` without `--format raw` AND with the binary heuristic bypassed.
+- DRIFT 6 — Missing positional argument returns `ARGUMENT_PARSE_ERROR` (exit 2), NOT `INVALID_INPUT` (65). Clap-level argument errors are reported as exit 2. The 65-code is reserved for runtime content validation (malformed TOML, invalid regex, empty stdin default).
+- DRIFT 7 — Missing `--workspace` defaults to CWD, NOT an error. `--workspace` is a flag with a CWD default, not a required argument. `WORKSPACE_JAIL` (126) only fires when an absolute path resolves outside the effective jail.
+- See `docs/decisions/0033-v0-1-19-exit-code-naming-drift-consolidation.md` for the full rationale and the consequences of accepting the binary behavior as canonical.
 ## Error JSON Schema
 ### REQUIRED — Fields
 - `error` (bool) — always `true` when an error occurs

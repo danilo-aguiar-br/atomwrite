@@ -8,6 +8,36 @@
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.19] - 2026-06-14
+
+#### G121 — `search` and `replace` resolve root paths against the workspace
+- **Bug (CWE-367 — TOCTOU/path-confusion)** — `cmd_search` and `cmd_replace` took the caller-supplied root paths, validated them with `path_safety::validate_path`, then fed the ORIGINAL (CWD-relative) path to `ignore::WalkBuilder`. `validate_path` returned the canonical absolute path but the per-call result was discarded. When `CWD != --workspace`, the walker either (a) silently walked the wrong tree if a same-named path existed under CWD, or (b) produced a `JailViolation` event per file walked. The G118 fix in `write.rs:44` (ADR-0027) never propagated to these two commands because the per-entry `validate_path` inside the worker thread masked the missing pre-step resolution.
+- **Fix — new `path_resolution::resolve_paths_against_workspace` helper** — `cmd_search` and `cmd_replace` now call this helper once at the top of the command (after `global.resolve_workspace()()`) and pass the canonical `Vec<PathBuf>` to `build_walker`. The pre-step `for path in &args.paths { validate_path(path, &workspace)?; }` loop in `replace.rs` is removed; search gets a parallel resolution call. Both `build_walker` signatures gain a `canonical_paths: &[PathBuf]` parameter; they no longer read `&args.paths[0]` directly.
+- **Consequence** — Search and replace now honor `CWD != --workspace`. A relative path like `src/` passed with `--workspace /path/to/ws` walks `/path/to/ws/src/` regardless of process CWD. Out-of-jail paths fail once with `WORKSPACE_JAIL` (exit 126) at command start instead of per-file inside the worker. See `docs/decisions/0031-g121-path-resolution-helper.md`.
+
+#### G122 — Real S-expression matching in `query` subcommand
+- **Bug (silent feature, documented but never implemented)** — The `query` subcommand (v14 Tier 3, introduced in v0.1.12) always promised S-expression support. The docs in `COOKBOOK.md`, `HOW_TO_USE.md` and both bilingual SKILL files show examples like `atomwrite --workspace . query src/main.rs --query "(function_item name: (identifier) @name)"`. In practice, `cmd_query` called `walk_kind_filter` which does `wanted.iter().any(|w| w == &kind)` — a literal STRING comparison with `node.kind()`. The whole string `"(function_item name: (identifier) @name)"` never matched any real `node.kind()`, so the S-expression feature never worked.
+- **Fix — new `QueryType` enum + auto-classification** — `classify_pattern(pattern) -> QueryType` detects S-expression by the presence of `(`, `)`, or `@`. `walk_sexpr` compiles the pattern via `tree_sitter::Query::new`, executes via `QueryCursor::matches`, and emits `query_match` NDJSON with the new `capture_name` field for each `@capture`. `cmd_query` branches on the classification.
+- **New direct dep `tree-sitter = "0.26"`** — the language-pack re-exports `Language` but `Query`/`QueryCursor`/`StreamingIterator` require the `tree-sitter` crate itself.
+- **Consequence** — Patterns with `(`, `)`, or `@` are routed to `tree_sitter::Query::new`. Parse errors (e.g. `(unclosed`) return exit 1 with `invalid S-expression pattern: ...` message (via `anyhow::Context`). The kind-filter path is preserved bit-by-bit: users passing `--query function_item` (without S-expression chars) keep getting the same results. See `docs/decisions/0032-query-sexp-real-implementation.md`.
+
+#### Exit code documentation drift consolidation (ADR-0033)
+- **Context** — Phase D testing on 2026-06-14 ran 7 concrete binary-level probes against the v0.1.18 release and surfaced 7 places where the published docs diverged from the actual binary behavior. The 7 drifts are:
+  1. `STATE_DRIFT` (82) absorbs `CHECKSUM_VERIFY_FAILED` (81) for `--verify-checksum` — both are conflict class, retryable. The 81-code is now historical (preserved only for the `read` path BLAKE3 mismatch on file content).
+  2. `--syntax-check` returns `SYNTAX_ERROR_DETECTED`, NOT `SYNTAX_ERROR` — the rename happened in the v0.1.12 G72 tree-sitter rollout but docs were not updated.
+  3. `ORPHAN_JOURNAL` (93) is consultive, NOT auto-detected — the gate is `ATOMWRITE_WAL=1` OR `--strict-atomic`. The default `write` (v0.1.16 G119 `WalPolicy::Auto`) does not write a sidecar and therefore cannot detect orphans.
+  4. `BROKEN_PIPE` (141) requires real SIGPIPE propagation — a simple `head -1` pipe does NOT trigger it. The v0.1.4+ SIGPIPE restoration puts the default disposition back, so the signal is only raised when the downstream consumer actively closes the pipe mid-stream.
+  5. Binary file reads return exit 0 with `kind: binary` metadata, NOT exit 65 — the v0.1.4 `BINARY_FILE` heuristic was changed to emit a structured envelope and exit 0. The 65-code path now only fires for `read` without `--format raw` AND with the binary heuristic bypassed.
+  6. Missing positional argument returns `ARGUMENT_PARSE_ERROR` (exit 2), NOT `INVALID_INPUT` (65) — clap-level argument errors are reported as exit 2. The 65-code is reserved for runtime content validation (malformed TOML, invalid regex, empty stdin default).
+  7. Missing `--workspace` defaults to CWD, NOT an error — `--workspace` is documented as a flag with a CWD default, not a required argument. `WORKSPACE_JAIL` (126) only fires when an absolute path resolves outside the effective jail.
+- **Decision** — Accept the binary behavior as canonical. Consolidate the docs in v0.1.19 to match. See `docs/decisions/0033-v0-1-19-exit-code-naming-drift-consolidation.md`.
+- **Note on `SYNTAX_ERROR` legacy name** — the v0.1.12 docs used `SYNTAX_ERROR`; the binary in v0.1.18 emits `SYNTAX_ERROR_DETECTED`. The historical name is preserved only in prose for grep-ability.
+
+#### Validation
+- `cargo build --release` OK
+- `cargo clippy --all-targets -- -D warnings` OK
+- 515 tests passing in 46 suites (up from 502 in 44 suites in v0.1.18, +13 new)
+- 3 new ADRs: 0031 (path resolution helper), 0032 (query S-expression), 0033 (exit code drift consolidation)
 ## [0.1.18] - 2026-06-14
 
 #### G118 — `replace` pre-validates root paths against the workspace jail

@@ -37,9 +37,13 @@ pub fn cmd_search(
 ) -> Result<()> {
     let start = Instant::now();
 
+    let workspace = global.resolve_workspace()?;
+    let canonical_paths =
+        crate::commands::path_resolution::resolve_paths_against_workspace(&args.paths, &workspace)?;
+
     let matcher = build_matcher(args)?;
 
-    let walker = build_walker(args, global)?;
+    let walker = build_walker(args, &canonical_paths, global)?;
 
     let (tx, rx) = crossbeam_channel::bounded::<SearchEvent>(1024);
 
@@ -466,10 +470,14 @@ fn build_matcher(args: &SearchArgs) -> Result<grep_regex::RegexMatcher> {
     })
 }
 
-fn build_walker(args: &SearchArgs, global: &GlobalArgs) -> Result<ignore::WalkBuilder> {
-    let mut builder = ignore::WalkBuilder::new(&args.paths[0]);
+fn build_walker(
+    args: &SearchArgs,
+    canonical_paths: &[std::path::PathBuf],
+    global: &GlobalArgs,
+) -> Result<ignore::WalkBuilder> {
+    let mut builder = ignore::WalkBuilder::new(&canonical_paths[0]);
 
-    for path in args.paths.iter().skip(1) {
+    for path in canonical_paths.iter().skip(1) {
         builder.add(path);
     }
 
@@ -483,7 +491,7 @@ fn build_walker(args: &SearchArgs, global: &GlobalArgs) -> Result<ignore::WalkBu
     }
 
     if !args.include.is_empty() || !args.exclude.is_empty() {
-        let mut overrides = ignore::overrides::OverrideBuilder::new(&args.paths[0]);
+        let mut overrides = ignore::overrides::OverrideBuilder::new(&canonical_paths[0]);
         for glob in &args.include {
             overrides.add(glob)?;
         }
