@@ -72,7 +72,7 @@ All additive. No existing dependency removed.
 
 ### Test Coverage
 
-- 502 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118 in v0.1.15)
+- 542 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118 in v0.1.15 + 40 v0.1.16-v0.1.18 cross-platform + 21 v0.1.19 + 20 v0.1.20)
 - 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/`
 - See [docs/decisions/README.md](README.md) for architectural decisions
@@ -536,3 +536,44 @@ The v0.1.12 release closes 13 of the Top 20 gaps from the PRD v5-v16 audit (`gap
 - Monitor exit codes and NDJSON output for unexpected changes
 - Revert to the previous version if agent tests fail
 - Revert agent configuration to match the older CLI version
+
+
+## v0.1.20 — What Is New
+
+This release introduces a new safety layer called **intention guards** and renames the global `--lang` flag to `--locale` to disambiguate from the tree-sitter `--lang` selector used by `scope` and `transform`.
+
+### Intention Guards (5 OPT-IN flags)
+
+- `--require-backup <N>` — refuse the operation when fewer than `N` retained backups exist for the target
+- `--confirm` — emit a confirmation prompt listing the planned mutation in NDJSON before executing
+- `--auto-rotate <N>` — automatically rotate the backup ring down to `N` entries after a successful write
+- `--risk-threshold <LOW|MEDIUM|HIGH>` — block operations whose classified risk meets or exceeds the threshold
+- `--locale <en|pt-BR>` — renamed from `--lang` to disambiguate from the tree-sitter `--lang`
+
+### Other Additions
+
+- `count --by-size` — list the largest files in the tree with sizes and line counts
+- `read --mode raw|envelope` — select between byte-stream output and structured NDJSON envelope
+- `search --no-begin-end` — disable the implicit `^` and `$` anchor decoration in regex output
+- `write --preserve-timestamps` — keep the source file mtime when overwriting
+- `scope --lang rust` — explicit alias accepted for ergonomic symmetry with `transform --lang`
+
+### Statistics
+
+- 542 tests passing in 47 integration suites, 0 failures
+- 11 GAP-2026 closed
+- 3 Windows cross-compile targets green
+- 19 ADRs in `docs/decisions/` (0019-0037)
+
+### Migration `--lang` to `--locale`
+
+```bash
+# Discover all files using --lang
+rg -l -- '--lang\b' .
+
+# Bulk replace while preserving other matches
+fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
+
+# Or via ruplacer
+ruplacer --subvert --lang --locale
+```

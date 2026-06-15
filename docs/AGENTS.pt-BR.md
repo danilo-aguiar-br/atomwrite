@@ -8,7 +8,7 @@
 
 - G117: o `edit` multi-par `--old/--new` agora roda a mesma cascata fuzzy de 9 estratégias do caminho single, por par. Envelopes de sucesso ganham `pairs_total` e `pair_results[{index, matched, strategy, similarity}]`; falhas ganham `failed_pair_index` (exit 65, arquivo intacto). Novo opt-in `--partial` aplica os pares que casam e relata os demais.
 - G118: o `write` resolve o alvo contra `--workspace` ANTES de append/prepend, detecção automática de line ending e `--expect-checksum`. Com CWD divergente, drift de checksum agora retorna exit 82 (`STATE_DRIFT`) em vez de sobrescrever silenciosamente, e alvos fora do jail retornam exit 126 cedo.
-- 502 testes passando; os ADRs 0026-0030 documentam o fechamento de cinco gaps entre v0.1.15-v0.1.18.
+- 542 testes passando; os ADRs 0031-0037 documentam o fechamento de sete gaps entre v0.1.19-v0.1.20.
 
 ## O Que Há de Novo na v0.1.12
 
@@ -67,7 +67,7 @@ G39 xattr, G41 binary detect (content_inspector), G54 advisory lock, G56 FIFO sk
 
 ### Cobertura de Testes
 
-- **502 testes passando** (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 incrementos cross-platform/WAL/auditoria v0.1.16-v0.1.18)
+- **542 testes passando** (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 incrementos cross-platform/WAL/auditoria v0.1.16-v0.1.18)
 - 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/` (set, get, del, case, query, outline, wal-recovery)
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais

@@ -19,15 +19,24 @@
 - Todo arquivo recebe checksum BLAKE3: detecta drift, verifica integridade, habilita locking otimista
 
 
-## O Que Há De Novo Na v0.1.18 (2026-06-14)
-- **502 testes passando** (461 na v0.1.15 + 6 na v0.1.16 + 8 na v0.1.17 + 27 na v0.1.18). 43 suítes de teste, 0 falhas
-- **G118 resolve-first universal**: o pre-flight `validate_path` adicionado ao `write` na v0.1.15 agora está propagado para 10 comandos mutantes: `write`, `edit`, `copy`, `apply`, `move`, `rollback`, `set`, `del`, `case` e `replace`. `replace /etc/passwd` agora aborta em microssegundos com um único envelope `WORKSPACE_JAIL` em vez de caminhar o filesystem emitindo um evento por arquivo
-- **G119 limpeza inteligente de WAL em 5 camadas**: `WalPolicy { Auto, Always, Never }` (L1), `JournalGuard` RAII (L2), `wal-heal` no startup (L3), submódulo `heuristics` com 5 funções (L4), telemetria `wal-stats` (L5). 2 novos subcomandos: `wal-heal` e `wal-stats`. ADR-0028
-- **G120 guard de stdin vazio em 4 camadas**: `read_stdin_content` rejeita 0 bytes por padrão com opt-out `--allow-empty-stdin` (L1), `handle_append_prepend` rejeita stdin vazio (L2), warning de cross-validation quando `--append` + `--expect-checksum` + stdin vazio (L3), telemetria `stdin_bytes_read` no NDJSON (L4). ADR-0029
-- **Casos de borda follow-up G117**: 3 novos testes de regressão cobrindo exact-match Unicode (diacríticos UTF-8), preservação de line ending CRLF após replace, e multi-par onde o mesmo `--old` aparece duas vezes
-- **GAP 18A — `replace` pré-valida paths raiz**: o último comando mutante que dependia de validação por entrada agora falha rápido com `WORKSPACE_JAIL` (exit 126) antes de construir o `WalkBuilder`
+## O Que Há De Novo Na v0.1.20 (2026-06-15)
+- **542 testes passando** em 47 suítes de teste (502 na v0.1.18 + 21 na v0.1.19 + 19 na v0.1.20), 0 falhas, 0 warnings de clippy
+- **11 GAP-2026 fechados** na v0.1.20
+- **Intention guards** — nova camada de segurança OPT-IN com 5 flags: `--require-backup N`, `--confirm`, `--auto-rotate N`, `--risk-threshold LOW|MEDIUM|HIGH` e `--locale en|pt-BR`. Interceptam mutações destrutivas antes de tocarem o disco. ADR-0032
+- **Renomeação `--locale`** a partir de `--lang` para desambiguar do `--lang` tree-sitter usado por `scope` e `transform`. O antigo `--lang` permanece como alias oculto por uma versão minor. ADR-0034
+- **`count --by-size`** — lista os maiores arquivos da árvore com tamanhos e contagem de linhas. ADR-0035
+- **`read --mode raw|envelope`** — seleciona entre saída byte-stream e envelope NDJSON estruturado. ADR-0036
+- **`search --no-begin-end`** — desabilita a decoração implícita de âncoras `^` e `$` na saída regex. ADR-0037
+- **`scope --lang rust`** — alias explícito aceito para simetria ergonômica com `transform --lang`. ADR-0033
+- **`write --preserve-timestamps`** — preserva o mtime do arquivo fonte ao sobrescrever
+- **19 ADRs** em `docs/decisions/` (0019-0037). 3 targets de cross-compile Windows verdes (x86_64-gnu, i686-gnu, x86_64-msvc)
 
 
+## O Que Houve De Novo Na v0.1.19 (2026-06-14)
+- **G121 helper de resolução de caminho** que unifica a resolução do jail em todos os subcomandos de escrita. Fonte única de verdade para a checagem do limite do workspace
+- **Modo `query` S-expression real** via `tree-sitter` — agentes agora podem rodar queries AST estruturadas contra arquivos fonte
+- **7 derivas de documentação de exit codes** consolidadas para casar com a lista canônica em `docs/exit-codes.md` (ADR-0031)
+- **21 novos testes** em 3 suítes de integração. Targets de cross-compile permanecem verdes
 ## O Que Houve De Novo Na v0.1.17 (2026-06-13)
 - **L3 auto-heal no startup**: `atomwrite` executa um passe autônomo de `wal-heal` no startup com threshold de 3600s e budget de 100ms. O passe é opt-out via `--skip-startup-wal-heal` (ver `src/cli.rs`). O subcomando explícito `wal-heal` aterrissou na v0.1.15; v0.1.17 conecta a mesma lógica em `lib.rs::run` antes do despacho de qualquer subcomando
 

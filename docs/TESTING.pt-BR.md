@@ -6,7 +6,7 @@
 
 ## O Que Há de Novo na v0.1.12
 
-Esta seção resume as mudanças relevantes para testes em v0.1.12. A release adicionou 96 novos testes (eram 320 baseline) para um total de **445 testes em 43 suítes**. A v0.1.15 eleva o total para **502 testes** (+2 testes unitários na v0.1.14, +8 do G117 em `tests/cli_edit.rs`, +6 do G118 em `tests/cli_write.rs`).
+Esta seção resume as mudanças relevantes para testes em v0.1.12. A release adicionou 96 novos testes (eram 320 baseline) para um total de **445 testes em 43 suítes**. A v0.1.15 eleva o total para **542 testes** (+2 testes unitários na v0.1.14, +8 do G117 em `tests/cli_edit.rs`, +6 do G118 em `tests/cli_write.rs`).
 
 ### Novos Arquivos de Teste (10 Adicionados em v0.1.11+v0.1.12)
 
@@ -42,7 +42,7 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 
 ## O Que Há de Novo na v0.1.18 (Atual)
 
-- 502 testes passando (461 baseline v0.1.15 + 8 casos de borda G117 v0.1.18 + 2 pré-validação replace G118 v0.1.18 + 16 incrementos cross-platform/WAL/auditoria v0.1.16-v0.1.18 + 15 testes de contrato NDJSON v0.1.16-v0.1.18)
+- 542 testes passando (461 baseline v0.1.15 + 8 casos de borda G117 v0.1.18 + 2 pré-validação replace G118 v0.1.18 + 16 incrementos cross-platform/WAL/auditoria v0.1.16-v0.1.18 + 15 testes de contrato NDJSON v0.1.16-v0.1.18)
 - 30 subcomandos (28 baseline + `wal-heal` + `wal-stats` da v0.1.15)
 - 12 ADRs em docs/decisions/ (0019-0030)
 
@@ -50,7 +50,7 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 ### Como Executar
 
 ```bash
-# Executar todos os 502 testes
+# Executar todos os 542 testes
 cargo test
 
 # Executar apenas a suíte de regressão v0.1.12
@@ -69,7 +69,7 @@ cargo test --test cross_compile_check -- --ignored
 
 - 20.19% cobertura de linhas via `cargo tarpaulin` (935/4631 linhas cobertas)
 - Menor que o ideal porque tarpaulin conta apenas testes unitários, não testes de integração CLI
-- A suíte de testes de integração é a métrica primária de cobertura (502 testes em 43 suítes)
+- A suíte de testes de integração é a métrica primária de cobertura (542 testes em 43 suítes)
 
 ### Dependências Adicionadas
 
@@ -93,7 +93,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ## Estatísticas Atuais
 - 70+ arquivos Rust em `src/` e `tests/`
-- **502 testes no total em 43 suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
+- **542 testes no total em 43 suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
 - **96 novos testes adicionados em v0.1.11+v0.1.12**:
   - 11 testes em `tests/cli_v012_regressions.rs` (fixes GAP 13, GAP 14, GAP 18)
   - 27 testes em `tests/cli_v012_audit_regressions.rs` (auditoria v0.1.12 G72/G114)
@@ -347,3 +347,44 @@ cargo insta review
 - Para MSVC: instale Visual Studio 2019+ Build Tools com workload C++ (lib.exe deve estar no PATH)
 - Reexecute após corrigir: `cargo test --test cross_compile_check -- --ignored`
 - O gate reporta linker ausente com snippet de stderr claro como "lib.exe" ou "i686-w64-mingw32-gcc"; case essa string com o toolchain ausente
+
+
+## v0.1.20 — Novidades
+
+Esta release introduz uma nova camada de segurança chamada **intention guards** e renomeia a flag global `--lang` para `--locale` para desambiguar do seletor tree-sitter `--lang` usado por `scope` e `transform`.
+
+### Intention Guards (5 flags OPT-IN)
+
+- `--require-backup <N>` — recusa a operação quando menos de `N` backups retidos existem para o alvo
+- `--confirm` — emite um prompt de confirmação listando a mutação planejada em NDJSON antes de executar
+- `--auto-rotate <N>` — rotaciona automaticamente o anel de backups para `N` entradas após uma escrita bem-sucedida
+- `--risk-threshold <LOW|MEDIUM|HIGH>` — bloqueia operações cujo risco classificado atinge ou excede o threshold
+- `--locale <en|pt-BR>` — renomeado de `--lang` para desambiguar do `--lang` tree-sitter
+
+### Outras Adições
+
+- `count --by-size` — lista os maiores arquivos da árvore com tamanhos e contagem de linhas
+- `read --mode raw|envelope` — seleciona entre saída byte-stream e envelope NDJSON estruturado
+- `search --no-begin-end` — desabilita a decoração implícita de âncoras `^` e `$` na saída regex
+- `write --preserve-timestamps` — preserva o mtime do arquivo fonte ao sobrescrever
+- `scope --lang rust` — alias explícito aceito para simetria ergonômica com `transform --lang`
+
+### Estatísticas
+
+- 542 testes passando em 47 suites de integração, 0 falhas
+- 11 GAP-2026 fechados
+- 3 targets de cross-compile Windows verdes
+- 19 ADRs em `docs/decisions/` (0019-0037)
+
+### Migração `--lang` para `--locale`
+
+```bash
+# Descobrir todos os arquivos com --lang
+rg -l -- '--lang\b' .
+
+# Substituir em massa preservando outros matches
+fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
+
+# Ou via ruplacer
+ruplacer --subvert --lang --locale
+```

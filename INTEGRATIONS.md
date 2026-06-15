@@ -13,8 +13,8 @@
 - No plugins, extensions, or SDKs required
 - **30 subcommands** as of v0.1.18 (6 new in v0.1.12: set, get, del, case, query, outline; 2 new in v0.1.15: wal-heal, wal-stats)
 - As of v0.1.12, atomwrite runs on Windows 10/11, Linux, and macOS with identical NDJSON contract
-- The v0.1.12 release added 5 new error variants and the v0.1.18 release lands 502 tests across 43 test suites
-- The v0.1.15 release fixed G117 (multi-pair `edit` fuzzy parity, `pair_results`, `failed_pair_index`, opt-in `--partial`) and G118 (`write` resolves the target against the workspace — append/checksum are safe with a divergent CWD). v0.1.16 added G119 L1 WalPolicy and L4 HeuristicsEngine; v0.1.17 wired G119 L3 startup auto-heal; v0.1.18 added G118 universal resolve-first propagation, G120 L3 cross-flag tests, and G117 edge cases. 502 tests across 43 suites (v0.1.18)
+- The v0.1.12 release added 5 new error variants and the v0.1.20 release lands 542 tests across 47 test suites
+- The v0.1.15 release fixed G117 (multi-pair `edit` fuzzy parity, `pair_results`, `failed_pair_index`, opt-in `--partial`) and G118 (`write` resolves the target against the workspace — append/checksum are safe with a divergent CWD). v0.1.16 added G119 L1 WalPolicy and L4 HeuristicsEngine; v0.1.17 wired G119 L3 startup auto-heal; v0.1.18 added G118 universal resolve-first propagation, G120 L3 cross-flag tests, and G117 edge cases. 542 tests across 47 suites (v0.1.20)
 
 
 ## Summary Table

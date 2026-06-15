@@ -77,7 +77,7 @@ cargo fmt -- --check
 - Use `insta` for snapshot testing of NDJSON output
 - Use `proptest` for property-based testing where applicable
 - Target at least 80% coverage for new code
-- Run the full suite before submitting: `cargo test` (502 tests in v0.1.18)
+- Run the full suite before submitting: `cargo test` (542 tests in v0.1.20)
 
 
 ## Documentation
@@ -141,7 +141,7 @@ cargo fmt -- --check
 ## Quality Gates
 - Run `cargo fmt --check` before committing
 - Run `cargo clippy --all-targets -- -D warnings` for lint checks
-- Run `cargo test` for the full test suite (502 tests in v0.1.18)
+- Run `cargo test` for the full test suite (542 tests in v0.1.20)
 - Run `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` for documentation checks
 - Run `cargo audit` for security advisories
 - Run `cargo deny check` for license and dependency policy (see `deny.toml`)
@@ -155,6 +155,16 @@ cargo fmt -- --check
 - The gate fails on any `E0433`, `E0308`, or `E0507` regression in `#[cfg(windows)]` blocks
 - Required for any change that touches `src/atomic.rs`, `src/platform.rs`, `src/signal.rs`, or other Windows-only code
 - The gate is a defense against the GAP 14 regression: `cargo install atomwrite` was broken on Windows 10/11 in v0.1.3 because three Windows-only compile errors were not caught by the Linux-only CI
+
+## v0.1.20 Specific Gates — Writing Safe Code With Intention Guards
+
+When you add or modify a destructive mutation path, consider whether intention guards should be wired in.
+
+- New mutating commands SHOULD honor `--require-backup`, `--confirm`, `--auto-rotate`, and `--risk-threshold` via the shared `IntentionGuard` helper in `src/guards/`
+- Tests SHOULD cover the guard refusal paths: zero backups (exit `IntentionGuardRefused`), high-risk classification (exit `IntentionGuardRisk`), and auto-rotate after write
+- Documentation SHOULD list the new flag in `llms-full.txt`, `ARCHITECTURE.md`, and the relevant `docs/` page
+- Bump the test count in `README.md`, `llms.txt`, `ARCHITECTURE.md`, and `docs/TESTING.md` when adding tests
+- The `--locale` rename is the migration breadcrumb: any new global flag MUST be checked against the existing `--lang`/`--locale` collision map in `src/cli.rs`
 
 ## v0.1.12 Specific Gates
 - If you add a new subcommand, update the subcommand count in ALL of: `README.md`, `README.pt-BR.md`, `llms.txt`, `llms.pt-BR.txt`, `llms-full.txt`, `docs/AGENTS.md`, `docs/AGENTS.pt-BR.md`, `docs/MIGRATION.md`, `docs/MIGRATION.pt-BR.md`, `CHANGELOG.md`, `CHANGELOG.pt-BR.md`, `skill/atomwrite-en/SKILL.md`, `skill/atomwrite-pt/SKILL.md`

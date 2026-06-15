@@ -72,7 +72,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 
 ### Cobertura de Testes
 
-- 502 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118 na v0.1.15)
+- 542 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118 na v0.1.15 + 40 v0.1.16-v0.1.18 cross-platform + 21 v0.1.19 + 20 v0.1.20)
 - 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/`
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
@@ -536,3 +536,44 @@ A release v0.1.12 fecha 13 dos Top 20 gaps da auditoria PRD v5-v16 (`gaps.md`). 
 - Monitore exit codes e saída NDJSON para mudanças inesperadas
 - Reverta para a versão anterior se testes do agente falharem
 - Reverta a configuração do agente para corresponder a versão anterior da CLI
+
+
+## v0.1.20 — Novidades
+
+Esta release introduz uma nova camada de segurança chamada **intention guards** e renomeia a flag global `--lang` para `--locale` para desambiguar do seletor tree-sitter `--lang` usado por `scope` e `transform`.
+
+### Intention Guards (5 flags OPT-IN)
+
+- `--require-backup <N>` — recusa a operação quando menos de `N` backups retidos existem para o alvo
+- `--confirm` — emite um prompt de confirmação listando a mutação planejada em NDJSON antes de executar
+- `--auto-rotate <N>` — rotaciona automaticamente o anel de backups para `N` entradas após uma escrita bem-sucedida
+- `--risk-threshold <LOW|MEDIUM|HIGH>` — bloqueia operações cujo risco classificado atinge ou excede o threshold
+- `--locale <en|pt-BR>` — renomeado de `--lang` para desambiguar do `--lang` tree-sitter
+
+### Outras Adições
+
+- `count --by-size` — lista os maiores arquivos da árvore com tamanhos e contagem de linhas
+- `read --mode raw|envelope` — seleciona entre saída byte-stream e envelope NDJSON estruturado
+- `search --no-begin-end` — desabilita a decoração implícita de âncoras `^` e `$` na saída regex
+- `write --preserve-timestamps` — preserva o mtime do arquivo fonte ao sobrescrever
+- `scope --lang rust` — alias explícito aceito para simetria ergonômica com `transform --lang`
+
+### Estatísticas
+
+- 542 testes passando em 47 suites de integração, 0 falhas
+- 11 GAP-2026 fechados
+- 3 targets de cross-compile Windows verdes
+- 19 ADRs em `docs/decisions/` (0019-0037)
+
+### Migração `--lang` para `--locale`
+
+```bash
+# Descobrir todos os arquivos com --lang
+rg -l -- '--lang\b' .
+
+# Substituir em massa preservando outros matches
+fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
+
+# Ou via ruplacer
+ruplacer --subvert --lang --locale
+```

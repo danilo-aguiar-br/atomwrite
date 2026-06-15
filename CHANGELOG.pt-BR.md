@@ -8,9 +8,20 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [Unreleased]
+
+### Corrigido (Falhas de CI - GAP 23 barra invertida Windows em manifestos JSON)
+- **11 testes do `cli_batch` deixam de falhar no `windows-2025-vs2026`** — Os testes construíam o manifesto NDJSON via `format!` + `Path::display()`. No Windows o path nativo da plataforma usa barras invertidas (`C:\Users\...\Temp\.tmpXXXX\file.txt`), e o `format!` não as escapa. O resultado é uma string JSON com sequências de escape inválidas (`\U`, `\r`, `\A`, `\L`, `\T`), que o `serde_path_to_error::deserialize` rejeita com `invalid escape`. O `cmd_batch` então retorna `bail!` e sai com código não-zero, falhando o `assert!(output.status.success())`. O teste passava no Linux/macOS apenas porque os paths usam barras normais, que são válidas em strings JSON sem escape.
+  - Adicionado helper `common::manifest(&[serde_json::Value]) -> String` em `tests/common/mod.rs` que serializa cada op via `serde_json::to_string`, garantindo escape JSON correto de barras invertidas, aspas, caracteres de controle e Unicode.
+  - Refatorados todos os 11 testes afetados em `tests/cli_batch.rs` para usar o novo helper via macro `serde_json::json!`.
+  - Refatorados 2 testes adicionais com o mesmo padrão de bug: `tests/snapshot_write.rs::batch_summary_ndjson_structure_snapshot` e `tests/ndjson_valid_test.rs::ndjson_batch_output_valid` (também adicionado o `mod common;` faltante neste último).
+  - Adicionado teste de regressão `batch_write_escapes_backslash_in_target_path` que constrói uma string de path com barra invertida forçada em qualquer plataforma, para que o bug seja capturado em toda execução de CI, não apenas no Windows.
+- **Total de testes: 303/303 PASSAM** (eram 302; +1 do novo teste de regressão).
+
+
 ## [0.1.20] - 2026-06-15
 
-> **NOTA — Renomeação de flag (ADR-0037)** — a flag global `--lang` foi renomeada para `--locale`. A env var `ATOMWRITE_LANG` foi renomeada para `ATOMWRITE_LOCALE`. Os valores aceitos permanecem `en` e `pt-BR`. O alias `--lang` foi REMOVIDO nesta release; a presença dele agora dispara `ARGUMENT_PARSE_ERROR` (exit 2). Veja `docs/decisions/0037-lang-to-locale-rename.md` para a justificativa completa.
+> **NOTA — Renomeação de flag (ADR-0037)** — a flag global `--lang` foi renomeada para `--locale`. **A env var `ATOMWRITE_LANG` permanece inalterada** (a renomeação foi apenas no flag CLI long-form; o env var e o campo programático `args.global.lang` seguem estáveis). Os valores aceitos permanecem `en` e `pt-BR`. O alias `--lang` foi REMOVIDO desta flag global e LIBERADO para subcomandos — agora passe `--lang` para subcomandos que o aceitam como alias (ex.: `atomwrite scope --lang rust`). Veja `docs/decisions/0037-global-locale-rename.md` para a justificativa completa.
 
 #### GAP-2026-001 — `count --by-size` finalmente implementa a flag de help
 - **Bug** — `cmd_count` ignorava `args.by_size` apesar do campo existir em `src/cli_args.rs`. A help prometia top-N por tamanho; o código sempre retornava `mode: "lines"`. HELP-FIRST-DRIFT (flag anunciada na help antes da implementação existir).
@@ -57,47 +68,24 @@
   - `--risk-threshold <PERCENT>` (default 50): threshold L1 do guarda de tamanho; emite warning no stderr (`low`/`medium`/`high`) quando o delta de tamanho excede o threshold.
   - Telemetria: `WriteOutput.risk_assessment` (opcional, GAP-2026-011 L6) carrega bytes original/novo, percentual de delta, nível de risco e qual guarda disparou.
 
-## [0.1.15] - 2026-06-11
+#### ADR
+- ADR-0034 — help-driven testing anti-pattern: clap `--help` nunca mais declarado antes da implementação (5 dos 11 GAP-2026 tinham esse anti-pattern)
+- ADR-0035 — write intention guards: 4 flags defense-in-depth (--require-backup, --confirm, --auto-rotate, --risk-threshold) + `risk_assessment` no envelope, motivadas pelo incident c24-framework34.html de 2026-06-15
+- ADR-0036 — `edit --partial`: single-pair com zero matches retorna NO_MATCHES (exit 1); multi-pair aplica matched e relata unmatched em `pair_results`
+- ADR-0037 — rename `--lang` global para `--locale` (env var `ATOMWRITE_LANG` permanece, campo `args.global.lang` permanece, namespace `--lang` liberado para subcomandos como alias de `--language`)
 
-#### G117 — `edit --old/--new` multi-par: paridade fuzzy, relato por par e `--partial` opt-in
-- **Paridade fuzzy** — o caminho multi-par usava apenas busca exata `find_str`, então um par com whitespace divergente que a cascata fuzzy do par único resgata derrubava o lote inteiro. A cascata foi extraída para `match_pair` e compartilhada pelos dois caminhos: cada par roda a cascata completa de 9 estratégias (`exact`, `line_trimmed`, `whitespace_normalized`, `punctuation_normalized`, `indent_flexible`, `escape_normalized`, `trimmed_boundary`, `block_anchor`, `context_aware`). `--fuzzy off` preserva o comportamento exato pré-G117.
-- **Relato por par** — envelopes de sucesso ganham `pairs_total` e `pair_results` (array de `{index (1-based), matched, strategy, similarity}`); `mode` vira `fuzzy-multi(N)` quando algum par casou via fuzzy e permanece `exact-multi(N)` caso contrário. Envelopes de erro ganham `failed_pair_index`, `pairs_total` e `pair_results` via a nova variante `AtomwriteError::EditPairFailed`, que reutiliza o code `INVALID_INPUT` e o exit 65 (nenhum code novo). Pares após o índice falho nunca foram tentados e ficam ausentes do array.
-- **Nova flag `--partial` (opt-in)** — aplica os pares que casam em uma escrita atômica (exit 0, `edits < pairs_total`) e relata os ausentes com `matched: false`. Zero pares aplicados sai com 1 (`NO_MATCHES`) sem escrever, igual à semântica do `replace`. O padrão continua all-or-nothing: quando a atomicidade é possível, ela é estritamente melhor que relato de falha parcial.
-- **Orientação anti-mascaramento** — o envelope de erro NDJSON vai para o stdout por contrato, então `edit ... | jaq '.edits'` mascarava o exit 65 como `{"edits": null}` com exit 0 no pipeline. README, SKILL, COOKBOOK e HOW_TO_USE (ambos os idiomas) agora documentam a receita `jaq -e '.edits'` / `${PIPESTATUS[0]}`.
-- **Schemas regenerados** — `docs/schemas/edit-output.schema.json` foi regenerado de `edit --json-schema` (agora inclui `mtime_preserved`, `pairs_total`, `pair_results`); `docs/schemas/error-output.schema.json` ganha os três campos do G117 mais os cinco error codes introduzidos na v0.1.12 que faltavam no enum (`LOCK_TIMEOUT`, `SYNTAX_ERROR_DETECTED`, `EXDEV_FALLBACK_DISABLED`, `COPY_BACK_BLAKE3_FAILED`, `ORPHAN_JOURNAL`).
-- **Nota de escopo** — o modo `--multi` (NDJSON via stdin) permanece inalterado; o G117 cobre apenas pares repetidos `--old`/`--new`. Veja `docs/decisions/0026-g117-edit-multi-pair-fuzzy-partial.md`.
+#### Migration Notes
+- **Breaking change na CLI surface**: scripts que passavam `--lang <locale>` devem migrar para `--locale <locale>` (one-liner: `rg -l '\-\-lang\b' bin/ scripts/ && sd -- '\-\-lang\b' '--locale' bin/ scripts/`)
+- Env var `ATOMWRITE_LANG` e campo programático `args.global.lang` permanecem estáveis — CI matrices, container wrappers e consumidores Rust não precisam de mudança
+- Subcomandos que tinham `--language` agora também aceitam `--lang` como alias (ex.: `atomwrite scope --lang rust`)
 
-#### G118 — `write` resolve o alvo contra o workspace antes de todos os pré-passos
-- **Bug (dupla identidade de caminho, CWE-367)** — `cmd_write` entregava o caminho CRU da CLI (relativo ao CWD) a `handle_append_prepend`, `normalize_line_endings` (auto) e `verify_checksum`, enquanto só `atomic_write` resolvia via `validate_path`. Com alvo relativo e CWD diferente do `--workspace`, append/prepend TRUNCAVA silenciosamente o arquivo, a detecção automática de line ending era pulada e o `--expect-checksum` era pulado por inteiro (qualquer hash aceito, exit 0). Detectado em produção: o `gaps.md` deste repositório foi truncado e recuperado via `rollback --latest --verify`.
-- **Correção** — o alvo é resolvido UMA vez no início de `cmd_write` e o caminho resolvido alimenta os 3 pré-passos e o `atomic_write`. Drift de checksum com CWD divergente agora falha com `STATE_DRIFT` (exit 82); alvo fora do jail falha cedo com `WORKSPACE_JAIL` (exit 126). O campo `path` do NDJSON continua ecoando o caminho do usuário. Ver `docs/decisions/0027-g118-write-path-resolution.md`.
-- **Por que os testes nunca pegaram** — a suíte só usava alvos ABSOLUTOS, imunes ao CWD. Cinco testes de regressão agora usam alvo RELATIVO com `current_dir` fora do workspace (append, prepend, drift exit 82, checksum correto, detecção CRLF), mais um teste-guarda de conformidade garantindo que `&args.target` aparece exatamente uma vez em `write.rs`.
-
-#### GAP 18 — CI Windows verde de novo
-- `tests/snapshot_write.rs` agora redige `platform.dir_fsync` como `[platform_dir_fsync]`, a mesma técnica já usada para `platform.fsync`. O snapshot fixava `"dir_fsync": "sync_all"`, que o Windows reporta como `best_effort`, mantendo o job `windows-2025-vs2026` vermelho desde a v0.1.12.
-
-#### Job de MSRV alinhado ao manifesto
-- O job de CI chamado `MSRV 1.85` (toolchain pinado em 1.85) agora testa o MSRV documentado: `MSRV 1.88` com `dtolnay/rust-toolchain@1.88`, casando com `rust-version = "1.88"` do `Cargo.toml`.
-
-#### Validação
-- 8 novos testes de integração em `tests/cli_edit.rs` (21 no total na suíte): par fuzzy no multi, compat do mode `exact-multi(N)`, `pair_results` no sucesso, `failed_pair_index`/`pairs_total`/`pair_results` no erro com arquivo intacto, compat de `--fuzzy off`, caminho feliz do `--partial`, `--partial` com zero matches sai com 1, `--partial --dry-run` não escreve
-- `cargo test --lib` 152 passando (cobertura de suggestion por variante estendida a `EditPairFailed`); `cargo test --test snapshot_write` 9 passando
-- Reprodução determinística do `gaps.md` re-executada contra o binário novo: lote misto reporta `failed_pair_index: 2` com arquivo intacto; `--partial` aplica o par 1 com `edits: 1`; `| jaq -e '.edits'` sai com 1 no envelope de erro
-- G118: 6 testes de integração novos em `tests/cli_write.rs` (14 no total); reprodução determinística re-executada com CWD divergente: append preserva todas as linhas, o checksum de 64 zeros agora sai com 82 e o arquivo permanece intacto
-- Suíte completa após o G118: 461 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118), 0 falhas; `fmt`/`clippy -D warnings`/`doc`/`deny`/`audit` verdes; cross-check Windows `x86_64-pc-windows-gnu` com `RUSTFLAGS=-Dwarnings` limpo
-
-## [0.1.14] - 2026-06-07
-
-### Corrigido (Falha de CI - `windows-2025-vs2026` no teste `write_creates_file_with_ndjson_output`)
-- **Causa raiz** — O teste escreve 12 bytes de input (`"hello world\n"`) e espera `bytes_written == 12`. No Windows o v0.1.13 retornava 13 bytes porque o branch de fallback em `normalize_line_endings` retornava `LineEnding::CrLf` quando o arquivo alvo não existia e o SO host era Windows. A chamada subsequente `line_endings::normalize(..., CrLf)` inseria um `\r` antes de cada `\n`. Linux e macOS não eram afetados (o fallback delas retornava `LineEnding::Lf`, que preservava a contagem de bytes do input).
-- **Solução** — Os branches de fallback que retornavam `LineEnding::CrLf` no Windows (quando o arquivo alvo não existia ou não podia ser lido) foram removidos. `Auto` agora cumpre a sua docstring (`Preserve the dominant ending of the original file`): quando não há original, os bytes do input passam adiante sem modificação. Isso torna o CLI determinístico entre Linux, macOS e Windows para o mesmo conteúdo de stdin.
-- **Paridade de round-trip para input CRLF** — Um bug adicional foi descoberto ao escrever os testes de regressão: o fallback antigo não apenas convertia LF para CRLF, ele também *removia* o `\r` de input CRLF ao resolver `Auto` → `Lf` e depois executar a etapa de canonicalização de `normalize`. Com o novo comportamento, input CRLF em arquivo novo agora permanece CRLF byte a byte. Isso preserva o round-trip de `--expect-checksum` quando o usuário fornece conteúdo CRLF.
-- **Dois novos testes de regressão em `src/commands/write.rs::tests`** — `auto_on_new_file_preserves_lf_input` e `auto_on_new_file_preserves_crlf_input`. Eles exercitam o branch `Auto` com input LF e CRLF e afirmam que a saída é igual ao input byte a byte. Os testes são agnósticos de plataforma e teriam pego tanto o bug `cfg!(windows) ? CrLf : Lf` quanto o bug de canonicalização em qualquer runner de CI.
-- **Nenhuma mudança na lógica de detecção existente** — Quando o arquivo alvo existe, `Auto` ainda chama `line_endings::detect(&existing)` e aplica o estilo dominante. Quando o usuário passa um `--line-ending lf|cr-lf|cr` explícito, o valor explícito ainda é aplicado como antes. Apenas o branch `Auto` + arquivo alvo inexistente mudou.
-
-### Validação
-- CI Linux: `cargo build --all-features`, `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features` (152 lib tests + suites de integração + 3 doctests) — todos verdes
-- Cross-check Windows CI: `cargo check --target x86_64-pc-windows-gnu --lib` com `RUSTFLAGS=-Dwarnings` e stub de `cc` para o linker mingw-gcc ausente — zero erros, zero warnings
-- 8/8 testes de integração `cli_write` passam, incluindo a falha que era exclusiva do Windows
+#### Validation
+- `cargo build --release` OK
+- `cargo clippy --all-targets -- -D warnings` OK
+- 542 testes passando em 47 suites (up from 515 in 46 suites in v0.1.19, +27 new: 11 GAP-2026 closures + 16 intention-guard tests)
+- 4 novos ADRs: 0034 (help-driven testing), 0035 (write intention guards), 0036 (edit partial), 0037 (locale rename)
+- 11 GAP-2026 fechados (001-011), 100% cobertura dos gaps de auditoria local
+- Cross-compile verificado em 3 targets Windows: x86_64-gnu, i686-gnu, x86_64-msvc
 
 
 ## [0.1.19] - 2026-06-14
@@ -130,44 +118,121 @@
 - `cargo clippy --all-targets -- -D warnings` OK
 - 515 testes passando em 46 suítes (acima de 502 em 44 suítes na v0.1.18, +13 novos)
 - 3 novos ADRs: 0031 (helper de resolução de caminho), 0032 (S-expression de query), 0033 (consolidação de drift de exit code)
+
 ## [0.1.18] - 2026-06-14
 
 #### G118 — `replace` pré-valida caminhos raiz contra o jail do workspace
 - **`cmd_replace` resolve-first para todas as raízes** — após `global.resolve_workspace()`, o comando itera sobre `args.paths` e chama `path_safety::validate_path(path, &workspace)?` para CADA raiz ANTES de construir o `WalkBuilder`. Falha rápida com `WORKSPACE_JAIL` (exit 126) na primeira violação. Comportamento legado per-entry (v0.1.12-v0.1.17) emitia um evento `JailViolation` por arquivo caminhado e o usuário via o diagnóstico enterrado sob N eventos. Agora `replace /etc/passwd` aborta em microssegundos com um único envelope de erro estruturado.
 - **Convenção resolve-first agora universal** — `write` (ADR-0027), `edit`, `copy`, `apply`, `move`, `rollback`, `set`, `del`, `case` e agora `replace` todos validam o alvo contra o jail workspace ANTES de qualquer `exists()` ou read. Um único modelo mental para todos os comandos mutantes.
-- **Teste de regressão atualizado** — `replace_jail_violation_does_not_inflate_counter` em `tests/cli_v012_regressions.rs` agora afirma exit 126 + envelope `WORKSPACE_JAIL` + arquivos inside/outside inalterados.
-- **2 novos testes integrados** em `tests/cli_replace.rs`: `replace_root_path_outside_workspace_exits_126` e `replace_relative_dotdot_root_outside_workspace_exits_126`.
+- **Teste de regressão atualizado** — `replace_jail_violation_does_not_inflate_counter` em `tests/cli_v012_regressions.rs` agora afirma exit 126 + envelope `WORKSPACE_JAIL` + arquivos inside/outside inalterados. O nome é preservado (a invariante subjacente — "jail violation não pode inflar o counter de substituições" — é mantida) mas o corpo da asserção mudou.
+- **2 novos testes integrados** em `tests/cli_replace.rs`: `replace_root_path_outside_workspace_exits_126` (caminho absoluto `/etc/passwd`) e `replace_relative_dotdot_root_outside_workspace_exits_126` (caminho relativo `../escape`).
 
 #### G120 L3 — cobertura de teste para cross-validação
 - **2 novos testes integrados** em `tests/cli_write.rs`:
-  - `g120_l3_append_empty_stdin_with_matching_checksum_succeeds` — verifica o caminho `--append --allow-empty-stdin --expect-checksum <HASH> < /dev/null` end-to-end.
-  - `g120_l3_append_empty_stdin_without_opt_in_rejects_at_l1` — sem opt-in, L1 dispara primeiro (exit 65).
+  - `g120_l3_append_empty_stdin_with_matching_checksum_succeeds` — escreve arquivo seed, hasheia, roda `write --append --allow-empty-stdin --expect-checksum <HASH> < /dev/null`, afirma exit 0 + `stdin_bytes_read: 0` + arquivo inalterado (no-op append preserva checksum).
+  - `g120_l3_append_empty_stdin_without_opt_in_rejects_at_l1` — sem `--allow-empty-stdin`, a guarda L1 dispara primeiro (exit 65) e o arquivo é preservado. Documenta que L3 é inalcançável sem opt-in explícita.
 
 #### G117 follow-up — cobertura de edge cases
 - **3 novos testes integrados** em `tests/cli_edit.rs`:
-  - `edit_unicode_old_new_exact_match` — diacríticos UTF-8 com casamento byte-a-byte.
-  - `edit_crlf_line_endings_preserve_eol_after_replace` — preservação de `\r\n` byte-a-byte.
-  - `edit_multi_pair_same_old_appears_twice_applies_both` — multi-par com mesmo `--old` em pares consecutivos.
+  - `edit_unicode_old_new_exact_match` — diacríticos UTF-8 (`ção` → `AÇÃO`) com casamento exato byte-a-byte. Documenta o contrato de single-pair (substitui apenas a PRIMEIRA ocorrência; multi-pair para múltiplas).
+  - `edit_crlf_line_endings_preserve_eol_after_replace` — input com `\r\n`, replace, afirma preservação byte-a-byte (sem colapso para `\n`).
+  - `edit_multi_pair_same_old_appears_twice_applies_both` — multi-par onde ambos os pares referenciam o mesmo token `--old`. Garante que o segundo par consome a versão pós-primeiro-substituição (proteção contra off-by-one).
 
 #### ADR
-- **`docs/decisions/0030-v0-1-18-g118-replace-pre-validation-g120-l3-tests-g117-edge-cases.md`** — documenta as 3 decisões e gatilhos para revisitar.
+- **`docs/decisions/0030-v0-1-18-g118-replace-pre-validation-g120-l3-tests-g117-edge-cases.md`** — registra as 3 decisões, alternativas consideradas e gatilhos para revisitar.
 
-#### Validação
+#### Validation
 - `cargo build --release` OK
 - `cargo clippy --all-targets -- -D warnings` OK
-- Suíte completa: 502 testes passando, 0 regressões
-- 2 flakes pré-existentes não relacionados (`signal_test`, `tracing_test`)
+- Suíte completa de testes: 502 testes passando, 0 falhas, 0 regressões introduzidas pelas 3 mudanças
+- 2 flakes pré-existentes confirmados como não relacionados (`signal_test::batch_interrupted_by_signal`, `tracing_test::span_captures_path_field` + `tracing_test::debug_level_includes_filter_info`) — falhas idênticas no baseline `git stash` antes das mudanças
 
 
-## [Unreleased]
+## [0.1.17] - 2026-06-13
 
-### Corrigido (Falhas de CI - GAP 23 barra invertida Windows em manifestos JSON)
-- **11 testes do `cli_batch` deixam de falhar no `windows-2025-vs2026`** — Os testes construíam o manifesto NDJSON via `format!` + `Path::display()`. No Windows o path nativo da plataforma usa barras invertidas (`C:\Users\...\Temp\.tmpXXXX\file.txt`), e o `format!` não as escapa. O resultado é uma string JSON com sequências de escape inválidas (`\U`, `\r`, `\A`, `\L`, `\T`), que o `serde_path_to_error::deserialize` rejeita com `invalid escape`. O `cmd_batch` então retorna `bail!` e sai com código não-zero, falhando o `assert!(output.status.success())`. O teste passava no Linux/macOS apenas porque os paths usam barras normais, que são válidas em strings JSON sem escape.
-  - Adicionado helper `common::manifest(&[serde_json::Value]) -> String` em `tests/common/mod.rs` que serializa cada op via `serde_json::to_string`, garantindo escape JSON correto de barras invertidas, aspas, caracteres de controle e Unicode.
-  - Refatorados todos os 11 testes afetados em `tests/cli_batch.rs` para usar o novo helper via macro `serde_json::json!`.
-  - Refatorados 2 testes adicionais com o mesmo padrão de bug: `tests/snapshot_write.rs::batch_summary_ndjson_structure_snapshot` e `tests/ndjson_valid_test.rs::ndjson_batch_output_valid` (também adicionado o `mod common;` faltante neste último).
-  - Adicionado teste de regressão `batch_write_escapes_backslash_in_target_path` que constrói uma string de path com barra invertida forçada em qualquer plataforma, para que o bug seja capturado em toda execução de CI, não apenas no Windows.
-- **Total de testes: 303/303 PASSAM** (eram 302; +1 do novo teste de regressão).
+#### G119 — fiação de L3 startup auto-heal e L4 no Drop guard
+- **L3 startup pass** — cada invocação agora chama `auto_heal_on_startup(&workspace, threshold_secs=3600, max_duration_ms=100)` uma vez, ANTES de despachar o subcomando. Threshold default é 1h, orçamento é 100ms, e órfãos `Started` NUNCA são reaped (apenas `Committed`/`Aborted` mais antigos que o threshold). Em um workspace com 60 sidecars stale, o pass reapa todos em <5ms; em um workspace com 10k, o orçamento ainda limita o custo.
+- **Nova flag global `--no-auto-heal`** — desabilita o pass L3 para loops apertados de CI, benchmarks e forense. Também vinculado à env `ATOMWRITE_WAL_NO_AUTO_HEAL=1`. Existe para manter o overhead por invocação previsível quando o workspace tem 0 sidecars (evita o custo de walk+parse em cada comando).
+- **L4 fiação em `JournalGuard::drop`** — o drop agora consulta `heuristics_should_preserve` antes de remover. `h1_ttl`, `h3_rate_limit`, `h4_sentinel`, `h5_archive` todos votam; `h2_lru_within_cap` é intencionalmente bypassado (não há forma barata de saber a contagem global a partir de um drop por arquivo) passando `u64::MAX` tanto para `workspace_committed_count` quanto para `age_rank`. Composição OR: qualquer voto de preservação vence.
+- **Novo campo `committed_at_unix: Option<u64>` em `JournalGuard`** — `release()` carimba o timestamp Unix atual para que as heurísticas L4 que raciocinam sobre idade pós-commit (h1_ttl, h5_archive) tenham dados. O guard inerte e o caminho `keep()` o deixam `None` (nenhuma entrada Committed existia).
+- **Correções de teste** — 2 testes em `tests/cli_v012_wal.rs` (`wal_heal_reaps_stale_committed_journals`, `wal_stats_counts_committed_orphans_malformed`) e 2 em `tests/cli_wal.rs` (`g119_l5_wal_stats_reports_journal_state`, `g119_l5_wal_stats_reports_zeros_on_empty_workspace`) agora passam `--no-auto-heal` para impedir que o pass L3 de startup reapa sidecars stale pré-semeados antes da asserção rodar.
+- **Atualização de ADR** — `docs/decisions/0028-g119-wal-cleanup-intelligent.md` ganhou uma seção "Atualização v0.1.17 — Fiação de L3 startup + L4 no Drop guard" documentando o truque `u64::MAX`, o campo `committed_at_unix`, e a justificativa de isolamento de teste.
+
+#### Validação
+- `cargo fmt --check` limpo
+- `cargo clippy --bin atomwrite --lib --all-targets -- -D warnings` limpo (0 warnings)
+- 6 novos testes unitários em `src/wal.rs::tests` para L3 (`l3_auto_heal_on_empty_workspace_reports_zero`, `l3_auto_heal_reaps_old_committed_preserves_started`, `l3_auto_heal_respects_budget`) e L4 (`l4_release_records_committed_at_unix`, `l4_drop_preserves_sidecar_when_h4_sentinel_votes`, `l4_drop_removes_sidecar_when_no_heuristic_preserves`)
+- 3 novos testes integrados em `tests/cli_wal.rs` (`g119_l3_startup_auto_heal_reaps_stale_committed`, `g119_l3_no_auto_heal_preserves_stale_committed`, `g119_l4_sentinel_preserves_sidecar_on_successful_write`)
+- Suíte completa: 474 testes passando, 0 falhas, 0 regressões
+
+
+## [0.1.16] - 2026-06-13
+
+#### G119 — fecha a limpeza autônoma de 5 camadas (L1 prevention + L4 heuristics)
+- **L1 — enum `WalPolicy` + flag `--wal-policy`** — `Auto` (default) pula o sidecar para escritas triviais (arquivo ≤ 1 MiB AND não Edit/Replace AND diretório pai sob git AND tamanho do arquivo ≤ 4 KiB). `Always` força o sidecar (semântica legada, equivalente a `--strict-atomic`). `Never` suprime criação de sidecar mesmo quando `--strict-atomic` está setado. A decisão acontece dentro de `atomic_write` ANTES de `journal_started_with_guard`; custo é O(0) quando a política vota "sem sidecar". Redução esperada: 60-80% dos sidecars para cargas típicas de LLM agent.
+- **L4 — `HeuristicsEngine` com 5 regras composíveis** — `h1_ttl` (preserva por N segundos após `Committed`, default 0), `h2_lru_within_cap` (preserva dentro do cap de contagem, default 100), `h3_rate_limit` (estrangula quando >K sidecars/min, default 10), `h4_sentinel` (arquivo `.atomwrite_no_wal` desabilita por diretório), `h5_archive` (flag para arquivamento quando mais antigo que 7 dias). Env vars: `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS`. H3 usa `AtomicU64` lock-free para a janela de 60s. `heuristics_should_preserve(target, committed_at_unix, count, rank)` compõe via OR.
+- **`AtomicWriteOptions.wal_policy: WalPolicy`** — novo campo defaultando para `Auto`. Todos os 16 call-sites em `src/commands/` (write, edit, set, get, del, case, copy, replace, transform, scope, apply, rollback, batch×4) atualizados para passar a política adiante.
+- **Telemetria** — envelope NDJSON `WriteOutput` ganha `wal_policy: "auto" | "always" | "never"` para que chamadores possam auditar qual política foi aplicada.
+- **ADR** — `docs/decisions/0028-g119-wal-cleanup-intelligent.md` documenta a arquitetura de 5 camadas e a semântica de composição OR do engine L4.
+- **Novos testes unitários** — 12 testes em `src/wal.rs::tests`: `l1_never_policy_always_returns_false`, `l1_always_policy_always_returns_true`, `l1_auto_policy_returns_true_for_large_file`, `l1_auto_policy_returns_true_for_edit_op`, `l1_auto_policy_skips_trivial_file`, `l4_h1_ttl_default_zero_returns_false`, `l4_h2_lru_within_cap_returns_true_when_count_low`, `l4_h2_lru_returns_true_when_count_at_or_below_default_cap`, `l4_h3_rate_limit_returns_false_below_threshold`, `l4_h4_sentinel_returns_true_when_file_exists`, `l4_h4_sentinel_returns_false_when_absent`, `l4_h5_archive_returns_false_for_recent_journal_under_default`, `l4_h5_archive_returns_true_for_journal_older_than_7_days`, `l4_engine_returns_false_when_all_heuristics_disabled`.
+
+#### G120 — fecha a validação de conteúdo de 4 camadas (L3 cross-validation)
+- **L3 — `--append`/`--prepend` + `--expect-checksum` + stdin vazio emite warning estruturado** — quando o chamador combina flag append/prepend com `--expect-checksum` E o stdin é vazio (o caso de bypass de L1 via `--allow-empty-stdin`), `cmd_write` emite um `tracing::info!` que nomeia a combinação de flags cruzadas e prossegue para `verify_checksum` (que ainda valida o estado pré-mutação). Operadores monitorando stderr recebem um sinal explícito sem mudar o exit code.
+- **L3 opt-out — `--no-checksum-when-empty`** — chamador que INTENDE a combinação empty-stdin + checksum (no-op append com garantia de locking) pode passar esta flag para pular `verify_checksum` inteiramente. Emite `tracing::warn!` registrando a decisão.
+- **L1+L2 inalterados** — `read_stdin_content` ainda rejeita stdin vazio por default (exit 65); `handle_append_prepend` ainda rejeita stdin vazio quando `--append`/`--prepend` está setado. L3 é a terceira camada que roda apenas quando L1+L2 são explicitamente bypassadas.
+- **ADR** — `docs/decisions/0029-g120-empty-stdin-guard.md` documenta a semântica de warning L3 e a flag de opt-out.
+
+#### Validação
+- `cargo fmt --check` limpo
+- `cargo clippy --bin atomwrite --lib` limpo (0 warnings)
+- Suíte completa: 487 testes passando (469 baseline v0.1.15 + 18 novos em `src/wal.rs::tests`), 0 falhas, 0 regressões
+- Novo `WalPolicy` exportado de `crate::wal` e registrado no derive `ValueEnum` do clap
+- Schema `WriteOutput` regenerado para incluir campo `wal_policy`; `tests/snapshots/snapshot_write__write_output_structure.snap` atualizado
+
+
+## [0.1.15] - 2026-06-11
+
+#### G117 — `edit --old/--new` multi-par: paridade fuzzy, relato por par e `--partial` opt-in
+- **Paridade fuzzy** — o caminho multi-par usava apenas busca exata `find_str`, então um par com whitespace divergente que a cascata fuzzy do par único resgata derrubava o lote inteiro. A cascata foi extraída para `match_pair` e compartilhada pelos dois caminhos: cada par roda a cascata completa de 9 estratégias (`exact`, `line_trimmed`, `whitespace_normalized`, `punctuation_normalized`, `indent_flexible`, `escape_normalized`, `trimmed_boundary`, `block_anchor`, `context_aware`). `--fuzzy off` preserva o comportamento exato pré-G117.
+- **Relato por par** — envelopes de sucesso ganham `pairs_total` e `pair_results` (array de `{index (1-based), matched, strategy, similarity}`); `mode` vira `fuzzy-multi(N)` quando algum par casou via fuzzy e permanece `exact-multi(N)` caso contrário. Envelopes de erro ganham `failed_pair_index`, `pairs_total` e `pair_results` via a nova variante `AtomwriteError::EditPairFailed`, que reutiliza o code `INVALID_INPUT` e o exit 65 (nenhum code novo). Pares após o índice falho nunca foram tentados e ficam ausentes do array.
+- **Nova flag `--partial` (opt-in)** — aplica os pares que casam em uma escrita atômica (exit 0, `edits < pairs_total`) e relata os ausentes com `matched: false`. Zero pares aplicados sai com 1 (`NO_MATCHES`) sem escrever, igual à semântica do `replace`. O padrão continua all-or-nothing: quando a atomicidade é possível, ela é estritamente melhor que relato de falha parcial.
+- **Orientação anti-mascaramento** — o envelope de erro NDJSON vai para o stdout por contrato, então `edit ... | jaq '.edits'` mascarava o exit 65 como `{"edits": null}` com exit 0 no pipeline. README, SKILL, COOKBOOK e HOW_TO_USE (ambos os idiomas) agora documentam a receita `jaq -e '.edits'` / `${PIPESTATUS[0]}`.
+- **Schemas regenerados** — `docs/schemas/edit-output.schema.json` foi regenerado de `edit --json-schema` (agora inclui `mtime_preserved`, `pairs_total`, `pair_results`); `docs/schemas/error-output.schema.json` ganha os três campos do G117 mais os cinco error codes introduzidos na v0.1.12 que faltavam no enum (`LOCK_TIMEOUT`, `SYNTAX_ERROR_DETECTED`, `EXDEV_FALLBACK_DISABLED`, `COPY_BACK_BLAKE3_FAILED`, `ORPHAN_JOURNAL`).
+- **Nota de escopo** — o modo `--multi` (NDJSON via stdin) permanece inalterado; o G117 cobre apenas pares repetidos `--old`/`--new`. Veja `docs/decisions/0026-g117-edit-multi-pair-fuzzy-partial.md`.
+
+#### G118 — `write` resolve o alvo contra o workspace antes de todos os pré-passos
+- **Bug (dupla identidade de caminho, CWE-367)** — `cmd_write` entregava o caminho CRU da CLI (relativo ao CWD) a `handle_append_prepend`, `normalize_line_endings` (auto) e `verify_checksum`, enquanto só `atomic_write` resolvia via `validate_path`. Com alvo relativo e CWD diferente do `--workspace`, append/prepend TRUNCAVA silenciosamente o arquivo, a detecção automática de line ending era pulada e o `--expect-checksum` era pulado por inteiro (qualquer hash aceito, exit 0). Detectado em produção: o `gaps.md` deste repositório foi truncado e recuperado via `rollback --latest --verify`.
+- **Correção** — o alvo é resolvido UMA vez no início de `cmd_write` e o caminho resolvido alimenta os 3 pré-passos e o `atomic_write`. Drift de checksum com CWD divergente agora falha com `STATE_DRIFT` (exit 82); alvo fora do jail falha cedo com `WORKSPACE_JAIL` (exit 126). O campo `path` do NDJSON continua ecoando o caminho do usuário. Ver `docs/decisions/0027-g118-write-path-resolution.md`.
+- **Por que os testes nunca pegaram** — a suíte só usava alvos ABSOLUTOS, imunes ao CWD. Cinco testes de regressão agora usam alvo RELATIVO com `current_dir` fora do workspace (append, prepend, drift exit 82, checksum correto, detecção CRLF), mais um teste-guarda de conformidade garantindo que `&args.target` aparece exatamente uma vez em `write.rs`.
+
+#### GAP 18 — CI Windows verde de novo
+- `tests/snapshot_write.rs` agora redige `platform.dir_fsync` como `[platform_dir_fsync]`, a mesma técnica já usada para `platform.fsync`. O snapshot fixava `"dir_fsync": "sync_all"`, que o Windows reporta como `best_effort`, mantendo o job `windows-2025-vs2026` vermelho desde a v0.1.12.
+
+#### Job de MSRV alinhado ao manifesto
+- O job de CI chamado `MSRV 1.85` (toolchain pinado em 1.85) agora testa o MSRV documentado: `MSRV 1.88` com `dtolnay/rust-toolchain@1.88`, casando com `rust-version = "1.88"` do `Cargo.toml`.
+
+#### Validação
+- 8 novos testes de integração em `tests/cli_edit.rs` (21 no total na suíte): par fuzzy no multi, compat do mode `exact-multi(N)`, `pair_results` no sucesso, `failed_pair_index`/`pairs_total`/`pair_results` no erro com arquivo intacto, compat de `--fuzzy off`, caminho feliz do `--partial`, `--partial` com zero matches sai com 1, `--partial --dry-run` não escreve
+- `cargo test --lib` 152 passando (cobertura de suggestion por variante estendida a `EditPairFailed`); `cargo test --test snapshot_write` 9 passando
+- Reprodução determinística do `gaps.md` re-executada contra o binário novo: lote misto reporta `failed_pair_index: 2` com arquivo intacto; `--partial` aplica o par 1 com `edits: 1`; `| jaq -e '.edits'` sai com 1 no envelope de erro
+- G118: 6 testes de integração novos em `tests/cli_write.rs` (14 no total); reprodução determinística re-executada com CWD divergente: append preserva todas as linhas, o checksum de 64 zeros agora sai com 82 e o arquivo permanece intacto
+- Suíte completa após o G118: 461 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118), 0 falhas; `fmt`/`clippy -D warnings`/`doc`/`deny`/`audit` verdes; cross-check Windows `x86_64-pc-windows-gnu` com `RUSTFLAGS=-Dwarnings` limpo
+
+
+## [0.1.14] - 2026-06-07
+
+### Corrigido (Falha de CI - `windows-2025-vs2026` no teste `write_creates_file_with_ndjson_output`)
+- **Causa raiz** — O teste escreve 12 bytes de input (`"hello world\n"`) e espera `bytes_written == 12`. No Windows o v0.1.13 retornava 13 bytes porque o branch de fallback em `normalize_line_endings` retornava `LineEnding::CrLf` quando o arquivo alvo não existia e o SO host era Windows. A chamada subsequente `line_endings::normalize(..., CrLf)` inseria um `\r` antes de cada `\n`. Linux e macOS não eram afetados (o fallback delas retornava `LineEnding::Lf`, que preservava a contagem de bytes do input).
+- **Solução** — Os branches de fallback que retornavam `LineEnding::CrLf` no Windows (quando o arquivo alvo não existia ou não podia ser lido) foram removidos. `Auto` agora cumpre a sua docstring (`Preserve the dominant ending of the original file`): quando não há original, os bytes do input passam adiante sem modificação. Isso torna o CLI determinístico entre Linux, macOS e Windows para o mesmo conteúdo de stdin.
+- **Paridade de round-trip para input CRLF** — Um bug adicional foi descoberto ao escrever os testes de regressão: o fallback antigo não apenas convertia LF para CRLF, ele também *removia* o `\r` de input CRLF ao resolver `Auto` → `Lf` e depois executar a etapa de canonicalização de `normalize`. Com o novo comportamento, input CRLF em arquivo novo agora permanece CRLF byte a byte. Isso preserva o round-trip de `--expect-checksum` quando o usuário fornece conteúdo CRLF.
+- **Dois novos testes de regressão em `src/commands/write.rs::tests`** — `auto_on_new_file_preserves_lf_input` e `auto_on_new_file_preserves_crlf_input`. Eles exercitam o branch `Auto` com input LF e CRLF e afirmam que a saída é igual ao input byte a byte. Os testes são agnósticos de plataforma e teriam pego tanto o bug `cfg!(windows) ? CrLf : Lf` quanto o bug de canonicalização em qualquer runner de CI.
+- **Nenhuma mudança na lógica de detecção existente** — Quando o arquivo alvo existe, `Auto` ainda chama `line_endings::detect(&existing)` e aplica o estilo dominante. Quando o usuário passa um `--line-ending lf|cr-lf|cr` explícito, o valor explícito ainda é aplicado como antes. Apenas o branch `Auto` + arquivo alvo inexistente mudou.
+
+### Validação
+- CI Linux: `cargo build --all-features`, `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features` (152 lib tests + suites de integração + 3 doctests) — todos verdes
+- Cross-check Windows CI: `cargo check --target x86_64-pc-windows-gnu --lib` com `RUSTFLAGS=-Dwarnings` e stub de `cc` para o linker mingw-gcc ausente — zero erros, zero warnings
+- 8/8 testes de integração `cli_write` passam, incluindo a falha que era exclusiva do Windows
+
 
 ## [0.1.13] - 2026-06-07
 
@@ -181,6 +246,7 @@
 ### Validação
 - **Linux CI**: `cargo build --all-features`, `cargo clippy --all-features -- -D warnings`, `cargo test --all-features` (150 testes de lib passando) — todos verdes.
 - **Windows CI**: Os 4 erros sob `RUSTFLAGS=-Dwarnings` são eliminados. O padrão `#[cfg_attr(not(unix), allow(...))]` é o mesmo já validado em `signal.rs` (GAP 06) que historicamente passa em CI Windows desde v0.1.4.
+
 
 ## [0.1.12] - 2026-06-07
 
@@ -225,6 +291,7 @@
 - `atomwrite write` agora escreve um sidecar WAL apenas quando a env var `ATOMWRITE_WAL=1` está definida, OU quando `--strict-atomic` é passado. O comportamento padrão de `write` NÃO escreve o sidecar (consultivo apenas).
 - Veja `docs/MIGRATION.pt-BR.md` para o guia de upgrade completo de v0.1.11 para v0.1.12.
 
+
 ## [0.1.11] - 2026-06-05
 
 ### Corrigido (Falhas de CI - windows-2025-vs2026 + signal test flaky no Linux)
@@ -248,10 +315,12 @@
 - A escrita da mensagem de shutdown foi movida de `src/main.rs` para `src/signal.rs` como uma `pub fn` documentada. A função é `#[cfg(unix)]` (dependência de libc) e no-op em não-Unix. Apenas movimento de API interna.
 - v0.1.10 foi yanked do crates.io. Novo `cargo install` resolverá para v0.1.11.
 
+
 ## [0.1.10] - 2026-06-05
 
 ### Corrigido (Falhas de CI - GAP 20 follow-up)
 - **`signal_test::shutdown_message_on_stderr` faz flush da mensagem via `io::stderr().lock()`** — A primeira correção do v0.1.8 moveu `eprintln!` do signal handler para a main thread, mas usou `writeln!(io::stderr(), ...)` que é fully-buffered quando stderr é redirecionado para um pipe (como em `Stdio::piped()` do `cargo test`). O buffer nunca era flushado antes do processo terminar com o exit code do sinal, então o teste pai via stderr vazio. A correção usa `io::stderr().lock()` para adquirir o guard `StderrLock`, que faz flush do buffer no Drop. Isso garante que a mensagem chegue ao pipe de stderr capturado antes do processo terminar. CI ubuntu-latest confirmará no push.
+
 
 ## [0.1.8] - 2026-06-05
 
@@ -273,6 +342,7 @@
 - A mudança no signal handler é interna: consumidores externos que dependiam da mensagem de shutdown aparecer no stderr continuam a vê-la; ela agora é emitida pela main thread em vez do signal handler.
 - A mudança no fsync de backup do Windows é interna: arquivos de backup ainda são criados e atômicos; a única diferença é que o flush de durabilidade para metadados de backup é best-effort. Se um usuário futuro relatar perda de dados em backup, podemos re-apertar o fsync.
 
+
 ## [0.1.7] - 2026-06-05
 
 ### Corrigido (Falhas de CI - GAP 15)
@@ -293,7 +363,7 @@
 - `cargo test --all-features`: 302 de 303 testes PASS (1 falha pré-existente em `signal_test::shutdown_message_on_stderr` rastreada como GAP 16, não relacionada ao GAP 15)
 - `cargo fmt -- --check`: PASS
 - `cargo audit`: PASS (sem vulnerabilidades, sem flag `--ignore`)
-- `cargo deny check`: PASS (advisories, bans, licenses, sources todos OK)
+- `cargo deny check`: PASS (advisories, bans, sources todos OK)
 - Cross-compile `x86_64-pc-windows-gnu`: PASS (build, clippy -D warnings, tests --no-run)
 - Cross-compile `i686-pc-windows-gnu`: PASS (check --all-features)
 
@@ -306,6 +376,7 @@
 - **`signal_test::shutdown_message_on_stderr` não falha mais em macOS** — Substituída a chamada `libc::write(2, SHUTDOWN_MSG.as_ptr().cast(), ...)` nos handlers de SIGINT e SIGTERM por `eprintln!`. O stderr do runtime Rust é capturado de forma confiável pelo `Stdio::piped()` no processo de teste, enquanto writes brutos via libc eram perdidos na herança de process group do cargo test. A constante `SHUTDOWN_MSG` foi removida por ser dead code.
 - **Confiabilidade do test em `tests/signal_test.rs`** — Aumentado o `thread::sleep` de 50ms para 2000ms antes de enviar SIGINT. Os 50ms anteriores eram insuficientes para que o processo filho do atomwrite inicializasse completamente tracing, mimalloc, e signal handlers antes de receber o sinal. Aumentado o payload por arquivo de 100 para 1000 linhas para que o loop de search demore o suficiente para confirmar shutdown gracioso. O teste agora é estável em 5 execuções consecutivas.
 
+
 ## [0.1.6] - 2026-06-05
 
 ### Adicionado (Badges do README)
@@ -315,6 +386,7 @@
 - v0.1.6 é NÃO-BREAKING. A mudança é puramente visual (imagem de badge no README).
 - Nenhuma mudança de código ou API pública.
 - Nenhum guia de migração no CHANGELOG é necessário.
+
 
 ## [0.1.5] - 2026-06-05
 
@@ -335,6 +407,7 @@
 - v0.1.5 é NÃO-BREAKING. Os lints promovidos para deny já são satisfeitos pelo código atual.
 - v0.1.5 não altera nenhuma API pública nem comportamento. Apenas apertar a fiscalização de documentação e remover metadata obsoleta.
 - Nenhum guia de migração no CHANGELOG é necessário.
+
 
 ## [0.1.4] - 2026-06-05
 

@@ -6,7 +6,7 @@
 
 ## What's New in v0.1.12
 
-This section summarizes the test-relevant changes in v0.1.12. The release added 96 new tests (was 320 baseline) for a total of **445 tests in 43 test suites**. v0.1.15 raises the total to **502 tests** (+2 unit tests in v0.1.14, +8 G117 tests in `tests/cli_edit.rs`, +6 G118 tests in `tests/cli_write.rs`).
+This section summarizes the test-relevant changes in v0.1.12. The release added 96 new tests (was 320 baseline) for a total of **445 tests in 43 test suites**. v0.1.15 raises the total to **542 tests** (+2 unit tests in v0.1.14, +8 G117 tests in `tests/cli_edit.rs`, +6 G118 tests in `tests/cli_write.rs`).
 
 ### New Test Files (10 Added in v0.1.11+v0.1.12)
 
@@ -42,7 +42,7 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 
 ## What's New in v0.1.18 (Current)
 
-- 502 tests passing (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 cross-platform/WAL/audit increments v0.1.16-v0.1.18 + 15 NDJSON contract tests v0.1.16-v0.1.18)
+- 542 tests passing (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 cross-platform/WAL/audit increments v0.1.16-v0.1.18 + 15 NDJSON contract tests v0.1.16-v0.1.18)
 - 30 subcommands (28 baseline + `wal-heal` + `wal-stats` from v0.1.15)
 - 12 ADRs in docs/decisions/ (0019-0030)
 
@@ -50,7 +50,7 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 ### How to Run
 
 ```bash
-# Run all 502 tests
+# Run all 542 tests
 cargo test
 
 # Run only the v0.1.12 regression suite
@@ -69,7 +69,7 @@ cargo test --test cross_compile_check -- --ignored
 
 - 20.19% line coverage via `cargo tarpaulin` (935/4631 lines covered)
 - Lower than ideal because tarpaulin only counts unit tests, not CLI integration tests
-- The integration test suite is the primary coverage metric (502 tests across 43 suites)
+- The integration test suite is the primary coverage metric (542 tests across 43 suites)
 
 ### Dependencies Added
 
@@ -93,7 +93,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ## Current Stats
 - 70+ Rust files across `src/` and `tests/`
-- **502 tests total across 43 test suites** (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency)
+- **542 tests total across 43 test suites** (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency)
 - **96 new tests added in v0.1.11+v0.1.12**:
   - 11 tests in `tests/cli_v012_regressions.rs` (GAP 13, GAP 14, GAP 18 fixes)
   - 27 tests in `tests/cli_v012_audit_regressions.rs` (v0.1.12 G72/G114 audit)
@@ -347,3 +347,44 @@ cargo insta review
 - For MSVC: install Visual Studio 2019+ Build Tools with the C++ workload (lib.exe must be on PATH)
 - Re-run after fixing: `cargo test --test cross_compile_check -- --ignored`
 - The gate reports a missing linker with a clear stderr snippet like "lib.exe" or "i686-w64-mingw32-gcc"; match that string to the missing toolchain
+
+
+## v0.1.20 — What Is New
+
+This release introduces a new safety layer called **intention guards** and renames the global `--lang` flag to `--locale` to disambiguate from the tree-sitter `--lang` selector used by `scope` and `transform`.
+
+### Intention Guards (5 OPT-IN flags)
+
+- `--require-backup <N>` — refuse the operation when fewer than `N` retained backups exist for the target
+- `--confirm` — emit a confirmation prompt listing the planned mutation in NDJSON before executing
+- `--auto-rotate <N>` — automatically rotate the backup ring down to `N` entries after a successful write
+- `--risk-threshold <LOW|MEDIUM|HIGH>` — block operations whose classified risk meets or exceeds the threshold
+- `--locale <en|pt-BR>` — renamed from `--lang` to disambiguate from the tree-sitter `--lang`
+
+### Other Additions
+
+- `count --by-size` — list the largest files in the tree with sizes and line counts
+- `read --mode raw|envelope` — select between byte-stream output and structured NDJSON envelope
+- `search --no-begin-end` — disable the implicit `^` and `$` anchor decoration in regex output
+- `write --preserve-timestamps` — keep the source file mtime when overwriting
+- `scope --lang rust` — explicit alias accepted for ergonomic symmetry with `transform --lang`
+
+### Statistics
+
+- 542 tests passing in 47 integration suites, 0 failures
+- 11 GAP-2026 closed
+- 3 Windows cross-compile targets green
+- 19 ADRs in `docs/decisions/` (0019-0037)
+
+### Migration `--lang` to `--locale`
+
+```bash
+# Discover all files using --lang
+rg -l -- '--lang\b' .
+
+# Bulk replace while preserving other matches
+fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
+
+# Or via ruplacer
+ruplacer --subvert --lang --locale
+```

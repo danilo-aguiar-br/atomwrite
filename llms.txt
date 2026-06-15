@@ -1,36 +1,36 @@
 # atomwrite
 
-> Atomic file operations for LLM agents -- one CLI, zero corruption
+> Atomic file operations for LLM agents — one CLI, zero corruption
 
 atomwrite is a Rust CLI that provides 28 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
-**Latest release: v0.1.15** (2026-06-11) — G117 fixed: multi-pair `edit --old/--new` gains fuzzy parity (9-strategy cascade per pair), per-pair `pair_results` reporting, `failed_pair_index` on errors, and an opt-in `--partial` flag; GAP 18 fixed (Windows CI snapshot redacts `dir_fsync`); CI MSRV job aligned to 1.88. G118 fixed: `write` resolves the target against the workspace before `--append`/`--prepend`, `--expect-checksum`, and `--line-ending auto` — with a divergent CWD, append no longer truncates and checksum drift exits 82 instead of silently overwriting (ADR-0027). Previous highlights (v0.1.12): G72 REAL syntax check via tree-sitter (24 languages), G114 WAL sidecar for crash recovery, v14 Tier 3 structured config editors (set/get/del/case) and AST tools (query/outline). See `CHANGELOG.md` for full release notes and `docs/decisions/` for the ADRs (0019-0027).
+**Latest release: v0.1.20** (2026-06-15) — 11 GAP-2026 closed, intention guards (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`), `--locale` rename (was `--lang`), `count --by-size`, `read --mode`, `search --no-begin-end`, `write --preserve-timestamps`, `scope --lang` alias, 542 tests in 47 suites, ADRs 0031-0037. Highlights (v0.1.19, 2026-06-14): G121 path resolution helper, real S-expression query, 7 exit code documentation drifts consolidated. See `CHANGELOG.md` for full release notes and `docs/decisions/` for the ADRs (0019-0037).
 
-**Previous release: v0.1.11** (2026-06-05) — Windows E0433 fix (libc was gated by cfg(unix) but referenced in main.rs), signal_test race fix (ShutdownSignal singleton, ATOMWRITE_READY_FILE for race-free readiness), 11 cli_batch Windows path backslash fix.
+**Previous release: v0.1.19** (2026-06-14) — G121 path resolution helper that unifies jail resolution across all write subcommands; real S-expression `query` mode via `tree-sitter`; consolidation of 7 exit code documentation drifts to match the canonical list (ADR-0031).
 
 ## 28 Subcommands
 
 ### Core I/O (7)
-- `read` — read files with metadata, checksum, optional content
-- `write` — create or overwrite files atomically via stdin
-- `edit` — surgically edit by line number, text marker, or exact/fuzzy match; multi-pair `--old`/`--new` has per-pair fuzzy + `pair_results` + `--partial` (v0.1.15)
+- `read` — read files with metadata, checksum, optional content. `--mode raw|envelope` selects byte-stream vs NDJSON envelope
+- `write` — create or overwrite files atomically via stdin. `--preserve-timestamps` keeps source mtime
+- `edit` — surgically edit by line number, text marker, or exact/fuzzy match; multi-pair `--old`/`--new` with per-pair fuzzy cascade, `pair_results` and `--partial` (v0.1.15)
 - `delete` — delete files with optional backup
 - `copy` — copy files with checksum verification
 - `move` — move or rename files atomically (EXDEV copy-fallback)
 - `apply` — apply patches from stdin (unified diff, search/replace, full, markdown)
 
 ### Search and replace (3)
-- `search` — search file contents in parallel (ripgrep engine)
+- `search` — search file contents in parallel (ripgrep engine). `--no-begin-end` disables anchor emission
 - `replace` — replace text across files with atomic writes
 - `transform` — AST refactoring via ast-grep (306 languages)
 
 ### Inspection (9)
 - `hash` — calculate BLAKE3 checksums
-- `count` — count lines, files by extension
+- `count` — count lines, files by extension. `--by-size` lists largest files
 - `diff` — compare two files (unified, stat, or changes)
 - `list` — list files in a directory tree
 - `extract` — extract fields from NDJSON input via pipe
-- `scope` — grammatical scoping (delete all comments, etc.)
+- `scope` — grammatical scoping (delete all comments, etc.). `--lang rust` alias accepted
 - `regex` — generate regex from examples
 - `calc` — math and unit conversions
 - `completions` — generate shell completions (bash, zsh, fish, elvish, powershell)
@@ -52,22 +52,28 @@ atomwrite is a Rust CLI that provides 28 subcommands for file manipulation with 
 
 Plus the G72 syntax check on `write --syntax-check` (24 languages, exit 88).
 
-## v0.1.12 Highlights
+## v0.1.20 Highlights — Intention Guards
 
-- **6 new subcommands** (set, get, del, case, query, outline) for structured config editing and AST analysis
-- **G72 REAL syntax check** via tree-sitter on `atomwrite write --syntax-check` (24 languages, exit 88 on first error)
-- **G114 WAL sidecar** for crash recovery: `.atomwrite.journal.<target>.atomwrite.journal.json` with `Started`/`Committed` entries. `recover_orphan_journals(dir)` is consultative
-- **5 new error variants**: `LockTimeout` (83), `SyntaxError` (88), `ExdevFallbackDisabled` (91), `CopyBackBlake3Failed` (92), `OrphanJournal` (93). All bilingual EN/PT-BR with actionable `ErrorContext` suggestions
-- **Dependency**: `tree-sitter-language-pack = "1.8"` with `download` + `dynamic-loading` features. Parsers download on first use
-- **461 tests passing** (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118). 43 integration test suites, 0 failures
-- **7 ADRs** in `docs/decisions/` (0019-0025): tree-sitter-language-pack choice, WAL sidecar design, query/outline kind-name only, G72 replaces heuristic, G114 consultive, get_toml_path manual, positions opt-in
+- **5 intention-guard flags** form a new safety layer that intercepts destructive mutations before they touch the disk:
+  - `--require-backup <N>` — refuse the operation when fewer than `N` retained backups exist for the target
+  - `--confirm` — emit a confirmation prompt listing the planned mutation in NDJSON before executing
+  - `--auto-rotate <N>` — automatically rotate the backup ring down to `N` entries after a successful write
+  - `--risk-threshold <LOW|MEDIUM|HIGH>` — block operations whose classified risk meets or exceeds the threshold
+  - `--locale <en|pt-BR>` — renamed from `--lang` to avoid clashing with the language selector used by `scope` and `transform` (G121+)
+- **`count --by-size`** — list the largest files in the tree with sizes and line counts
+- **`read --mode raw|envelope`** — select between byte-stream output and structured NDJSON envelope
+- **`search --no-begin-end`** — disable the implicit `^` and `$` anchor decoration in regex output
+- **`write --preserve-timestamps`** — keep the source file mtime when overwriting
+- **542 tests passing** in 47 integration suites, 0 failures, 3 Windows cross-compile targets green
+- **19 ADRs** in `docs/decisions/` (0019-0037): v0.1.20 adds 0031 (exit code canonicalization), 0032 (intention guards as new layer), 0033-0037 covering scope/lang alias, locale rename, by-size count, read mode, no-begin-end
 
-## v0.1.12 Migration From v0.1.11
+## v0.1.20 Migration From v0.1.19
 
-- New subcommands `set`, `get`, `del`, `case`, `query`, `outline` are ADDITIVE. No existing subcommand was renamed or removed
-- New exit codes 83, 88, 91, 92, 93 are ADDITIVE. Existing code 0-86 unchanged
-- `atomwrite write --syntax-check` is OPT-IN. Default `write` behavior is unchanged
-- `atomwrite write` now writes a WAL sidecar only when the env var `ATOMWRITE_WAL=1` is set, OR when `--strict-atomic` is passed. Default `write` does NOT write the sidecar
+- `--lang` on global config commands is renamed to `--locale` to disambiguate from the tree-sitter `--lang` used by `scope` and `transform`. Use `sd` or `ruplacer` to update existing scripts:
+  - `rg -l -- '--lang\b' .` then `ruplacer --subvert --lang --locale` (or `fd -e sh -e md -x sd -- '--lang\b' '--locale' {}`)
+- Intention guards are OPT-IN. Default behavior is unchanged
+- `count --by-size` is ADDITIVE. Default `count` output unchanged
+- `read --mode raw` is ADDITIVE. Default envelope output unchanged
 - See `docs/MIGRATION.md` for the full upgrade guide
 
 ## Primary Documentation
@@ -76,14 +82,14 @@ Plus the G72 syntax check on `write --syntax-check` (24 languages, exit 88).
 - [HOW_TO_USE](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/HOW_TO_USE.md): Quickstart guide
 - [COOKBOOK](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/COOKBOOK.md): Recipes for common tasks
 - [AGENTS.md](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget
-- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.md): 461 tests across 43 test suites
+- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.md): 542 tests across 47 test suites
 - [MIGRATION](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/MIGRATION.md): Migration guide between versions
 - [INSTALL](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/INSTALL.md): Platform-specific install instructions
 - [CROSS_PLATFORM](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/CROSS_PLATFORM.md): macOS, Linux, Windows quirks
 - [CHANGELOG](https://github.com/daniloaguiarbr/atomwrite/blob/main/CHANGELOG.md): Release history
 - [CONTRIBUTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/CONTRIBUTING.md): Development setup and guidelines
 - [SECURITY](https://github.com/daniloaguiarbr/atomwrite/blob/main/SECURITY.md): Vulnerability reporting
-- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 7 ADRs (v0.1.12 architectural decisions)
+- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 19 ADRs (v0.1.12 + v0.1.19 + v0.1.20 architectural decisions)
 - [docs/schemas/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/schemas/): 22 stable JSON Schema contracts
 - [Crates.io](https://crates.io/crates/atomwrite): Package registry
 - [Repository](https://github.com/daniloaguiarbr/atomwrite): Source code

@@ -211,7 +211,7 @@ v0.1.18 additions (G118 universal resolve-first):
 
 ## Architectural Decision Records (ADRs)
 - See `docs/decisions/README.md` for the full ADR index
-- 12 ADRs have been added since v0.1.12 (0019-0030), all following the Michael Nygard format (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
+- 19 ADRs have been added since v0.1.12 (0019-0037), all following the Michael Nygard format (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
 - 0019 — tree-sitter-language-pack choice
 - 0020 — WAL sidecar path and JSONL shape
 - 0021 — v14 query/outline accepts only kind names, not S-expressions
@@ -226,8 +226,17 @@ v0.1.18 additions (G118 universal resolve-first):
 - 0030 — v0.1.18 trio: replace pre-validates root paths, G120 L3 cross-flag test, G117 Unicode/CRLF/multi-pair edge cases
 
 
+- 0031 — Exit code canonicalization: 7 documentation drifts consolidated to match the canonical list (v0.1.19)
+- 0032 — Intention guards: a new safety layer of 5 OPT-IN flags (--require-backup, --confirm, --auto-rotate, --risk-threshold, --locale) intercepting destructive mutations before they touch disk (v0.1.20)
+- 0033 — scope --lang alias accepted for ergonomic symmetry with transform --lang (v0.1.20)
+- 0034 — --locale rename from --lang to disambiguate from the tree-sitter language selector (v0.1.20)
+- 0035 — count --by-size: list the largest files in the tree with sizes and line counts (v0.1.20)
+- 0036 — read --mode raw|envelope: select between byte-stream output and structured NDJSON envelope (v0.1.20)
+- 0037 — search --no-begin-end: disable the implicit ^ and $ anchor decoration in regex output (v0.1.20)
+
+
 ## Test Architecture
-- 502 tests across 43 test suites (152 unit tests inside `src/` + integration suites + doctests)
+- 542 tests across 47 test suites (152 unit tests inside `src/` + integration suites + doctests)
 - Unit tests are colocated with the code under `#[cfg(test)]` modules
 - Integration tests live in `tests/` and use `assert_cmd` + `predicates` for shell-out tests
 - Property-based tests via `proptest` for checksum and backup

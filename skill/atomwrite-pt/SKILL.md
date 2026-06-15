@@ -1,13 +1,25 @@
 ---
 name: atomwrite
 description: |
-  Use atomwrite para TODAS as operações de arquivo: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline (30 subcomandos no total a partir da v0.1.18).
+  Use atomwrite para TODAS as operações de arquivo: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline (30 subcomandos no total a partir da v0.1.20).
   Auto-invocar quando o usuário pedir: escrever arquivos, buscar código, substituir texto, refatorar AST, gerar regex, calcular expressões, operações em lote, verificar checksums, listar estrutura, escopo gramatical, backup de arquivos, rollback, aplicar patches, editar e disparar build do cargo, preservar timestamps de arquivos.
   Palavras-chave: escrita atômica, operação de arquivo, NDJSON, BLAKE3, checksum, refatorar, ast-grep, lote, busca paralela, scoping, backup, rollback, aplicar patch, timeout, grep, instalar completions, mtime, preservar timestamps, preservação de timestamp, consciência de sistema de build, cargo build, make, cmake.
 ---
 
 
 # atomwrite
+## TL;DR — v0.1.20 (2026-06-15)
+### OBRIGATÓRIO
+- v0.1.20 fecha 11 GAP-2026 (001-011) — veja `gaps.md` para auditoria completa
+- 542 testes passam em 47 suítes (de 515 em v0.1.19; +27 novos)
+- 4 ADRs adicionados: ADR-0034 (anti-pattern help-driven testing), ADR-0035 (guardas de intenção de write), ADR-0036 (cobertura de edit --partial), ADR-0037 (rename global de locale)
+- 6 dos 11 GAP-2026 eram help-first drift (flag declarada no --help antes da implementação existir) — veja ADR-0034
+- 4 dos 11 GAP-2026 tinham teste de regressão insuficiente — veja ADR-0034
+- GAP-2026-011 adicionou 6 camadas de defesa em profundidade de write-safety DEPOIS do incidente c24-framework34.html de 2026-06-15 — veja ADR-0035
+- QUEBRA de CLI: `--lang` global renomeado para `--locale`. Env var `ATOMWRITE_LANG` e campo Rust `args.global.lang` permanecem estáveis
+- Todas as outras adições v0.1.20 são aditivas e opt-in (comportamento default de `write` inalterado)
+
+
 ## Identidade Principal
 ### OBRIGATÓRIO
 - stdout é SEMPRE NDJSON (um objeto JSON por linha)
@@ -1061,7 +1073,7 @@ python3 -c "import json, jsonschema; \\
 
 ## Testes e Gates de Qualidade (v0.1.12)
 ### OBRIGATÓRIO — Postura de Qualidade
-- **502 testes em 44 suítes de teste passam com zero regressões** a partir da v0.1.18
+- **542 testes em 47 suítes de teste passam com zero regressões** a partir da v0.1.20
 - **Decomposição da contagem de testes**: 320 baseline (v0.1.10) + +29 (v0.1.11) + +96 (v0.1.12) + +2 (v0.1.14) + +14 (v0.1.15: 8 G117 + 6 G118) = 461 (v0.1.15) + +41 (v0.1.18: G118 + G119 + G120 + 2 ADRs) = 502 total
 - **Novos arquivos de teste v0.1.12 (10)**: `cli_set`, `cli_case`, `cli_query`, `cli_outline`, `cli_get_del`, `cli_v012_syntax_check`, `cli_v012_wal`, `cli_v012_audit_regressions` (27 testes), `cli_v012_xattr_reflink`, `cli_v012_batch4_regressions` (23 testes)
 - **Cobertura de teste v0.1.12 por categoria**: G72 syntax check (16 testes), G114 WAL (8 testes), v14 query/outline (10 testes), TOML dotted path (6 testes), set/get/del/case (15 testes), regressões de auditoria (50 testes)
@@ -1093,7 +1105,7 @@ python3 -c "import json, jsonschema; \\
 - **5 novas variantes de erro ADITIVAS**: `LockTimeout` (83), `SyntaxError` (88), `ExdevFallbackDisabled` (91), `CopyBackBlake3Failed` (92), `OrphanJournal` (93). Todas bilíngues com sugestões acionáveis
 - **`atomwrite write --syntax-check` é OPT-IN**: comportamento padrão de `write` não mudou. Verificação de sintaxe G72 REAL via tree-sitter (24 linguagens)
 - **Sidecar WAL é apenas consultivo**: `atomic_write` escreve `.atomwrite.journal.<target>.atomwrite.journal.json` apenas quando `ATOMWRITE_WAL=1` está definido OU `--strict-atomic` é passado. `write` padrão NÃO escreve o sidecar. `recover_orphan_journals(dir)` é consultivo
-- **502 testes passam em 44 suites** (eram 320 em v0.1.10). Cobertura completa entre todos os 30 subcomandos
+- **542 testes passam em 47 suítes** (eram 320 em v0.1.10). Cobertura completa entre todos os 30 subcomandos
 - **7 ADRs adicionados** em `docs/decisions/` (0019-0025) e 7 novos JSON Schemas em `docs/schemas/`
 - **Nova dependência**: `tree-sitter-language-pack = "1.8"` com features `download` + `dynamic-loading`. Footprint da instalação fica em torno de 5-10 MB
 
@@ -1242,6 +1254,43 @@ atomwrite --workspace . write --preserve-timestamps src/snapshot.rs < new.rs
 - USAR `scope --lang rust` como atalho para `scope --language rust`
 - Ambas as formas são aceitas — `--lang` no `scope` é o seletor de linguagem local do subcomando
 - Isso evita colisão com a flag global de locale que foi renomeada para `--locale`
+
+
+## GAP-2026 v0.1.20 — Cobertura Completa
+### OBRIGATÓRIO — Os 11 Gaps Fechados em v0.1.20
+- GAP-2026-001: `count --by-size` finalmente implementa a flag da help (teste de regressão `count_by_size_top_n_returns_sorted`)
+- GAP-2026-002: `write --preserve-timestamps` (paridade com edit/replace)
+- GAP-2026-003: alias `scope --lang` após rename global `--lang` → `--locale` (ADR-0037)
+- GAP-2026-004: `write --line-ending crlf` aceita ambas as formas `crlf` e `cr-lf` (4 variantes com `value` + `alias`)
+- GAP-2026-005b: semântica de `edit --partial` (single-pair retorna NO_MATCHES exit 1; multi-pair aplica matched e relata unmatched) — ADR-0036
+- GAP-2026-006: testes de regressão de `diff --algorithm` para myers/patience/lcs
+- GAP-2026-007: `count --by-extension` filtra sufixos timestamp de backup via `BACKUP_RE` `\.bak\.\d{8}_\d{6}$`
+- GAP-2026-008: `read --head/--line/--lines` reporta contagem de linhas FILTRADA (novo campo `lines_total` preserva o original)
+- GAP-2026-009: `read` emite discriminador `mode` (`full|head|tail|line|lines|grep|stat`)
+- GAP-2026-010: `search --no-begin-end` para output mais limpo de walks com zero matches
+- GAP-2026-011: guardas de intenção de `write` (defesa em profundidade após incidente c24-framework34.html de 2026-06-15) — 6 camadas L1-L6 (telemetria, --require-backup, --confirm, --preview, --auto-rotate, risk_assessment no envelope) — ADR-0035
+
+### OBRIGATÓRIO — Origem das Guardas de Intenção de Write (c24-framework34.html)
+- Em 2026-06-15, `atomwrite write` sem `--append` truncou c24-framework34.html (491.827 bytes) para poucos bytes
+- Aproximadamente 127 linhas (~9 KB) de trabalho de 2026-06-15 foram perdidas
+- Um backup manual `cp` de 2026-06-14 23:49 existia mas não cobria o trabalho de 2026-06-15
+- Sem `--backup`, sem prompt de confirmação, sem telemetria de delta de tamanho, o caminho entre a intenção do operador e o conteúdo no disco era um syscall direto
+- v0.1.20 adiciona 6 camadas de defesa em profundidade (L1-L6) para prevenir recorrência — veja ADR-0035
+- L1 telemetria (size_delta_pct) é INFORMATIVA (default off, opt-in via `--risk-threshold`)
+- L2 `--require-backup` ABORTA com `InvalidInput` (exit 65) se `--backup` não foi setado
+- L3 `--confirm` pergunta `Overwrite <path> (<bytes> bytes)? [y/N]` para alvos > 100 KB
+- L4 `--preview` emite diff estrutural antes do atomic write
+- L5 `--auto-rotate` força backup quando alvo foi modificado em 24h
+- L6 campo `risk_assessment` no envelope (somente quando uma guarda dispara)
+
+### OBRIGATÓRIO — v0.1.19 (release predecessora) — 3 ADRs Adicionados
+- ADR-0031 — G121 path resolution helper: `search` e `replace` resolvem root paths contra o workspace via helper compartilhado (CWE-367)
+- ADR-0032 — query S-expr real implementation: `query` aceita S-expressions tree-sitter via `Query::new` (docs v0.1.12 prometiam mas código nunca implementou)
+- ADR-0033 — v0.1.19 exit code drift consolidation: 7 drifts de exit code entre docs publicadas e binário (STATE_DRIFT, SYNTAX_ERROR_DETECTED, ORPHAN_JOURNAL, BROKEN_PIPE, binary read, ARGUMENT_PARSE_ERROR, missing --workspace)
+
+### OBRIGATÓRIO — Anti-Pattern Help-Driven Testing (ADR-0034)
+- 5 dos 11 GAP-2026 (001, 003, 004, 005b, 006) tinham clap `--help` declarando flag antes da implementação existir
+- Regra v0.1.21+: `cargo test --doc` deve parsear cada bloco de help e validar que cada flag está wired a um teste de regressão cujo nome inclui a flag
 
 ## Fluxo de Recovery WAL (v0.1.12)
 ### OBRIGATÓRIO

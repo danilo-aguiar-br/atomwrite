@@ -54,6 +54,24 @@
   - `--auto-rotate` (L5): when `--backup` is active, force a rotation backup if the target was modified within the last 24 hours.
   - `--risk-threshold <PERCENT>` (default 50): L1 size-guard threshold; emits a stderr warning (`low`/`medium`/`high`) when the size delta exceeds the threshold.
   - Telemetry: `WriteOutput.risk_assessment` (optional, GAP-2026-011 L6) carries the original/new bytes, delta percentage, risk level, and which guard triggered.
+#### ADR
+- ADR-0034 — help-driven testing anti-pattern: clap `--help` nunca mais declarado antes da implementação (5 dos 11 GAP-2026 tinham esse anti-pattern)
+- ADR-0035 — write intention guards: 4 flags defense-in-depth (--require-backup, --confirm, --auto-rotate, --risk-threshold) + `risk_assessment` no envelope, motivadas pelo incident c24-framework34.html de 2026-06-15
+- ADR-0036 — `edit --partial`: single-pair com zero matches retorna NO_MATCHES (exit 1); multi-pair aplica matched e relata unmatched em `pair_results`
+- ADR-0037 — rename `--lang` global para `--locale` (env var `ATOMWRITE_LANG` permanece, campo `args.global.lang` permanece, namespace `--lang` liberado para subcomandos como alias de `--language`)
+
+#### Migration Notes
+- **Breaking change na CLI surface**: scripts que passavam `--lang <locale>` devem migrar para `--locale <locale>` (one-liner: `rg -l '\\-\\-lang\\b' bin/ scripts/ && sd -- '\\-\\-lang\\b' '--locale' bin/ scripts/`)
+- Env var `ATOMWRITE_LANG` e campo programático `args.global.lang` permanecem estáveis — CI matrices, container wrappers e consumidores Rust não precisam de mudança
+- Subcomandos que tinham `--language` agora também aceitam `--lang` como alias (ex.: `atomwrite scope --lang rust`)
+
+#### Validation
+- `cargo build --release` OK
+- `cargo clippy --all-targets -- -D warnings` OK
+- 542 testes passando em 47 suites (up from 515 in 46 suites in v0.1.19, +27 new: 11 GAP-2026 closures + 16 intention-guard tests)
+- 4 novos ADRs: 0034 (help-driven testing), 0035 (write intention guards), 0036 (edit partial), 0037 (locale rename)
+- 11 GAP-2026 fechados (001-011), 100% cobertura dos gaps de auditoria local
+- Cross-compile verificado em 3 targets Windows: x86_64-gnu, i686-gnu, x86_64-msvc
 
 
 ## [0.1.19] - 2026-06-14

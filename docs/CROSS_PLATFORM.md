@@ -54,7 +54,7 @@ This section summarizes cross-platform-relevant changes in v0.1.12.
 
 ### Test Coverage
 
-- 502 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118 in v0.1.15)
+- 542 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118 in v0.1.15)
 - Cross-compile gate: `cargo test --test cross_compile_check -- --ignored` validates Windows GNU/MSVC targets
 - 5 signal tests in `tests/signal_test.rs` cover SIGINT/SIGTERM/SIGPIPE/batch/shutdown
 - See [docs/decisions/README.md](README.md) for architectural decisions
@@ -203,3 +203,44 @@ This section summarizes cross-platform-relevant changes in v0.1.12.
 - Claude Code (Anthropic)
 - Cursor (Anysphere)
 - Windsurf (Codeium)
+
+
+## v0.1.20 — What Is New
+
+This release introduces a new safety layer called **intention guards** and renames the global `--lang` flag to `--locale` to disambiguate from the tree-sitter `--lang` selector used by `scope` and `transform`.
+
+### Intention Guards (5 OPT-IN flags)
+
+- `--require-backup <N>` — refuse the operation when fewer than `N` retained backups exist for the target
+- `--confirm` — emit a confirmation prompt listing the planned mutation in NDJSON before executing
+- `--auto-rotate <N>` — automatically rotate the backup ring down to `N` entries after a successful write
+- `--risk-threshold <LOW|MEDIUM|HIGH>` — block operations whose classified risk meets or exceeds the threshold
+- `--locale <en|pt-BR>` — renamed from `--lang` to disambiguate from the tree-sitter `--lang`
+
+### Other Additions
+
+- `count --by-size` — list the largest files in the tree with sizes and line counts
+- `read --mode raw|envelope` — select between byte-stream output and structured NDJSON envelope
+- `search --no-begin-end` — disable the implicit `^` and `$` anchor decoration in regex output
+- `write --preserve-timestamps` — keep the source file mtime when overwriting
+- `scope --lang rust` — explicit alias accepted for ergonomic symmetry with `transform --lang`
+
+### Statistics
+
+- 542 tests passing in 47 integration suites, 0 failures
+- 11 GAP-2026 closed
+- 3 Windows cross-compile targets green
+- 19 ADRs in `docs/decisions/` (0019-0037)
+
+### Migration `--lang` to `--locale`
+
+```bash
+# Discover all files using --lang
+rg -l -- '--lang\b' .
+
+# Bulk replace while preserving other matches
+fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
+
+# Or via ruplacer
+ruplacer --subvert --lang --locale
+```

@@ -1,36 +1,36 @@
 # atomwrite
 
-> Operações atômicas de arquivo para agentes LLM -- um CLI, zero corrupção
+> Operações atômicas de arquivo para agentes LLM — um CLI, zero corrupção
 
 atomwrite é um CLI Rust que fornece 28 subcomandos para manipulação de arquivos com garantias de escrita atômica. Toda escrita usa tempfile + fsync + rename + fsync do diretório. Toda resposta é NDJSON com checksums BLAKE3. Construído para agentes LLM que precisam de operações de arquivo confiáveis e estruturadas sem risco de corrupção.
 
-**Release mais recente: v0.1.15** (2026-06-11) — G117 corrigido: `edit --old/--new` multi-par ganha paridade fuzzy (cascata de 9 estratégias por par), relato por par em `pair_results`, `failed_pair_index` nos erros e a flag opt-in `--partial`; GAP 18 corrigido (snapshot do CI Windows redige `dir_fsync`); job de MSRV do CI alinhado a 1.88. G118 corrigido: `write` resolve o alvo contra o workspace antes de `--append`/`--prepend`, `--expect-checksum` e `--line-ending auto` — com CWD divergente, o append não trunca mais e a divergência de checksum sai com 82 em vez de sobrescrever silenciosamente (ADR-0027). Destaques anteriores (v0.1.12): verificação de sintaxe G72 REAL via tree-sitter (24 linguagens), sidecar G114 WAL, editores de configuração v14 Tier 3 (set/get/del/case) e ferramentas AST (query/outline). Veja `CHANGELOG.pt-BR.md` para as notas completas e `docs/decisions/` para os ADRs (0019-0027).
+**Release mais recente: v0.1.20** (2026-06-15) — 11 GAP-2026 fechados, intention guards (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`), renomeação `--locale` (era `--lang`), `count --by-size`, `read --mode`, `search --no-begin-end`, `write --preserve-timestamps`, alias `scope --lang`, 542 testes em 47 suites, ADRs 0031-0037. Destaques anteriores (v0.1.19, 2026-06-14): helper de resolução de caminho G121, query S-expression real, consolidação de 7 derivas de documentação de exit codes. Veja `CHANGELOG.pt-BR.md` para as notas completas e `docs/decisions/` para os ADRs (0019-0037).
 
-**Release anterior: v0.1.11** (2026-06-05) — Correção de E0433 no Windows (libc estava gated por cfg(unix) mas referenciado em main.rs), correção de race no signal_test (ShutdownSignal singleton, ATOMWRITE_READY_FILE para readiness sem race), correção de barra invertida em 11 testes cli_batch do Windows.
+**Release anterior: v0.1.19** (2026-06-14) — Helper de resolução de caminho G121 que unifica a resolução do jail em todos os subcomandos de escrita; modo `query` S-expression real via `tree-sitter`; consolidação de 7 derivas de documentação de exit codes para casar com a lista canônica (ADR-0031).
 
 ## 28 Subcomandos
 
 ### I/O Principal (7)
-- `read` — ler arquivos com metadados, checksum, conteúdo opcional
-- `write` — criar ou sobrescrever arquivos atomicamente via stdin
-- `edit` — editar cirurgicamente por número de linha, marcador de texto ou match exato/fuzzy; multi-par `--old`/`--new` tem fuzzy por par + `pair_results` + `--partial` (v0.1.15)
+- `read` — ler arquivos com metadados, checksum, conteúdo opcional. `--mode raw|envelope` seleciona byte-stream vs envelope NDJSON
+- `write` — criar ou sobrescrever arquivos atomicamente via stdin. `--preserve-timestamps` preserva o mtime da fonte
+- `edit` — editar cirurgicamente por número de linha, marcador de texto ou match exato/fuzzy; multi-par `--old`/`--new` com cascata fuzzy por par, `pair_results` e `--partial` (v0.1.15)
 - `delete` — deletar arquivos com backup opcional
 - `copy` — copiar arquivos com verificação de checksum
 - `move` — mover ou renomear arquivos atomicamente (EXDEV copy-fallback)
 - `apply` — aplicar patches do stdin (unified diff, search/replace, full, markdown)
 
 ### Busca e substituição (3)
-- `search` — buscar conteúdo de arquivos em paralelo (motor ripgrep)
+- `search` — buscar conteúdo de arquivos em paralelo (motor ripgrep). `--no-begin-end` desabilita a emissão de âncoras
 - `replace` — substituir texto entre arquivos com escritas atômicas
 - `transform` — refatoração AST via ast-grep (306 linguagens)
 
 ### Inspeção (9)
 - `hash` — calcular checksums BLAKE3
-- `count` — contar linhas, arquivos por extensão
+- `count` — contar linhas, arquivos por extensão. `--by-size` lista os maiores arquivos
 - `diff` — comparar dois arquivos (unified, stat ou mudanças)
 - `list` — listar arquivos em uma árvore de diretórios
 - `extract` — extrair campos de entrada NDJSON via pipe
-- `scope` — scoping gramatical (deletar todos os comentários, etc.)
+- `scope` — scoping gramatical (deletar todos os comentários, etc.). Aceita alias `--lang rust`
 - `regex` — gerar regex a partir de exemplos
 - `calc` — matemática e conversões de unidades
 - `completions` — gerar completions de shell (bash, zsh, fish, elvish, powershell)
@@ -52,22 +52,28 @@ atomwrite é um CLI Rust que fornece 28 subcomandos para manipulação de arquiv
 
 Além da verificação de sintaxe G72 em `write --syntax-check` (24 linguagens, exit 88).
 
-## Destaques Da v0.1.12
+## Destaques Da v0.1.20 — Intention Guards
 
-- **6 novos subcomandos** (set, get, del, case, query, outline) para edição estruturada de configuração e análise AST
-- **Verificação de sintaxe G72 REAL** via tree-sitter em `atomwrite write --syntax-check` (24 linguagens, exit 88 no primeiro erro)
-- **Sidecar G114 WAL** para recuperação de crash: `.atomwrite.journal.<target>.atomwrite.journal.json` com entradas `Started`/`Committed`. `recover_orphan_journals(dir)` é consultivo
-- **5 novas variantes de erro**: `LockTimeout` (83), `SyntaxError` (88), `ExdevFallbackDisabled` (91), `CopyBackBlake3Failed` (92), `OrphanJournal` (93). Todas bilíngues EN/PT-BR com sugestões acionáveis em `ErrorContext`
-- **Dependência**: `tree-sitter-language-pack = "1.8"` com features `download` + `dynamic-loading`. Parsers baixam no primeiro uso
-- **461 testes passando** (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118). 43 suites de testes de integração, 0 falhas
-- **7 ADRs** em `docs/decisions/` (0019-0025): escolha de tree-sitter-language-pack, design do WAL sidecar, query/outline apenas kind-name, G72 substitui heurística, G114 consultivo, get_toml_path manual, positions opt-in
+- **5 flags de intention-guard** formam uma nova camada de segurança que intercepta mutações destrutivas antes de tocarem o disco:
+  - `--require-backup <N>` — recusa a operação quando menos de `N` backups retidos existem para o alvo
+  - `--confirm` — emite um prompt de confirmação listando a mutação planejada em NDJSON antes de executar
+  - `--auto-rotate <N>` — rotaciona automaticamente o anel de backups para `N` entradas após uma escrita bem-sucedida
+  - `--risk-threshold <LOW|MEDIUM|HIGH>` — bloqueia operações cujo risco classificado atinge ou excede o threshold
+  - `--locale <en|pt-BR>` — renomeado de `--lang` para evitar conflito com o seletor de linguagem usado por `scope` e `transform` (G121+)
+- **`count --by-size`** — lista os maiores arquivos da árvore com tamanhos e contagem de linhas
+- **`read --mode raw|envelope`** — seleciona entre saída byte-stream e envelope NDJSON estruturado
+- **`search --no-begin-end`** — desabilita a decoração implícita de âncoras `^` e `$` na saída regex
+- **`write --preserve-timestamps`** — preserva o mtime do arquivo fonte ao sobrescrever
+- **542 testes passando** em 47 suites de integração, 0 falhas, 3 targets de cross-compile Windows verdes
+- **19 ADRs** em `docs/decisions/` (0019-0037): v0.1.20 adiciona 0031 (canonização de exit codes), 0032 (intention guards como nova camada), 0033-0037 cobrindo scope/lang alias, renomeação locale, count by-size, read mode, no-begin-end
 
-## Migração De v0.1.11 Para v0.1.12
+## Migração De v0.1.19 Para v0.1.20
 
-- Novos subcomandos `set`, `get`, `del`, `case`, `query`, `outline` são ADITIVOS. Nenhum subcomando existente foi renomeado ou removido
-- Novos códigos de saída 83, 88, 91, 92, 93 são ADITIVOS. Códigos existentes 0-86 inalterados
-- `atomwrite write --syntax-check` é OPT-IN. Comportamento padrão de `write` não mudou
-- `atomwrite write` agora escreve um sidecar WAL apenas quando a env var `ATOMWRITE_WAL=1` está definida, OU quando `--strict-atomic` é passado. `write` padrão NÃO escreve o sidecar
+- `--lang` em comandos globais de configuração é renomeado para `--locale` para desambiguar do `--lang` tree-sitter usado por `scope` e `transform`. Use `sd` ou `ruplacer` para atualizar scripts existentes:
+  - `rg -l -- '--lang\b' .` e depois `ruplacer --subvert --lang --locale` (ou `fd -e sh -e md -x sd -- '--lang\b' '--locale' {}`)
+- Intention guards são OPT-IN. Comportamento padrão inalterado
+- `count --by-size` é ADITIVO. Saída padrão de `count` inalterada
+- `read --mode raw` é ADITIVO. Saída de envelope padrão inalterada
 - Veja `docs/MIGRATION.pt-BR.md` para o guia de upgrade completo
 
 ## Documentação Principal
@@ -76,14 +82,14 @@ Além da verificação de sintaxe G72 em `write --syntax-check` (24 linguagens, 
 - [HOW_TO_USE](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/HOW_TO_USE.pt-BR.md): Guia de início rápido
 - [COOKBOOK](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/COOKBOOK.pt-BR.md): Receitas para tarefas comuns
 - [AGENTS](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.pt-BR.md): Arquivo de descoberta de agente com contrato de saída e budget de tokens
-- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.pt-BR.md): 461 testes em 43 suites de teste
+- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.pt-BR.md): 542 testes em 47 suites de teste
 - [MIGRATION](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/MIGRATION.pt-BR.md): Guia de migração entre versões
 - [INSTALL](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/INSTALL.pt-BR.md): Instruções de instalação por plataforma
 - [CROSS_PLATFORM](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/CROSS_PLATFORM.pt-BR.md): Quirks de macOS, Linux, Windows
 - [CHANGELOG](https://github.com/daniloaguiarbr/atomwrite/blob/main/CHANGELOG.pt-BR.md): Histórico de releases
 - [CONTRIBUTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/CONTRIBUTING.pt-BR.md): Setup de desenvolvimento e diretrizes
 - [SECURITY](https://github.com/daniloaguiarbr/atomwrite/blob/main/SECURITY.pt-BR.md): Reporte de vulnerabilidades
-- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 7 ADRs (decisões arquiteturais da v0.1.12)
+- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 19 ADRs (decisões arquiteturais da v0.1.12 + v0.1.19 + v0.1.20)
 - [docs/schemas/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/schemas/): 22 contratos estáveis de JSON Schema
 - [Crates.io](https://crates.io/crates/atomwrite): Registro de pacotes
 - [Repositório](https://github.com/daniloaguiarbr/atomwrite): Código-fonte

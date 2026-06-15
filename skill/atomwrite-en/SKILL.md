@@ -1,13 +1,25 @@
 ---
 name: atomwrite
 description: |
-  Use atomwrite for ALL file operations: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline (30 subcommands total as of v0.1.18).
+  Use atomwrite for ALL file operations: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline (30 subcommands total as of v0.1.20).
   Auto-invoke when user asks to: write files, search code, replace text, refactor AST, generate regex, calculate expressions, batch operations, check checksums, list project structure, scope code by grammar, backup files, rollback changes, apply patches, edit and trigger cargo build, preserve file timestamps.
   Trigger on keywords: atomic write, file operation, NDJSON, BLAKE3, checksum, refactor, ast-grep, batch, search parallel, scope, backup, rollback, apply patch, timeout, grep, install completions, mtime, preserve-timestamps, preserve timestamps, build system aware, cargo build, make, cmake.
 ---
 
 
 # atomwrite
+## TL;DR — v0.1.20 (2026-06-15)
+### REQUIRED
+- v0.1.20 closes 11 GAP-2026 (001-011) — see `gaps.md` for full audit
+- 542 tests pass in 47 suites (up from 515 in v0.1.19; +27 new)
+- 4 ADRs added: ADR-0034 (help-driven testing anti-pattern), ADR-0035 (write intention guards), ADR-0036 (edit --partial coverage), ADR-0037 (global locale rename)
+- 6 of the 11 GAP-2026 were "help-first drift" (flag declared in --help before implementation existed) — see ADR-0034
+- 4 of the 11 GAP-2026 had insufficient regression test pinning — see ADR-0034
+- GAP-2026-011 added 6 layers of write-safety defense-in-depth AFTER the c24-framework34.html truncation incident of 2026-06-15 — see ADR-0035
+- BREAKING CLI change: global `--lang` renamed to `--locale`. Env var `ATOMWRITE_LANG` and Rust field `args.global.lang` stay stable
+- All other v0.1.20 additions are additive and opt-in (default `write` behavior unchanged)
+
+
 ## Core Identity
 ### REQUIRED
 - stdout is ALWAYS NDJSON (one JSON object per line)
@@ -1061,8 +1073,8 @@ python3 -c "import json, jsonschema; \\
 
 ## Tests and Quality Gates (v0.1.12)
 ### REQUIRED — Quality Posture
-- **502 tests in 44 test suites pass with zero regressions** as of v0.1.18
-- **Test count decomposition**: 320 baseline (v0.1.10) + +29 (v0.1.11) + +96 (v0.1.12) + +2 (v0.1.14) + +14 (v0.1.15: 8 G117 + 6 G118) = 461 (v0.1.15) + +41 (v0.1.18: G118 + G119 + G120 + 2 ADRs) = 502 total
+- **542 tests in 47 test suites pass with zero regressions** as of v0.1.20
+- **Test count decomposition**: 320 baseline (v0.1.10) + +29 (v0.1.11) + +96 (v0.1.12) + +2 (v0.1.14) + +14 (v0.1.15: 8 G117 + 6 G118) = 461 (v0.1.15) + +41 (v0.1.18: G118 + G119 + G120 + 2 ADRs) = 502 (v0.1.18) + +13 (v0.1.19: ADR-0031 G121 path resolution + ADR-0032 query S-expr + ADR-0033 exit code consolidation) = 515 (v0.1.19) + +27 (v0.1.20: 11 GAP-2026 + 4 ADRs) = 542 total
 - **v0.1.12 new test files (10)**: `cli_set`, `cli_case`, `cli_query`, `cli_outline`, `cli_get_del`, `cli_v012_syntax_check`, `cli_v012_wal`, `cli_v012_audit_regressions` (27 tests), `cli_v012_xattr_reflink`, `cli_v012_batch4_regressions` (23 tests)
 - **v0.1.12 test coverage by category**: G72 syntax check (16 tests), G114 WAL (8 tests), v14 query/outline (10 tests), TOML dotted path (6 tests), set/get/del/case (15 tests), audit regressions (50 tests)
 - 8 official gates pass on every commit: `fmt`, `clippy`, `build`, `test`, `doc`, `deny`, `audit`, `msrv`
@@ -1094,7 +1106,7 @@ python3 -c "import json, jsonschema; \\
 - **5 new error variants ADDITIVE**: `LockTimeout` (83), `SyntaxError` (88), `ExdevFallbackDisabled` (91), `CopyBackBlake3Failed` (92), `OrphanJournal` (93). All bilingual with actionable suggestions
 - **`atomwrite write --syntax-check` is OPT-IN**: default `write` behavior is unchanged. G72 REAL tree-sitter syntax check (24 languages)
 - **WAL sidecar is consultive only**: `atomic_write` writes `.atomwrite.journal.<target>.atomwrite.journal.json` only when `ATOMWRITE_WAL=1` is set OR `--strict-atomic` is passed. Default `write` does NOT write the sidecar. `recover_orphan_journals(dir)` is consultive
-- **502 tests pass in 44 test suites** (was 320 in v0.1.10). Coverage is full across all 30 subcommands
+- **542 tests pass in 47 test suites** (was 320 in v0.1.10). Coverage is full across all 30 subcommands
 - **7 ADRs added** in `docs/decisions/` (0019-0025): tree-sitter-language-pack, WAL sidecar, query/outline kind-name only, G72 replaces heuristic, G114 consultive, get_toml_path manual, positions opt-in
 - **7 new JSON Schemas** in `docs/schemas/` (set-result, get-result, del-result, case-result, query-output, outline-output, wal-recovery)
 - **New dependency**: `tree-sitter-language-pack = "1.8"` with `download` + `dynamic-loading` features. Install footprint stays around 5-10 MB
@@ -1245,6 +1257,43 @@ atomwrite --workspace . write --preserve-timestamps src/snapshot.rs < new.rs
 - USE `scope --lang rust` as shorthand for `scope --language rust`
 - Both forms are accepted — `--lang` on `scope` is the subcommand-local language selector
 - This avoids collision with the global locale flag that was renamed to `--locale`
+
+## v0.1.20 GAP-2026 — Complete Coverage
+### REQUIRED — The 11 Gaps Closed in v0.1.20
+- GAP-2026-001: `count --by-size` finally implements the help flag (regression test `count_by_size_top_n_returns_sorted`)
+- GAP-2026-002: `write --preserve-timestamps` (parity with edit/replace)
+- GAP-2026-003: `scope --lang` alias after global `--lang` → `--locale` rename (ADR-0037)
+- GAP-2026-004: `write --line-ending crlf` accepts both `crlf` and `cr-lf` (4 variants with `value` + `alias`)
+- GAP-2026-005b: `edit --partial` semantics (single-pair returns NO_MATCHES exit 1; multi-pair applies matched and reports unmatched) — ADR-0036
+- GAP-2026-006: `diff --algorithm` regression tests for myers/patience/lcs
+- GAP-2026-007: `count --by-extension` filters backup timestamp suffixes via `BACKUP_RE` `\.bak\.\d{8}_\d{6}$`
+- GAP-2026-008: `read --head/--line/--lines` reports FILTERED line count (new `lines_total` field preserves original)
+- GAP-2026-009: `read` emits `mode` discriminator (`full|head|tail|line|lines|grep|stat`)
+- GAP-2026-010: `search --no-begin-end` for cleaner output of walks with zero matches
+- GAP-2026-011: `write` intention guards (defense-in-depth after c24-framework34.html incident 2026-06-15) — 6 layers L1-L6 (telemetry, --require-backup, --confirm, --preview, --auto-rotate, risk_assessment in envelope) — ADR-0035
+
+### REQUIRED — Write Intention Guards Origin (c24-framework34.html)
+- On 2026-06-15, `atomwrite write` without `--append` truncated c24-framework34.html (491,827 bytes) to a few bytes
+- Approximately 127 lines (~9 KB) of 2026-06-15 work were lost
+- A 2026-06-14 23:49 manual `cp` backup existed but did not cover the 2026-06-15 work
+- Without `--backup`, without confirmation prompt, without size-delta telemetry, the path between operator intent and on-disk content was a direct syscall
+- v0.1.20 adds 6 defense-in-depth layers (L1-L6) to prevent recurrence — see ADR-0035
+- L1 telemetry (size_delta_pct) is INFORMATIVE (default off, opt-in via `--risk-threshold`)
+- L2 `--require-backup` ABORTS with `InvalidInput` (exit 65) if `--backup` is not also set
+- L3 `--confirm` prompts `Overwrite <path> (<bytes> bytes)? [y/N]` for targets > 100 KB
+- L4 `--preview` emits structural diff before atomic write
+- L5 `--auto-rotate` forces backup when target modified within 24h
+- L6 `risk_assessment` field in envelope (only when a guard fires)
+
+### REQUIRED — v0.1.19 (predecessor release) — 3 ADRs Added
+- ADR-0031 — G121 path resolution helper: `search` and `replace` resolve root paths against workspace via shared helper (CWE-367)
+- ADR-0032 — query S-expr real implementation: `query` accepts S-expressions tree-sitter via `Query::new` (v0.1.12 docs promised but code never implemented)
+- ADR-0033 — v0.1.19 exit code drift consolidation: 7 drifts of exit code between published docs and binary (STATE_DRIFT, SYNTAX_ERROR_DETECTED, ORPHAN_JOURNAL, BROKEN_PIPE, binary read, ARGUMENT_PARSE_ERROR, missing --workspace)
+
+### REQUIRED — Help-Driven Testing Anti-Pattern (ADR-0034)
+- 5 of the 11 GAP-2026 (001, 003, 004, 005b, 006) had clap `--help` declaring flag before implementation existed
+- v0.1.21+ rule: `cargo test --doc` must parse each help block and validate each flag is wired to a regression test whose name includes the flag
+
 
 ## WAL Recovery Flow (v0.1.12)
 ### REQUIRED

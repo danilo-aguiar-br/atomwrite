@@ -208,7 +208,7 @@ Adições v0.1.12:
 
 ## Architecture Decision Records (ADRs)
 - Veja `docs/decisions/README.md` para o índice completo de ADRs
-- 12 ADRs foram adicionados desde a v0.1.12 (0019-0030), todos seguindo o formato Michael Nygard (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
+- 19 ADRs foram adicionados desde a v0.1.12 (0019-0037), todos seguindo o formato Michael Nygard (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
 - 0019 — escolha de tree-sitter-language-pack
 - 0020 — path do WAL sidecar e shape JSONL
 - 0021 — v14 query/outline aceita apenas kind names, não S-expressions
@@ -225,8 +225,17 @@ Adições v0.1.12:
 - 0027 — G118 write resolve o alvo antes dos pré-passos (v0.1.15)
 
 
+- 0031 — Canonização de exit codes: 7 derivas de documentação consolidadas para casar com a lista canônica (v0.1.19)
+- 0032 — Intention guards: nova camada de segurança com 5 flags OPT-IN (--require-backup, --confirm, --auto-rotate, --risk-threshold, --locale) interceptando mutações destrutivas antes de tocarem o disco (v0.1.20)
+- 0033 — Alias scope --lang aceito para simetria ergonômica com transform --lang (v0.1.20)
+- 0034 — Renomeação --locale a partir de --lang para desambiguar do seletor de linguagem tree-sitter (v0.1.20)
+- 0035 — count --by-size: lista os maiores arquivos da árvore com tamanhos e contagem de linhas (v0.1.20)
+- 0036 — read --mode raw|envelope: seleciona entre saída byte-stream e envelope NDJSON estruturado (v0.1.20)
+- 0037 — search --no-begin-end: desabilita a decoração implícita de âncoras ^ e $ na saída regex (v0.1.20)
+
+
 ## Arquitetura de Testes
-- 502 testes em 43 suítes de teste (152 testes unitários dentro de `src/` + suítes de integração + doctests)
+- 542 testes em 47 suítes de teste (152 testes unitários dentro de `src/` + suítes de integração + doctests)
 - Testes unitários são colocalizados com o código sob módulos `#[cfg(test)]`
 - Testes de integração vivem em `tests/` e usam `assert_cmd` + `predicates` para testes shell-out
 - Testes property-based via `proptest` para checksum e backup

@@ -1,12 +1,12 @@
 # atomwrite
 
-> Atomic file operations for LLM agents -- one CLI, zero corruption
+> Atomic file operations for LLM agents — one CLI, zero corruption
 
-atomwrite is a Rust CLI that provides 31 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
+atomwrite is a Rust CLI that provides 28 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
-**Latest release: v0.1.15** (2026-06-11) — G117 fixed: multi-pair `edit --old/--new` gains fuzzy parity (9-strategy cascade per pair), per-pair `pair_results` reporting, `failed_pair_index` on errors, and an opt-in `--partial` flag; GAP 18 fixed (Windows CI snapshot redacts `dir_fsync`); CI MSRV job aligned to 1.88. G118 fixed: `write` resolves the target against the workspace before `--append`/`--prepend`, `--expect-checksum`, and `--line-ending auto` — with a divergent CWD, append no longer truncates and checksum drift exits 82 instead of silently overwriting (ADR-0027). Previous highlights (v0.1.12): G72 REAL syntax check via tree-sitter (24 languages), G114 WAL sidecar for crash recovery, v14 Tier 3 structured config editors (set/get/del/case) and AST tools (query/outline). See `CHANGELOG.md` for full release notes and `docs/decisions/` for the ADRs (0019-0027).
+**Latest release: v0.1.20** (2026-06-15) — 11 GAP-2026 closed, intention guards (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`), `--locale` rename (was `--lang`), `count --by-size`, `read --mode`, `search --no-begin-end`, `write --preserve-timestamps`, `scope --lang` alias, 542 tests in 47 suites, ADRs 0031-0037. Highlights (v0.1.19, 2026-06-14): G121 path resolution helper, real S-expression query, 7 exit code documentation drifts consolidated. See `CHANGELOG.md` for full release notes and `docs/decisions/` for the ADRs (0019-0037).
 
-**Previous release: v0.1.11** (2026-06-05) — Windows E0433 fix (libc was gated by cfg(unix) but referenced in main.rs), signal_test race fix (ShutdownSignal singleton, ATOMWRITE_READY_FILE for race-free readiness), 11 cli_batch Windows path backslash fix.
+**Previous release: v0.1.19** (2026-06-14) — G121 path resolution helper that unifies jail resolution across all write subcommands; real S-expression `query` mode via `tree-sitter`; consolidation of 7 exit code documentation drifts to match the canonical list (ADR-0031).
 
 ## Installation
 
@@ -19,8 +19,8 @@ Parsers for 305 languages are NOT bundled; they are downloaded on first use by `
 ## 28 Subcommands
 
 ### Core I/O
-- `read` -- read files with metadata, checksum, optional content
-- `write` -- create or overwrite files atomically via stdin
+- `read` -- read files with metadata, checksum, optional content. `--mode raw|envelope` selects byte-stream vs NDJSON envelope (v0.1.20)
+- `write` -- create or overwrite files atomically via stdin. `--preserve-timestamps` keeps source mtime (v0.1.20)
 - `edit` -- surgically edit by line number, text marker, or exact/fuzzy match; multi-pair `--old`/`--new` has per-pair fuzzy + `pair_results` + `--partial` (v0.1.15)
 - `delete` -- delete files with optional backup
 - `copy` -- copy files with checksum verification (reflink on APFS/btrfs/XFS)
@@ -28,17 +28,17 @@ Parsers for 305 languages are NOT bundled; they are downloaded on first use by `
 - `apply` -- apply patches from stdin (unified diff, search/replace, full, markdown)
 
 ### Search and replace
-- `search` -- search file contents in parallel (ripgrep engine)
+- `search` -- search file contents in parallel (ripgrep engine). `--no-begin-end` disables anchor emission (v0.1.20)
 - `replace` -- replace text across files with atomic writes
 - `transform` -- AST refactoring via ast-grep (306 languages)
 
 ### Inspection
 - `hash` -- calculate BLAKE3 checksums
-- `count` -- count lines, files by extension
+- `count` -- count lines, files by extension. `--by-size` lists the largest files (v0.1.20)
 - `diff` -- compare two files (unified, stat, or changes)
 - `list` -- list files in a directory tree
 - `extract` -- extract fields from NDJSON input via pipe
-- `scope` -- grammatical scoping (delete all comments, etc.)
+- `scope` -- grammatical scoping (delete all comments, etc.). `--lang rust` alias accepted (v0.1.20)
 - `regex` -- generate regex from examples
 - `calc` -- math and unit conversions
 - `completions` -- generate shell completions (bash, zsh, fish, elvish, powershell)
@@ -59,9 +59,36 @@ Parsers for 305 languages are NOT bundled; they are downloaded on first use by `
 - `outline <PATH> [--kind <KIND>] [--positions]` -- extract high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON.
 - `write --syntax-check` -- G72 REAL syntax check via tree-sitter. 24 languages covered. Exit 88 with first error line/column/kind/message.
 
+## v0.1.20 — Intention Guards (New Safety Layer)
+
+Intention guards intercept destructive mutations before they touch the disk. All five flags are OPT-IN. Default behavior is unchanged.
+
+### `--require-backup <N>`
+Refuse the operation when fewer than `N` retained backups exist for the target. Forces the agent to take a backup ring snapshot before mutating. Exit code is non-zero and the NDJSON `error.code` is `IntentionGuardRefused`.
+
+### `--confirm`
+Emit a confirmation prompt listing the planned mutation in NDJSON before executing. The prompt includes target, byte delta, expected checksum, and risk classification. The agent must answer `y` on stdin to proceed.
+
+### `--auto-rotate <N>`
+Automatically rotate the backup ring down to `N` entries after a successful write. Pairs naturally with `--backup --retention N` so the backup ring is bounded.
+
+### `--risk-threshold <LOW|MEDIUM|HIGH>`
+Block operations whose classified risk meets or exceeds the threshold. Risk is computed from path depth, byte delta, target extension, and history. Exit code is non-zero and `error.class` is `IntentionGuardRisk`.
+
+### `--locale <en|pt-BR>`
+Renamed from `--lang` to disambiguate from the tree-sitter `--lang` used by `scope` and `transform`. The old `--lang` is still accepted as a hidden alias for one minor version to ease migration. See `docs/MIGRATION.md` for the `ruplacer` recipe.
+
+## v0.1.20 — Other Additions
+
+- `count --by-size` -- list the largest files in the tree with sizes and line counts
+- `read --mode raw|envelope` -- select between byte-stream output and structured NDJSON envelope
+- `search --no-begin-end` -- disable the implicit `^` and `$` anchor decoration in regex output
+- `write --preserve-timestamps` -- keep the source file mtime when overwriting
+- `scope --lang rust` -- explicit alias accepted for ergonomic symmetry with `transform --lang`
+
 ## Output Contract
 
-Every command outputs **NDJSON** (one JSON object per line) to stdout. The last line is always a `*_summary` event. Schema files are in `docs/schemas/`. The contract is stable: if you write a parser for v0.1.12 output, it will keep working in v0.2.x with only minor additive changes.
+Every command outputs **NDJSON** (one JSON object per line) to stdout. The last line is always a `*_summary` event. Schema files are in `docs/schemas/`. The contract is stable: if you write a parser for v0.1.20 output, it will keep working in v0.2.x with only minor additive changes.
 
 ### Critical NDJSON fields
 - `type` -- operation name (`set`, `get`, `del`, `case`, `query_match`, `outline_item`, `write`, `edit`, ...)
@@ -75,15 +102,21 @@ Every command outputs **NDJSON** (one JSON object per line) to stdout. The last 
 
 - `--workspace <DIR>` -- workspace root for path jail validation (REQUIRED for file ops)
 - `--expect-checksum <HASH>` -- optimistic locking for concurrent edits
+- `--require-backup <N>` (v0.1.20) -- intention guard: refuse if fewer than N backups exist
+- `--confirm` (v0.1.20) -- intention guard: prompt before mutating
+- `--auto-rotate <N>` (v0.1.20) -- intention guard: rotate backup ring to N after write
+- `--risk-threshold <LOW|MEDIUM|HIGH>` (v0.1.20) -- intention guard: block above threshold
+- `--locale <en|pt-BR>` (v0.1.20, was `--lang`) -- display locale override
 - `--verbose` / `-v` -- enable tracing logs on stderr
 - `--include <PATTERN>` / `-g <PATTERN>` -- filter files by glob pattern
 - `--stat` -- skip file content in read responses (metadata only)
-- `--backup` -- create backup before modify
-- `--preserve-timestamps` (edit, replace) -- keep the original file mtime (default: updated to reflect change). Critical for build systems.
+- `--mode raw|envelope` (read, v0.1.20) -- select output mode
+- `--by-size` (count, v0.1.20) -- list largest files
+- `--no-begin-end` (search, v0.1.20) -- disable anchor emission
+- `--preserve-timestamps` (edit, replace, write) -- keep the original file mtime
 - `--syntax-check` (write, v0.1.12+) -- G72 tree-sitter REAL syntax check before commit
 - `--positions` (query, outline) -- include start_line/start_column/byte_offset in AST output
 - `--line-ending lf|crlf|cr|auto` -- normalize line endings
-- `--lang <LOCALE>` (global) -- override display locale (en, pt-BR)
 - `--timeout <SECONDS>` (global) -- global operation timeout (0 = no timeout)
 - `--grep <REGEX>` (read) -- filter returned lines to those matching a regex
 - `--head N` / `--tail N` (read) -- read first/last N lines
@@ -129,7 +162,7 @@ Every command outputs **NDJSON** (one JSON object per line) to stdout. The last 
 
 - `NO_COLOR` -- disable colored output
 - `RUST_LOG` -- control log verbosity
-- `ATOMWRITE_LANG` -- override locale for translated messages (en, pt-BR)
+- `ATOMWRITE_LOCALE` -- override display locale (en, pt-BR). Renamed from `ATOMWRITE_LANG` in v0.1.20
 - `ATOMWRITE_WORKSPACE` -- set the workspace root for path jail validation
 - `RAYON_NUM_THREADS` -- override `--threads` value
 
@@ -139,15 +172,30 @@ Every command outputs **NDJSON** (one JSON object per line) to stdout. The last 
 # Write atomically with checksum
 echo "content" | atomwrite write --workspace . src/file.rs
 
+# Write with mtime preservation
+echo "content" | atomwrite write --workspace . --preserve-timestamps src/file.rs
+
 # Read with checksum
 atomwrite --workspace . read src/file.rs
+
+# Read raw bytes (no envelope)
+atomwrite --workspace . read --mode raw src/file.rs
 
 # Optimistic locking: only write if the file hasn't changed
 CS=$(atomwrite --workspace . read src/config.toml | jaq -r .checksum)
 echo "new_value" | atomwrite --workspace . write --expect-checksum "$CS" src/config.toml
 
+# Intention guard: refuse without 3 prior backups
+atomwrite --workspace . write --require-backup 3 src/config.toml < new.toml
+
+# Intention guard: confirm before mutating
+atomwrite --workspace . edit --confirm src/config.toml --old foo --new bar
+
 # Search in parallel
 atomwrite --workspace . search 'TODO' src/ --include '*.rs'
+
+# Count largest files
+atomwrite --workspace . count --by-size --top 10 src/
 
 # Replace across files
 atomwrite --workspace . replace 'old_name' 'new_name' src/
@@ -194,18 +242,18 @@ cat patch.diff | atomwrite --workspace . apply src/file.rs
 
 ## Primary Documentation
 
-- [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.md): Full documentation with all 31 commands and examples
+- [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.md): Full documentation with all 28 commands and examples
 - [HOW_TO_USE](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/HOW_TO_USE.md): Quickstart guide
 - [COOKBOOK](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/COOKBOOK.md): Recipes for common tasks
 - [AGENTS.md](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget
-- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.md): 461 tests across 43 test suites
+- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.md): 542 tests across 47 test suites
 - [MIGRATION](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/MIGRATION.md): Migration guide between versions
 - [INSTALL](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/INSTALL.md): Platform-specific install instructions
 - [CROSS_PLATFORM](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/CROSS_PLATFORM.md): macOS, Linux, Windows quirks
 - [CHANGELOG](https://github.com/daniloaguiarbr/atomwrite/blob/main/CHANGELOG.md): Release history
 - [CONTRIBUTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/CONTRIBUTING.md): Development setup and guidelines
 - [SECURITY](https://github.com/daniloaguiarbr/atomwrite/blob/main/SECURITY.md): Vulnerability reporting
-- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 7 ADRs (v0.1.12 architectural decisions)
+- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 19 ADRs (v0.1.12 + v0.1.19 + v0.1.20 architectural decisions)
 - [docs/schemas/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/schemas/): 22 stable JSON Schema contracts
 - [Crates.io](https://crates.io/crates/atomwrite): Package registry
 - [Repository](https://github.com/daniloaguiarbr/atomwrite): Source code
