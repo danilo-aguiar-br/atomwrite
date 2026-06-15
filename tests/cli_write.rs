@@ -613,3 +613,233 @@ fn g120_l3_append_empty_stdin_without_opt_in_rejects_at_l1() {
     let content = std::fs::read_to_string(&target).expect("read");
     assert_eq!(content, "linha 1\n");
 }
+
+// ============================================================================
+// v0.1.20 GAP-2026-011: write intention guards regression tests
+// ============================================================================
+
+/// L2 — --require-backup without --backup AND target exists must fail with
+/// exit 65 (InvalidInput). This is the hard guard that prevents silent
+/// overwrites of important files, motivated by the 2026-06-15 incident
+/// (c24-framework34.html lost 127 lines).
+#[test]
+fn v0_1_20_require_backup_blocks_overwrite_without_backup() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target = dir.path().join("important.html");
+    std::fs::write(&target, "<html>existing</html>\n").expect("seed");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "write",
+            "--require-backup",
+        ])
+        .arg(&target)
+        .write_stdin("<html>new</html>\n")
+        .output()
+        .expect("run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(65),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // File unchanged.
+    let content = std::fs::read_to_string(&target).expect("read");
+    assert_eq!(content, "<html>existing</html>\n");
+}
+
+/// L2 — --require-backup combined with --backup must succeed.
+#[test]
+fn v0_1_20_require_backup_with_backup_succeeds() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target = dir.path().join("important.html");
+    std::fs::write(&target, "<html>existing</html>\n").expect("seed");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "write",
+            "--require-backup",
+            "--backup",
+            "--retention",
+            "3",
+        ])
+        .arg(&target)
+        .write_stdin("<html>new</html>\n")
+        .output()
+        .expect("run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let content = std::fs::read_to_string(&target).expect("read");
+    assert_eq!(content, "<html>new</html>\n");
+}
+
+/// L1 — risk_assessment telemetry: size delta of 90% must emit high risk.
+#[test]
+fn v0_1_20_risk_assessment_high_delta_emits_warning() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target = dir.path().join("data.bin");
+    std::fs::write(&target, "x".repeat(1000)).expect("seed");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "write",
+            "--risk-threshold",
+            "50",
+        ])
+        .arg(&target)
+        .write_stdin("y") // 1 byte vs 1000 bytes = 99.9% delta
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+    let events = common::parse_ndjson(&output.stdout);
+    let risk = events[0]["risk_assessment"]
+        .as_object()
+        .expect("risk_assessment present");
+    assert_eq!(risk["risk_level"], "high");
+    assert_eq!(risk["guard_triggered"], "size");
+    assert!(risk["size_delta_pct"].as_u64().unwrap() >= 90);
+}
+
+/// L1 — small delta (10%) must NOT emit risk_assessment (silent).
+#[test]
+fn v0_1_20_risk_assessment_small_delta_silent() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target = dir.path().join("data.bin");
+    std::fs::write(&target, "x".repeat(1000)).expect("seed");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "write",
+            "--risk-threshold",
+            "50",
+        ])
+        .arg(&target)
+        .write_stdin("y".repeat(900)) // 10% delta
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+    let events = common::parse_ndjson(&output.stdout);
+    // risk_assessment should be null/absent for small delta.
+    assert!(events[0].get("risk_assessment").is_none() || events[0]["risk_assessment"].is_null());
+}
+
+/// GAP-2026-002 — --preserve-timestamps keeps mtime stable.
+#[cfg(unix)]
+#[test]
+fn v0_1_20_write_preserve_timestamps_keeps_mtime() {
+    use std::os::unix::fs::MetadataExt;
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target = dir.path().join("data.txt");
+    std::fs::write(&target, "original").expect("seed");
+    let original_mtime = std::fs::metadata(&target).unwrap().mtime();
+    std::thread::sleep(Duration::from_millis(50));
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "write",
+            "--preserve-timestamps",
+        ])
+        .arg(&target)
+        .write_stdin("updated")
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+    let new_mtime = std::fs::metadata(&target).unwrap().mtime();
+    assert_eq!(original_mtime, new_mtime, "mtime must be preserved");
+}
+
+/// GAP-2026-004 — --line-ending crlf without hyphen must work.
+#[test]
+fn v0_1_20_write_line_ending_crlf_no_hyphen_accepted() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target = dir.path().join("out.txt");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "write",
+            "--line-ending",
+            "crlf",
+        ])
+        .arg(&target)
+        .write_stdin("line1\nline2\n")
+        .output()
+        .expect("run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let content = std::fs::read(&target).expect("read");
+    assert_eq!(content, b"line1\r\nline2\r\n");
+}
+
+/// GAP-2026-004 — --line-ending cr-lf with hyphen must also work.
+#[test]
+fn v0_1_20_write_line_ending_cr_lf_with_hyphen_accepted() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target = dir.path().join("out.txt");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "write",
+            "--line-ending",
+            "cr-lf",
+        ])
+        .arg(&target)
+        .write_stdin("a\nb\n")
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+    let content = std::fs::read(&target).expect("read");
+    assert_eq!(content, b"a\r\nb\r\n");
+}
+
+/// L2 edge case — --require-backup on NEW file (no existing) must succeed
+/// even without --backup (target doesn't exist, nothing to guard against).
+#[test]
+fn v0_1_20_require_backup_new_file_succeeds_without_backup() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target = dir.path().join("brand_new.txt");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "write",
+            "--require-backup",
+        ])
+        .arg(&target)
+        .write_stdin("new content")
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+    assert!(target.exists());
+}

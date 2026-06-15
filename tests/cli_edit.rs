@@ -1085,3 +1085,102 @@ fn edit_one_token_drift_in_block_matches_via_context_aware_fallback() {
     let content = std::fs::read_to_string(&path).expect("read");
     assert_eq!(content, "X\n");
 }
+
+// ============================================================================
+// v0.1.20 GAP-2026-005b: edit --partial single-pair still returns NoMatches
+// ============================================================================
+
+/// GAP-005b: single-pair --partial + unmatched pattern returns NoMatches
+/// (exit 1) without writing anything. --partial does NOT make single-pair
+/// matches "best-effort"; it only applies to multi-pair.
+#[test]
+fn v0_1_20_edit_partial_single_pair_unmatched_returns_no_matches() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "foo.txt", "hello world\n");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "edit",
+            "--old",
+            "NONEXISTENT_TEXT",
+            "--new",
+            "X",
+            "--partial",
+        ])
+        .arg(dir.path().join("foo.txt"))
+        .output()
+        .expect("run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "single-pair --partial + no match must be NoMatches (exit 1)"
+    );
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events[0]["code"], "NO_MATCHES");
+    let content = std::fs::read_to_string(dir.path().join("foo.txt")).unwrap();
+    assert_eq!(content, "hello world\n", "no write on NoMatches");
+}
+
+// ============================================================================
+// v0.1.20 GAP-2026-006: diff --algorithm myers/patience/lcs
+// ============================================================================
+
+/// GAP-006: --algorithm myers runs successfully.
+#[test]
+fn v0_1_20_diff_algorithm_myers_runs() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "the quick brown fox\n").unwrap();
+    std::fs::write(&b, "the quick red fox\n").unwrap();
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "diff",
+            "--algorithm",
+            "myers",
+        ])
+        .arg(&a)
+        .arg(&b)
+        .output()
+        .expect("run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// GAP-006: --algorithm lcs runs successfully on identical files.
+#[test]
+fn v0_1_20_diff_algorithm_lcs_on_identical_files() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "abc\n").unwrap();
+    std::fs::write(&b, "abc\n").unwrap();
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "diff",
+            "--algorithm",
+            "lcs",
+            "--stat",
+        ])
+        .arg(&a)
+        .arg(&b)
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+    let events = common::parse_ndjson(&output.stdout);
+    assert!(events[0]["identical"].as_bool().unwrap());
+}

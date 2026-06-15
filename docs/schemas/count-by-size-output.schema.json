@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CountBySizeOutput",
+  "description": "NDJSON output for count sorted by file size (top-N). Added in v0.1.20 to close GAP-2026-001 (HELP-FIRST-DRIFT).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "mode": {
+      "description": "Count mode name.",
+      "type": "string"
+    },
+    "items": {
+      "description": "Top-N files by descending size.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SizeEntry"
+      }
+    },
+    "elapsed_ms": {
+      "description": "Operation duration in milliseconds.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "type",
+    "mode",
+    "items",
+    "elapsed_ms"
+  ],
+  "$defs": {
+    "SizeEntry": {
+      "description": "One entry in CountBySizeOutput.items (GAP-2026-001).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "Absolute or workspace-relative file path.",
+          "type": "string"
+        },
+        "bytes": {
+          "description": "File size in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "path",
+        "bytes"
+      ]
+    }
+  }
+}

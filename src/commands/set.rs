@@ -102,6 +102,7 @@ pub fn cmd_set(
         stdin_bytes_read: new_content.len() as u64,
         wal_policy: "auto",
         platform: result.platform,
+        risk_assessment: None,
     };
     Ok(())
 }

@@ -308,19 +308,22 @@ fn json_schema_all_subcommands_no_args() {
 }
 
 #[test]
-fn lang_flag_does_not_alter_json_output() {
+fn locale_flag_does_not_alter_json_output() {
+    // ADR-0037 v0.1.20: `--lang` global was renamed to `--locale` to
+    // free the namespace for `scope --lang`. Test verifies the new
+    // `--locale` flag and that NDJSON output is locale-agnostic.
     let dir = tempfile::tempdir().expect("tempdir");
     let path = common::create_test_file(dir.path(), "lang.txt", "test content\n");
     let ws = dir.path().to_str().unwrap();
 
     let out_en = common::atomwrite()
-        .args(["--lang", "en", "--workspace", ws, "read"])
+        .args(["--locale", "en", "--workspace", ws, "read"])
         .arg(&path)
         .output()
         .expect("en");
 
     let out_pt = common::atomwrite()
-        .args(["--lang", "pt-BR", "--workspace", ws, "read"])
+        .args(["--locale", "pt-BR", "--workspace", ws, "read"])
         .arg(&path)
         .output()
         .expect("pt");
@@ -333,14 +336,229 @@ fn lang_flag_does_not_alter_json_output() {
 
     assert_eq!(
         events_en[0]["checksum"], events_pt[0]["checksum"],
-        "checksum must be identical regardless of --lang"
+        "checksum must be identical regardless of --locale"
     );
     assert_eq!(
         events_en[0]["content"], events_pt[0]["content"],
-        "content must be identical regardless of --lang"
+        "content must be identical regardless of --locale"
     );
     assert_eq!(
         events_en[0]["type"], events_pt[0]["type"],
-        "type must be identical regardless of --lang"
+        "type must be identical regardless of --locale"
     );
+}
+
+#[test]
+fn scope_lang_alias_works() {
+    // GAP-2026-003 v0.1.20: `--lang` is now a valid alias for
+    // `--language` in `scope` after the global rename to `--locale`.
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "main.rs", "fn main() {}\n");
+    let ws = dir.path().to_str().unwrap();
+
+    let out = common::atomwrite()
+        .args([
+            "--workspace",
+            ws,
+            "scope",
+            "--lang",
+            "rust",
+            "--query",
+            "fn",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("scope --lang");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn scope_language_long_form_still_works() {
+    // Regression: explicit --language must keep working post-rename.
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "main.rs", "fn main() {}\n");
+    let ws = dir.path().to_str().unwrap();
+
+    let out = common::atomwrite()
+        .args([
+            "--workspace",
+            ws,
+            "scope",
+            "--language",
+            "rust",
+            "--query",
+            "fn",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("scope --language");
+    assert!(out.status.success());
+}
+
+#[test]
+fn env_atomwrite_lang_still_honored() {
+    // ADR-0037: env var name ATOMWRITE_LANG is preserved (backward compat).
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "x.txt", "x");
+    let ws = dir.path().to_str().unwrap();
+
+    let out = common::atomwrite()
+        .env("ATOMWRITE_LANG", "pt-BR")
+        .args(["--workspace", ws, "read"])
+        .arg(dir.path().join("x.txt"))
+        .output()
+        .expect("env ATOMWRITE_LANG");
+    assert!(out.status.success());
+}
+
+// ============================================================================
+// v0.1.20 GAP-2026-008/009: read --mode field + filtered lines
+// ============================================================================
+
+/// GAP-009 read --head 2 produces mode: "head" and lines = 2.
+#[test]
+fn v0_1_20_read_head_emits_mode_field() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("data.txt");
+    std::fs::write(&path, "a\nb\nc\nd\ne\n").expect("write");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "read",
+            "--head",
+            "2",
+        ])
+        .arg(&path)
+        .output()
+        .expect("run");
+
+    assert!(output.status.success());
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events[0]["mode"], "head");
+    assert_eq!(events[0]["lines"].as_u64().unwrap(), 2);
+}
+
+/// GAP-008 read --head 2 of 5-line file: lines=2 (filtered), lines_total=5.
+#[test]
+fn v0_1_20_read_head_reports_filtered_count() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("data.txt");
+    std::fs::write(&path, "a\nb\nc\nd\ne\n").expect("write");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "read",
+            "--head",
+            "2",
+        ])
+        .arg(&path)
+        .output()
+        .expect("run");
+
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events[0]["lines"].as_u64().unwrap(), 2, "filtered count");
+    assert_eq!(
+        events[0]["lines_total"].as_u64().unwrap(),
+        5,
+        "total file count"
+    );
+}
+
+/// GAP-009 read --tail mode discriminator.
+#[test]
+fn v0_1_20_read_tail_emits_mode_field() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("data.txt");
+    std::fs::write(&path, "a\nb\nc\nd\ne\n").expect("write");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "read",
+            "--tail",
+            "2",
+        ])
+        .arg(&path)
+        .output()
+        .expect("run");
+
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events[0]["mode"], "tail");
+}
+
+/// GAP-009 read --line mode discriminator.
+#[test]
+fn v0_1_20_read_line_emits_mode_field() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("data.txt");
+    std::fs::write(&path, "a\nb\nc\n").expect("write");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "read",
+            "--line",
+            "2",
+        ])
+        .arg(&path)
+        .output()
+        .expect("run");
+
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events[0]["mode"], "line");
+}
+
+/// GAP-009 read --stat mode discriminator.
+#[test]
+fn v0_1_20_read_stat_emits_mode_field() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("data.txt");
+    std::fs::write(&path, "hello\n").expect("write");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "read",
+            "--stat",
+        ])
+        .arg(&path)
+        .output()
+        .expect("run");
+
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events[0]["mode"], "stat");
+}
+
+/// GAP-009 read --grep mode discriminator.
+#[test]
+fn v0_1_20_read_grep_emits_mode_field() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("data.txt");
+    std::fs::write(&path, "alpha\nbeta\ngamma\n").expect("write");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "read",
+            "--grep",
+            "alpha",
+        ])
+        .arg(&path)
+        .output()
+        .expect("run");
+
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events[0]["mode"], "grep");
 }

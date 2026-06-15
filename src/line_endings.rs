@@ -8,12 +8,17 @@ use crate::constants::LINE_ENDING_DETECT_SIZE;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum LineEnding {
     /// Unix-style line feed.
+    #[value(name = "lf")]
     Lf,
     /// Windows-style carriage return + line feed.
+    /// Accepts both `cr-lf` (canonical) and `crlf` (informal, common in docs).
+    #[value(name = "cr-lf", alias = "crlf")]
     CrLf,
     /// Classic Mac carriage return.
+    #[value(name = "cr")]
     Cr,
     /// Preserve the dominant ending of the original file.
+    #[value(name = "auto")]
     Auto,
 }
 

@@ -1131,6 +1131,118 @@ atomwrite --workspace . wal-heal --threshold-secs 3600
 atomwrite --workspace . wal-heal --threshold-secs 7200 --max-duration-ms 500
 ```
 
+
+## Notas da v0.1.20
+### OBRIGATÓRIO — Rename Global de --lang para --locale
+- Flag GLOBAL `--lang` foi RENOMEADA para `--locale` (mudança quebrante na v0.1.20)
+- Variável de ambiente `ATOMWRITE_LANG` permanece INALTERADA
+- Nome do campo Rust `lang` no Cli struct permanece INALTERADO
+- Veja ADR-0037 para a justificativa completa do rename e notas de migração
+- ATUALIZE invocações existentes de `--lang pt-BR` para `--locale pt-BR`
+- NÃO confundir com `transform --lang` ou `scope --lang` (flags de linguagem de subcomando permanecem)
+
+### OBRIGATÓRIO — Flags de Guarda de Intenção de Write (v0.1.20)
+- SABER que a v0.1.20 introduz quatro novas flags de segurança de escrita
+- USAR `--require-backup` para ABORTAR se `--backup` não estiver setado E o alvo existir
+- USAR `--confirm` para disparar prompt interativo S/N para arquivos maiores que 100KB
+- USAR `--auto-rotate` para FORÇAR backup quando o alvo foi modificado nas últimas 24 horas
+- USAR `--risk-threshold <PERCENT>` para emitir telemetria `risk_assessment` quando o delta de tamanho exceder o threshold (padrão: 50)
+- Comportamento padrão do `write` permanece INALTERADO — estas flags são aditivas
+- USAR `--require-backup` em pipelines de CI para prevenir sobrescritas destrutivas sem backup
+
+### Padrão Correto — Exigir Backup Antes de Sobrescrita
+```bash
+# v0.1.20+: aborta se --backup não estiver setado e alvo existir
+atomwrite --workspace . write --require-backup src/main.rs < new_main.rs
+# Exit 1 (Validation) se --backup também não foi setado
+```
+
+### Padrão Correto — Confirmar Escrita em Arquivos Grandes
+```bash
+# v0.1.20+: prompt interativo para arquivos > 100KB
+atomwrite --workspace . write --confirm big_dataset.csv < new_data.csv
+# Pergunta s/N antes de aplicar
+```
+
+### Padrão Correto — Auto-Rotacionar Alvos Recentes
+```bash
+# v0.1.20+: força backup quando alvo modificado nas últimas 24h
+atomwrite --workspace . write --auto-rotate src/frequently_changed.rs < new.rs
+# Backup auto-criado se mtime dentro de 24h
+```
+
+### Padrão Correto — Telemetria de Threshold de Risco
+```bash
+# v0.1.20+: emite risk_assessment quando delta de tamanho > 50%
+atomwrite --workspace . write --risk-threshold 30 src/data.json < new.json
+# Resposta NDJSON inclui bloco risk_assessment
+```
+
+### OBRIGATÓRIO — Modo Count --by-size (v0.1.20)
+- SABER que `--by-size` produz saída NDJSON estruturada (v0.1.20+)
+- Resposta inclui `mode: "by_size"`, array `items[path, bytes]`, ordenado DECRESCENTE por tamanho
+- USAR `--top N` para truncar a lista de items (padrão: 10)
+- Substitui a antiga saída em tabela de texto por um contrato parseável
+- CONSUMIR via `jaq '.items[] | {path, bytes}'` para pipelines downstream
+
+### Padrão Correto — Maiores Arquivos
+```bash
+# v0.1.20+: top 10 maiores arquivos com saída estruturada
+atomwrite --workspace . count --by-size --top 10
+# Output: {"type":"result","mode":"by_size","items":[{"path":"...","bytes":N},...]}
+```
+
+### OBRIGATÓRIO — Discriminador Read --mode (v0.1.20)
+- SABER que o campo `mode` na saída do `read` agora é POPULADO
+- Valor de `mode` é um de: `full`, `head`, `tail`, `line`, `lines`, `grep`, `stat`
+- USAR isto para desambiguar qual variante de read produziu a resposta
+- Anteriormente o campo estava sempre ausente ou null
+
+### Padrão Correto — Inspecionar Modo do Read
+```bash
+# v0.1.20+: read reporta qual modo foi usado
+atomwrite --workspace . read --head 20 src/main.rs | jaq '.mode'
+# Output: "head"
+
+atomwrite --workspace . read --grep 'TODO' src/main.rs | jaq '.mode'
+# Output: "grep"
+
+atomwrite --workspace . read --stat src/main.rs | jaq '.mode'
+# Output: "stat"
+```
+
+### OBRIGATÓRIO — Search --no-begin-end (v0.1.20)
+- USAR `--no-begin-end` para suprimir eventos `begin`/`end` por arquivo quando arquivos não têm matches
+- Útil para pipelines streaming que só se importam com conteúdo de match
+- Comportamento padrão INALTERADO — eventos `begin`/`end` continuam emitidos a menos que suprimidos
+- Combinar com `--count` para contagens compactas por arquivo
+
+### Padrão Correto — Suprimir Marcadores de Arquivo Vazio
+```bash
+# v0.1.20+: silencia eventos begin/end para arquivos sem matches
+atomwrite --workspace . search --no-begin-end 'TODO' src/ --include '*.rs'
+# Output: apenas arquivos com matches emitem begin/end; zero-match ficam silentes
+```
+
+### OBRIGATÓRIO — Write --preserve-timestamps (v0.1.20)
+- USAR `--preserve-timestamps` no `write` para manter o mtime original do alvo
+- Comportamento padrão INALTERADO — mtime é atualizado para refletir a escrita por padrão
+- Útil para workflows de backup, snapshot e builds reproduzíveis
+- Espelho da flag `--preserve-timestamps` existente em `edit` e `replace`
+
+### Padrão Correto — Preservar mtime no Write
+```bash
+# v0.1.20+: mantém mtime original no write
+atomwrite --workspace . write --preserve-timestamps src/snapshot.rs < new.rs
+# mtime do alvo inalterado após a escrita atômica
+```
+
+### OBRIGATÓRIO — Alias Scope --lang (v0.1.20)
+- Após o rename global de `--lang` para `--locale`, `scope --lang <LANG>` agora é um alias funcional de `--language`
+- USAR `scope --lang rust` como atalho para `scope --language rust`
+- Ambas as formas são aceitas — `--lang` no `scope` é o seletor de linguagem local do subcomando
+- Isso evita colisão com a flag global de locale que foi renomeada para `--locale`
+
 ## Fluxo de Recovery WAL (v0.1.12)
 ### OBRIGATÓRIO
 - SABER que `atomic_write` só escreve um sidecar WAL quando a env var `ATOMWRITE_WAL=1` está definida OU a flag CLI `--strict-atomic` é passada

@@ -112,11 +112,20 @@ pub struct GlobalArgs {
     pub json: bool,
 
     /// Override locale for translated messages (e.g. en, pt-BR).
+    ///
+    /// ADR-0037: long flag renamed `--lang` → `--locale` in v0.1.20 to
+    /// free the `--lang` namespace for subcommand-level use (e.g.
+    /// `scope --lang` as an alias for `--language`). The env var
+    /// `ATOMWRITE_LANG` and the Rust field name `lang` are unchanged
+    /// to preserve backward compatibility for env-var consumers and
+    /// programmatic API users. Existing `--lang` flag invocations
+    /// will fail loudly with `unknown argument` — this is a deliberate
+    /// breaking change in CLI surface, documented in CHANGELOG v0.1.20.
     #[arg(
-        long,
+        long = "locale",
         global = true,
         env = "ATOMWRITE_LANG",
-        help = "Override locale (en, pt-BR)"
+        help = "Override locale (en, pt-BR); renamed from --lang in v0.1.20"
     )]
     pub lang: Option<String>,
 

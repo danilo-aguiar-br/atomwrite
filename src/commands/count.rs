@@ -5,13 +5,23 @@
 
 use std::collections::BTreeMap;
 use std::io::Write;
+use std::sync::LazyLock;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use regex::Regex;
 
 use crate::cli::{CountArgs, GlobalArgs};
-use crate::ndjson_types::{CountByExtOutput, CountTotalOutput, CountTotals, ExtCountOutput};
+use crate::ndjson_types::{
+    CountByExtOutput, CountBySizeOutput, CountTotalOutput, CountTotals, ExtCountOutput, SizeEntry,
+};
 use crate::output::NdjsonWriter;
+
+/// Matches atomwrite backup filenames like `foo.txt.bak.20260615_035515`.
+/// Backups are categorized under a dedicated "backup" extension key rather
+/// than letting the timestamp be treated as a real extension (GAP-2026-007).
+static BACKUP_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\.bak\.\d{8}_\d{6}$").expect("valid backup regex"));
 
 /// Count lines, pattern matches, or files grouped by extension.
 ///
@@ -59,6 +69,7 @@ pub fn cmd_count(
     let mut total_blank = 0u64;
     let mut total_bytes = 0u64;
     let mut by_ext: BTreeMap<String, ExtCountOutput> = BTreeMap::new();
+    let mut by_size_items: Vec<(std::path::PathBuf, u64)> = Vec::new();
 
     for entry in walker.build() {
         let entry = match entry {
@@ -81,12 +92,20 @@ pub fn cmd_count(
             let size = meta.len();
             total_bytes += size;
             total_files += 1;
+            if args.by_size {
+                by_size_items.push((validated.clone(), size));
+            }
 
-            let ext = validated
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("(none)")
-                .to_owned();
+            let file_name = validated.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let ext = if BACKUP_RE.is_match(file_name) {
+                "backup".to_owned()
+            } else {
+                validated
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("(none)")
+                    .to_owned()
+            };
 
             let entry_count = by_ext.entry(ext).or_default();
             entry_count.files += 1;
@@ -110,6 +129,24 @@ pub fn cmd_count(
             r#type: "count",
             mode: "by_extension",
             by_extension: by_ext,
+            elapsed_ms: start.elapsed().as_millis() as u64,
+        })?;
+    } else if args.by_size {
+        // Sort descending by size and truncate to top N.
+        by_size_items.sort_by(|a, b| b.1.cmp(&a.1));
+        let top = args.top.min(by_size_items.len());
+        let items: Vec<SizeEntry> = by_size_items
+            .into_iter()
+            .take(top)
+            .map(|(p, s)| SizeEntry {
+                path: p.display().to_string(),
+                bytes: s,
+            })
+            .collect();
+        writer.write_event(&CountBySizeOutput {
+            r#type: "count",
+            mode: "by_size",
+            items,
             elapsed_ms: start.elapsed().as_millis() as u64,
         })?;
     } else {

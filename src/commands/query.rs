@@ -307,7 +307,6 @@ fn walk_kind_filter(
     Ok(())
 }
 
-
 /// Run a real tree-sitter S-expression query against `root` and emit
 /// one `query_match` NDJSON event per captured node. The captured
 /// name (e.g. `name` for `@name`) is exposed via the `capture_name`
@@ -336,13 +335,13 @@ fn walk_sexpr(
     parser
         .set_language(lang)
         .with_context(|| format!("failed to set language for S-expression query on {lang_name}"))?;
-    let tree = parser
-        .parse(source, None)
-        .with_context(|| format!("parser returned no tree for S-expression query on {lang_name}"))?;
+    let tree = parser.parse(source, None).with_context(|| {
+        format!("parser returned no tree for S-expression query on {lang_name}")
+    })?;
     let fresh_root = tree.root_node();
 
-    let ts_query = TsQuery::new(lang, pattern)
-        .with_context(|| format!("invalid S-expression: {pattern}"))?;
+    let ts_query =
+        TsQuery::new(lang, pattern).with_context(|| format!("invalid S-expression: {pattern}"))?;
     let mut cursor = tree_sitter::QueryCursor::new();
     let capture_names = ts_query.capture_names();
     let mut matches = cursor.matches(&ts_query, fresh_root, source);

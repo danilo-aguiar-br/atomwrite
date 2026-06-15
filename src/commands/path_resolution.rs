@@ -81,8 +81,7 @@ mod tests {
             .expect("resolve");
         assert_eq!(
             resolved[0],
-            resolve_paths_against_workspace(std::slice::from_ref(&target), workspace)
-                .unwrap()[0]
+            resolve_paths_against_workspace(std::slice::from_ref(&target), workspace).unwrap()[0]
         );
     }
 

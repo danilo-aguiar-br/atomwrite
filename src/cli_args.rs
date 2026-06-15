@@ -361,6 +361,53 @@ pub struct WriteArgs {
     )]
     pub wal_policy: crate::wal::WalPolicy,
 
+    /// Preserve original mtime+atime of the target file (default: update to now).
+    /// Useful for backup/snapshot workflows that depend on stable mtimes.
+    /// Parity with edit/replace/set/del/case (which expose --preserve-timestamps).
+    #[arg(
+        long,
+        help = "Preserve original mtime/atime of the target file (default: update to now)"
+    )]
+    pub preserve_timestamps: bool,
+
+    /// GAP-2026-011 L2: Require `--backup` to be set. Aborts the write with
+    /// exit 65 if the target file exists and `--backup` is not provided.
+    /// Useful for CI/CD pipelines where backups are non-negotiable.
+    #[arg(
+        long,
+        help = "Require --backup; abort if missing and target file exists (defense-in-depth L2)"
+    )]
+    pub require_backup: bool,
+
+    /// GAP-2026-011 L3: Interactive Y/N confirmation when the target file
+    /// exists and is larger than 100KB. Reads from stdin; abort if input
+    /// is not "y" or "yes".
+    #[arg(
+        long,
+        help = "Require interactive Y/N confirmation for large files (>100KB) (defense-in-depth L3)"
+    )]
+    pub confirm: bool,
+
+    /// GAP-2026-011 L5: Auto-rotation. When `--backup` is active, ensures a
+    /// rotation backup is created if the target file was modified within
+    /// the last 24 hours (heuristic: recent files need backups).
+    #[arg(
+        long,
+        help = "Force auto-rotation backup for recently-modified files (<24h) (defense-in-depth L5)"
+    )]
+    pub auto_rotate: bool,
+
+    /// GAP-2026-011: Size delta threshold (in percent) to trigger the
+    /// L1 size guard warning. Default: 50 (any change larger than 50%
+    /// of the original file size emits a warning to stderr).
+    #[arg(
+        long,
+        value_name = "PERCENT",
+        default_value_t = 50,
+        help = "Size delta threshold in percent to trigger risk warning (L1, default: 50)"
+    )]
+    pub risk_threshold: u8,
+
     /// Preview without writing.
     #[arg(long, help = "Show what would be done without writing")]
     pub dry_run: bool,
@@ -598,6 +645,15 @@ pub struct SearchArgs {
         help = "Truncate matches longer than N columns (default: 500)"
     )]
     pub max_columns: usize,
+
+    /// Suppress per-file `begin` and `end` NDJSON events for files with
+    /// zero matches (GAP-2026-010). Default: emit `begin`/`end` for every
+    /// file visited (back-compat).
+    #[arg(
+        long,
+        help = "Suppress begin/end events for files with no matches (cleaner output for empty searches)"
+    )]
+    pub no_begin_end: bool,
 }
 
 /// Sort criterion for search results.

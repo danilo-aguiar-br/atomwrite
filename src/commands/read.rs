@@ -71,13 +71,35 @@ pub fn cmd_read(
         Some(apply_line_filters(&text, args))
     };
 
-    let (line_count, range) = if is_binary {
-        (0, None)
+    let (line_count, lines_total, range) = if is_binary {
+        (0u64, 0u64, None)
     } else {
         let text = String::from_utf8_lossy(&raw_bytes);
         let total_lines = text.lines().count() as u64;
+        // FIX GAP-2026-008: report FILTERED line count, not file total
+        let filtered_count = content_str
+            .as_deref()
+            .map(|s| s.lines().count() as u64)
+            .unwrap_or(total_lines);
         let range = parse_line_range(args, total_lines);
-        (total_lines, range)
+        (filtered_count, total_lines, range)
+    };
+
+    // FIX GAP-2026-009: emit `mode` discriminator for downstream consumers
+    let mode = if args.stat {
+        "stat"
+    } else if args.line.is_some() {
+        "line"
+    } else if args.lines.is_some() {
+        "lines"
+    } else if args.head.is_some() {
+        "head"
+    } else if args.tail.is_some() {
+        "tail"
+    } else if args.grep.is_some() {
+        "grep"
+    } else {
+        "full"
     };
 
     let output = ReadOutput {
@@ -85,6 +107,11 @@ pub fn cmd_read(
         path: path.display().to_string(),
         content: content_str,
         lines: line_count,
+        lines_total: if lines_total != line_count {
+            Some(lines_total)
+        } else {
+            None
+        },
         bytes: raw_bytes.len() as u64,
         checksum: hash,
         permissions: permissions_str,
@@ -97,6 +124,7 @@ pub fn cmd_read(
         binary: is_binary,
         range,
         verified: args.verify_checksum.as_ref().map(|_| true),
+        mode: mode.to_string(),
     };
 
     writer.write_event(&output)?;

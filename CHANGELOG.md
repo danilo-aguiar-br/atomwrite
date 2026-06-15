@@ -8,6 +8,54 @@
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.20] - 2026-06-15
+
+#### GAP-2026-001 — `count --by-size` finally implements the help flag
+- **Bug** — `cmd_count` ignored `args.by_size` despite the struct field existing in `src/cli_args.rs`. Help promised top-N by size; code always returned `mode: "lines"`. HELP-FIRST-DRIFT (flag announced in help before implementation existed).
+- **Fix** — New `CountBySizeOutput` struct in `ndjson_types.rs`. `cmd_count` collects `Vec<(PathBuf, u64)>` during the walk, sorts descending by size, truncates to `args.top` (default 10), and emits the top-N output.
+
+#### GAP-2026-002 — `write --preserve-timestamps` (parity with edit/replace)
+- **Bug** — `cmd_write` hardcoded `preserve_timestamps: false` in `AtomicWriteOptions` while 5 of 6 mutating subcommands exposed the flag.
+- **Fix** — Added `preserve_timestamps: bool` to `WriteArgs`; `cmd_write` now passes `args.preserve_timestamps` to the atomic layer.
+
+#### GAP-2026-003 — `scope --lang` alias
+- **Bug** — `ScopeArgs.language` was declared with `short='l' long="language"` only, with no `alias = "lang"`. Users following the SKILL docs that mention `--lang` got `ARGUMENT_PARSE_ERROR`.
+- **Fix** — Added `alias = "lang"` to the `language` field.
+
+#### GAP-2026-004 — `write --line-ending crlf` (accepts both forms)
+- **Bug** — `LineEnding::CrLf` was rendered by clap as `cr-lf` (kebab-case) while docs and prior user expectations wrote `crlf` (no hyphen).
+- **Fix** — Added `#[value(name = "cr-lf", alias = "crlf")]` and equivalent `value` attributes to all 4 variants for explicit, stable CLI surface.
+
+#### GAP-2026-005b — `edit --partial` semantics documented
+- **Doc-only** — `--partial` is implemented for multi-pair; single-pair failure path now returns `NoMatches` (exit 1) with no write. Documented in skill EN/PT.
+
+#### GAP-2026-006 — `diff --algorithm` regression tests
+- **Doc + tests** — `algorithm: DiffAlgorithm` was already implemented and dispatched to `similar::Algorithm::{Myers,Patience,Lcs}`. Added regression tests for `myers` vs `patience` vs `lcs`.
+
+#### GAP-2026-007 — `count --by-extension` filters backup timestamps
+- **Bug** — `validated.extension()` returned the last `.` component, so `foo.txt.bak.20260615_035515` was categorized as `20260615_035515`.
+- **Fix** — New `BACKUP_RE` regex `\.bak\.\d{8}_\d{6}$` matches backup filenames and routes them to a dedicated `"backup"` category.
+
+#### GAP-2026-008 — `read --head/--line/--lines` reports filtered line count
+- **Bug** — `ReadOutput.lines` reported the unfiltered file total even with `--head`, `--line`, or `--lines`.
+- **Fix** — `line_count` is now computed from the filtered `content_str`; `lines_total` (new optional field) preserves the original file total for downstream consumers.
+
+#### GAP-2026-009 — `read` emits `mode` discriminator
+- **API** — `ReadOutput` gains a `mode` field: `"full" | "head" | "tail" | "line" | "lines" | "grep" | "stat"`. Downstream consumers no longer need to parse content to discriminate partial reads from full reads.
+
+#### GAP-2026-010 — `search --no-begin-end` for cleaner empty-walk output
+- **API** — New `no_begin_end: bool` flag on `SearchArgs`. Default (off) preserves pre-v0.1.20 behavior. With the flag, `begin`/`end` NDJSON events are suppressed for files with zero matches.
+
+#### GAP-2026-011 — `write` intention guards (defense-in-depth after 2026-06-15 incident)
+- **Incident** — During a 2026-06-15 audit, `atomwrite write` was called without `--append` on `c24-framework34.html` (491827 bytes). The file was truncated to a few bytes; ~127 lines of 15-jun work (~9 KB) were lost.
+- **Fix — 5 new flags on `WriteArgs`** (all opt-in, default off to preserve backward compat):
+  - `--require-backup` (L2): abort with `InvalidInput` (exit 65) if target exists and `--backup` is not set.
+  - `--confirm` (L3): when target exists and is larger than 100KB, prompt `Overwrite <path> (<N> bytes)? [y/N]` and read from stdin. Aborts on any answer other than `y`/`yes`.
+  - `--auto-rotate` (L5): when `--backup` is active, force a rotation backup if the target was modified within the last 24 hours.
+  - `--risk-threshold <PERCENT>` (default 50): L1 size-guard threshold; emits a stderr warning (`low`/`medium`/`high`) when the size delta exceeds the threshold.
+  - Telemetry: `WriteOutput.risk_assessment` (optional, GAP-2026-011 L6) carries the original/new bytes, delta percentage, risk level, and which guard triggered.
+
+
 ## [0.1.19] - 2026-06-14
 
 #### G121 — `search` and `replace` resolve root paths against the workspace

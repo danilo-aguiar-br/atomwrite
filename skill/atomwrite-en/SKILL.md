@@ -1134,6 +1134,118 @@ atomwrite --workspace . wal-heal --threshold-secs 3600
 atomwrite --workspace . wal-heal --threshold-secs 7200 --max-duration-ms 500
 ```
 
+
+## v0.1.20 Notes
+### REQUIRED — Global --lang to --locale Rename
+- GLOBAL flag `--lang` is RENAMED to `--locale` (breaking change in v0.1.20)
+- Env var `ATOMWRITE_LANG` is UNCHANGED
+- Rust field name `lang` on the Cli struct is UNCHANGED
+- See ADR-0037 for the full rename rationale and migration notes
+- UPDATE existing invocations from `--lang pt-BR` to `--locale pt-BR`
+- DO NOT confuse with `transform --lang` or `scope --lang` (subcommand language flags stay)
+
+### REQUIRED — Write Intention Guard Flags (v0.1.20)
+- KNOW that v0.1.20 introduces four new write-safety flags
+- USE `--require-backup` to ABORT if `--backup` is not set AND the target exists
+- USE `--confirm` to trigger an interactive Y/N prompt for files larger than 100KB
+- USE `--auto-rotate` to FORCE a backup when the target was modified within the last 24 hours
+- USE `--risk-threshold <PERCENT>` to emit `risk_assessment` telemetry when size delta exceeds the threshold (default: 50)
+- Default behavior of `write` is UNCHANGED — these flags are additive
+- USE `--require-backup` in CI pipelines to prevent destructive overwrites without backup
+
+### Correct Pattern — Require Backup Before Overwrite
+```bash
+# v0.1.20+: abort if --backup is missing and target exists
+atomwrite --workspace . write --require-backup src/main.rs < new_main.rs
+# Exit 1 (Validation) if --backup was not also set
+```
+
+### Correct Pattern — Confirm Large File Writes
+```bash
+# v0.1.20+: interactive prompt for files > 100KB
+atomwrite --workspace . write --confirm big_dataset.csv < new_data.csv
+# Prompts y/N before applying
+```
+
+### Correct Pattern — Auto-Rotate Recent Targets
+```bash
+# v0.1.20+: force backup when target modified within 24h
+atomwrite --workspace . write --auto-rotate src/frequently_changed.rs < new.rs
+# Backup auto-created if mtime within 24h
+```
+
+### Correct Pattern — Risk Threshold Telemetry
+```bash
+# v0.1.20+: emit risk_assessment when size delta > 50%
+atomwrite --workspace . write --risk-threshold 30 src/data.json < new.json
+# NDJSON response includes risk_assessment block
+```
+
+### REQUIRED — Count --by-size Mode (v0.1.20)
+- KNOW that `--by-size` produces a structured NDJSON output (v0.1.20+)
+- Response includes `mode: "by_size"`, `items[path, bytes]` array, sorted DESCENDING by size
+- USE `--top N` to truncate the items list (default: 10)
+- Replaces the old text-table output with a parseable contract
+- CONSUME via `jaq '.items[] | {path, bytes}'` for downstream pipelines
+
+### Correct Pattern — Largest Files
+```bash
+# v0.1.20+: top 10 largest files with structured output
+atomwrite --workspace . count --by-size --top 10
+# Output: {"type":"result","mode":"by_size","items":[{"path":"...","bytes":N},...]}
+```
+
+### REQUIRED — Read --mode Discriminator (v0.1.20)
+- KNOW that the `mode` field in `read` output is now POPULATED
+- `mode` value is one of: `full`, `head`, `tail`, `line`, `lines`, `grep`, `stat`
+- USE this to disambiguate which read variant produced the response
+- Previously the field was always absent or null
+
+### Correct Pattern — Inspect Read Mode
+```bash
+# v0.1.20+: read reports which mode was used
+atomwrite --workspace . read --head 20 src/main.rs | jaq '.mode'
+# Output: "head"
+
+atomwrite --workspace . read --grep 'TODO' src/main.rs | jaq '.mode'
+# Output: "grep"
+
+atomwrite --workspace . read --stat src/main.rs | jaq '.mode'
+# Output: "stat"
+```
+
+### REQUIRED — Search --no-begin-end (v0.1.20)
+- USE `--no-begin-end` to suppress per-file `begin`/`end` events when files have zero matches
+- Useful for streaming pipelines that only care about match content
+- Default behavior UNCHANGED — `begin`/`end` events still emitted unless suppressed
+- Combine with `--count` for compact per-file match counts
+
+### Correct Pattern — Suppress Empty File Markers
+```bash
+# v0.1.20+: silence begin/end events for files without matches
+atomwrite --workspace . search --no-begin-end 'TODO' src/ --include '*.rs'
+# Output: only files with matches emit begin/end; zero-match files are silent
+```
+
+### REQUIRED — Write --preserve-timestamps (v0.1.20)
+- USE `--preserve-timestamps` on `write` to keep the original mtime of the target
+- Default behavior UNCHANGED — mtime is updated to reflect the write by default
+- Useful for backup, snapshot, and reproducible build workflows
+- Mirror of the existing `--preserve-timestamps` flag on `edit` and `replace`
+
+### Correct Pattern — Preserve mtime on Write
+```bash
+# v0.1.20+: keep original mtime on write
+atomwrite --workspace . write --preserve-timestamps src/snapshot.rs < new.rs
+# Target mtime unchanged after the atomic write
+```
+
+### REQUIRED — Scope --lang Alias (v0.1.20)
+- After the global `--lang` to `--locale` rename, `scope --lang <LANG>` is now a working alias for `--language`
+- USE `scope --lang rust` as shorthand for `scope --language rust`
+- Both forms are accepted — `--lang` on `scope` is the subcommand-local language selector
+- This avoids collision with the global locale flag that was renamed to `--locale`
+
 ## WAL Recovery Flow (v0.1.12)
 ### REQUIRED
 - KNOW that `atomic_write` only writes a WAL sidecar when `ATOMWRITE_WAL=1` env var is set OR `--strict-atomic` CLI flag is passed

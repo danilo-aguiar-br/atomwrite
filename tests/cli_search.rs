@@ -220,3 +220,57 @@ fn search_files_dedup_multi_file() {
         files.len()
     );
 }
+
+// ============================================================================
+// v0.1.20 GAP-2026-010: --no-begin-end suppression
+// ============================================================================
+
+/// GAP-010 default: begin/end events emitted for every visited file.
+#[test]
+fn v0_1_20_search_default_emits_begin_end() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "a.rs", "alpha");
+    common::create_test_file(dir.path(), "b.rs", "beta");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "search",
+            "NEVER_MATCH_THIS",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("run");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let begin_count = stdout.matches("\"type\":\"begin\"").count();
+    assert_eq!(begin_count, 2, "default: 2 begin events for 2 files");
+}
+
+/// GAP-010 --no-begin-end: zero begin/end events when no matches.
+#[test]
+fn v0_1_20_search_no_begin_end_suppresses_empty_walks() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    common::create_test_file(dir.path(), "a.txt", "alpha");
+    common::create_test_file(dir.path(), "b.txt", "beta");
+    common::create_test_file(dir.path(), "c.txt", "gamma");
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "search",
+            "--no-begin-end",
+            "NEVER_MATCH",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("run");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let begin_count = stdout.matches("\"type\":\"begin\"").count();
+    let end_count = stdout.matches("\"type\":\"end\"").count();
+    assert_eq!(begin_count, 0, "no begin events with --no-begin-end");
+    assert_eq!(end_count, 0, "no end events with --no-begin-end");
+}

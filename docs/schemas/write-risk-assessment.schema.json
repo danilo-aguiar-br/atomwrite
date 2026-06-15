@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WriteRiskAssessment",
+  "description": "GAP-2026-011 L1/L6: Telemetry describing why a write was classified as risky. Emitted in WriteOutput.risk_assessment when the size delta exceeds the user-configured --risk-threshold (default 50%).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "original_bytes": {
+      "description": "File size before the write.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "new_bytes": {
+      "description": "New file size after the write.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "size_delta_pct": {
+      "description": "|new - original| / original * 100, clamped to u8.",
+      "type": "integer",
+      "format": "uint8",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "risk_level": {
+      "description": "\"low\" (<70%) | \"medium\" (70-89%) | \"high\" (>=90%).",
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "guard_triggered": {
+      "description": "Which guard triggered the assessment (always \"size\" for L1).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "original_bytes",
+    "new_bytes",
+    "size_delta_pct",
+    "risk_level",
+    "guard_triggered"
+  ]
+}

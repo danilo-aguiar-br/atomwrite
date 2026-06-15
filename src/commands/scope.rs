@@ -29,11 +29,17 @@ pub struct ScopeArgs {
     pub paths: Vec<std::path::PathBuf>,
 
     /// Source language for AST parsing.
+    /// GAP-2026-003 — fixed in v0.1.20 via ADR-0037: the global locale
+    /// flag was renamed from `--lang` to `--locale`, freeing the
+    /// `--lang` namespace. `--lang` is now a working alias for
+    /// `--language`. Both `--lang rust` and `--language rust` are
+    /// accepted; use the short form `-l rust` for terse scripts.
     #[arg(
         short = 'l',
         long = "language",
+        alias = "lang",
         required = true,
-        help = "Language (rust, py, ts, go, c, etc)"
+        help = "Language (rust, py, ts, go, c, etc); accepts --lang as alias"
     )]
     pub language: String,
 

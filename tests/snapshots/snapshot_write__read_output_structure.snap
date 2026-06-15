@@ -9,6 +9,7 @@ expression: event
   "content": "hello world\n",
   "kind": "text",
   "lines": 1,
+  "mode": "full",
   "modified": "[redacted]",
   "path": "[redacted]",
   "permissions": "[redacted]",

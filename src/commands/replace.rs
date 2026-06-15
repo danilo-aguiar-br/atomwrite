@@ -42,9 +42,8 @@ pub fn cmd_replace(
     // validate_path on every caller-supplied root, COLLECTS the canonical
     // absolute PathBuf, and returns them so the WalkBuilder receives a
     // workspace-anchored root instead of the original (CWD-relative) path.
-    let canonical_paths = crate::commands::path_resolution::resolve_paths_against_workspace(
-        &args.paths, &workspace,
-    )?;
+    let canonical_paths =
+        crate::commands::path_resolution::resolve_paths_against_workspace(&args.paths, &workspace)?;
 
     let pattern = compile_pattern(args)?;
 

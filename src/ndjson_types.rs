@@ -36,6 +36,28 @@ pub struct WriteOutput {
     pub wal_policy: &'static str,
     /// Platform-specific fsync methods used.
     pub platform: PlatformInfo,
+    /// GAP-2026-011 L6: risk telemetry for size-delta warnings. Omitted
+    /// when the write is below the configured risk threshold (default
+    /// 50% delta) and no other guard was triggered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk_assessment: Option<WriteRiskAssessment>,
+}
+
+/// GAP-2026-011 L1/L6: Telemetry describing why a write was classified
+/// as risky. Emitted in `WriteOutput.risk_assessment` when the size
+/// delta exceeds the user-configured `--risk-threshold` (default 50%).
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct WriteRiskAssessment {
+    /// File size before the write.
+    pub original_bytes: u64,
+    /// New file size after the write.
+    pub new_bytes: u64,
+    /// |new - original| / original * 100, clamped to u8.
+    pub size_delta_pct: u8,
+    /// "low" (<70%) | "medium" (70-89%) | "high" (>=90%).
+    pub risk_level: &'static str,
+    /// Which guard triggered the assessment (always "size" for L1).
+    pub guard_triggered: &'static str,
 }
 
 /// Platform-specific fsync method names for diagnostics.
@@ -57,8 +79,17 @@ pub struct ReadOutput {
     /// File content, omitted in stat-only mode or for binary files.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
-    /// Total number of lines in the file.
+    /// Number of lines in the returned content.
+    ///
+    /// As of v0.1.20 (GAP-2026-008), this is the FILTERED count when a partial
+    /// read filter (`--head`, `--tail`, `--line`, `--lines`, `--grep`) is
+    /// in effect. The original file total is preserved in `lines_total`.
     pub lines: u64,
+    /// Total lines in the original file before any filter (GAP-2026-008).
+    /// Omitted when no filter is applied or the filter did not change the
+    /// line count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines_total: Option<u64>,
     /// File size in bytes.
     pub bytes: u64,
     /// BLAKE3 checksum of the file contents.
@@ -77,6 +108,10 @@ pub struct ReadOutput {
     /// Checksum verification result, if --verify-checksum was used.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verified: Option<bool>,
+    /// Read mode discriminator (GAP-2026-009): "full" | "head" | "tail" |
+    /// "line" | "lines" | "grep" | "stat". Allows downstream consumers to
+    /// distinguish partial reads from full reads without parsing content.
+    pub mode: String,
 }
 
 /// Inclusive 1-based line range for partial file reads.
@@ -730,6 +765,29 @@ pub struct CountTotalOutput {
     pub elapsed_ms: u64,
 }
 
+/// NDJSON output for count sorted by file size (top-N).
+/// Added in v0.1.20 to close GAP-2026-001 (HELP-FIRST-DRIFT).
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct CountBySizeOutput {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Count mode name.
+    pub mode: &'static str,
+    /// Top-N files by descending size.
+    pub items: Vec<SizeEntry>,
+    /// Duration in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// One entry in `CountBySizeOutput.items` (GAP-2026-001).
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct SizeEntry {
+    /// Absolute or workspace-relative file path.
+    pub path: String,
+    /// File size in bytes.
+    pub bytes: u64,
+}
+
 /// Aggregate file and line counts.
 #[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct CountTotals {
@@ -901,6 +959,7 @@ mod tests {
                 fsync: "sync_data",
                 dir_fsync: "sync_all",
             },
+            risk_assessment: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -1018,11 +1077,13 @@ mod tests {
                 fsync: "sync_data",
                 dir_fsync: "best_effort",
             },
+            risk_assessment: None,
         };
         let json = serde_json::to_value(&val).unwrap();
         let obj = json.as_object().unwrap();
         assert!(!obj.contains_key("checksum_before"));
         assert!(!obj.contains_key("backup_path"));
+        assert!(!obj.contains_key("risk_assessment"));
     }
 
     #[test]
@@ -1032,6 +1093,7 @@ mod tests {
             path: "/tmp/read.rs".into(),
             content: Some("hello".into()),
             lines: 1,
+            lines_total: None,
             bytes: 5,
             checksum: "abc".into(),
             permissions: "0644".into(),
@@ -1040,6 +1102,7 @@ mod tests {
             binary: false,
             range: None,
             verified: None,
+            mode: "full".into(),
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);

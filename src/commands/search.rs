@@ -61,6 +61,7 @@ pub fn cmd_search(
     let include_fifo = args.include_fifo;
     let max_filesize = args.max_filesize;
     let max_columns = args.max_columns;
+    let no_begin_end = args.no_begin_end;
 
     let shutdown_flag = shutdown.flag();
     let walker_thread = std::thread::spawn(move || {
@@ -136,8 +137,15 @@ pub fn cmd_search(
                 let mut file_matches = 0u64;
                 let mut file_lines = 0u64;
 
-                // Receiver may have dropped during shutdown — send failure is expected
-                let _ = tx.send(SearchEvent::Begin(Arc::clone(&path)));
+                // GAP-2026-010: --no-begin-end suppresses begin/end events for
+                // files with zero matches. Default (off) preserves the
+                // pre-v0.1.20 behaviour of emitting begin/end for every file.
+                // CRITICAL: Begin must be sent BEFORE the sink so that
+                // Match events emitted by SearchSink have a current open
+                // path to attach to in the consumer's BTreeMap.
+                if !no_begin_end {
+                    let _ = tx.send(SearchEvent::Begin(Arc::clone(&path)));
+                }
 
                 let mut sink = SearchSink {
                     matcher: &matcher,
@@ -159,11 +167,13 @@ pub fn cmd_search(
                     tm.fetch_add(file_matches, Ordering::Relaxed);
                 }
 
-                let _ = tx.send(SearchEvent::End {
-                    path,
-                    matches: file_matches,
-                    lines_searched: file_lines,
-                });
+                if !(no_begin_end && file_matches == 0) {
+                    let _ = tx.send(SearchEvent::End {
+                        path,
+                        matches: file_matches,
+                        lines_searched: file_lines,
+                    });
+                }
 
                 ignore::WalkState::Continue
             })

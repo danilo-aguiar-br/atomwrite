@@ -31,6 +31,8 @@
 - `apply-result.schema.json` -- output of `atomwrite apply`
 - `error-output.schema.json` -- error envelope emitted by all subcommands (v0.1.15: adds `failed_pair_index`, `pairs_total`, `pair_results` -- G117)
 - `wal-stats-output.schema.json` -- output of `atomwrite wal-stats` (v0.1.16: G119 L5 telemetry; `total_journals`, `by_state`, `oldest_journal_age_secs`, `total_size_bytes`, `by_directory`, `auto_heal_recommended`, `estimated_reclaim_bytes`)
+- `count-by-size-output.schema.json` -- output of `atomwrite count --by-size --top N` (v0.1.20: GAP-2026-001 top-N files by descending size; `items[].path`, `items[].bytes`)
+- `write-risk-assessment.schema.json` -- nested risk telemetry in `atomwrite write` output (v0.1.20: GAP-2026-011 L1/L6; `original_bytes`, `new_bytes`, `size_delta_pct`, `risk_level`, `guard_triggered`)
 
 
 ## Portugues
@@ -62,3 +64,5 @@
 - `rollback-result.schema.json` -- saída do `atomwrite rollback`
 - `apply-result.schema.json` -- saída do `atomwrite apply`
 - `error-output.schema.json` -- envelope de erro emitido por todos os subcomandos (v0.1.15: adiciona `failed_pair_index`, `pairs_total`, `pair_results` -- G117)
+- `count-by-size-output.schema.json` -- saída do `atomwrite count --by-size --top N` (v0.1.20: GAP-2026-001 top-N arquivos por tamanho decrescente; `items[].path`, `items[].bytes`)
+- `write-risk-assessment.schema.json` -- telemetria de risco aninhada na saída do `atomwrite write` (v0.1.20: GAP-2026-011 L1/L6; `original_bytes`, `new_bytes`, `size_delta_pct`, `risk_level`, `guard_triggered`)

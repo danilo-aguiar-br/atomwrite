@@ -116,11 +116,80 @@ pub fn cmd_write(
         return Ok(());
     }
 
+    // GAP-2026-011 L2 — require-backup guard
+    if args.require_backup && !args.backup && resolved.exists() {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "--require-backup is set but --backup is not; pass --backup or remove --require-backup".into(),
+        }
+        .into());
+    }
+
+    // GAP-2026-011 L3 — confirm guard
+    if args.confirm && resolved.exists() {
+        let size = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
+        if size > 100 * 1024 {
+            use std::io::BufRead;
+            eprint!("Overwrite {} ({} bytes)? [y/N] ", resolved.display(), size);
+            let stdin_lock = std::io::stdin();
+            let mut handle = stdin_lock.lock();
+            let mut input = String::new();
+            let _ = handle.read_line(&mut input);
+            if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
+                bail!("aborted by user (confirm=no)");
+            }
+        }
+    }
+
+    // GAP-2026-011 L5 — auto-rotate guard
+    let auto_rotate_active = args.auto_rotate
+        && args.backup
+        && resolved.exists()
+        && std::fs::metadata(&resolved)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age < std::time::Duration::from_secs(24 * 3600));
+
+    // GAP-2026-011 L1 + L6 — size guard and risk_assessment telemetry
+    let risk_assessment = if resolved.exists() {
+        let original = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
+        let new_bytes = content.len() as u64;
+        if original > 0 {
+            let delta_pct = ((new_bytes.abs_diff(original)) * 100 / original) as u8;
+            if delta_pct >= args.risk_threshold {
+                let level = if delta_pct >= 90 {
+                    "high"
+                } else if delta_pct >= 70 {
+                    "medium"
+                } else {
+                    "low"
+                };
+                eprintln!(
+                    "\x1b[33mwarning:\x1b[0m write risk: {} ({}% delta, {} -> {} bytes)",
+                    level, delta_pct, original, new_bytes
+                );
+                Some(crate::ndjson_types::WriteRiskAssessment {
+                    original_bytes: original,
+                    new_bytes,
+                    size_delta_pct: delta_pct,
+                    risk_level: level,
+                    guard_triggered: "size",
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let opts = AtomicWriteOptions {
-        backup: args.backup,
+        backup: args.backup || auto_rotate_active,
         syntax_check: args.syntax_check,
         retention: args.retention,
-        preserve_timestamps: false,
+        preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
@@ -141,6 +210,7 @@ pub fn cmd_write(
         stdin_bytes_read,
         wal_policy: args.wal_policy.as_str(),
         platform: result.platform,
+        risk_assessment,
     };
 
     writer.write_event(&output)?;

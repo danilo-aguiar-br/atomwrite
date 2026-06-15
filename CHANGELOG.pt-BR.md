@@ -8,6 +8,55 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.20] - 2026-06-15
+
+> **NOTA — Renomeação de flag (ADR-0037)** — a flag global `--lang` foi renomeada para `--locale`. A env var `ATOMWRITE_LANG` foi renomeada para `ATOMWRITE_LOCALE`. Os valores aceitos permanecem `en` e `pt-BR`. O alias `--lang` foi REMOVIDO nesta release; a presença dele agora dispara `ARGUMENT_PARSE_ERROR` (exit 2). Veja `docs/decisions/0037-lang-to-locale-rename.md` para a justificativa completa.
+
+#### GAP-2026-001 — `count --by-size` finalmente implementa a flag de help
+- **Bug** — `cmd_count` ignorava `args.by_size` apesar do campo existir em `src/cli_args.rs`. A help prometia top-N por tamanho; o código sempre retornava `mode: "lines"`. HELP-FIRST-DRIFT (flag anunciada na help antes da implementação existir).
+- **Correção** — Nova struct `CountBySizeOutput` em `ndjson_types.rs`. `cmd_count` coleta `Vec<(PathBuf, u64)>` durante o walk, ordena descendente por tamanho, trunca para `args.top` (default 10) e emite o output do top-N.
+
+#### GAP-2026-002 — `write --preserve-timestamps` (paridade com edit/replace)
+- **Bug** — `cmd_write` hardcodava `preserve_timestamps: false` em `AtomicWriteOptions` enquanto 5 de 6 subcomandos mutantes expunham a flag.
+- **Correção** — Adicionado `preserve_timestamps: bool` a `WriteArgs`; `cmd_write` agora passa `args.preserve_timestamps` para a camada atômica.
+
+#### GAP-2026-003 — alias `scope --lang`
+- **Bug** — `ScopeArgs.language` foi declarado com `short='l' long="language"` apenas, sem `alias = "lang"`. Usuários seguindo os docs da SKILL que mencionam `--lang` recebiam `ARGUMENT_PARSE_ERROR`.
+- **Correção** — Adicionado `alias = "lang"` ao campo `language`.
+
+#### GAP-2026-004 — `write --line-ending crlf` (aceita ambas as formas)
+- **Bug** — `LineEnding::CrLf` era renderizado pelo clap como `cr-lf` (kebab-case) enquanto os docs e expectativas prévias de usuários escreviam `crlf` (sem hífen).
+- **Correção** — Adicionados `#[value(name = "cr-lf", alias = "crlf")]` e atributos `value` equivalentes a todas as 4 variantes para superfície CLI explícita e estável.
+
+#### GAP-2026-005b — semântica de `edit --partial` documentada
+- **Apenas doc** — `--partial` é implementado para multi-par; o caminho de falha single-par agora retorna `NoMatches` (exit 1) sem escrita. Documentado em skill EN/PT.
+
+#### GAP-2026-006 — testes de regressão para `diff --algorithm`
+- **Doc + testes** — `algorithm: DiffAlgorithm` já estava implementado e despachado para `similar::Algorithm::{Myers,Patience,Lcs}`. Adicionados testes de regressão para `myers` vs `patience` vs `lcs`.
+
+#### GAP-2026-007 — `count --by-extension` filtra timestamps de backup
+- **Bug** — `validated.extension()` retornava o último componente `.`, então `foo.txt.bak.20260615_035515` era categorizado como `20260615_035515`.
+- **Correção** — Nova regex `BACKUP_RE` `\.bak\.\d{8}_\d{6}$` casa nomes de arquivo de backup e os roteia para uma categoria `"backup"` dedicada.
+
+#### GAP-2026-008 — `read --head/--line/--lines` reporta contagem de linhas filtrada
+- **Bug** — `ReadOutput.lines` reportava o total do arquivo não-filtrado mesmo com `--head`, `--line` ou `--lines`.
+- **Correção** — `line_count` agora é computado a partir do `content_str` filtrado; `lines_total` (novo campo opcional) preserva o total original do arquivo para consumidores downstream.
+
+#### GAP-2026-009 — `read` emite discriminador `mode`
+- **API** — `ReadOutput` ganha um campo `mode`: `"full" | "head" | "tail" | "line" | "lines" | "grep" | "stat"`. Consumidores downstream não precisam mais parsear o conteúdo para discriminar leituras parciais de leituras completas.
+
+#### GAP-2026-010 — `search --no-begin-end` para output de walk vazio mais limpo
+- **API** — Nova flag `no_begin_end: bool` em `SearchArgs`. Default (off) preserva o comportamento pré-v0.1.20. Com a flag, eventos NDJSON `begin`/`end` são suprimidos para arquivos com zero matches.
+
+#### GAP-2026-011 — guardas de intenção em `write` (defesa em profundidade após incidente de 2026-06-15)
+- **Incidente** — Durante uma auditoria em 2026-06-15, `atomwrite write` foi chamado sem `--append` sobre `c24-framework34.html` (491827 bytes). O arquivo foi truncado para poucos bytes; ~127 linhas de trabalho de 15-jun (~9 KB) foram perdidas.
+- **Correção — 5 novas flags em `WriteArgs`** (todas opt-in, default off para preservar compat):
+  - `--require-backup` (L2): aborta com `InvalidInput` (exit 65) se o alvo existe e `--backup` não está setado.
+  - `--confirm` (L3): quando o alvo existe e é maior que 100KB, prompt `Overwrite <path> (<N> bytes)? [y/N]` e lê do stdin. Aborta em qualquer resposta diferente de `y`/`yes`.
+  - `--auto-rotate` (L5): quando `--backup` está ativo, força um backup rotativo se o alvo foi modificado nas últimas 24 horas.
+  - `--risk-threshold <PERCENT>` (default 50): threshold L1 do guarda de tamanho; emite warning no stderr (`low`/`medium`/`high`) quando o delta de tamanho excede o threshold.
+  - Telemetria: `WriteOutput.risk_assessment` (opcional, GAP-2026-011 L6) carrega bytes original/novo, percentual de delta, nível de risco e qual guarda disparou.
+
 ## [0.1.15] - 2026-06-11
 
 #### G117 — `edit --old/--new` multi-par: paridade fuzzy, relato por par e `--partial` opt-in
