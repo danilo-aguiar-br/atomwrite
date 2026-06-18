@@ -1,50 +1,64 @@
 # atomwrite -- Agent Integration Contract
 
 
-[Leia em Portugues](AGENTS.pt-BR.md)
+[Leia em Português](AGENTS.pt-BR.md)
 
 
-## What Is New in v0.1.15 (extended in v0.1.18)
+## What's New in v0.1.22
 
-- G117: multi-pair `edit --old/--new` now runs the same 9-strategy fuzzy cascade as the single-pair path, per pair. Success envelopes gain `pairs_total` and `pair_results[{index, matched, strategy, similarity}]`; failures gain `failed_pair_index` (exit 65, file untouched). New opt-in `--partial` applies the pairs that match and reports the rest.
-- G118: `write` resolves the target against `--workspace` BEFORE append/prepend, line-ending auto-detection, and `--expect-checksum`. With a divergent CWD, checksum drift now exits 82 (`STATE_DRIFT`) instead of silently overwriting, and out-of-jail targets exit 126 early.
-- 502 tests passing; ADRs 0026-0030 document the five-gap closure across v0.1.15-v0.1.18.
+- **GAP-2026-012 Front 3 closed** — new subcommand `edit-loop [PATH]` applies N pairs `{old, new}` in 1 invocation via NDJSON on stdin. Reduces 5 sequential `edit` calls (5 subprocess spawns, 5 checksum recaptures) to a single atomic write. Supports `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`. See `tests/cli_v0121_edit_loop.rs` and ADR-0039.
+- **GAP-2026-013 Front 2 closed** — new subcommand `prune-backups [PATHS]...` provides manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` files from v0.1.20 and earlier. Flags: `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (defaults to true for safety). Reuses `cleanup_old_backups_in` from `src/atomic.rs`. See `tests/cli_v0121_prune_backups.rs` and ADR-0040.
+- 2 new NDJSON schemas: `edit-loop-output.schema.json` (with `pairs_total`, `pairs_applied`, `pairs_unmatched`, `pair_results[].index`, `pair_results[].matched`) and `prune-backups-output.schema.json` (with `action`, `path`, `reason`, `total`, `elapsed_ms`).
+- 32 subcommands total (added `edit-loop` and `prune-backups` to the previous 30).
+
+## What's New in v0.1.21
+
+- **GAP-2026-012 closed** — new flag `--allow-sequential-drift` on `edit` opts into accepting checksUM drift between sequential edits on the same file, eliminating the false-positive `STATE_DRIFT` (exit 82) when the same agent owns the file across iterations. Default behavior (without flag) is unchanged: re-capture checksum between edits.
+- **GAP-2026-013 Front 4 closed** — `edit` and `rollback` now expose `--backup` and `--retention` flags for parity with `write` and `replace`. Default `backup: false` preserves existing behavior.
+- **GAP-2026-014 v2 closed** — backup default changed to **delete after success**. Previously, backups accumulated with the `retention: u8` (default 5) policy. Now, `--backup` creates a `.bak.{timestamp}` which is `rm`'d inline on success. New opt-in `--keep-backup` preserves the backup. Failed operations always preserve the backup for inspection. See ADR-0038 and `tests/cli_v0121_backup_keep_flag.rs`.
+- New pattern documented: capture checksum at the top of each loop iteration via `atomwrite read --json | jaq -r '.checksum'`, then pass to `--expect-checksum`. Eliminates STATE_DRIFT for sequential edits by the same agent.
+
+## What's New in v0.1.15 (extended in v0.1.18)
+
+- G117: `edit` multi-pair `--old/--new` now runs the same 9-strategy fuzzy cascade as the single path, per pair. Success envelopes gain `pairs_total` and `pair_results[{index, matched, strategy, similarity}]`; failures gain `failed_pair_index` (exit 65, file intact). New opt-in `--partial` applies the pairs that match and reports the unmatched ones.
+- G118: `write` resolves the target against `--workspace` BEFORE append/prepend, automatic line ending detection, and `--expect-checksum`. With diverging CWD, checksum drift now returns exit 82 (`STATE_DRIFT`) instead of silently overwriting, and targets outside the jail return exit 126 early.
+- 542 tests passing; ADRs 0031-0037 document the closure of seven gaps between v0.1.19-v0.1.20.
 
 ## What's New in v0.1.12
 
-This section summarizes v0.1.12 changes that are most relevant to AI agents using atomwrite as a tool. All 13 gaps from the PRD audit that were closed in v0.1.11+v0.1.12 are listed below.
+This section summarizes the v0.1.12 changes most relevant to AI agents using atomwrite as a tool. All 13 gaps closed in the PRD audit in v0.1.11+v0.1.12 are listed below.
 
 ### Subcommands Added (v14 Tier 3)
 
-- `set <PATH> <KEY_PATH> <VALUE>` — write a value at a dotted path in a TOML or JSON file, preserving comments and key order via `toml_edit`. Use this instead of rewriting the entire config file (saves tokens, preserves formatting).
-- `get <PATH> <KEY_PATH>` — read a value at a dotted path. NDJSON: `{"type":"get","key_path","value","found","format"}`. Use this instead of reading the whole config file.
-- `del <PATH> <KEY_PATH>` — remove a key. `--force-missing` flag treats missing keys as a no-op success. Use this for idempotent cleanup scripts.
-- `case <PATHS...> --subvert OLD NEW --to <style>` — rename identifiers across multiple files via `heck`. Styles: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`. Use this for renaming 1-N identifiers across an entire module in a single call.
-- `query <PATH> [--kinds|--query <KIND>|-Q <KIND>|--tree] [--positions]` — walk a tree-sitter AST and emit nodes as NDJSON. 305 languages via `tree-sitter-language-pack`. Use this for semantic code analysis.
-- `outline <PATH> [--kind <KIND>] [--positions]` — extract high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON. Use this for code maps before refactoring.
+- `set <PATH> <KEY_PATH> <VALUE>` — writes a value at a dotted path in a TOML or JSON file, preserving comments and key order via `toml_edit`. Use this instead of rewriting the entire config file (saves tokens, preserves formatting).
+- `get <PATH> <KEY_PATH>` — reads a value at a dotted path. NDJSON: `{"type":"get","key_path","value","found","format"}`. Use this instead of reading the entire config file.
+- `del <PATH> <KEY_PATH>` — removes a key. The `--force-missing` flag treats absent keys as no-op success. Use this for idempotent cleanup scripts.
+- `case <PATHS...> --subvert OLD NEW --to <style>` — renames identifiers across multiple files via `heck`. Styles: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`.
+- `query <PATH> [--kinds|--query <KIND>|-Q <KIND>|--tree] [--positions]` — walks a tree-sitter AST and emits nodes as NDJSON. 305 languages via `tree-sitter-language-pack`.
+- `outline <PATH> [--kind <KIND>] [--positions]` — extracts high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON.
 
 ### Flags Added (Critical for Agents)
 
-- `--format raw` (alias `--raw`) on `read` — emit raw bytes for Unix composability with `sed`, `awk`, `diff`, `patch`. G81.
-- `--syntax-check` on `write` — invoke tree-sitter parser (24 languages) to validate code. Exit 88 on syntax error. G72.
-- `--max-filesize <BYTES>` on `search` — skip files larger than limit (default 10 MiB). G68.
-- `--max-columns <N>` on `search` — truncate matches with >N columns (default 500). G68.
-- `--literal` (alias `-F`) on `replace` — disable regex interpretation. G66.
+- `--format raw` (alias `--raw`) on `read` — emits raw bytes for Unix composability with `sed`, `awk`, `diff`, `patch`. G81.
+- `--syntax-check` on `write` — invokes the tree-sitter parser (24 languages) to validate code. Exit 88 on syntax error. G72.
+- `--max-filesize <BYTES>` on `search` — skips files larger than the limit (default 10 MiB). G68.
+- `--max-columns <N>` on `search` — truncates matches wider than N columns (default 500). G68.
+- `--literal` (alias `-F`) on `replace` — disables regex interpretation. G66.
 - `--rules <file.yaml>` and `--inline-rules <YAML>` on `transform` — multi-rule YAML for cascading refactors. G44.
-- `--batch-size <N>` on `batch` — control peak memory (default 100). G77.
-- `--no-reflink` on `backup`/`copy` — disable CoW for filesystems without support. G64.
-- `--include-fifo` on `write` — allow writing to named pipes. G56.
-- `--strict-atomic` on `write` — abort on EXDEV instead of copy fallback. G90.
-- `--lock` and `--lock-timeout <ms>` on `write`/`edit` — advisory file lock via `flock`. G54.
+- `--batch-size <N>` on `batch` — controls memory peak (default 100). G77.
+- `--no-reflink` on `backup`/`copy` — disables CoW for filesystems without support. G64.
+- `--include-fifo` on `write` — allows writing to named pipes. G56.
+- `--strict-atomic` on `write` — aborts on EXDEV instead of copy fallback. G90.
+- `--lock` and `--lock-timeout <ms>` on `write`/`edit` — advisory lock via `flock`. G54.
 
 ### Error Codes Added (5 New)
 
-- 83 `LockTimeout` (G54 advisory file lock via flock exceeded)
+- 83 `LockTimeout` (G54 advisory lock via flock exceeded)
 - 88 `SyntaxError` (G72 `--syntax-check` via tree-sitter parser)
-- 91 `ExdevFallbackDisabled` (G90 `--strict-atomic` opted out of Docker/NFS fallback)
+- 91 `ExdevFallbackDisabled` (G90 `--strict-atomic` opts out of Docker/NFS fallback)
 - 92 `CopyBackBlake3Failed` (G114 in-place write lost checksum integrity)
-- 93 `OrphanJournal` (G114 WAL sidecar left over from crash)
-- See REQUIRED -- Exit Codes below for the full table including all 25 codes.
+- 93 `OrphanJournal` (G114 WAL sidecar left by crash)
+- See REQUIRED -- Exit Codes below for the full table with all 25 codes.
 
 ### Crash Recovery (G114)
 
@@ -61,21 +75,21 @@ G39 xattr, G41 binary detect (content_inspector), G54 advisory lock, G56 FIFO sk
 - `tree-sitter-language-pack = "1.8"` (305 languages, download + dynamic-loading, ~5-10MB footprint)
 - `toml_edit` (preserves TOML formatting)
 - `heck = "0.5"` (case conversion)
-- `reflink-copy = "0.1"` (CoW backup)
+- `reflink-copy = "0.1"` (backup CoW)
 - `content_inspector = "0.2"` (UTF-16 detection)
 - `xattr = "1"` (extended attributes)
 
 ### Test Coverage
 
-- **502 tests passing** (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 cross-platform/WAL/audit increments v0.1.16-v0.1.18)
+- **542 tests passing** (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 cross-platform/WAL/audit increments v0.1.16-v0.1.18)
 - 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/` (set, get, del, case, query, outline, wal-recovery)
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
 ## Why atomwrite
-- Your agent makes dozens of tool calls to read, write, search and replace files
-- Each call costs tokens, latency and context window space
-- atomwrite replaces that with one CLI that handles all file operations
+- Your agent makes dozens of tool calls to read, write, search, and replace files
+- Each call costs tokens, latency, and context window space
+- atomwrite replaces all of this with one CLI that handles every file operation
 - Every write is atomic: tempfile, fsync, rename, fsync-dir
 - Every output is NDJSON: one JSON object per line on stdout
 - Every response includes a BLAKE3 checksum
@@ -83,24 +97,24 @@ G39 xattr, G41 binary detect (content_inspector), G54 advisory lock, G56 FIFO sk
 
 
 ## Economy
-### Token Savings
+### Token Economy
 - Each subcommand costs ~50-200 output tokens
 - A batch of 100 writes costs 1 bash call instead of 100 tool calls
-- The checksum in write responses saves one read call per write
+- The checksum in write responses saves one read per write
 - A typical refactoring session saves 500+ tool calls
 
 ### Context Window
 - NDJSON output is compact and structured
-- No verbose human-readable formatting to parse
-- Agents consume output directly without extraction steps
+- No verbose human formatting to interpret
+- Agents consume the output directly without extraction steps
 
 
 ## Sovereignty
 - atomwrite is a standalone Rust binary with zero runtime dependencies
 - No cloud service, no API key, no network access required
 - All operations execute locally with sub-millisecond latency
-- The agent controls every aspect of file operations
-- No vendor lock-in to any specific agent framework or MCP server
+- The agent controls all aspects of file operations
+- No vendor lock-in to any agent framework or MCP server
 
 
 ## Compatible Agents
@@ -109,7 +123,7 @@ G39 xattr, G41 binary detect (content_inspector), G54 advisory lock, G56 FIFO sk
 - Windsurf (Codeium)
 - Aider
 - OpenAI Codex CLI
-- Any agent that can invoke bash commands and parse JSON
+- Any agent that invokes bash commands and interprets JSON
 
 
 ## Quickstart
@@ -118,58 +132,61 @@ G39 xattr, G41 binary detect (content_inspector), G54 advisory lock, G56 FIFO sk
 cargo install atomwrite
 echo "hello" | atomwrite write src/hello.txt
 atomwrite read src/hello.txt
-atomwrite read --format raw src/hello.txt | wc -l
 atomwrite search 'hello' src/
 atomwrite replace 'hello' 'world' src/
 atomwrite calc "2 hours + 30 minutes to seconds"
 ```
 
 
-## 28 Subcommands
-- `read` -- read files with metadata, checksum, optional content; `--format raw` (alias `--raw`) emits raw bytes for Unix composability (G81); `--grep <REGEX>` filters returned lines
-- `write` -- create or overwrite files atomically via stdin; `--syntax-check` validates with tree-sitter after write (G72, exit 88)
-- `edit` -- surgically edit by line number, text marker or exact match; `--fuzzy auto|off|aggressive` for fuzzy matching; `--multi` for NDJSON multi-edit
-- `search` -- search file contents in parallel (ripgrep engine); supports `--context N`, `--max-count N`, `--invert`, `--sort path`, `--fixed`, `--word`, `--case-insensitive`, `--include`, `--exclude`
-- `replace` -- replace text across files with atomic writes
-- `hash` -- calculate BLAKE3 checksums
-- `delete` -- delete files with optional backup
-- `count` -- count lines, files by extension
-- `diff` -- compare two files (unified, stat, or changes)
-- `move` -- move or rename files atomically
-- `copy` -- copy files with checksum verification
-- `list` -- list project file structure with metadata
-- `extract` -- extract fields from NDJSON or text columns
-- `calc` -- evaluate math expressions and unit conversions (fend engine)
-- `regex` -- generate regex from examples (grex engine)
+## 32 Subcommands
+- `read` -- reads files with metadata, checksum, optional content; `--format raw` (alias `--raw`) emits raw bytes for Unix composability (G81); `--grep <REGEX>` filters returned lines
+- `write` -- creates or overwrites files atomically via stdin; `--syntax-check` valida com tree-sitter após escrita (G72, exit 88)
+- `edit` -- edits surgically by line number, text marker, or exact match; `--fuzzy auto|off|aggressive` for fuzzy matching; `--multi` for NDJSON multi-edit
+- `search` -- searches file content in parallel (ripgrep engine); supports `--context N`, `--max-count N`, `--invert`, `--sort path`, `--fixed`, `--word`, `--case-insensitive`, `--include`, `--exclude`
+- `replace` -- replaces text across multiple files with atomic writes
+- `hash` -- computes BLAKE3 checksums
+- `delete` -- deletes files with optional backup
+- `count` -- counts lines, files by extension
+- `diff` -- compares two files (unified, stat, or changes)
+- `move` -- moves or renames files atomically
+- `copy` -- copies files with checksum verification
+- `list` -- lists project file structure with metadata
+- `extract` -- extracts fields from NDJSON or text columns
+- `calc` -- evaluates mathematical expressions and unit conversions (fend engine)
+- `regex` -- generates regex from examples (grex engine)
 - `transform` -- structural AST search and rewrite (ast-grep, 306 languages)
-- `scope` -- grammatical scoping on code categories; `--delete` to remove matches; `--action upper|lower|titlecase|squeeze` for text transforms; `--replace-with "text"` for custom replacement; `--query` for prepared queries (comments, fn, strings, struct, etc); `--pattern` for custom AST patterns; supports Rust (30 queries), Python (13), JS/TS (11), Go (8)
-- `backup` -- create timestamped backups with BLAKE3 checksums; `--retention` for retention period, `--dry-run` for preview
-- `rollback` -- restore from backup; `--timestamp` or `--latest` to select backup, `--verify` for checksum validation, `--dry-run` for preview
-- `apply` -- apply patches from stdin with auto-format detection (unified diff, SEARCH/REPLACE blocks, markdown-fenced, full file); `--format` to force format, `--backup` for safety, `--dry-run` for preview
-- `batch` -- execute multiple operations from NDJSON manifest (write, replace, delete, edit, hash, move, copy); supports `--transaction` for all-or-nothing
-- `completions` -- generate shell completions; use `--install` to install to XDG data directory
-- `set` -- (v0.1.12, v14 Tier 3) write a value at a dotted path in a TOML or JSON file via `toml_edit`; auto-coerces int/bool/float/string
-- `get` -- (v0.1.12, v14 Tier 3) read a value at a dotted path; NDJSON: `{"type":"get","key_path","value","found","format"}`
-- `del` -- (v0.1.12, v14 Tier 3) remove a key; `--force-missing` flag treats missing keys as a no-op success
-- `case` -- (v0.1.12, v14 Tier 3) rename identifiers across multiple files via `heck`; styles: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`
-- `query` -- (v0.1.12, v14 Tier 3, G72) walk a tree-sitter AST and emit nodes as NDJSON; 305 languages via `tree-sitter-language-pack`; modes: `--kinds`, `--query <KIND>`, `-Q <KIND>`, `--tree`, `--positions`
-- `outline` -- (v0.1.12, v14 Tier 3) extract high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON
+- `scope` -- grammatical scope over code categories; `--delete` to remove matches; `--action upper|lower|titlecase|squeeze` for text transformations; `--replace-with "text"` for custom substitution; `--query` for prepared queries (comments, fn, strings, struct, etc); `--pattern` for custom AST patterns; supports Rust (30 queries), Python (13), JS/TS (11), Go (8)
+- `backup` -- creates timestamped backups with BLAKE3 checksums; `--retention` for retention period, `--dry-run` for preview
+- `rollback` -- restores from backup; `--timestamp` or `--latest` to select backup, `--verify` for checksum validation, `--dry-run` for preview
+- `apply` -- applies patches from stdin with automatic format detection (unified diff, SEARCH/REPLACE blocks, markdown-fenced, full file); `--format` to force format, `--backup` for safety, `--dry-run` for preview
+- `batch` -- executes multiple operations from NDJSON manifest (write, replace, delete, edit, hash, move, copy); supports `--transaction` for all-or-nothing
+- `completions` -- generates shell completions
+- `set` -- (v0.1.12, v14 Tier 3) writes a value at a dotted path in a TOML or JSON file via `toml_edit`; auto-coerces int/bool/float/string
+- `get` -- (v0.1.12, v14 Tier 3) reads a value at a dotted path; NDJSON: `{"type":"get","key_path","value","found","format"}`
+- `del` -- (v0.1.12, v14 Tier 3) removes a key; `--force-missing` flag treats absent keys as no-op success
+- `case` -- (v0.1.12, v14 Tier 3) renames identifiers across multiple files via `heck`; styles: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`
+- `query` -- (v0.1.12, v14 Tier 3, G72) walks a tree-sitter AST and emits nodes as NDJSON; 305 languages via `tree-sitter-language-pack`; modes: `--kinds`, `--query <KIND>`, `-Q <KIND>`, `--tree`, `--positions`
+- `outline` -- (v0.1.12, v14 Tier 3) extracts high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON
+- `wal-stats` -- (v0.1.18) inspects WAL journal state for telemetry and debugging; scope via `--workspace <DIR>`; NDJSON report with `terminal_committed`, `terminal_aborted`, `total_bytes`, `oldest_age_secs`
+- `wal-heal` -- (v0.1.18) removes orphan terminal journals older than `--threshold-secs` (default 3600s); wall-clock budget via `--max-duration-ms` (default 100ms)
+- `edit-loop` -- (v0.1.22) applies N `{old, new}` pairs in 1 invocation via NDJSON on stdin; supports `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`
+- `prune-backups` -- (v0.1.22) manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` files (v0.1.20 and earlier); flags `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` for safety); NDJSON output with `path`, `reason`, `action`, `total`
 
 
 ## REQUIRED -- Output Contract
-- stdout: ALWAYS NDJSON structured (one JSON object per line)
+- stdout: ALWAYS structured NDJSON (one JSON object per line)
 - stderr: logs only (tracing format, only with `--verbose`)
-- Every object has a `"type"` discriminator field
+- Every object has a discriminator field `"type"`
 - Flush after each line
-- NEVER parse stderr for structured data
-- ALWAYS parse stdout line by line as JSON
+- NEVER interpret stderr as structured data
+- ALWAYS interpret stdout line by line as JSON
 
 
 ## REQUIRED -- CRUD Contract
 ### Create (write)
-- Pipe content to stdin
+- Send content via stdin
 - Receive path, bytes_written, checksum, platform info
-- Use `--backup` to preserve previous version
+- Use `--backup` to preserve the previous version
 - Use `--expect-checksum` for optimistic locking
 
 ### Read (read)
@@ -177,23 +194,23 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - Use `--stat` to skip content (metadata only)
 - Use `--lines START:END` for partial reads (1-based inclusive)
 - Use `--head N` for first N lines, `--tail N` for last N lines
-- Use `--grep <REGEX>` to filter returned lines to those matching a regex
+- Use `--grep <REGEX>` to filter returned lines to those matching the regex
 - Binary files are auto-detected and content is omitted
 
 ### Update (edit, replace, transform)
-- `edit` -- surgical: by line number, text marker or exact match
+- `edit` -- surgical: by line number, text marker, or exact match
 - `replace` -- bulk: across multiple files with regex support
-- `transform` -- structural: AST-aware rewrite across codebases
+- `transform` -- structural: AST-based rewrite across codebases
 - All three return checksums before and after modification
 - All three support `--dry-run` for preview
-- `edit` and `replace` support `--preserve-timestamps` to opt out of mtime updates (default: mtime is updated to reflect the change, so build systems like cargo/make/cmake detect the source change without manual `touch`)
-- `edit` and `replace` NDJSON output include `mtime_preserved: bool` field to verify which path was taken
+- `edit` and `replace` support `--preserve-timestamps` to skip mtime update (default: mtime is updated to reflect the change, so build systems like cargo/make/cmake detect the source change without manual `touch`)
+- The NDJSON output of `edit` and `replace` includes the `mtime_preserved: bool` field to verify which path was taken
 
 ### Delete (delete)
 - Receive path, bytes, checksum_before
 - Use `--backup` for reversible deletion
 - Use `--recursive` for directories
-- Use `--dry-run` to preview
+- Use `--dry-run` for preview
 
 
 ## REQUIRED -- JSON Output Format
@@ -215,11 +232,6 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 {"type":"edit","path":"/abs/path","edits":1,"mode":"old_new","bytes_before":100,"bytes_after":110,"checksum_before":"abc...","checksum_after":"def...","lines_before":10,"lines_after":11,"elapsed_ms":1,"fuzzy":true,"strategy":"exact_whitespace","strategies_tried":2,"similarity":null}
 ```
 
-- `fuzzy`: whether fuzzy matching was used (only present in `--old/--new` mode)
-- `strategy`: fuzzy strategy that succeeded (only present when `fuzzy=true`)
-- `strategies_tried`: number of strategies tried before success (only present in `--old/--new` mode)
-- `similarity`: similarity score 0.0-1.0 (only present for `block_anchor` strategy)
-
 ### Search Match
 
 ```json
@@ -238,9 +250,9 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 {"error":true,"code":"FILE_NOT_FOUND","exit":4,"message":"file not found: src/missing.rs","path":"src/missing.rs","error_class":"permanent","retryable":false,"suggestion":"verify the file path exists","workspace":null}
 ```
 
-- `workspace` field appears only on `WORKSPACE_JAIL` errors and reports the resolved workspace root (may be `null`)
+- The `workspace` field only appears on `WORKSPACE_JAIL` errors and reports the resolved workspace root (may be `null`)
 - `suggestion` is context-aware: `WORKSPACE_JAIL` suggestion changes based on whether `--workspace` was provided
-- See `docs/schemas/` for full JSON Schema definitions of all output types (the `error-output.schema.json` defines all 20 error codes and the `workspace` field)
+- See `docs/schemas/` for complete JSON Schema definitions of all output types (`error-output.schema.json` defines all 20 error codes and the `workspace` field)
 
 
 ## REQUIRED -- Exit Codes
@@ -251,21 +263,21 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - 28: disk full
 - 30: quota exceeded
 - 65: invalid input, file too large, or binary file
-- 73: cross-device rename
+- 73: rename across devices
 - 74: I/O error
-- 78: config invalid
-- 81: checksum verification failed (hash --verify mismatch)
-- 82: state drift (checksum mismatch on write)
-- 83: lock timeout (G54 advisory file lock via flock, `--lock-timeout` exceeded)
-- 85: FIFO detected (named pipe cannot be atomically written)
-- 86: device file detected (block or character device)
+- 78: invalid configuration
+- 81: checksum verification failed (hash --verify did not match)
+- 82: state drift (checksum did not match on write)
+- 83: lock timeout (G54 advisory lock via flock, `--lock-timeout` exceeded)
+- 85: FIFO detected (named pipe cannot be written atomically)
+- 86: device file detected (block or character)
 - 88: syntax error detected (G72 `--syntax-check` via tree-sitter parser)
-- 91: EXDEV fallback disabled (`--strict-atomic` opted out of G90 Docker/NFS fallback)
+- 91: EXDEV fallback disabled (`--strict-atomic` opts out of G90 Docker/NFS fallback)
 - 92: copy-back BLAKE3 failed (G114 in-place write lost checksum integrity)
-- 93: orphan journal recovered (G114 WAL sidecar left over from crash)
-- 126: workspace jail violated
+- 93: orphan journal recovered (G114 WAL sidecar left by crash)
+- 126: workspace jail violation
 - 127: symlink blocked
-- 128: file immutable
+- 128: immutable file
 - 130: SIGINT
 - 141: SIGPIPE (broken pipe)
 - 143: SIGTERM
@@ -277,18 +289,18 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - Fields: `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`, `workspace`
 - `error_class` values: `permanent`, `transient`, `conflict`, `precondition_failed`
 - `retryable` is true for `transient` and `conflict` classes
-- `workspace` field appears only on `WORKSPACE_JAIL` errors and reports the resolved workspace root
-- All 25 error variants carry actionable `suggestion` text (added in v0.1.4, GAP 13)
-- `WorkspaceJail` suggestion is **context-aware**: when `--workspace` or `ATOMWRITE_WORKSPACE` is already set, the suggestion says "use a path inside the workspace (<root>)" rather than re-prompting the flag
-- The `BinaryFile` suggestion recommends `read --stat` for metadata-only reads (the previous phantom `--force-text` reference is removed)
+- The `workspace` field only appears on `WORKSPACE_JAIL` errors and reports the resolved workspace root
+- All 20 error variants carry actionable `suggestion` text (added in v0.1.4, GAP 13)
+- The `WorkspaceJail` suggestion is **context-aware**: when `--workspace` or `ATOMWRITE_WORKSPACE` is already set, the suggestion says "use a path inside the workspace (<root>)" instead of re-asking for the flag
+- The `BinaryFile` suggestion recommends `read --stat` for metadata-only reads (phantom reference to `--force-text` was removed)
 - The `FileImmutable` suggestion mentions `chattr -i` (Unix) and `fsutil` (Windows)
-- The `NoMatches` suggestion guides pattern broadening and `--include`/`--exclude` filter review
-- Only `BrokenPipe` (SIGPIPE) has no suggestion because the error is not actionable by the user
+- The `NoMatches` suggestion guides pattern broadening and reviewing `--include`/`--exclude` filters
+- Only `BrokenPipe` (SIGPIPE) has no suggestion because the error is not user-actionable
 
 ### Context-Aware Suggestion API (v0.1.4)
 - New Rust API: `ErrorJson::from_error_with_context(err, &ErrorContext)` accepts workspace provenance
-- `ErrorContext` struct has `workspace_provided: bool` and `workspace: Option<PathBuf>`
-- Legacy `ErrorJson::from_error(err)` still works and produces the same output as the new API with a default context
+- The `ErrorContext` struct has `workspace_provided: bool` and `workspace: Option<PathBuf>`
+- The legacy `ErrorJson::from_error(err)` still works and produces the same output as the new API with default context
 - Programmatic consumers can call `from_error_with_context` to influence the suggestion text
 
 
@@ -299,51 +311,51 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `IO_ERROR` (exit 74) -- retry with exponential backoff
 
 ### Conflict Errors (retryable: true)
-- `STATE_DRIFT` (exit 82) -- re-read file, get new checksum, retry with updated `--expect-checksum`
-- `CROSS_DEVICE` (exit 73) -- atomwrite handles this internally via copy-then-delete
+- `STATE_DRIFT` (exit 82) -- re-read the file, get the new checksum, retry with updated `--expect-checksum`
+- `CROSS_DEVICE` (exit 73) -- atomwrite handles internally via copy-then-delete
 
 ### Permanent Errors (retryable: false)
-- `FILE_NOT_FOUND` (exit 4) -- verify path exists before retrying
-- `PERMISSION_DENIED` (exit 13) -- do not retry without permission fix
-- `INVALID_INPUT` (exit 65) -- fix the input and retry
-- `CONFIG_INVALID` (exit 78) -- fix the configuration and retry
+- `FILE_NOT_FOUND` (exit 4) -- verify the path exists before retrying
+- `PERMISSION_DENIED` (exit 13) -- do not retry without fixing permissions
+- `INVALID_INPUT` (exit 65) -- correct the input and retry
+- `CONFIG_INVALID` (exit 78) -- correct the configuration and retry
 - `CHECKSUM_VERIFY_FAILED` (exit 81) -- the hash passed to `--verify` did not match; re-read the file
 - `FILE_TOO_LARGE` (exit 65) -- increase `--max-filesize` or process a smaller file
-- `WORKSPACE_JAIL` (exit 126) -- do not retry, path is outside workspace
+- `WORKSPACE_JAIL` (exit 126) -- do not retry, path is outside the workspace
 - `SYMLINK_BLOCKED` (exit 127) -- do not retry with symlinks disabled
-- `IMMUTABLE_FILE` (exit 128) -- do not retry without removing immutable flag
-- `INTERNAL_ERROR` (exit 255) -- report as a bug; not actionable by the user
+- `IMMUTABLE_FILE` (exit 128) -- do not retry without removing the immutability flag
+- `INTERNAL_ERROR` (exit 255) -- report as a bug; not user-actionable
 
 ### Precondition Failed (retryable: false)
 - `BINARY_FILE` (exit 65) -- use `--stat` mode to read metadata without content
-- `IMMUTABLE_FILE` (exit 128) -- remove immutable flag first (chattr -i on Unix, fsutil on Windows)
-- `WORKSPACE_JAIL` (exit 126) -- adjust `--workspace` boundary
+- `IMMUTABLE_FILE` (exit 128) -- remove the immutability flag first (chattr -i on Unix, fsutil on Windows)
+- `WORKSPACE_JAIL` (exit 126) -- adjust the `--workspace` boundary
 - `FIFO_DETECTED` (exit 85) -- skip this file or use stdin redirection
 - `DEVICE_FILE` (exit 86) -- skip this file or use stdin redirection
 
 
 ## REQUIRED -- Global Flags
-- `--workspace <PATH>` -- ALWAYS pass to restrict operations to project root
-- `--verbose` / `-v` -- enable tracing on stderr
-- `--quiet` / `-q` -- suppress non-essential output
-- `--color <auto|always|never>` -- control colored output
-- `--no-color` -- disable colored output (equivalent to `--color never`)
-- `--no-gitignore` -- do not respect .gitignore rules
-- `--hidden` -- include hidden files and directories
-- `--follow-symlinks` -- follow symbolic links
+- `--workspace <PATH>` -- ALWAYS pass to restrict operations to the project root
+- `--verbose` / `-v` -- enables tracing on stderr
+- `--quiet` / `-q` -- suppresses non-essential output
+- `--color <auto|always|never>` -- controls colored output
+- `--no-color` -- disables colored output (equivalent to `--color never`)
+- `--no-gitignore` -- does not respect .gitignore rules
+- `--hidden` -- includes hidden files and directories
+- `--follow-symlinks` -- follows symbolic links
 - `--threads <N>` / `-j <N>` -- parallel threads (0 = all cores)
-- `--max-filesize <BYTES>` -- skip files larger than limit
-- `--timeout <SECONDS>` -- global operation timeout (0 = no timeout, default 0). Use to bound long-running searches, batches, and replace operations
-- `--json-schema` -- emit JSON schema for the subcommand output
-- `--lang <LOCALE>` -- override display locale (en, pt-BR) via `ATOMWRITE_LANG` env
+- `--max-filesize <BYTES>` -- ignores files larger than the limit
+- `--timeout <SECONDS>` -- global operation timeout (0 = no timeout, default 0). Use to bound long searches, batches, and replace operations
+- `--json-schema` -- emits the JSON schema for the subcommand's output
+- `--lang <LOCALE>` -- overrides the display locale (en, pt-BR) via env `ATOMWRITE_LANG`
 
 
-## FORBIDDEN -- Common Pitfalls
-- NEVER parse stderr for data; it contains only tracing logs
+## PROHIBITED -- Common Pitfalls
+- NEVER interpret stderr as data; it only contains tracing logs
 - NEVER assume exit code 1 is a fatal error; it means zero matches in search
-- NEVER skip `--workspace` when running as an agent
-- NEVER skip `--dry-run` before destructive batch operations
-- NEVER use unquoted expressions with `calc`; the shell will interpolate
+- NEVER omit `--workspace` when running as an agent
+- NEVER omit `--dry-run` before destructive batch operations
+- NEVER use unquoted expressions with `calc`; the shell will interpolate them
 - NEVER ignore `checksum_before` and `checksum_after` in edit/replace responses
 - NEVER retry `permanent` or `precondition_failed` errors without fixing the cause
 
@@ -352,12 +364,86 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - Each subcommand: 1 bash call, ~50-200 output tokens
 - Batch mode: 1 bash call for N operations
 - Checksum in response eliminates 1 verification read per write
-- A typical agent session saves 500+ tool calls versus individual operations
+- A typical agent session saves 500+ calls versus individual operations
 
 
 ## REQUIRED -- Optimistic Locking
 - Read a file and capture its `checksum` from the response
 - Pass the checksum via `--expect-checksum` on the next write or edit
 - If the file changed between read and write, atomwrite returns exit 82 (`STATE_DRIFT`)
-- Re-read the file to get the current checksum and retry
+- Re-read the file to get the current checksum and try again
 - This prevents lost updates in concurrent agent workflows
+
+
+## Backup Operations v0.1.21
+
+- By default, backups are DELETED after the operation completes successfully
+- Use `--keep-backup` to preserve the backup after success
+- Backups from FAILED operations are always preserved for inspection
+- `cleanup_old_backups_in` keeps N backups only for `--keep-backup` cases
+- New subcommand `prune-backups` for manual cleanup of legacy backups
+
+
+## Sequential Pattern v0.1.21
+
+- 5 sequential edits WITHOUT re-capture = 4 fail with `STATE_DRIFT` (exit 82)
+- 5 sequential edits WITH re-capture = all pass (canonical pattern)
+- 5 sequential edits WITH `--allow-sequential-drift` = all pass with warning
+- `edit-loop` applies N pairs in 1 invocation (no internal STATE_DRIFT)
+
+
+## Subcommands v0.1.22
+
+Two new subcommands close the rejected fronts from previous plans (`gaps.md` lines 82-83, 201):
+
+### `edit-loop` — N Pairs in 1 Invocation
+
+- **When to use**: applying a batch of textual transformations to one file where today you would invoke `edit` N times in a shell loop
+- **Input**: NDJSON via stdin with one `{old, new}` object per line
+- **Behavior**: reads the file ONCE, applies all pairs in memory, writes atomically ONCE
+- **Advantage over shell loop**: 1 CLI invocation instead of N; 1 read + 1 write instead of N+N; no internal `STATE_DRIFT` between pairs
+
+```bash
+# Aplicar 3 pares em 1 invocação
+printf '%s\n' \
+  '{"old":"v0_1_20","new":"v0_1_22"}' \
+  '{"old":"foo","new":"bar"}' \
+  '{"old":"baz","new":"qux"}' \
+  | atomwrite --workspace . edit-loop src/version.rs
+
+# Com backup preservado (linha do tempo forense)
+printf '%s\n' '{"old":"foo","new":"bar"}' \
+  | atomwrite --workspace . edit-loop --backup --keep-backup src/foo.rs
+
+# Modo best-effort com --partial
+printf '%s\n' '{"old":"existe","new":"X"}' '{"old":"ausente","new":"Y"}' \
+  | atomwrite --workspace . edit-loop --partial src/foo.rs
+```
+
+- **NDJSON Schema**: `docs/schemas/edit-loop-output.schema.json` -- fields `pairs_total`, `pairs_applied`, `pairs_unmatched`, `pair_results[].index`, `pair_results[].matched`
+- **ADR**: `docs/decisions/0039-edit-loop-helper.md`
+
+### `prune-backups` — Manual Cleanup of Legacy Files
+
+- **When to use**: operators who upgraded from v0.1.20 inherit `.bak.YYYYMMDD_HHMMSS` siblings that v0.1.21 no longer creates (and therefore no longer cleans up automatically)
+- **Algorithm**: scans `[PATHS]...` for `.bak.YYYYMMDD_HHMMSS` files, applies age or count filters
+- **Safety**: `--dry-run` is DEFAULT `true` to prevent accidental data loss
+
+```bash
+# Default --dry-run true: lista o que SERIA removido
+atomwrite --workspace . prune-backups --max-age 86400 .
+
+# Remove backups mais antigos que 24 horas
+atomwrite --workspace . prune-backups --max-age 86400 --dry-run false .
+
+# Mantém apenas os 3 backups mais recentes por diretório
+atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
+
+# Pipeline CI: afirma zero backups órfãos após limpeza
+atomwrite --workspace . prune-backups --max-age 0 --dry-run false . \
+  && fd '*.bak.*' . | wc -l | jaq -e '. == 0'
+```
+
+- **NDJSON Schema**: `docs/schemas/prune-backups-output.schema.json` -- fields `path`, `reason`, `action`, `total`, `elapsed_ms`
+- **ADR**: `docs/decisions/0040-prune-backups-subcommand.md`
+- **Operational note**: automatic retroactive cleanup was explicitly rejected (see ADR-0038 Addendum); operators must run `prune-backups` on demand

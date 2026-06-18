@@ -1,7 +1,7 @@
 # Installation Guide
 
 - Complete instructions for installing atomwrite on Linux, macOS, and Windows
-- Current target version: v0.1.18 (fixes Windows 10/11 compilation, adds context-aware error suggestions, 6 new subcommands, G72 real syntax check, G114 WAL sidecar, 5 new error codes, reflink copy, EXDEV fallback)
+- Current target version: v0.1.22 (adds `edit-loop` and `prune-backups` subcommands, `--allow-sequential-drift` opt-in flag on `edit`, `--backup` parity 4/4 across mutating subcommands, `--keep-backup` opt-in flag on 6 subcommands, 575+ tests, ADRs 0038/0039/0040)
 - Sections ordered by platform, with prerequisites and troubleshooting
 
 
@@ -64,8 +64,8 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Install atomwrite v0.1.18 from crates.io
-cargo install atomwrite --locked --version "^0.1.12"
+# Install atomwrite v0.1.22 from crates.io
+cargo install atomwrite --locked --version "^0.1.22"
 
 # Verify
 atomwrite --version
@@ -323,4 +323,43 @@ fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 
 # Or via ruplacer
 ruplacer --subvert --lang --locale
+```
+\n
+
+## v0.1.21 — What Is New
+
+This release closes 3 GAP-2026 items and changes default behavior for backup retention:
+
+- **`--allow-sequential-drift`** on `edit` — opt-in flag for sequential edit pipelines
+- **`--backup` parity 4/4** — `edit` and `rollback` now accept `--backup` (was hardcoded `false`)
+- **`--keep-backup`** on 6 subcommands — opt-in flag to preserve the backup after success
+- **Default change** — backups are DELETED after successful `--backup` operations; add `--keep-backup` to preserve
+- 555+ tests passing, 1 new ADR (0038)
+
+## v0.1.22 — What Is New
+
+This release adds 2 new subcommands for cleanup and N-edits-in-1-invocation patterns:
+
+- **`prune-backups [PATHS]...`** — manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` siblings
+  - Flags: `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (default true)
+  - NDJSON output with per-backup lines and summary
+- **`edit-loop <PATH>`** — apply N `{old, new}` pairs via NDJSON on stdin in 1 invocation
+  - Flags: `--workspace`, `--expect-checksum`, `--partial`, `--fuzzy`, `--backup`, `--keep-backup`
+  - NDJSON output with per-pair `pair_result` and summary
+- 575+ tests passing, 2 new ADRs (0039, 0040), 2 new NDJSON schemas
+- 32 subcommands total (up from 30 in v0.1.20)
+
+### Install v0.1.22
+
+```bash
+# From crates.io
+cargo install atomwrite --locked --version "^0.1.22"
+
+# Verify
+atomwrite --version
+
+# Smoke test the new subcommands
+atomwrite --workspace . prune-backups --max-age 86400 .
+printf '%s\n' '{"old":"foo","new":"bar"}' \
+  | atomwrite --workspace . edit-loop src/foo.rs
 ```

@@ -924,6 +924,71 @@ pub struct TextValuesOutput<'a> {
 
 pub use crate::wal::{AutoHealReport, WalDirEntry, WalStateBreakdown, WalStats};
 
+// ============================================================================
+// v0.1.22 — prune-backups NDJSON output types
+// ============================================================================
+
+/// NDJSON per-entry event for `prune-backups` (pruned, skipped, or error).
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct PruneBackupEntry {
+    /// Event type discriminator: `"pruned"` | `"skipped"` | `"error"`.
+    pub r#type: &'static str,
+    /// Absolute path of the backup file (or target when skipped).
+    pub path: String,
+    /// Reason string: `"age"` | `"count"` | `"not_found"` | `"remove_failed"`.
+    pub reason: String,
+    /// Error message when `type == "error"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// NDJSON final summary for `prune-backups`.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct PruneBackupSummary {
+    /// Event type discriminator: "summary".
+    pub r#type: &'static str,
+    /// Action label: `"pruned"` | `"dry_run"`.
+    pub action: String,
+    /// Total number of backups pruned (or matching criteria, in dry-run).
+    pub total: usize,
+    /// Operation duration in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+// ============================================================================
+// v0.1.22 — edit-loop NDJSON output types (ADR-0039)
+// ============================================================================
+
+/// Per-pair result emitted in the `pair_results` array of `edit-loop`.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct EditLoopPairResult {
+    /// 1-based index of the pair in NDJSON order.
+    pub index: usize,
+    /// Whether the pair matched and was applied.
+    pub matched: bool,
+}
+
+/// NDJSON final summary for `edit-loop`.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct EditLoopSummary {
+    /// Event type discriminator: "result".
+    pub r#type: &'static str,
+    /// Action label: `"edit_loop"`.
+    pub action: String,
+    /// Target file path.
+    pub path: String,
+    /// Total number of pairs read from stdin.
+    pub pairs_total: usize,
+    /// Number of pairs that matched and were applied.
+    pub pairs_applied: usize,
+    /// Number of pairs that did not match.
+    pub pairs_unmatched: usize,
+    /// Operation duration in milliseconds.
+    pub elapsed_ms: u64,
+    /// Per-pair result array, in input order.
+    pub pair_results: Vec<EditLoopPairResult>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

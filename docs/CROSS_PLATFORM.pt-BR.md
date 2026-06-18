@@ -244,3 +244,25 @@ fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 # Ou via ruplacer
 ruplacer --subvert --lang --locale
 ```
+
+
+## v0.1.21 — Novidades
+
+Esta release é totalmente retrocompatível em todas as 3 plataformas suportadas (Linux, macOS, Windows). Nenhum comportamento específico de plataforma foi alterado.
+
+- Flag opt-in `--allow-sequential-drift` em `edit` — comportamento uniforme entre plataformas
+- `--backup` e `--keep-backup` propagados em 6 sub-comandos (`write`, `edit`, `replace`, `rollback`, `apply`, `batch`) — funciona identicamente em Linux ext4, macOS APFS e Windows NTFS
+- Arquivos de backup usam nomenclatura `.bak.<YYYYMMDD_HHMMSS>` e `fs::copy` atômico — mesmas garantias de atomicidade nas 3 plataformas
+
+## v0.1.22 — Novidades
+
+Esta release é totalmente retrocompatível em todas as 3 plataformas suportadas.
+
+- **`prune-backups [PATHS]...`** — limpeza manual de siblings `.bak.YYYYMMDD_HHMMSS`
+  - Usa `std::fs::remove_file` diretamente (não o pipeline atômico)
+  - Honra o jail do `--workspace` em todas as plataformas
+  - Saída NDJSON é independente de plataforma
+- **`edit-loop <PATH>`** — N pares em 1 invocação via NDJSON
+  - Lê o arquivo uma vez com `read_file_string` (usa memmap2 para arquivos grandes em Linux/macOS)
+  - Escreve atomicamente via o mesmo pipeline do `edit`
+  - No Windows: respeita `init_console` UTF-8 e tratamento ANSI (v0.1.4)

@@ -78,7 +78,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 
 ## Versão Atual
-- atomwrite está na v0.1.15
+- atomwrite está na v0.1.22
 - Este documento cobre migração de v0.1.0 a v0.1.15, com seções detalhadas para v0.1.12 a v0.1.15, v0.1.11 a v0.1.12 e grandes transições anteriores
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
 
@@ -577,3 +577,91 @@ fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 # Ou via ruplacer
 ruplacer --subvert --lang --locale
 ```
+
+## v0.1.21 — Novidades
+
+Esta release fecha 3 GAP-2026 items (012, 013 Problema C, 014 v2) e adiciona 1 ADR (0038 backup cumprido deleta). A mudança mais visível é que operações `--backup` agora DELETAM o backup após sucesso por padrão; adicione `--keep-backup` para preservá-lo. A segunda mudança visível é que `edit` e `rollback` agora aceitam `--backup`, fechando o buraco de paridade de API da v0.1.20. A terceira mudança é `--allow-sequential-drift` em `edit` para pipelines sequenciais.
+
+### Operações de Backup
+
+- `write --backup` e `replace --backup` DELETAM o backup após sucesso por padrão
+- `edit --backup` e `rollback --backup` são NOVIDADES em v0.1.21; a flag é honrada em todos os 4 subcomandos mutantes
+- `--keep-backup` é a flag OPT-IN para preservar o backup após sucesso em `write`, `edit`, `replace`, `rollback`, `apply` e `batch`
+- `apply --keep-backup` e `batch --keep-backup` são NOVIDADES em v0.1.21 para paridade
+- Backups são SEMPRE preservados no caminho de FALHA, independentemente de `--keep-backup`
+
+### Padrão de Edits Sequenciais
+
+- Encadear múltiplas chamadas `edit` no mesmo arquivo sem re-capturar `checksum_after` produz `STATE_DRIFT` (exit 82) em toda chamada após a primeira
+- Dois padrões válidos: re-capturar checksum (Padrão A) ou passar `--allow-sequential-drift` (Padrão B)
+- Comportamento padrão inalterado: `STATE_DRIFT` ainda dispara em mismatch de checksum quando a flag está ausente
+
+#### Exemplo — Padrão A
+
+```bash
+# Checksum inicial
+CS=$(atomwrite --workspace . read src/main.rs | jaq -r '.checksum')
+
+# Edit 1 — passa o checksum capturado
+echo "linha 2" | atomwrite --workspace . edit --expect-checksum "$CS" src/main.rs --append
+
+# Re-captura o checksum pós-edição
+CS=$(atomwrite --workspace . read src/main.rs | jaq -r '.checksum')
+
+# Edit 2 — usa o novo checksum
+printf 'linha 1\nlinha 2\n' | atomwrite --workspace . edit --expect-checksum "$CS" src/main.rs --append
+```
+
+#### Exemplo — Padrão B
+
+```bash
+# Edit 1 — checksum inicial
+CS=$(atomwrite --workspace . read src/main.rs | jaq -r '.checksum')
+echo "linha 2" | atomwrite --workspace . edit --expect-checksum "$CS" src/main.rs --append
+
+# Edit 2 — drift permitido, o pré-estado difere de CS
+printf 'linha 1\nlinha 2\n' | atomwrite --workspace . edit --allow-sequential-drift src/main.rs --append
+```
+
+### Migration Notes
+
+- **Breaking change** — `write --backup` e `replace --backup` não deixam mais um sibling `.bak` em disco após uma escrita bem-sucedida. O comportamento pré-v0.1.21 de backup vive para sempre acabou. Adicione `--keep-backup` a qualquer script que dependa do backup persistindo através da operação, ou reescreva para ler o backup antes da escrita completar.
+- **Breaking change** — `edit` e `rollback` agora aceitam `--backup` mas o ignoram sem reclamação se as pré-condições da camada atômica rejeitarem. O novo opt-in é a flag explícita `--backup`; scripts antigos que chamavam `edit` com a suposição de sem backup ainda recebem sem backup por padrão.
+- **Não-breaking** — `apply --keep-backup` e `batch --keep-backup` são aditivos. Comportamento padrão (sem backup) permanece inalterado.
+
+### Validation
+
+- `cargo build --release` OK
+- `cargo clippy --all-targets -- -D warnings` OK
+- 555+ testes passando (542 baseline v0.1.20 + 13 novos)
+- 1 novo ADR: 0038 (backup cumprido deleta)
+- 3 novos GAP-2026 fechados (012, 013 Problema C, 014 v2)
+- Cross-compile verificado em 3 targets Windows
+- Smoke test de migração: `fd '*.bak.*' . | wc -l` reporta 0 em uma execução pós-sucesso; reporta 1 quando `--keep-backup` está setado
+
+
+## v0.1.22 — Novidades
+
+Esta release adiciona 2 novos sub-comandos para fechar o último GAP-2026-012 e dar aos operadores ferramentas para gerenciar backups legados.
+
+### Sub-comandos Adicionados
+
+- **`prune-backups [PATHS]...`** — limpeza manual de backups `.bak.YYYYMMDD_HHMMSS` legados
+  - Flags: `--max-age <SECONDS>` (deleta backups mais antigos que N segundos), `--max-count <N>` (mantém N mais recentes), `--dry-run` (lista sem deletar; default `true` para segurança)
+  - Saída NDJSON com `scanned`, `deleted`, `kept`, `elapsed_ms`, `dry_run`
+  - Exit 0 em scan completo, 1 se nenhum backup encontrado, 65 em falha de precondição
+  - Veja `docs/decisions/0040-prune-backups-subcommand.md`
+- **`edit-loop <PATH>`** — aplica N pares `{old, new}` via NDJSON no stdin em 1 invocação
+  - Aceita flags globais (`--workspace`, `--expect-checksum`, `--partial`, `--fuzzy`, `--line-ending`, `--preserve-timestamps`)
+  - Saída NDJSON: 1 linha `pair_result` por par + linha `summary` final com `pairs_total`, `pairs_matched`, `pairs_unmatched`
+  - Exit 0 se todos os pares casaram, 1 se zero matches (NO_MATCHES), 65 em falha de precondição
+  - Veja `docs/decisions/0039-edit-loop-helper.md`
+
+### Validation
+
+- `cargo build --release` OK
+- `cargo clippy --all-targets -- -D warnings` OK
+- 575+ testes passando (555+ baseline v0.1.21 + 16+ novos de regressão e property tests)
+- 2 novos ADRs: 0039 (edit-loop helper), 0040 (prune-backups subcommand)
+- 2 novos schemas NDJSON: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
+- Cross-compile verificado em 3 targets Windows

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "edit-loop output",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": {
+      "const": "result"
+    },
+    "action": {
+      "const": "edit_loop"
+    },
+    "path": {
+      "type": "string"
+    },
+    "pairs_total": {
+      "type": "integer"
+    },
+    "pairs_applied": {
+      "type": "integer"
+    },
+    "pairs_unmatched": {
+      "type": "integer"
+    },
+    "elapsed_ms": {
+      "type": "integer"
+    },
+    "pair_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "matched"],
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "matched": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

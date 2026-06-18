@@ -78,6 +78,7 @@ pub fn emit_input_schema(writer: &mut NdjsonWriter<impl Write>) -> Result<()> {
 /// Returns `AtomwriteError::Io` if reading stdin or writing results fails.
 /// Returns `AtomwriteError::InvalidInput` if the manifest contains invalid operations.
 #[tracing::instrument(skip_all, fields(command = "batch"))]
+#[allow(clippy::too_many_arguments)]
 pub fn cmd_batch(
     global: &GlobalArgs,
     stdin: impl Read,
@@ -86,6 +87,7 @@ pub fn cmd_batch(
     transaction: bool,
     manifest_path: Option<&std::path::Path>,
     shutdown: &ShutdownSignal,
+    keep_backup: bool,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
@@ -195,7 +197,7 @@ pub fn cmd_batch(
         } else {
             false
         };
-        let result = execute_op(op, idx, &workspace, global, dry_run);
+        let result = execute_op(op, idx, &workspace, global, dry_run, keep_backup);
 
         match result {
             Ok(details) => {
@@ -340,21 +342,27 @@ fn execute_op(
     workspace: &std::path::Path,
     global: &GlobalArgs,
     dry_run: bool,
+    keep_backup: bool,
 ) -> Result<String> {
     let max_size = global.effective_max_filesize();
     match op.op.as_str() {
-        "write" => execute_write(op, workspace, dry_run),
-        "replace" => execute_replace(op, workspace, dry_run, max_size),
+        "write" => execute_write(op, workspace, dry_run, keep_backup),
+        "replace" => execute_replace(op, workspace, dry_run, max_size, keep_backup),
         "delete" => execute_delete(op, workspace, dry_run, max_size),
-        "edit" => execute_edit(op, workspace, dry_run, max_size),
+        "edit" => execute_edit(op, workspace, dry_run, max_size, keep_backup),
         "hash" => execute_hash(op, workspace, max_size),
         "move" => execute_move(op, workspace, dry_run),
-        "copy" => execute_copy(op, workspace, dry_run, max_size),
+        "copy" => execute_copy(op, workspace, dry_run, max_size, keep_backup),
         _ => bail!("unsupported batch operation: {}", op.op),
     }
 }
 
-fn execute_write(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Result<String> {
+fn execute_write(
+    op: &BatchOp,
+    workspace: &std::path::Path,
+    dry_run: bool,
+    keep_backup: bool,
+) -> Result<String> {
     let target = op.resolve_file_path()?;
     let content = op
         .content
@@ -368,8 +376,15 @@ fn execute_write(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Re
     }
 
     let opts = AtomicWriteOptions {
-        backup: op.backup,
-        ..Default::default()
+        backup: op.backup || keep_backup,
+        syntax_check: false,
+        retention: 5,
+        preserve_timestamps: false,
+        backup_output_dir: None,
+        strategy: None,
+        strict_atomic: false,
+        wal_policy: crate::wal::WalPolicy::Auto,
+        keep_backup,
     };
     let result = atomic_write(target_path, content.as_bytes(), &opts, workspace)?;
     Ok(format!(
@@ -383,6 +398,7 @@ fn execute_replace(
     workspace: &std::path::Path,
     dry_run: bool,
     max_size: u64,
+    keep_backup: bool,
 ) -> Result<String> {
     let path_str = op.resolve_file_path()?;
     let pattern =
@@ -415,8 +431,15 @@ fn execute_replace(
 
     let checksum_before = checksum::hash_bytes(content.as_bytes());
     let opts = AtomicWriteOptions {
-        backup: op.backup,
-        ..Default::default()
+        backup: op.backup || keep_backup,
+        syntax_check: false,
+        retention: 5,
+        preserve_timestamps: false,
+        backup_output_dir: None,
+        strategy: None,
+        strict_atomic: false,
+        wal_policy: crate::wal::WalPolicy::Auto,
+        keep_backup,
     };
     let result = atomic_write(&validated, new_content.as_bytes(), &opts, workspace)?;
     Ok(format!(
@@ -473,6 +496,7 @@ fn execute_edit(
     workspace: &std::path::Path,
     dry_run: bool,
     max_size: u64,
+    keep_backup: bool,
 ) -> Result<String> {
     let path_str = op.resolve_file_path()?;
     let old = op
@@ -500,8 +524,15 @@ fn execute_edit(
     let edited = content.replacen(old, new, 1);
     let checksum_before = checksum::hash_bytes(content.as_bytes());
     let opts = AtomicWriteOptions {
-        backup: op.backup,
-        ..Default::default()
+        backup: op.backup || keep_backup,
+        syntax_check: false,
+        retention: 5,
+        preserve_timestamps: false,
+        backup_output_dir: None,
+        strategy: None,
+        strict_atomic: false,
+        wal_policy: crate::wal::WalPolicy::Auto,
+        keep_backup,
     };
     let result = atomic_write(&validated, edited.as_bytes(), &opts, workspace)?;
     Ok(format!(
@@ -562,6 +593,7 @@ fn execute_copy(
     workspace: &std::path::Path,
     dry_run: bool,
     max_size: u64,
+    keep_backup: bool,
 ) -> Result<String> {
     let source_str = op
         .source
@@ -587,8 +619,15 @@ fn execute_copy(
     let content = crate::file_io::read_file_bytes(&source, max_size)
         .with_context(|| format!("cannot read {}", source.display()))?;
     let opts = AtomicWriteOptions {
-        backup: op.backup,
-        ..Default::default()
+        backup: op.backup || keep_backup,
+        syntax_check: false,
+        retention: 5,
+        preserve_timestamps: false,
+        backup_output_dir: None,
+        strategy: None,
+        strict_atomic: false,
+        wal_policy: crate::wal::WalPolicy::Auto,
+        keep_backup,
     };
     let result = atomic_write(&dest, &content, &opts, workspace)?;
     Ok(format!(

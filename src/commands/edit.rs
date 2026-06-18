@@ -57,12 +57,20 @@ pub fn cmd_edit(
 
     if let Some(ref expected) = args.expect_checksum {
         if &checksum_before != expected {
-            return Err(AtomwriteError::StateDrift {
-                path: path.clone(),
-                expected: expected.clone(),
-                actual: checksum_before,
+            if args.allow_sequential_drift {
+                tracing::warn!(
+                    expected = %expected,
+                    actual = %checksum_before,
+                    "drift aceito por --allow-sequential-drift"
+                );
+            } else {
+                return Err(AtomwriteError::StateDrift {
+                    path: path.clone(),
+                    expected: expected.clone(),
+                    actual: checksum_before,
+                }
+                .into());
             }
-            .into());
         }
     }
 
@@ -136,14 +144,15 @@ pub fn cmd_edit(
     };
 
     let opts = AtomicWriteOptions {
-        backup: false,
+        backup: args.backup,
         syntax_check: false,
-        retention: 5,
+        retention: args.retention,
         preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
         wal_policy: args.wal_policy,
+        keep_backup: args.keep_backup,
     };
 
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
@@ -390,14 +399,15 @@ fn cmd_edit_multi(
     }
 
     let opts = AtomicWriteOptions {
-        backup: false,
+        backup: args.backup,
         syntax_check: false,
-        retention: 5,
+        retention: args.retention,
         preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
         wal_policy: args.wal_policy,
+        keep_backup: args.keep_backup,
     };
 
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;

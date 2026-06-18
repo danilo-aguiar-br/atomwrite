@@ -73,6 +73,7 @@ pub fn cmd_set(
         strategy: None,
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
+        keep_backup: false,
     };
 
     let result = atomic_write(&validated, new_content.as_bytes(), &opts, &workspace)?;

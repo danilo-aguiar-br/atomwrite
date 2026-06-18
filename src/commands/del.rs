@@ -100,6 +100,7 @@ pub fn cmd_del(
         strategy: None,
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
+        keep_backup: false,
     };
 
     let _ = atomic_write(&validated, new_content.as_bytes(), &opts, &workspace)?;

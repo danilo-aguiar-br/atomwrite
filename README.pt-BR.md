@@ -13,10 +13,27 @@
 
 ## O Que É
 - Um único binário Rust que resolve toda operação de arquivo que um agente LLM precisa
-- **30 subcomandos**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions
+- **32 subcomandos**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions, edit-loop, prune-backups
 - Toda escrita é atômica: tempfile, fsync, rename, fsync do diretório
 - Toda resposta é NDJSON: um objeto JSON por linha, legível por máquina
 - Todo arquivo recebe checksum BLAKE3: detecta drift, verifica integridade, habilita locking otimista
+
+
+## O Que Há De Novo Na v0.1.22 (2026-06-17)
+- **2 novos sub-comandos**: `edit-loop` e `prune-backups`
+- **`edit-loop <PATH>`** — aplica N pares de substituição `{old, new}` via NDJSON no stdin em 1 invocação (reduz overhead de 5x subprocess para edições em lote). ADR-0039
+- **`prune-backups [PATHS]...`** — limpeza manual de siblings `.bak.YYYYMMDD_HHMMSS` legados com `--max-age`, `--max-count`, `--dry-run` (default true para segurança). ADR-0040
+- **2 novos schemas NDJSON**: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
+- **575+ testes passando** em 56+ suites de integração, 0 falhas, 0 warnings de clippy
+
+
+## O Que Há De Novo Na v0.1.21 (2026-06-17)
+- **3 GAP-2026 fechados** na v0.1.21
+- **`--allow-sequential-drift`** em `edit` — flag opt-in para pipelines de edição sequencial. ADR-0038
+- **`--backup` paridade 4/4** — `edit` e `rollback` agora aceitam `--backup` (eram hardcoded `false`)
+- **`--keep-backup`** em 6 sub-comandos (`write`, `edit`, `replace`, `rollback`, `apply`, `batch`) — flag opt-in para preservar o backup após sucesso
+- **Mudança de comportamento padrão** — backups são DELETADOS após operações `--backup` bem-sucedidas; adicione `--keep-backup` para preservar o comportamento anterior
+- **555+ testes passando**, 1 novo ADR (0038), 3 targets de cross-compile Windows verdes
 
 
 ## O Que Há De Novo Na v0.1.20 (2026-06-15)

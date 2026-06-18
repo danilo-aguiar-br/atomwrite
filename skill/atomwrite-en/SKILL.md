@@ -1,23 +1,30 @@
 ---
 name: atomwrite
 description: |
-  Use atomwrite for ALL file operations: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline (30 subcommands total as of v0.1.20).
+  Use atomwrite for ALL file operations: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline, edit-loop, prune-backups (32 subcommands total as of v0.1.22).
   Auto-invoke when user asks to: write files, search code, replace text, refactor AST, generate regex, calculate expressions, batch operations, check checksums, list project structure, scope code by grammar, backup files, rollback changes, apply patches, edit and trigger cargo build, preserve file timestamps.
-  Trigger on keywords: atomic write, file operation, NDJSON, BLAKE3, checksum, refactor, ast-grep, batch, search parallel, scope, backup, rollback, apply patch, timeout, grep, install completions, mtime, preserve-timestamps, preserve timestamps, build system aware, cargo build, make, cmake.
+  Trigger on keywords: atomic write, file operation, NDJSON, BLAKE3, checksum, refactor, ast-grep, batch, search parallel, scope, backup, rollback, apply patch, timeout, grep, install completions, mtime, preserve-timestamps, preserve timestamps, build system aware, cargo build, make, cmake, prune-backups, edit-loop, sequential drift, transient backup, --keep-backup, --allow-sequential-drift.
 ---
 
 
 # atomwrite
-## TL;DR — v0.1.20 (2026-06-15)
+## TL;DR — v0.1.22 (2026-06-17)
 ### REQUIRED
-- v0.1.20 closes 11 GAP-2026 (001-011) — see `gaps.md` for full audit
-- 542 tests pass in 47 suites (up from 515 in v0.1.19; +27 new)
-- 4 ADRs added: ADR-0034 (help-driven testing anti-pattern), ADR-0035 (write intention guards), ADR-0036 (edit --partial coverage), ADR-0037 (global locale rename)
-- 6 of the 11 GAP-2026 were "help-first drift" (flag declared in --help before implementation existed) — see ADR-0034
-- 4 of the 11 GAP-2026 had insufficient regression test pinning — see ADR-0034
-- GAP-2026-011 added 6 layers of write-safety defense-in-depth AFTER the c24-framework34.html truncation incident of 2026-06-15 — see ADR-0035
-- BREAKING CLI change: global `--lang` renamed to `--locale`. Env var `ATOMWRITE_LANG` and Rust field `args.global.lang` stay stable
-- All other v0.1.20 additions are additive and opt-in (default `write` behavior unchanged)
+- v0.1.22 closes GAP-2026-012 Front 3 (`edit-loop` helper — subcommand for N pairs in 1 invocation) and reopens the manual cleanup front of GAP-2026-013 (`prune-backups` subcommand for legacy v0.1.20 `.bak.*` siblings)
+- 575+ tests pass in 56+ suites (up from 555+ in v0.1.21; +16 new)
+- 2 ADRs added: ADR-0039 (edit-loop helper), ADR-0040 (prune-backups subcommand)
+- v0.1.22 adds 2 new subcommands: `edit-loop` (N pairs in 1 invocation via NDJSON on stdin) and `prune-backups` (manual cleanup of legacy `.bak.*` files with `--max-age`, `--max-count`, `--dry-run`)
+- 2 new NDJSON schemas: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
+- v0.1.21 PREVIOUSLY closed GAP-2026-012 Front 1 (documentation of re-capture pattern) + Front 2 (`--allow-sequential-drift` opt-in), GAP-2026-013 Problem C (`--backup` parity across 4/4 subcommands), GAP-2026-014 v2 (backups deleted after success by default; `--keep-backup` opt-in preserves them)
+- v0.1.20 PREVIOUSLY closed 11 GAP-2026 (001-011); renamed `--lang` to `--locale` (BREAKING CLI change; env var `ATOMWRITE_LANG` and Rust field `args.global.lang` stay stable); added intention guards (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`) on `write`
+- All v0.1.21 and v0.1.22 additions are additive and opt-in (default `write` behavior unchanged)
+
+## v0.1.22 (2026-06-17) — prune-backups and edit-loop Sub-commands
+
+- **`prune-backups [PATHS]...`** — clean up legacy `.bak.YYYYMMDD_HHMMSS` backups by age or count
+- **`edit-loop [PATH]`** — apply N `{old, new}` pairs via NDJSON on stdin in 1 invocation
+- 2 ADRs added (0039, 0040)
+
 
 
 ## Core Identity
@@ -1147,6 +1154,62 @@ atomwrite --workspace . wal-heal --threshold-secs 7200 --max-duration-ms 500
 ```
 
 
+## v0.1.21 — Sequential Edit Pattern with Checksum Re-capture
+### REQUIRED — Gap-2026-012 Pattern
+- KNOW that chaining multiple `edit` calls on the same file without re-capturing `checksum_after` produces `STATE_DRIFT` (exit 82) on every call after the first
+- TWO valid patterns for sequential pipelines — choose one per pipeline
+- PATTERN A — re-capture `checksum_after` after each `edit` and pass to the next call. Reduces drift risk to zero but doubles the CLI invocations (one `read` per `edit`)
+- PATTERN B — pass `--allow-sequential-drift` to every `edit` call. Same number of CLI invocations as the naive approach; the flag suppresses `STATE_DRIFT` and emits `tracing::warn!` naming the drift
+- DO NOT use `--allow-sequential-drift` in a TRUE parallel scenario. The flag exists for the single-agent sequential case; concurrent agents should use Pattern A with fresh reads
+
+### Pattern A — Re-capture Checksum After Each Edit
+```bash
+# Initial seed of the target
+echo "line 1" > /tmp/seq.txt
+# Read the initial checksum
+CS=$(atomwrite --workspace /tmp read seq.txt | jaq -r '.checksum')
+# Edit 1 — pass the captured checksum
+echo "line 2" | atomwrite --workspace /tmp edit --expect-checksum "$CS" seq.txt --append
+# Re-capture the post-edit checksum
+CS=$(atomwrite --workspace /tmp read seq.txt | jaq -r '.checksum')
+# Edit 2 — uses the new checksum
+printf 'line 1\nline 2\n' | atomwrite --workspace /tmp edit --expect-checksum "$CS" seq.txt --append
+```
+
+### Pattern B — Allow Sequential Drift
+```bash
+# Initial seed of the target
+echo "line 1" > /tmp/seq.txt
+# Read the initial checksum
+CS=$(atomwrite --workspace /tmp read seq.txt | jaq -r '.checksum')
+# Edit 1 — pass the captured checksum (drift would fire here without the flag on edit 2+)
+echo "line 2" | atomwrite --workspace /tmp edit --expect-checksum "$CS" seq.txt --append
+# Edit 2 — drift is allowed, the pre-state differs from CS but the flag suppresses STATE_DRIFT
+printf 'line 1\nline 2\n' | atomwrite --workspace /tmp edit --allow-sequential-drift seq.txt --append
+```
+
+### FORBIDDEN
+- NEVER use `--allow-sequential-drift` to bypass drift caused by a CONCURRENT writer — that is a true race, not a sequential pipeline, and the warning exists to surface it
+- NEVER pass `--allow-sequential-drift` to a pipeline that runs multiple `edit` invocations in parallel against the same file
+
+## v0.1.21 — Backup Deletion After Success
+### REQUIRED — Gap-2026-014 v2 Behavior
+- KNOW that `write --backup`, `replace --backup`, and `edit --backup` DELETE the backup file by default after the write succeeds
+- USE `--keep-backup` on `write`, `edit`, `replace`, `rollback`, `apply`, or `batch` to preserve the backup after success
+- KNOW that backups are ALWAYS preserved when the write FAILS. The `--keep-backup` flag affects only the success path
+- USE `--keep-backup` in CI scripts that need the backup as forensic evidence after the write completes
+- DO NOT assume backups persist after a successful `--backup` operation. The pre-v0.1.21 behavior of backup-lives-forever is removed
+
+### Pattern — Preserve Backup for Audit
+```bash
+# Backup survives after success when --keep-backup is passed
+echo "new" | atomwrite --workspace /tmp write --backup --keep-backup config.toml
+# Default behavior: backup is deleted after success
+echo "new" | atomwrite --workspace /tmp write --backup config.toml
+# Verify the post-success state
+test -f /tmp/config.toml.bak.* && echo "backup present" || echo "backup deleted"
+```
+
 ## v0.1.20 Notes
 ### REQUIRED — Global --lang to --locale Rename
 - GLOBAL flag `--lang` is RENAMED to `--locale` (breaking change in v0.1.20)
@@ -1418,4 +1481,53 @@ atomwrite --workspace . query -Q '(function_item name: (identifier) @name (#eq? 
 ```bash
 # Get a quick map of all top-level items in a file
 atomwrite --workspace . outline src/lib.rs | jaq '.items[] | "\(.kind): \(.name)"'
+```
+
+## v0.1.22 (2026-06-17) — Sequential Edit Patterns Re-capture and edit-loop
+
+### Pattern — Sequential Edits with Checksum Re-capture
+
+When you chain multiple `edit` calls on the same file, each `edit` changes the BLAKE3 checksum. Without re-capturing the checksum before each `--expect-checksum`, you receive spurious `STATE_DRIFT` (exit 82).
+
+**Pattern A — explicit re-capture**:
+
+```bash
+CS=$(atomwrite --workspace . read src/foo.rs | jaq -r '.checksum')
+echo "novo" | atomwrite --workspace . edit --after-line 10 \
+  --expect-checksum "$CS" src/foo.rs
+
+# Re-capture before the next edit
+CS=$(atomwrite --workspace . read src/foo.rs | jaq -r '.checksum')
+echo "outro" | atomwrite --workspace . edit --after-line 20 \
+  --expect-chksum "$CS" src/foo.rs
+```
+
+**Pattern B — `--allow-sequential-drift` flag** (opt-in):
+
+```bash
+CS=$(atomwrite --workspace . read src/foo.rs | jaq -r '.checksum')
+echo "novo" | atomwrite --workspace . edit --allow-sequential-drift \
+  --after-line 10 --expect-checksum "$CS" src/foo.rs
+echo "outro" | atomwrite --workspace . edit --allow-sequential-drift \
+  --after-line 20 --expect-checksum "$CS" src/foo.rs
+```
+
+**Pattern C — `edit-loop` sub-command** (N edits in 1 invocation):
+
+```bash
+echo '[{"old":"foo","new":"bar"},{"old":"baz","new":"qux"}]' \
+  | atomwrite --workspace . edit-loop --backup --keep-backup src/foo.rs
+```
+
+### Pattern — Prune-Backups
+
+```bash
+# List backups that would be removed (without deleting)
+atomwrite --workspace . prune-backups --max-age 86400 --dry-run /path/
+
+# Remove backups older than 24 hours
+atomwrite --workspace . prune-backups --max-age 86400 /path/
+
+# Keep only the 3 most recent backups
+atomwrite --workspace . prune-backups --max-count 3 /path/
 ```

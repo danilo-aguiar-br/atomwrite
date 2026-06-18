@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "atomwrite"
-version = "0.1.20"
+version = "0.1.22"
 edition = "2024"
 rust-version = "1.88"
 description = "Atomic file operations CLI for LLM agents — read, write, edit, search, replace with NDJSON output"
@@ -112,6 +112,7 @@ proptest = "1"
 regex = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 tracing-test = "0.2"
+filetime = "0.2"
 
 [[bench]]
 name = "hash_benchmark"
@@ -138,3 +139,8 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [badges.maintenance]
 status = "actively-developed"
+
+[features]
+# Opt-in property tests that may take longer than the default budget.
+# Run with: cargo test --features slow-tests
+slow-tests = []

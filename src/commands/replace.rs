@@ -65,6 +65,7 @@ pub fn cmd_replace(
     let dry_run = args.dry_run;
     let preview = args.preview;
     let backup = args.backup;
+    let keep_backup = args.keep_backup;
     let ws: Arc<std::path::Path> = Arc::from(workspace.as_path());
     let expect_ck: Option<Arc<str>> = args.expect_checksum.clone().map(Into::into);
 
@@ -177,6 +178,7 @@ pub fn cmd_replace(
                     strict_atomic: false,
                     syntax_check: false,
                     wal_policy: crate::wal::WalPolicy::Auto,
+                    keep_backup,
                 };
 
                 match atomic_write(&path, replaced.as_bytes(), &opts, &ws) {

@@ -24,6 +24,8 @@ pub mod delete;
 pub mod diff;
 /// Surgical file editing by line or marker.
 pub mod edit;
+/// v0.1.22 ADR-0039: apply N `old`/`new` pairs from NDJSON stdin in one write.
+pub mod edit_loop;
 /// Field extraction from NDJSON or text.
 pub mod extract;
 /// v14 Tier 3: structured config value reader.
@@ -38,6 +40,8 @@ pub mod r#move;
 pub mod outline;
 /// v0.1.19 G121: workspace-relative path resolution helper for walking commands.
 pub mod path_resolution;
+/// v0.1.22 ADR-0040: prune `.bak.YYYYMMDD_HHMMSS` backups by age or count.
+pub mod prune_backups;
 /// v14 Tier 3 (v0.1.12): tree-sitter S-expression query against a file.
 pub mod query;
 /// File reading with metadata and content.

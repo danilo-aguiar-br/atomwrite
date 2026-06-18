@@ -105,8 +105,15 @@ pub fn cmd_rollback(
 
     let content = crate::file_io::read_file_bytes(&backup, max_size)?;
     let opts = AtomicWriteOptions {
-        backup: false,
-        ..Default::default()
+        backup: args.backup,
+        syntax_check: false,
+        retention: args.retention,
+        preserve_timestamps: false,
+        backup_output_dir: None,
+        strategy: None,
+        strict_atomic: false,
+        wal_policy: crate::wal::WalPolicy::Auto,
+        keep_backup: args.keep_backup,
     };
     atomic_write(&target, &content, &opts, &workspace)?;
 

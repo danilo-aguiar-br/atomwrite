@@ -194,6 +194,7 @@ pub fn cmd_write(
         strategy: None,
         strict_atomic: false,
         wal_policy: args.wal_policy,
+        keep_backup: args.keep_backup,
     };
 
     let result = atomic_write(&resolved, &content, &opts, &workspace)?;

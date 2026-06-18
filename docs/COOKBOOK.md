@@ -1,7 +1,7 @@
 # atomwrite Cookbook
 
 
-[Leia em Portugues](COOKBOOK.pt-BR.md)
+[Leia em Português](COOKBOOK.pt-BR.md)
 
 > Practical recipes you can copy-paste into your agent workflows
 
@@ -61,7 +61,7 @@ This section summarizes recipe-relevant changes in v0.1.12. The v0.1.12 release 
 - 542 tests passing (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 cross-platform/WAL/audit increments v0.1.16-v0.1.18)
 - 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/`
-- See [docs/decisions/README.md](README.md) for architectural decisions
+- See [README.md](README.md) for architectural decisions
 
 ## Latency Note
 - All operations execute locally with sub-millisecond overhead
@@ -948,4 +948,88 @@ fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 
 # Or via ruplacer
 ruplacer --subvert --lang --locale
+```
+
+
+## v0.1.21 — Recipes
+
+### Backup Deleted After Success
+
+- **Default change** — `write --backup` no longer leaves a `.bak.<timestamp>` sibling on disk after success. The backup is deleted.
+- **Opt-in to preserve** — pass `--keep-backup` to any of `write`, `edit`, `replace`, `rollback`, `apply`, `batch`:
+
+```bash
+# Default v0.1.21: backup is created, write succeeds, backup is deleted
+echo "new" | atomwrite --workspace . write --backup config.toml
+
+# Opt-in v0.1.21: backup is created, write succeeds, backup is preserved
+echo "new" | atomwrite --workspace . write --backup --keep-backup config.toml
+```
+
+### Sequential Edit Pattern with Checksum Re-capture
+
+- **Pattern A — explicit re-capture** is the canonical way to chain N `edit` calls on the same file:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+for pair in "foo:bar" "baz:qux" "alpha:beta"; do
+  OLD="${pair%:*}"
+  NEW="${pair#*:}"
+  CS=$(atomwrite --workspace . read src/foo.rs | jaq -r '.checksum')
+  echo "$NEW" | atomwrite --workspace . edit --old "$OLD" --new "$NEW"     --expect-checksum "$CS" src/foo.rs
+done
+```
+
+- **Pattern B — `--allow-sequential-drift` opt-in** for one-shot scripts that prefer not to re-capture:
+
+```bash
+CS=$(atomwrite --workspace . read src/foo.rs | jaq -r '.checksum')
+for pair in "foo:bar" "baz:qux"; do
+  OLD="${pair%:*}"; NEW="${pair#*:}"
+  echo "$NEW" | atomwrite --workspace . edit --allow-sequential-drift     --old "$OLD" --new "$NEW" --expect-checksum "$CS" src/foo.rs
+done
+```
+
+
+## v0.1.22 — Recipes
+
+### `edit-loop` for N Pairs in 1 Invocation
+
+- **Use case**: apply a batch of textual transformations to one file (rename an identifier in 7 places, sweep obsolete type aliases) where today you invoke `edit` N times in a shell loop.
+
+```bash
+# Apply 3 pairs in 1 invocation
+printf '%s\n' \
+  '{"old":"v0_1_20","new":"v0_1_22"}' \
+  '{"old":"foo","new":"bar"}' \
+  '{"old":"baz","new":"qux"}' \
+  | atomwrite --workspace . edit-loop src/version.rs
+
+# With backup preserved for forensic timeline
+printf '%s\n' '{"old":"foo","new":"bar"}' \
+  | atomwrite --workspace . edit-loop --backup --keep-backup src/foo.rs
+
+# With --partial (best-effort: apply matched, report unmatched)
+printf '%s\n' '{"old":"exists","new":"X"}' '{"old":"absent","new":"Y"}' \
+  | atomwrite --workspace . edit-loop --partial src/foo.rs
+```
+
+### `prune-backups` for Manual Cleanup of Legacy `.bak.*`
+
+- **Use case**: operators who upgraded from v0.1.20 inherit `.bak.<timestamp>` siblings that v0.1.21 no longer creates (and therefore no longer cleans up automatically).
+
+```bash
+# Default --dry-run true: list what WOULD be removed
+atomwrite --workspace . prune-backups --max-age 86400 .
+
+# Remove backups older than 24 hours
+atomwrite --workspace . prune-backups --max-age 86400 --dry-run false .
+
+# Keep only the 3 most recent backups per directory
+atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
+
+# CI pipeline: assert zero backup orphans after cleanup
+atomwrite --workspace . prune-backups --max-age 0 --dry-run false . \
+  && fd '*.bak.*' . | wc -l | jaq -e '. == 0'
 ```

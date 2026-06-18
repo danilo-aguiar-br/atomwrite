@@ -270,4 +270,10 @@ pub enum Commands {
 
     /// Generate shell completions for bash, zsh, fish, or powershell
     Completions(CompletionsArgs),
+
+    /// v0.1.22 ADR-0040: prune `.bak.YYYYMMDD_HHMMSS` backups by age or count.
+    PruneBackups(PruneBackupsArgs),
+
+    /// v0.1.22 ADR-0039: apply N `old`/`new` pairs from NDJSON stdin in one write.
+    EditLoop(EditLoopArgs),
 }

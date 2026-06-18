@@ -40,17 +40,34 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 - Testes de snapshot via `insta`
 - Testes de sinal (SIGINT, SIGTERM, SIGPIPE)
 
-## O Que Há de Novo na v0.1.18 (Atual)
+## O Que Há de Novo na v0.1.22 (Atual)
 
-- 542 testes passando (461 baseline v0.1.15 + 8 casos de borda G117 v0.1.18 + 2 pré-validação replace G118 v0.1.18 + 16 incrementos cross-platform/WAL/auditoria v0.1.16-v0.1.18 + 15 testes de contrato NDJSON v0.1.16-v0.1.18)
-- 30 subcomandos (28 baseline + `wal-heal` + `wal-stats` da v0.1.15)
-- 12 ADRs em docs/decisions/ (0019-0030)
+- 575+ testes passando (542 baseline v0.1.18 + 16 testes GAP-2026-012 v0.1.21 + 12 testes GAP-2026-014 v2 backup-delete v0.1.21 + 5 testes GAP-2026-013 edit-backup v0.1.21)
+- 32 subcomandos (30 baseline v0.1.18 + `edit-loop` + `prune-backups` da v0.1.22)
+- 22 ADRs em docs/decisions/ (0019-0040)
+- 2 novos schemas NDJSON: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
+
+## O Que Há de Novo na v0.1.21
+
+- GAP-2026-012 (flag `--allow-sequential-drift`) fechado; edits sequenciais não exigem mais re-capturar checksum entre iterações
+- GAP-2026-013 Frente 4 (`--backup` exposto em `edit` e `rollback`) fechado; paridade com `write` e `replace`
+- GAP-2026-014 v2 (backup é deletado por padrão após sucesso) fechado; flag opt-in `--keep-backup` adicionada
+- ADR-0038 criado documentando o paradigma de backup que deleta após sucesso
+- Novos testes: `tests/cli_v0121_sequential_drift.rs` (4), `tests/cli_v0121_backup_keep_flag.rs` (3), `tests/cli_v0121_edit_backup.rs` (3), `tests/cli_v0121_rollback_backup.rs` (2), `tests/cli_v0121_apply_keep.rs` (2), `tests/cli_v0121_batch_keep.rs` (2), `tests/proptest_v0121_backup_delete.rs` (2 property tests)
+
+## O Que Há de Novo na v0.1.22
+
+- GAP-2026-012 Frente 3 (sub-comando helper `edit-loop`) fechado; novo `edit-loop` aplica N pares `{old, new}` em 1 invocação via NDJSON no stdin
+- GAP-2026-013 Frente 2 (sub-comando `prune-backups`) fechado; novo `prune-backups` oferece limpeza manual de arquivos `.bak.YYYYMMDD_HHMMSS` legados
+- ADR-0039 criado documentando o design de `edit-loop`
+- ADR-0040 criado documentando o design de `prune-backups`
+- Novos testes: `tests/cli_v0121_edit_loop.rs` (4), `tests/cli_v0121_prune_backups.rs` (3)
 
 
 ### Como Executar
 
 ```bash
-# Executar todos os 542 testes
+# Executar todos os 575+ testes
 cargo test
 
 # Executar apenas a suíte de regressão v0.1.12
@@ -69,7 +86,7 @@ cargo test --test cross_compile_check -- --ignored
 
 - 20.19% cobertura de linhas via `cargo tarpaulin` (935/4631 linhas cobertas)
 - Menor que o ideal porque tarpaulin conta apenas testes unitários, não testes de integração CLI
-- A suíte de testes de integração é a métrica primária de cobertura (542 testes em 43 suítes)
+- A suíte de testes de integração é a métrica primária de cobertura (575+ testes em 47+ suítes)
 
 ### Dependências Adicionadas
 
@@ -78,8 +95,8 @@ cargo test --test cross_compile_check -- --ignored
 
 ### ADRs e Schemas
 
-- 7 novos ADRs em `docs/decisions/` (0019-0025) explicam as decisões arquiteturais por trás das features v0.1.12
-- 7 novos JSON schemas em `docs/schemas/` (set, get, del, case, query, outline, wal-recovery)
+- 22 novos ADRs em `docs/decisions/` (0019-0040) explicam as decisões arquiteturais por trás das features v0.1.12 a v0.1.22
+- 29 schemas JSON em `docs/schemas/` (índice completo em `docs/schemas/README.md`); v0.1.22 adicionou `edit-loop-output` e `prune-backups-output`
 - Veja [docs/decisions/README.md](README.md) para a lista completa de ADRs
 
 ## Por Que Testes Categorizados
@@ -93,7 +110,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ## Estatísticas Atuais
 - 70+ arquivos Rust em `src/` e `tests/`
-- **542 testes no total em 43 suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
+- **575+ testes no total em 47+ suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
 - **96 novos testes adicionados em v0.1.11+v0.1.12**:
   - 11 testes em `tests/cli_v012_regressions.rs` (fixes GAP 13, GAP 14, GAP 18)
   - 27 testes em `tests/cli_v012_audit_regressions.rs` (auditoria v0.1.12 G72/G114)

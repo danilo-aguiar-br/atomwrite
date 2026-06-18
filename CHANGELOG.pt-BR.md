@@ -87,6 +87,66 @@
 - 11 GAP-2026 fechados (001-011), 100% cobertura dos gaps de auditoria local
 - Cross-compile verificado em 3 targets Windows: x86_64-gnu, i686-gnu, x86_64-msvc
 
+## [0.1.21] - 2026-06-17
+
+#### GAP-2026-012 — `--allow-sequential-drift` para pipelines sequenciais de `edit`
+- **Contexto** — Agentes que encadeiam múltiplas chamadas `edit` no mesmo arquivo sem re-capturar `checksum_after` entre invocações recebem `STATE_DRIFT` (exit 82) em toda chamada após a primeira. A documentação cobria o cenário paralelo mas não o sequencial (agente único, arquivo único, edições em lock-step).
+- **Correção — nova flag opt-in `--allow-sequential-drift` em `edit`** — quando setada, `cmd_edit` emite `tracing::warn!` nomeando o drift e prossegue com a edição (exit 0 em sucesso). O comportamento default permanece inalterado: `STATE_DRIFT` (exit 82) ainda dispara em mismatch de checksum quando a flag está ausente. Dois padrões válidos para pipelines sequenciais: (a) re-capturar `checksum_after` após cada `edit` e passar para a próxima chamada; (b) passar `--allow-sequential-drift` uma vez em cada chamada e deixar o pré-estado de cada chamada diferir do original. Veja `SKILL.md` para a receita de loop `while` e `docs/HOW_TO_USE.md` para o exemplo copy-paste.
+
+#### GAP-2026-013 Problema C — `--backup` e `--keep-backup` expostos em `edit`, `rollback`, `replace`, `apply`, `batch`
+- **Bug (violação de paridade de API)** — `edit` e `rollback` hardcodavam `backup: false` em `AtomicWriteOptions` enquanto `write` e `replace` expunham `--backup`. Usuários que tentavam `--backup` em `edit`/`rollback` eram silenciosamente ignorados. As structs `ReplaceArgs`, `ApplyArgs` e `BatchArgs` tinham o mesmo buraco.
+- **Correção — `--backup`, `--retention` e `--keep-backup` propagados em 6 subcomandos** — `edit` ganha `backup`, `retention`, `keep_backup`; `rollback` ganha `backup`, `keep_backup`; `replace`, `apply`, `batch` ganham `keep_backup`. Os 3 sites hardcoded `backup: false` em `src/commands/edit.rs:139`, `src/commands/edit.rs:393` e `src/commands/rollback.rs:108` são substituídos por `args.backup`. Paridade de subcomando para `--backup` agora é 4/4 (write, edit, replace, rollback); 6/6 subcomandos honram `--keep-backup` (write, edit, replace, rollback, apply, batch).
+
+#### GAP-2026-014 v2 — backups são deletados após escritas bem-sucedidas por default
+- **Contexto** — `cleanup_old_backups_in` podava por contagem, deixando backups vivos indefinidamente até que 5 mais novos tomassem seu lugar. Toda operação bem-sucedida com `--backup` deixava lixo persistente em disco; scripts de CI que rodavam `fd '*.bak.*' . | wc -l` viam contagens crescentes proporcionais ao volume de escrita.
+- **Correção — `keep_backup: bool` em `AtomicWriteOptions`, default `false`** — novo helper `delete_backup_quietly(path)` remove o backup após `atomic_write_inner` retornar sucesso. `ErrorKind::NotFound` é mapeado para `Ok(())` (idempotência). Em erros não-NotFound, `tracing::warn!` é emitido e a operação prossegue (cleanup é logado, não propagado). Em caminhos de falha o backup é preservado como antes. `keep_backup: true` é o opt-in explícito para preservar o backup; o comportamento prévio de `--backup` de deixar backups em disco agora só é acessível via `--keep-backup`. 6 subcomandos aceitam a flag: `write`, `edit`, `replace`, `rollback`, `apply`, `batch`. Veja `docs/decisions/0038-backup-cumprido-deleta.md`.
+
+#### Paridade — `apply` e `batch` agora honram `--keep-backup`
+- `apply` propaga `args.keep_backup` para a chamada interna de `atomic_write` para que um patch bem-sucedido não deixe um `.bak` sibling para trás por default.
+- `batch` propaga `--keep-backup` para toda op `write`/`edit`/`replace` no manifesto NDJSON. `keep_backup` por op no NDJSON sobrescreve o default em nível de batch.
+
+#### ADR
+- ADR-0038 — backup cumprido deleta: justificativa para `keep_backup` default `false` + helper `delete_backup_quietly`; alternativas rejeitadas são scheduler, subcomando `prune-backups` e cleanup por idade (todas subsumidas por deleção-após-sucesso).
+
+#### Migration Notes
+- **Breaking change** — `write --backup` e `replace --backup` não deixam mais um sibling `.bak` em disco após uma escrita bem-sucedida. O comportamento pré-v0.1.21 de backup vive para sempre acabou. Adicione `--keep-backup` a qualquer script que dependa do backup persistindo através da operação, ou reescreva para ler o backup antes da escrita completar.
+- **Breaking change** — `edit` e `rollback` agora aceitam `--backup` mas o ignoram sem reclamação se as pré-condições da camada atômica rejeitarem. O novo opt-in é a flag explícita `--backup`; scripts antigos que chamavam `edit` com a suposição de sem backup ainda recebem sem backup por default.
+- **Não-breaking** — `apply --keep-backup` e `batch --keep-backup` são aditivos. Comportamento default (sem backup) permanece inalterado.
+
+#### Validation
+- `cargo build --release` OK
+- `cargo clippy --all-targets -- -D warnings` OK
+- 555+ testes passando (542 baseline v0.1.20 + 13 novos: 6 em `cli_v0121_backup_keep_flag`, 2 em `cli_v0121_edit_backup`, 3 em `cli_v0121_sequential_drift`, 1 em `cli_v0121_rollback_backup`, 1 em `cli_v0121_apply_keep`, 1 em `cli_v0121_batch_keep`, 1 em `proptest_v0121_backup_delete`)
+- 1 novo ADR: 0038 (backup cumprido deleta)
+- 3 novos GAP-2026 fechados (012, 013 Problema C, 014 v2)
+- Cross-compile verificado em 3 targets Windows: x86_64-gnu, i686-gnu, x86_64-msvc
+- Smoke test de migração: `fd '*.bak.*' . | wc -l` reporta 0 em uma execução pós-sucesso; reporta 1 quando `--keep-backup` está setado
+
+
+
+## [0.1.22] - 2026-06-17
+
+### Adicionado
+
+- Sub-comando `prune-backups` para limpeza manual de backups legados (flags `--max-age`, `--max-count`, `--dry-run`)
+- Sub-comando `edit-loop` para N edições em 1 invocação via NDJSON no stdin
+- ADR-0039 (`docs/decisions/0039-edit-loop-helper.md`)
+- ADR-0040 (`docs/decisions/0040-prune-backups-subcommand.md`)
+- 2 schemas NDJSON (`prune-backups-output.schema.json`, `edit-loop-output.schema.json`)
+
+### Testes
+
+- 16 novos testes de regressão (3+4+3+3+2+2)
+- 2 novos property tests sob feature `slow-tests`
+- Cobertura ≥ 80% em código novo
+
+### Documentação
+
+- Marcadores `[FECHADO v0.1.21]` em `gaps.md` para 3 gaps
+- Seção "Padrão Correto — Edits Sequenciais com Re-captura de Checksum" em SKILLs EN/PT
+- Exemplo copy-paste de loop `while` em `docs/HOW_TO_USE.md`
+- Seções v0.1.21 em `docs/AGENTS.pt-BR.md`
+
 
 ## [0.1.19] - 2026-06-14
 

@@ -13,10 +13,27 @@
 
 ## What Is It
 - A single Rust binary that handles every file operation an LLM agent needs
-- **30 subcommands**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions
+- **32 subcommands**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions, edit-loop, prune-backups
 - Every write is atomic: tempfile, fsync, rename, fsync directory
 - Every response is NDJSON: one JSON object per line, machine-readable by default
 - Every file gets a BLAKE3 checksum: detect drift, verify integrity, enable optimistic locking
+
+
+## What Is New In v0.1.22 (2026-06-17)
+- **2 new subcommands**: `edit-loop` and `prune-backups`
+- **`edit-loop <PATH>`** — apply N `{old, new}` substitution pairs via NDJSON on stdin in 1 invocation (reduces 5x subprocess overhead for batch edits). ADR-0039
+- **`prune-backups [PATHS]...`** — manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` siblings with `--max-age`, `--max-count`, `--dry-run` (default true for safety). ADR-0040
+- **2 new NDJSON schemas**: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
+- **575+ tests passing** in 56+ integration suites, 0 failures, 0 clippy warnings
+
+
+## What Is New In v0.1.21 (2026-06-17)
+- **3 GAP-2026 closed** in v0.1.21
+- **`--allow-sequential-drift`** on `edit` — opt-in flag for sequential edit pipelines. ADR-0038
+- **`--backup` parity 4/4** — `edit` and `rollback` now accept `--backup` (were hardcoded `false`)
+- **`--keep-backup`** on 6 subcommands (`write`, `edit`, `replace`, `rollback`, `apply`, `batch`) — opt-in flag to preserve the backup after success
+- **Default behavior change** — backups are DELETED after successful `--backup` operations; add `--keep-backup` to preserve the previous behavior
+- **555+ tests passing**, 1 new ADR (0038), 3 Windows cross-compile targets green
 
 
 ## What Is New In v0.1.20 (2026-06-15)

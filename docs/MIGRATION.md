@@ -78,12 +78,12 @@ All additive. No existing dependency removed.
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
 ## Current Version
-- atomwrite is at v0.1.15
-- This document covers migration from v0.1.0 through v0.1.15, with detailed sections for v0.1.12 to v0.1.15, v0.1.11 to v0.1.12, and earlier major transitions
+- atomwrite is at v0.1.22 (released 2026-06-17)
+- This document covers migration from v0.1.0 through v0.1.22, with detailed sections for v0.1.20 to v0.1.22, v0.1.18 to v0.1.20, v0.1.12 to v0.1.18, v0.1.11 to v0.1.12, and earlier major transitions
 - See the sections below for additive changes and breaking changes in each version
 
 
-## v0.1.12 to v0.1.15 (Current)
+## v0.1.18 to v0.1.20 (2026-06-15)
 
 ### Additive (G117)
 
@@ -577,3 +577,54 @@ fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 # Or via ruplacer
 ruplacer --subvert --lang --locale
 ```
+
+
+## v0.1.21 — What Is New
+
+This release closes 3 GAP-2026 items (012, 013 Problem C, 014 v2) and adds 1 ADR (0038). The most visible change is that `--backup` operations now DELETE the backup after success by default; add `--keep-backup` to preserve it. The second visible change is that `edit` and `rollback` now accept `--backup`, closing the API parity hole from v0.1.20. The third change is `--allow-sequential-drift` on `edit` for sequential pipelines.
+
+For the complete migration guide, see `docs/MIGRATION-v0.1.20-to-v0.1.21.md`.
+
+### Backup Operations
+
+- `write --backup` and `replace --backup` DELETE the backup after success by default
+- `edit --backup` and `rollback --backup` are NEW in v0.1.21; the flag is honored on all 4 mutating subcommands
+- `--keep-backup` is the OPT-IN flag to preserve the backup after success on `write`, `edit`, `replace`, `rollback`, `apply`, and `batch`
+- `apply --keep-backup` and `batch --keep-backup` are NEW in v0.1.21 for parity
+- Backups are ALWAYS preserved on the FAILURE path, regardless of `--keep-backup`
+
+### Sequential Edit Pattern
+
+- Chaining multiple `edit` calls on the same file without re-capturing `checksum_after` produces `STATE_DRIFT` (exit 82) on every call after the first
+- Two valid patterns: re-capture checksum (Pattern A) or pass `--allow-sequential-drift` (Pattern B)
+- Default behavior is unchanged: `STATE_DRIFT` still fires on checksum mismatch when the flag is absent
+
+### Statistics
+
+- 555+ tests passing (542 baseline v0.1.20 + 13 new)
+- 1 new ADR (0038)
+- 3 Windows cross-compile targets green
+
+
+## v0.1.22 — What Is New
+
+This release adds 2 new subcommands to address the legacy backup cleanup and the N-edits-in-1-invocation operator pattern. Both are additive: no flag, schema, or default behavior changed for existing commands.
+
+For the complete migration guide, see `docs/MIGRATION-v0.1.21-to-v0.1.22.md`.
+
+### Subcommands Added
+
+- **`prune-backups [PATHS]...`** — manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` siblings
+  - Flags: `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` for safety)
+  - NDJSON output with per-backup lines and summary
+  - Exit 0 (scan complete), 1 (NO_MATCHES), 65 (precondition failed)
+- **`edit-loop <PATH>`** — apply N `{old, new}` substitution pairs in 1 invocation via NDJSON on stdin
+  - Flags: `--workspace`, `--expect-checksum`, `--partial`, `--fuzzy`, `--line-ending`, `--preserve-timestamps`, `--backup`, `--keep-backup`, `--retention`
+  - NDJSON output with `pair_result` per input line plus a `summary` line
+
+### Statistics
+
+- 575+ tests passing in 56+ integration suites, 0 failures
+- 2 new ADRs (0039, 0040)
+- 2 new NDJSON schemas (`edit-loop-output.schema.json`, `prune-backups-output.schema.json`)
+- 32 subcommands total (up from 30 in v0.1.20)

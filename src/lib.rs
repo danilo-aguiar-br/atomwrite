@@ -92,6 +92,8 @@ fn emit_json_schema(command: &Commands, mut out: impl Write) -> Result<()> {
         Commands::Outline(_) => schemars::schema_for!(ndjson_types::WriteOutput),
         Commands::WalStats(_) => schemars::schema_for!(ndjson_types::WalStats),
         Commands::WalHeal(_) => schemars::schema_for!(ndjson_types::AutoHealReport),
+        Commands::PruneBackups(_) => schemars::schema_for!(ndjson_types::PruneBackupSummary),
+        Commands::EditLoop(_) => schemars::schema_for!(ndjson_types::EditLoopSummary),
         Commands::Completions(_) => schemars::schema_for!(ndjson_types::CalcOutput),
     };
     serde_json::to_writer_pretty(&mut out, &schema)?;
@@ -136,6 +138,8 @@ pub fn emit_schema_by_name(name: &str, mut out: impl Write) -> Result<bool> {
         "case" => schemars::schema_for!(ndjson_types::WriteOutput),
         "query" => schemars::schema_for!(ndjson_types::WriteOutput),
         "outline" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "prune-backups" => schemars::schema_for!(ndjson_types::PruneBackupSummary),
+        "edit-loop" => schemars::schema_for!(ndjson_types::EditLoopSummary),
         "completions" => schemars::schema_for!(ndjson_types::WriteOutput),
         _ => return Ok(false),
     };
@@ -249,6 +253,7 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
                 args.transaction,
                 args.file.as_deref(),
                 &shutdown,
+                args.keep_backup,
             )
         }
         Commands::Scope(args) => {
@@ -270,6 +275,18 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
         }
         Commands::WalHeal(args) => {
             commands::wal_stats::cmd_wal_heal(args, &cli.global, &mut writer)
+        }
+        Commands::PruneBackups(args) => {
+            commands::prune_backups::cmd_prune_backups(args, &cli.global, &mut writer)
+        }
+        Commands::EditLoop(args) => {
+            // Pass the already-locked `stdin` from `run()`'s argument
+            // instead of re-locking with `std::io::stdin().lock()`. The
+            // latter is a deadlock: `Stdin::lock` is non-recursive, so
+            // attempting to re-acquire it from the same thread that
+            // holds it (via `main.rs:106 stdin.lock()`) blocks forever.
+            // See audit 2026-06-17.
+            commands::edit_loop::cmd_edit_loop(args, &cli.global, stdin, &mut writer)
         }
         Commands::Completions(_) => unreachable!("completions handled in prescan_json_schema"),
     };

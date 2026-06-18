@@ -1,33 +1,8 @@
-# ── AI Tooling & Project Docs (não versionados) ──
-.claude/
-docs_prd/
-docs_rules/
-CLAUDE.md
-AGENTS.md
-gaps.md
-
-# ── GraphRAG Database ──
-graphrag.sqlite
-graphrag.sqlite-shm
-graphrag.sqlite-wal
-.ingest-queue.sqlite
-.ingest-queue.sqlite-shm
-.ingest-queue.sqlite-wal
-.enrich-queue.sqlite
-.enrich-queue.sqlite-shm
-.enrich-queue.sqlite-wal
-
-# ── Rust / Cargo ──
+# ── Build artifacts ──
 /target/
-fuzz/target/
-fuzz/corpus/
-fuzz/artifacts/
 **/*.rs.bk
-# Cargo.lock DEVE ser versionado para binários (regra Rust)
-# Linker config is machine-specific (requires mold); see .cargo/config.toml.example
-.cargo/config.toml
 
-# ── IDE & Editor ──
+# ── IDE and editor ──
 .vscode/
 .idea/
 *.swp
@@ -36,7 +11,7 @@ fuzz/artifacts/
 .DS_Store
 Thumbs.db
 
-# ── Environment & Secrets ──
+# ── Environment and secrets ──
 .env
 .env.*
 *.pem
@@ -44,9 +19,33 @@ Thumbs.db
 *.p12
 *.pfx
 
+# ── AI tooling and project docs (not versioned) ──
+.claude/
+docs_prd/
+docs_rules/
+CLAUDE.md
+AGENTS.pt-BR.md
+
+# ── Test and runtime logs (development artifacts) ──
+*.log
+
 # ── atomwrite WAL sidecars (runtime artifacts, never commit) ──
 # Pattern matches: .atomwrite.journal.<target>.atomwrite.journal.json
 # and the empty .atomwrite.journal.json sidecar from atomic_write
-# Excludes legitimate  markdown files that happen to
-# share the prefix.
 **/.atomwrite.journal*.json
+
+# ── sqlite-graphrag runtime artifacts (local databases and queues) ──
+graphrag.sqlite
+graphrag.sqlite-shm
+graphrag.sqlite-wal
+.enrich-queue.sqlite
+.enrich-queue.sqlite-shm
+.enrich-queue.sqlite-wal
+.ingest-queue.sqlite
+.ingest-queue.sqlite-shm
+.ingest-queue.sqlite-wal
+
+# ── Local cargo config and working notes (never commit) ──
+.cargo/config.toml
+gaps.md
+fuzz/corpus/

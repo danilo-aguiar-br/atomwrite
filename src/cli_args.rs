@@ -411,6 +411,16 @@ pub struct WriteArgs {
     /// Preview without writing.
     #[arg(long, help = "Show what would be done without writing")]
     pub dry_run: bool,
+
+    /// v0.1.21 GAP-014 v2: keep the backup after a successful write.
+    /// By default the backup is deleted quietly (cleanup is idempotent).
+    /// Use this flag to retain the backup for audit or version control.
+    /// On failure the backup is ALWAYS preserved regardless of this flag.
+    #[arg(
+        long,
+        help = "Keep backup after success (default: delete quietly). On failure backup is always preserved."
+    )]
+    pub keep_backup: bool,
 }
 
 /// Fuzzy matching behavior for --old/--new edit mode.
@@ -531,6 +541,99 @@ pub struct EditArgs {
         help = "WAL sidecar policy: auto (default), always, never (G119 L1)"
     )]
     pub wal_policy: crate::wal::WalPolicy,
+
+    /// v0.1.21 GAP-013 C: create a `.bak` file before editing. Default is
+    /// `false` for back-compat; pass `--backup` to enable the same
+    /// pre-write snapshot semantics as `write --backup`.
+    #[arg(
+        long,
+        help = "Create .bak backup before editing (default: false; paridade com write/replace)"
+    )]
+    pub backup: bool,
+
+    /// v0.1.21 GAP-013 C: number of backups to retain when --backup is active.
+    /// Mirrors `write --retention`. Default: 5.
+    #[arg(
+        long,
+        default_value_t = 5,
+        help = "Maximum number of backups to retain when --backup is active (default: 5)"
+    )]
+    pub retention: u8,
+
+    /// v0.1.21 GAP-014 v2: keep the backup after a successful edit.
+    /// By default the backup is deleted quietly. On failure the backup
+    /// is ALWAYS preserved regardless of this flag.
+    #[arg(
+        long,
+        help = "Keep backup after success (default: delete quietly). On failure backup is always preserved."
+    )]
+    pub keep_backup: bool,
+
+    /// v0.1.21 GAP-012: accept `STATE_DRIFT` between sequential edits by
+    /// the same agent. Use this when chaining multiple `edit` calls
+    /// without re-capturing the checksum. Default (off) keeps the
+    /// fail-loud `STATE_DRIFT` for true concurrency.
+    #[arg(
+        long,
+        help = "Accept STATE_DRIFT between sequential edits (default: reject). For agent pipelines that chain edits."
+    )]
+    pub allow_sequential_drift: bool,
+}
+
+/// Arguments for the `edit-loop` subcommand (ADR-0039).
+#[derive(Args, Debug)]
+pub struct EditLoopArgs {
+    /// File path to apply all pairs against.
+    pub path: PathBuf,
+
+    /// Accept `STATE_DRIFT` between iterations (default: reject). Useful
+    /// when chaining edits; for `edit-loop` this is informational since
+    /// the whole batch is computed in memory and a single atomic write
+    /// is performed at the end (no per-pair drift to validate).
+    #[arg(
+        long,
+        help = "Accept STATE_DRIFT (informational for edit-loop; default: reject)"
+    )]
+    pub allow_sequential_drift: bool,
+
+    /// Create a `.bak` snapshot of the target before writing.
+    #[arg(long, help = "Create .bak backup before writing (default: false)")]
+    pub backup: bool,
+
+    /// Number of backups to retain when `--backup` is active.
+    #[arg(
+        long,
+        default_value_t = 5,
+        value_name = "N",
+        help = "Maximum number of backups to retain when --backup is active (default: 5)"
+    )]
+    pub retention: u8,
+
+    /// Keep the backup after a successful write (default: delete quietly).
+    #[arg(
+        long,
+        help = "Keep backup after success (default: delete quietly). On failure backup is always preserved."
+    )]
+    pub keep_backup: bool,
+
+    /// Validate syntax after writing (G72). Pass a language name
+    /// (`rust`, `python`, `js`, etc.). When the file is invalid, the
+    /// write is aborted with `SyntaxError` (exit 88).
+    #[arg(
+        long,
+        value_name = "LANG",
+        help = "Validate syntax of the written file via tree-sitter (e.g. rust, python, js)"
+    )]
+    pub syntax_check: Option<String>,
+
+    /// Normalize line endings of the written file.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = crate::line_endings::LineEnding::Auto,
+        help = "Normalize line endings: lf, crlf, cr, auto (preserve original)"
+    )]
+    pub line_ending: crate::line_endings::LineEnding,
 }
 
 /// Arguments for the search subcommand.
@@ -736,6 +839,15 @@ pub struct ReplaceArgs {
     /// detect source changes (cargo, make, cmake, gradle).
     #[arg(long, help = "Preserve original mtime (default: update mtime to now)")]
     pub preserve_timestamps: bool,
+
+    /// v0.1.21 GAP-014 v2: keep backups after a successful replace.
+    /// Default is to delete them quietly. On failure the backup is
+    /// always preserved regardless of this flag.
+    #[arg(
+        long,
+        help = "Keep backup after success (default: delete quietly). On failure backup is always preserved."
+    )]
+    pub keep_backup: bool,
 }
 
 /// Arguments for the list subcommand.
@@ -917,6 +1029,15 @@ pub struct BatchArgs {
         help = "Operations to buffer before emitting the summary line (default: 100)"
     )]
     pub batch_size: usize,
+
+    /// v0.1.21 GAP-014 v2: keep per-op backups after success. Applies to
+    /// every operation in the batch that creates a backup. Default is
+    /// to delete each backup quietly once its op completes.
+    #[arg(
+        long,
+        help = "Keep per-op backups after success (default: delete quietly). On failure backups are always preserved."
+    )]
+    pub keep_backup: bool,
 }
 
 /// Arguments for the backup subcommand.
@@ -939,6 +1060,34 @@ pub struct BackupArgs {
     pub dry_run: bool,
 }
 
+/// Arguments for the `prune-backups` subcommand (ADR-0040).
+#[derive(Args, Debug)]
+pub struct PruneBackupsArgs {
+    /// Target file paths whose `.bak.YYYYMMDD_HHMMSS` siblings will be
+    /// considered for pruning.
+    #[arg(required = true)]
+    pub paths: Vec<PathBuf>,
+
+    /// Maximum age (in seconds) of backups that survive. Backups whose
+    /// mtime is strictly older than `now - max_age_secs` are pruned.
+    /// When both `--max-age-secs` and `--max-count` are passed, age is
+    /// applied first and count is applied to the survivors.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        help = "Drop backups older than N seconds"
+    )]
+    pub max_age_secs: Option<u32>,
+
+    /// Maximum number of backups to keep (most recent by mtime).
+    #[arg(long, value_name = "N", help = "Keep at most N most-recent backups")]
+    pub max_count: Option<u8>,
+
+    /// Preview without deleting anything.
+    #[arg(long, help = "Show what would be pruned without writing")]
+    pub dry_run: bool,
+}
+
 /// Arguments for the rollback subcommand.
 #[derive(Args, Debug)]
 pub struct RollbackArgs {
@@ -956,6 +1105,31 @@ pub struct RollbackArgs {
     /// Verify BLAKE3 checksum after restore.
     #[arg(long, help = "Verify checksum after restoring")]
     pub verify: bool,
+
+    /// v0.1.21 GAP-013 C: create a `.bak` snapshot of the current target
+    /// before restoring the chosen backup. Default `false` to keep the
+    /// rollback lean. Pass `--backup` when you want an extra safety net.
+    #[arg(
+        long,
+        help = "Create .bak of the current target before restoring (default: false; paridade com edit)"
+    )]
+    pub backup: bool,
+
+    /// v0.1.21 GAP-014 v2: keep the pre-rollback snapshot after success.
+    /// Default is to delete it quietly. On failure it is always preserved.
+    #[arg(
+        long,
+        help = "Keep pre-rollback snapshot after success (default: delete quietly)"
+    )]
+    pub keep_backup: bool,
+
+    /// v0.1.21: number of backups to retain when --keep-backup is active.
+    #[arg(
+        long,
+        default_value_t = 5,
+        help = "Number of backups to retain when --keep-backup is active (default: 5)"
+    )]
+    pub retention: u8,
 
     /// Preview without restoring.
     #[arg(long, help = "Show what would be done without writing")]
@@ -991,6 +1165,23 @@ pub struct ApplyArgs {
     /// Create backup before applying patch.
     #[arg(long, help = "Create backup of target before patching")]
     pub backup: bool,
+
+    /// v0.1.21 GAP-014 v2: keep the backup after a successful apply.
+    /// Default is to delete it quietly. On failure the backup is always
+    /// preserved regardless of this flag.
+    #[arg(
+        long,
+        help = "Keep backup after success (default: delete quietly). On failure backup is always preserved."
+    )]
+    pub keep_backup: bool,
+
+    /// v0.1.21: number of backups to retain when --keep-backup is active.
+    #[arg(
+        long,
+        default_value_t = 5,
+        help = "Number of backups to retain when --keep-backup is active (default: 5)"
+    )]
+    pub retention: u8,
 
     /// Preview without writing.
     #[arg(long, help = "Show what would be done without writing")]

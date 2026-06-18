@@ -4,7 +4,7 @@
 
 atomwrite é um CLI Rust que fornece 28 subcomandos para manipulação de arquivos com garantias de escrita atômica. Toda escrita usa tempfile + fsync + rename + fsync do diretório. Toda resposta é NDJSON com checksums BLAKE3. Construído para agentes LLM que precisam de operações de arquivo confiáveis e estruturadas sem risco de corrupção.
 
-**Release mais recente: v0.1.20** (2026-06-15) — 11 GAP-2026 fechados, intention guards (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`), renomeação `--locale` (era `--lang`), `count --by-size`, `read --mode`, `search --no-begin-end`, `write --preserve-timestamps`, alias `scope --lang`, 542 testes em 47 suites, ADRs 0031-0037. Destaques anteriores (v0.1.19, 2026-06-14): helper de resolução de caminho G121, query S-expression real, consolidação de 7 derivas de documentação de exit codes. Veja `CHANGELOG.pt-BR.md` para as notas completas e `docs/decisions/` para os ADRs (0019-0037).
+**Release mais recente: v0.1.22** (2026-06-17) — 2 novos sub-comandos (`edit-loop` para N pares em 1 invocação via NDJSON; `prune-backups` para limpeza manual de arquivos `.bak.*` legados com `--max-age`, `--max-count`, `--dry-run`), 16+ novos testes de regressão, ADRs 0039 e 0040, 2 novos schemas NDJSON (`edit-loop-output`, `prune-backups-output`), 575+ testes, 32 sub-comandos totais. Destaques anteriores (v0.1.21, 2026-06-17): 3 fechamentos de GAP-2026 (012 drift sequencial via `--allow-sequential-drift`, 013 Problema C paridade `--backup` em 4 sub-comandos, 014 v2 `--keep-backup` deleta-após-sucesso como default), 555+ testes, ADR-0038 (backup cumprido deleta), nova flag `--keep-backup` em 6 sub-comandos (write, edit, replace, rollback, apply, batch), `--allow-sequential-drift` em `edit` para pipelines sequenciais. Destaques anteriores (v0.1.20, 2026-06-15): 11 GAP-2026 fechados, intention guards (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`), renomeação `--locale` (era `--lang`), `count --by-size`, `read --mode`, `search --no-begin-end`, `write --preserve-timestamps`, alias `scope --lang`, 542 testes em 47 suites, ADRs 0031-0037. Veja `CHANGELOG.pt-BR.md` para as notas completas e `docs/decisions/` para os ADRs (0019-0040).
 
 **Release anterior: v0.1.19** (2026-06-14) — Helper de resolução de caminho G121 que unifica a resolução do jail em todos os subcomandos de escrita; modo `query` S-expression real via `tree-sitter`; consolidação de 7 derivas de documentação de exit codes para casar com a lista canônica (ADR-0031).
 
@@ -89,7 +89,7 @@ Além da verificação de sintaxe G72 em `write --syntax-check` (24 linguagens, 
 - [CHANGELOG](https://github.com/daniloaguiarbr/atomwrite/blob/main/CHANGELOG.pt-BR.md): Histórico de releases
 - [CONTRIBUTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/CONTRIBUTING.pt-BR.md): Setup de desenvolvimento e diretrizes
 - [SECURITY](https://github.com/daniloaguiarbr/atomwrite/blob/main/SECURITY.pt-BR.md): Reporte de vulnerabilidades
-- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 19 ADRs (decisões arquiteturais da v0.1.12 + v0.1.19 + v0.1.20)
-- [docs/schemas/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/schemas/): 22 contratos estáveis de JSON Schema
+- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 22 ADRs (decisões arquiteturais da v0.1.12 + v0.1.19 + v0.1.20 + v0.1.21 + v0.1.22)
+- [docs/schemas/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/schemas/): 24 contratos estáveis de JSON Schema
 - [Crates.io](https://crates.io/crates/atomwrite): Registro de pacotes
 - [Repositório](https://github.com/daniloaguiarbr/atomwrite): Código-fonte

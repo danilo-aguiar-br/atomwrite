@@ -4,6 +4,20 @@
 [Read in English](AGENTS.md)
 
 
+## O Que Há de Novo na v0.1.22
+
+- **GAP-2026-012 Frente 3 fechado** — novo sub-comando `edit-loop [PATH]` aplica N pares `{old, new}` em 1 invocação via NDJSON no stdin. Reduz 5 chamadas `edit` sequenciais (5 spawns de subprocess, 5 recapturas de checksum) para uma única escrita atômica. Suporta `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`. Veja `tests/cli_v0121_edit_loop.rs` e ADR-0039.
+- **GAP-2026-013 Frente 2 fechado** — novo sub-comando `prune-backups [PATHS]...` oferece limpeza manual de arquivos `.bak.YYYYMMDD_HHMMSS` legados da v0.1.20 e anteriores. Flags: `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (default true para segurança). Reusa `cleanup_old_backups_in` de `src/atomic.rs`. Veja `tests/cli_v0121_prune_backups.rs` e ADR-0040.
+- 2 novos schemas NDJSON: `edit-loop-output.schema.json` (com `pairs_total`, `pairs_applied`, `pairs_unmatched`, `pair_results[].index`, `pair_results[].matched`) e `prune-backups-output.schema.json` (com `action`, `path`, `reason`, `total`, `elapsed_ms`).
+- 32 subcomandos no total (adicionados `edit-loop` e `prune-backups` aos 30 anteriores).
+
+## O Que Há de Novo na v0.1.21
+
+- **GAP-2026-012 fechado** — nova flag `--allow-sequential-drift` em `edit` aceita drift de checksum entre edits sequenciais no mesmo arquivo, eliminando o `STATE_DRIFT` (exit 82) falso-positivo quando o mesmo agente é dono do arquivo entre iterações. Comportamento padrão (sem a flag) inalterado: re-capturar checksum entre edits.
+- **GAP-2026-013 Frente 4 fechado** — `edit` e `rollback` agora expõem flags `--backup` e `--retention` para paridade com `write` e `replace`. Default `backup: false` preserva comportamento existente.
+- **GAP-2026-014 v2 fechado** — default de backup mudou para **deletar após sucesso**. Anteriormente, backups acumulavam com a política `retention: u8` (padrão 5). Agora, `--backup` cria um `.bak.{timestamp}` que é removido inline no sucesso. Nova flag opt-in `--keep-backup` preserva o backup. Operações que falham sempre preservam o backup para inspeção. Veja ADR-0038 e `tests/cli_v0121_backup_keep_flag.rs`.
+- Novo padrão documentado: capturar checksum no topo de cada iteração de loop via `atomwrite read --json | jaq -r '.checksum'`, depois passar para `--expect-checksum`. Elimina STATE_DRIFT para edits sequenciais pelo mesmo agente.
+
 ## O Que Há de Novo na v0.1.15 (estendido em v0.1.18)
 
 - G117: o `edit` multi-par `--old/--new` agora roda a mesma cascata fuzzy de 9 estratégias do caminho single, por par. Envelopes de sucesso ganham `pairs_total` e `pair_results[{index, matched, strategy, similarity}]`; falhas ganham `failed_pair_index` (exit 65, arquivo intacto). Novo opt-in `--partial` aplica os pares que casam e relata os demais.
@@ -124,7 +138,7 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 ```
 
 
-## 28 Subcomandos
+## 32 Subcomandos
 - `read` -- lê arquivos com metadados, checksum, conteúdo opcional; `--format raw` (alias `--raw`) emite bytes crus para composabilidade Unix (G81); `--grep <REGEX>` filtra linhas retornadas
 - `write` -- cria ou sobrescreve arquivos atomicamente via stdin; `--syntax-check` valida com tree-sitter após escrita (G72, exit 88)
 - `edit` -- edita cirurgicamente por número de linha, marcador de texto ou match exato; `--fuzzy auto|off|aggressive` para matching fuzzy; `--multi` para multi-edit NDJSON
@@ -153,6 +167,10 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - `case` -- (v0.1.12, v14 Tier 3) renomeia identificadores em múltiplos arquivos via `heck`; estilos: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`
 - `query` -- (v0.1.12, v14 Tier 3, G72) caminha um AST tree-sitter e emite nós como NDJSON; 305 linguagens via `tree-sitter-language-pack`; modos: `--kinds`, `--query <KIND>`, `-Q <KIND>`, `--tree`, `--positions`
 - `outline` -- (v0.1.12, v14 Tier 3) extrai estrutura de alto nível (funções, classes, structs, enums, traits, módulos) como NDJSON
+- `wal-stats` -- (v0.1.18) inspeciona estado do journal WAL para telemetria e debug; escopo via `--workspace <DIR>`; relatório NDJSON com `terminal_committed`, `terminal_aborted`, `total_bytes`, `oldest_age_secs`
+- `wal-heal` -- (v0.1.18) remove journals terminais órfãos mais antigos que `--threshold-secs` (padrão 3600s); budget de wall-clock via `--max-duration-ms` (padrão 100ms)
+- `edit-loop` -- (v0.1.22) aplica N pares `{old, new}` em 1 invocação via NDJSON no stdin; suporta `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`
+- `prune-backups` -- (v0.1.22) limpeza manual de arquivos `.bak.YYYYMMDD_HHMMSS` legados (v0.1.20 e anteriores); flags `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` para segurança); saída NDJSON com `path`, `reason`, `action`, `total`
 
 
 ## OBRIGATÓRIO -- Contrato de Saída
@@ -355,3 +373,77 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - Se o arquivo mudou entre leitura e escrita, atomwrite retorna exit 82 (`STATE_DRIFT`)
 - Releia o arquivo para obter o checksum atual e tente novamente
 - Isso previne atualizações perdidas em workflows concorrentes de agentes
+
+
+## Operações de Backup v0.1.21
+
+- Por padrão, backups são DELETADOS após a operação completar com sucesso
+- Use `--keep-backup` para preservar o backup após sucesso
+- Backups de operações que FALHARAM são sempre preservados para inspeção
+- `cleanup_old_backups_in` mantém N backups apenas para casos com `--keep-backup`
+- Novo sub-comando `prune-backups` para limpeza manual de backups legados
+
+
+## Padrão Sequencial v0.1.21
+
+- 5 edits sequenciais SEM re-captura = 4 falham com `STATE_DRIFT` (exit 82)
+- 5 edits COM re-captura = todos passam (padrão canônico)
+- 5 edits COM `--allow-sequential-drift` = todos passam com warning
+- `edit-loop` aplica N pares em 1 invocação (sem STATE_DRIFT interno)
+
+
+## Subcomandos v0.1.22
+
+Dois novos sub-comandos fecham as frentes rejeitadas em planos anteriores (`gaps.md` linhas 82-83, 201):
+
+### `edit-loop` — N Pares em 1 Invocação
+
+- **Quando usar**: aplicar lote de transformações textuais em um arquivo onde hoje você invocaria `edit` N vezes em loop shell
+- **Input**: NDJSON via stdin com um objeto `{old, new}` por linha
+- **Comportamento**: lê o arquivo UMA vez, aplica todos os pares em memória, escreve atomicamente UMA vez
+- **Vantagem vs shell loop**: 1 invocação CLI em vez de N; 1 read + 1 write em vez de N+N; sem `STATE_DRIFT` interno entre pares
+
+```bash
+# Aplicar 3 pares em 1 invocação
+printf '%s\n' \
+  '{"old":"v0_1_20","new":"v0_1_22"}' \
+  '{"old":"foo","new":"bar"}' \
+  '{"old":"baz","new":"qux"}' \
+  | atomwrite --workspace . edit-loop src/version.rs
+
+# Com backup preservado (linha do tempo forense)
+printf '%s\n' '{"old":"foo","new":"bar"}' \
+  | atomwrite --workspace . edit-loop --backup --keep-backup src/foo.rs
+
+# Modo best-effort com --partial
+printf '%s\n' '{"old":"existe","new":"X"}' '{"old":"ausente","new":"Y"}' \
+  | atomwrite --workspace . edit-loop --partial src/foo.rs
+```
+
+- **Schema NDJSON**: `docs/schemas/edit-loop-output.schema.json` — campos `pairs_total`, `pairs_applied`, `pairs_unmatched`, `pair_results[].index`, `pair_results[].matched`
+- **ADR**: `docs/decisions/0039-edit-loop-helper.md`
+
+### `prune-backups` — Limpeza Manual de Legados
+
+- **Quando usar**: operadores que atualizaram de v0.1.20 herdam siblings `.bak.YYYYMMDD_HHMMSS` que v0.1.21 não cria mais (e portanto não limpa mais automaticamente)
+- **Algoritmo**: varre `[PATHS]...` em busca de arquivos `.bak.YYYYMMDD_HHMMSS`, aplica filtros de idade ou contagem
+- **Segurança**: `--dry-run` é DEFAULT `true` para prevenir perda acidental de dados
+
+```bash
+# Default --dry-run true: lista o que SERIA removido
+atomwrite --workspace . prune-backups --max-age 86400 .
+
+# Remove backups mais antigos que 24 horas
+atomwrite --workspace . prune-backups --max-age 86400 --dry-run false .
+
+# Mantém apenas os 3 backups mais recentes por diretório
+atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
+
+# Pipeline CI: afirma zero backups órfãos após limpeza
+atomwrite --workspace . prune-backups --max-age 0 --dry-run false . \
+  && fd '*.bak.*' . | wc -l | jaq -e '. == 0'
+```
+
+- **Schema NDJSON**: `docs/schemas/prune-backups-output.schema.json` — campos `path`, `reason`, `action`, `total`, `elapsed_ms`
+- **ADR**: `docs/decisions/0040-prune-backups-subcommand.md`
+- **Nota operacional**: limpeza retroativa automática foi explicitamente rejeitada (ver ADR-0038 Addendum); operadores devem rodar `prune-backups` sob demanda

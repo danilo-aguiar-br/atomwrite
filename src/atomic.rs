@@ -83,6 +83,13 @@ pub struct AtomicWriteOptions {
     /// sidecar entirely. The default value `Auto` prevents 60-80% of
     /// unnecessary sidecar writes for trivial operations.
     pub wal_policy: crate::wal::WalPolicy,
+    /// v0.1.21 GAP-014 v2: keep the backup after a successful write.
+    /// When `false` (default), the backup created by `backup: true` is
+    /// deleted quietly after the atomic rename completes. When `true`,
+    /// the backup is retained and cleaned up by `cleanup_old_backups_in`
+    /// according to `retention`. Backup-on-failure is ALWAYS preserved
+    /// regardless of this flag.
+    pub keep_backup: bool,
 }
 
 impl Default for AtomicWriteOptions {
@@ -96,6 +103,7 @@ impl Default for AtomicWriteOptions {
             strict_atomic: false,
             syntax_check: false,
             wal_policy: crate::wal::WalPolicy::Auto,
+            keep_backup: false,
         }
     }
 }
@@ -397,6 +405,16 @@ pub fn atomic_write(
     } else {
         // No WAL was created (best-effort fallback) — guard is inert.
         wal_guard.keep();
+    }
+
+    // v0.1.21 GAP-014 v2: delete backup quietly after successful write
+    // when the caller did not request retention. Idempotent: NotFound is
+    // treated as success. Errors other than NotFound are logged at WARN
+    // level but do NOT propagate — the user's write already succeeded.
+    if let Some(ref bp) = backup_path {
+        if !opts.keep_backup {
+            delete_backup_quietly(bp);
+        }
     }
 
     Ok(WriteResult {
@@ -827,6 +845,35 @@ pub(crate) fn create_backup_in(
     }
 
     Ok(backup_path)
+}
+
+/// Quietly delete a backup file after a successful atomic write.
+///
+/// v0.1.21 GAP-014 v2: by default, backups are transient and removed
+/// after the write commits. This function is idempotent — `NotFound`
+/// is mapped to `Ok(())` so a double-delete or pre-cleaned path is
+/// silent. Any other I/O error is logged at WARN level but does NOT
+/// propagate: the user's write already succeeded, and propagating a
+/// cleanup failure would mask the success path.
+fn delete_backup_quietly(path: &Path) {
+    match fs::remove_file(path) {
+        Ok(()) => {
+            tracing::debug!(path = %path.display(), "backup deleted after successful write");
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::debug!(
+                path = %path.display(),
+                "backup already gone (NotFound) — nothing to delete"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "failed to delete backup after successful write — backup retained"
+            );
+        }
+    }
 }
 
 /// Prune old backups that share the given `prefix` in the given directory.

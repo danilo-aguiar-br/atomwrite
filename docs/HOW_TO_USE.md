@@ -658,3 +658,139 @@ fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 # Or via ruplacer
 ruplacer --subvert --lang --locale
 ```
+
+## v0.1.21 — What Is New
+
+This release closes 3 GAP-2026 items (012, 013 Problem C, 014 v2) and adds one ADR (0038 backup cumprido deleta). The most visible change is that `--backup` operations now DELETE the backup after success by default; add `--keep-backup` to preserve it. The second visible change is that `edit` and `rollback` now accept `--backup`, closing the API parity hole from v0.1.20. The third change is `--allow-sequential-drift` on `edit` for sequential pipelines.
+
+### Backup Operations
+
+- `write --backup` and `replace --backup` DELETE the backup after success by default
+- `edit --backup` and `rollback --backup` are NEW in v0.1.21; the flag is honored on all 4 mutating subcommands
+- `--keep-backup` is the OPT-IN flag to preserve the backup after success on `write`, `edit`, `replace`, `rollback`, `apply`, and `batch`
+- `apply --keep-backup` and `batch --keep-backup` are NEW in v0.1.21 for parity
+- Backups are ALWAYS preserved on the FAILURE path, regardless of `--keep-backup`
+
+#### Examples
+
+```bash
+# Backup deleted after success (default v0.1.21 behavior)
+echo "new" | atomwrite --workspace . write --backup config.toml
+
+# Backup preserved after success (opt-in to v0.1.20 behavior)
+echo "new" | atomwrite --workspace . write --backup --keep-backup config.toml
+
+# Edit with backup (new in v0.1.21)
+echo "new" | atomwrite --workspace . edit --backup src/main.rs --old foo --new bar
+
+# Batch with keep-backup (new in v0.1.21)
+echo '{"op":"write","target":"config.toml","content":"new","keep_backup":true}' \
+  | atomwrite --workspace . batch
+```
+
+### Sequential Edit Pattern
+
+- Chaining multiple `edit` calls on the same file without re-capturing `checksum_after` produces `STATE_DRIFT` (exit 82) on every call after the first
+- Two valid patterns: re-capture checksum (Pattern A) or pass `--allow-sequential-drift` (Pattern B)
+- Default behavior is unchanged: `STATE_DRIFT` still fires on checksum mismatch when the flag is absent
+
+#### Example — Pattern A
+
+```bash
+# Initial checksum
+CS=$(atomwrite --workspace . read src/main.rs | jaq -r '.checksum')
+
+# Edit 1 — pass the captured checksum
+echo "line 2" | atomwrite --workspace . edit --expect-checksum "$CS" src/main.rs --append
+
+# Re-capture the post-edit checksum
+CS=$(atomwrite --workspace . read src/main.rs | jaq -r '.checksum')
+
+# Edit 2 — uses the new checksum
+printf 'line 1\nline 2\n' | atomwrite --workspace . edit --expect-checksum "$CS" src/main.rs --append
+```
+
+#### Example — Pattern B
+
+```bash
+# Edit 1 — initial checksum
+CS=$(atomwrite --workspace . read src/main.rs | jaq -r '.checksum')
+echo "line 2" | atomwrite --workspace . edit --expect-checksum "$CS" src/main.rs --append
+
+# Edit 2 — drift allowed, the pre-state differs from CS
+printf 'line 1\nline 2\n' | atomwrite --workspace . edit --allow-sequential-drift src/main.rs --append
+```
+
+
+#### Example Copy-Paste — `while` Loop with Re-capture
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+WORKSPACE="/path/to/workspace"
+TARGET="$WORKSPACE/src/foo.rs"
+
+# Canonical pattern: re-capture checksum before each edit
+while IFS= read -r change; do
+  CS=$(atomwrite --workspace "$WORKSPACE" read "$TARGET" | jaq -r '.checksum')
+  echo "$change" | atomwrite --workspace "$WORKSPACE" edit \
+    --expect-checksum "$CS" "$TARGET"
+done <<INNER
+primeira mudança
+segunda mudança
+terceira mudança
+INNER
+```
+
+
+## v0.1.22 — What Is New
+
+This release adds 2 new subcommands to address the legacy backup cleanup and the N-edits-in-1-invocation operator pattern. Both are additive: no flag, schema, or default behavior changed for existing commands.
+
+### `prune-backups` Subcommand
+
+- Manual cleanup of `.bak.YYYYMMDD_HHMMSS` siblings left by v0.1.20-era `--backup` operations
+- Flags: `--max-age <SECONDS>` (delete older than N), `--max-count <N>` (keep at most N most-recent), `--dry-run` (default `true` for safety)
+- NDJSON output: one line per backup (`path`, `age_secs`, `size_bytes`, `action`) plus a `summary` line
+- Exit 0 (scan complete), 1 (NO_MATCHES), 65 (precondition failed)
+- Refuses to run without `--max-age` or `--max-count` (VAI-PSIQUE-CHECK)
+
+```bash
+# List backups that would be removed (default --dry-run true)
+atomwrite --workspace . prune-backups --max-age 86400 .
+
+# Actually remove backups older than 24 hours
+atomwrite --workspace . prune-backups --max-age 86400 --dry-run false .
+
+# Keep only the 3 most recent backups per directory
+atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
+```
+
+### `edit-loop` Subcommand
+
+- Apply N `{old, new}` substitution pairs in 1 invocation via NDJSON on stdin
+- Flags: `--workspace`, `--expect-checksum`, `--partial`, `--fuzzy`, `--line-ending`, `--preserve-timestamps`, `--backup`, `--keep-backup`, `--retention`
+- NDJSON output: one `pair_result` per input line plus a `summary` line with `pairs_total`, `pairs_matched`, `pairs_unmatched`
+- Exit 0 (all matched, or `--partial` with ≥1 matched), 1 (NO_MATCHES), 65 (precondition failed)
+
+```bash
+# Apply 2 pairs to one file in 1 invocation
+printf '%s
+' '{"old":"foo","new":"bar"}' '{"old":"baz","new":"qux"}'   | atomwrite --workspace . edit-loop src/foo.rs
+
+# With backup preserved
+printf '%s
+' '{"old":"foo","new":"bar"}'   | atomwrite --workspace . edit-loop --backup --keep-backup src/foo.rs
+
+# With --partial (apply matched, report unmatched)
+printf '%s
+' '{"old":"exists","new":"X"}' '{"old":"absent","new":"Y"}'   | atomwrite --workspace . edit-loop --partial src/foo.rs
+```
+
+### Statistics
+
+- 575+ tests passing in 56+ integration suites, 0 failures
+- 2 new ADRs: 0039 (edit-loop helper), 0040 (prune-backups subcommand)
+- 2 new NDJSON schemas: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
+- 32 subcommands total (up from 30 in v0.1.20)

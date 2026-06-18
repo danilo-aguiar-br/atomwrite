@@ -949,3 +949,89 @@ fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 # Ou via ruplacer
 ruplacer --subvert --lang --locale
 ```
+
+
+## v0.1.21 — Receitas
+
+### Backup Deletado Após Sucesso
+
+- **Mudança de padrão** — `write --backup` não deixa mais um sibling `.bak.<timestamp>` em disco após sucesso. O backup é deletado.
+- **Opt-in para preservar** — passe `--keep-backup` para qualquer um de `write`, `edit`, `replace`, `rollback`, `apply`, `batch`:
+
+```bash
+# Default v0.1.21: backup é criado, escrita sucede, backup é deletado
+echo "novo" | atomwrite --workspace . write --backup config.toml
+
+# Opt-in v0.1.21: backup é criado, escrita sucede, backup é preservado
+echo "novo" | atomwrite --workspace . write --backup --keep-backup config.toml
+```
+
+### Padrão de Edits Sequenciais com Re-captura de Checksum
+
+- **Padrão A — re-captura explícita** é a forma canônica de encadear N chamadas `edit` no mesmo arquivo:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+for par in "foo:bar" "baz:qux" "alpha:beta"; do
+  OLD="${par%:*}"
+  NEW="${par#*:}"
+  CS=$(atomwrite --workspace . read src/foo.rs | jaq -r '.checksum')
+  echo "$NEW" | atomwrite --workspace . edit --old "$OLD" --new "$NEW" \
+    --expect-checksum "$CS" src/foo.rs
+done
+```
+
+- **Padrão B — opt-in `--allow-sequential-drift`** para scripts one-shot que preferem não re-capturar:
+
+```bash
+CS=$(atomwrite --workspace . read src/foo.rs | jaq -r '.checksum')
+for par in "foo:bar" "baz:qux"; do
+  OLD="${par%:*}"; NEW="${par#*:}"
+  echo "$NEW" | atomwrite --workspace . edit --allow-sequential-drift \
+    --old "$OLD" --new "$NEW" --expect-checksum "$CS" src/foo.rs
+done
+```
+
+
+## v0.1.22 — Receitas
+
+### `edit-loop` para N Pares em 1 Invocação
+
+- **Caso de uso**: aplicar um lote de transformações textuais em um arquivo (renomear identificador em 7 lugares, varrer aliases obsoletos) onde hoje você invocaria `edit` N vezes em loop shell.
+
+```bash
+# Aplicar 3 pares em 1 invocação
+printf '%s\n' \
+  '{"old":"v0_1_20","new":"v0_1_22"}' \
+  '{"old":"foo","new":"bar"}' \
+  '{"old":"baz","new":"qux"}' \
+  | atomwrite --workspace . edit-loop src/version.rs
+
+# Com backup preservado para linha do tempo forense
+printf '%s\n' '{"old":"foo","new":"bar"}' \
+  | atomwrite --workspace . edit-loop --backup --keep-backup src/foo.rs
+
+# Com --partial (best-effort: aplica matched, reporta unmatched)
+printf '%s\n' '{"old":"existe","new":"X"}' '{"old":"ausente","new":"Y"}' \
+  | atomwrite --workspace . edit-loop --partial src/foo.rs
+```
+
+### `prune-backups` para Limpeza Manual de `.bak.*` Legados
+
+- **Caso de uso**: operadores que atualizaram de v0.1.20 herdam siblings `.bak.<timestamp>` que v0.1.21 não cria mais (e portanto não limpa mais automaticamente).
+
+```bash
+# Default --dry-run true: lista o que SERIA removido
+atomwrite --workspace . prune-backups --max-age 86400 .
+
+# Remove backups mais antigos que 24 horas
+atomwrite --workspace . prune-backups --max-age 86400 --dry-run false .
+
+# Mantém apenas os 3 backups mais recentes por diretório
+atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
+
+# Pipeline CI: afirma zero backups órfãos após limpeza
+atomwrite --workspace . prune-backups --max-age 0 --dry-run false . \
+  && fd '*.bak.*' . | wc -l | jaq -e '. == 0'
+```

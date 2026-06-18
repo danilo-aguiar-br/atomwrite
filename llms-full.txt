@@ -4,6 +4,7 @@
 
 atomwrite is a Rust CLI that provides 28 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
+**Latest release: v0.1.22** (2026-06-17) — 2 new subcommands (`edit-loop` for N pairs in 1 invocation via NDJSON; `prune-backups` for manual cleanup of legacy `.bak.*` files with `--max-age`, `--max-count`, `--dry-run`), 16+ new regression tests, ADRs 0039 and 0040, 2 new NDJSON schemas (`edit-loop-output`, `prune-backups-output`), 575+ tests, 32 subcommands total. Highlights (v0.1.21, 2026-06-17): 3 GAP-2026 closures (012 sequential drift via `--allow-sequential-drift`, 013 Problem C `--backup` parity across 4 subcommands, 014 v2 `--keep-backup` deletes-after-success default), 555+ tests, ADR-0038 (backup cumprido deleta), new `--keep-backup` flag on 6 subcommands (write, edit, replace, rollback, apply, batch), `--allow-sequential-drift` on `edit` for sequential pipelines. Highlights (v0.1.20, 2026-06-15): 11 GAP-2026 closed, intention guards (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`), `--locale` rename (was `--lang`), 542 tests in 47 suites, ADRs 0031-0037. See `CHANGELOG.md` for full release notes and `docs/decisions/` for the ADRs (0019-0040).
 **Latest release: v0.1.20** (2026-06-15) — 11 GAP-2026 closed, intention guards (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`), `--locale` rename (was `--lang`), `count --by-size`, `read --mode`, `search --no-begin-end`, `write --preserve-timestamps`, `scope --lang` alias, 542 tests in 47 suites, ADRs 0031-0037. Highlights (v0.1.19, 2026-06-14): G121 path resolution helper, real S-expression query, 7 exit code documentation drifts consolidated. See `CHANGELOG.md` for full release notes and `docs/decisions/` for the ADRs (0019-0037).
 
 **Previous release: v0.1.19** (2026-06-14) — G121 path resolution helper that unifies jail resolution across all write subcommands; real S-expression `query` mode via `tree-sitter`; consolidation of 7 exit code documentation drifts to match the canonical list (ADR-0031).
@@ -85,6 +86,24 @@ Renamed from `--lang` to disambiguate from the tree-sitter `--lang` used by `sco
 - `search --no-begin-end` -- disable the implicit `^` and `$` anchor decoration in regex output
 - `write --preserve-timestamps` -- keep the source file mtime when overwriting
 - `scope --lang rust` -- explicit alias accepted for ergonomic symmetry with `transform --lang`
+
+## v0.1.21 — Sequential Edits and Backup Deletion
+### `--keep-backup` on 6 subcommands
+- `--keep-backup` is the OPT-IN flag that preserves the backup file after a successful `--backup` write
+- Accepted by `write`, `edit`, `replace`, `rollback`, `apply`, and `batch`
+- DEFAULT behavior (no `--keep-backup`) is that the backup is DELETED after a successful write
+- Backups are ALWAYS preserved when the write FAILS, regardless of `--keep-backup`
+- Pre-v0.1.21 behavior (backup lives forever after success) is REMOVED
+
+### `--allow-sequential-drift` on `edit`
+- `--allow-sequential-drift` is the OPT-IN flag that suppresses `STATE_DRIFT` (exit 82) on subsequent `edit` calls in a sequential pipeline
+- The flag emits `tracing::warn!` naming the drift and proceeds with the edit (exit 0 on success)
+- Use Pattern A (re-capture `checksum_after` after each `edit`) for ZERO drift risk; use Pattern B (pass `--allow-sequential-drift` on every call) for fewer CLI invocations
+- DO NOT use `--allow-sequential-drift` in a TRUE parallel scenario; concurrent agents should use Pattern A
+
+### `--backup` parity 4/4
+- `--backup` is now accepted by `write`, `edit`, `replace`, and `rollback` (was 2/4: only `write` and `replace` in v0.1.20)
+- `rollback` gains `--backup` for symmetry with `write` and `edit`; pass-through behavior documented in `docs/HOW_TO_USE.md`
 
 ## Output Contract
 

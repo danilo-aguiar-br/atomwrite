@@ -40,17 +40,34 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 - Snapshot tests via `insta`
 - Signal tests (SIGINT, SIGTERM, SIGPIPE)
 
-## What's New in v0.1.18 (Current)
+## What's New in v0.1.22 (Current)
 
-- 542 tests passing (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 cross-platform/WAL/audit increments v0.1.16-v0.1.18 + 15 NDJSON contract tests v0.1.16-v0.1.18)
-- 30 subcommands (28 baseline + `wal-heal` + `wal-stats` from v0.1.15)
-- 12 ADRs in docs/decisions/ (0019-0030)
+- 575+ tests passing (542 baseline v0.1.18 + 16 GAP-2026-012 tests v0.1.21 + 12 GAP-2026-014 v2 backup-delete tests v0.1.21 + 5 GAP-2026-013 edit-backup tests v0.1.21)
+- 32 subcommands (30 baseline v0.1.18 + `edit-loop` + `prune-backups` from v0.1.22)
+- 22 ADRs in docs/decisions/ (0019-0040)
+- 2 new NDJSON schemas: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
+
+## What's New in v0.1.21
+
+- GAP-2026-012 (--allow-sequential-drift flag) closed; sequential edits no longer require re-capturing checksum between iterations
+- GAP-2026-013 Front 4 (--backup exposed in `edit` and `rollback`) closed; parity with `write` and `replace`
+- GAP-2026-014 v2 (backup default-deletes after success) closed; `--keep-backup` opt-in escape hatch added
+- ADR-0038 created documenting the backup-default-deletes paradigm
+- New tests: `tests/cli_v0121_sequential_drift.rs` (4), `tests/cli_v0121_backup_keep_flag.rs` (3), `tests/cli_v0121_edit_backup.rs` (3), `tests/cli_v0121_rollback_backup.rs` (2), `tests/cli_v0121_apply_keep.rs` (2), `tests/cli_v0121_batch_keep.rs` (2), `tests/proptest_v0121_backup_delete.rs` (2 property tests)
+
+## What's New in v0.1.22
+
+- GAP-2026-012 Front 3 (edit-loop helper subcommand) closed; new `edit-loop` applies N pairs {old, new} in 1 invocation via NDJSON on stdin
+- GAP-2026-013 Front 2 (prune-backups subcommand) closed; new `prune-backups` provides manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` files
+- ADR-0039 created documenting the `edit-loop` design
+- ADR-0040 created documenting the `prune-backups` design
+- New tests: `tests/cli_v0121_edit_loop.rs` (4), `tests/cli_v0121_prune_backups.rs` (3)
 
 
 ### How to Run
 
 ```bash
-# Run all 542 tests
+# Run all 575+ tests
 cargo test
 
 # Run only the v0.1.12 regression suite
@@ -69,7 +86,7 @@ cargo test --test cross_compile_check -- --ignored
 
 - 20.19% line coverage via `cargo tarpaulin` (935/4631 lines covered)
 - Lower than ideal because tarpaulin only counts unit tests, not CLI integration tests
-- The integration test suite is the primary coverage metric (542 tests across 43 suites)
+- The integration test suite is the primary coverage metric (575+ tests across 47+ suites)
 
 ### Dependencies Added
 
@@ -78,8 +95,8 @@ cargo test --test cross_compile_check -- --ignored
 
 ### ADRs and Schemas
 
-- 12 new ADRs in `docs/decisions/` (0019-0025) explain the architectural decisions behind the v0.1.12 features
-- 7 new JSON schemas in `docs/schemas/` (set, get, del, case, query, outline, wal-recovery)
+- 22 new ADRs in `docs/decisions/` (0019-0040) explain the architectural decisions behind the v0.1.12 to v0.1.22 features
+- 29 JSON schemas in `docs/schemas/` (full index in `docs/schemas/README.md`); v0.1.22 added `edit-loop-output` and `prune-backups-output`
 - See [docs/decisions/README.md](README.md) for the full list of ADRs
 
 ## Why Categorized Tests
@@ -93,7 +110,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ## Current Stats
 - 70+ Rust files across `src/` and `tests/`
-- **542 tests total across 43 test suites** (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency)
+- **575+ tests total across 47+ test suites** (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency)
 - **96 new tests added in v0.1.11+v0.1.12**:
   - 11 tests in `tests/cli_v012_regressions.rs` (GAP 13, GAP 14, GAP 18 fixes)
   - 27 tests in `tests/cli_v012_audit_regressions.rs` (v0.1.12 G72/G114 audit)

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "prune-backups output",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": {
+      "enum": ["pruned", "skipped", "error", "summary"]
+    },
+    "path": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "error": {
+      "type": "string"
+    },
+    "action": {
+      "type": "string"
+    },
+    "total": {
+      "type": "integer"
+    },
+    "elapsed_ms": {
+      "type": "integer"
+    }
+  },
+  "additionalProperties": false
+}

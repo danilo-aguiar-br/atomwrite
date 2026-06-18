@@ -92,7 +92,14 @@ pub fn cmd_apply(
 
     let opts = AtomicWriteOptions {
         backup: args.backup,
-        ..Default::default()
+        syntax_check: false,
+        retention: args.retention,
+        preserve_timestamps: false,
+        backup_output_dir: None,
+        strategy: None,
+        strict_atomic: false,
+        wal_policy: crate::wal::WalPolicy::Auto,
+        keep_backup: args.keep_backup,
     };
     atomic_write(&target, result_content.as_bytes(), &opts, &workspace)?;
 

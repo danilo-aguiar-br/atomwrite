@@ -64,8 +64,8 @@ O fix do Windows 10/11 de v0.1.4 é preservado (cargo install agora funciona). v
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Instalar atomwrite v0.1.18 do crates.io
-cargo install atomwrite --locked --version "^0.1.12"
+# Instalar atomwrite v0.1.22 do crates.io
+cargo install atomwrite --locked --version "^0.1.22"
 
 # Verificar
 atomwrite --version
@@ -324,4 +324,43 @@ fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 
 # Ou via ruplacer
 ruplacer --subvert --lang --locale
+```
+
+
+## v0.1.21 — Novidades
+
+Esta release fecha 3 GAP-2026 items e altera o comportamento padrão de retenção de backups:
+
+- **`--allow-sequential-drift`** em `edit` — flag opt-in para pipelines de edição sequencial
+- **`--backup` paridade 4/4** — `edit` e `rollback` agora aceitam `--backup` (eram hardcoded `false`)
+- **`--keep-backup`** em 6 sub-comandos — flag opt-in para preservar o backup após sucesso
+- **Mudança de comportamento padrão** — backups são DELETADOS após operações `--backup` bem-sucedidas; adicione `--keep-backup` para preservar
+- 555+ testes passando, 1 novo ADR (0038)
+
+## v0.1.22 — Novidades
+
+Esta release adiciona 2 novos sub-comandos para limpeza e padrão de N-edits-em-1-invocação:
+
+- **`prune-backups [PATHS]...`** — limpeza manual de siblings `.bak.YYYYMMDD_HHMMSS` legados
+  - Flags: `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (default true)
+  - Saída NDJSON com linhas por backup e summary
+- **`edit-loop <PATH>`** — aplica N pares `{old, new}` via NDJSON no stdin em 1 invocação
+  - Flags: `--workspace`, `--expect-checksum`, `--partial`, `--fuzzy`, `--backup`, `--keep-backup`
+  - Saída NDJSON com `pair_result` por par e summary
+- 575+ testes passando, 2 novos ADRs (0039, 0040), 2 novos schemas NDJSON
+- 32 sub-comandos totais (de 30 em v0.1.20)
+
+### Instalar v0.1.22
+
+```bash
+# Do crates.io
+cargo install atomwrite --locked --version "^0.1.22"
+
+# Verificar
+atomwrite --version
+
+# Smoke test dos novos sub-comandos
+atomwrite --workspace . prune-backups --max-age 86400 .
+printf '%s\n' '{"old":"foo","new":"bar"}' \
+  | atomwrite --workspace . edit-loop src/foo.rs
 ```

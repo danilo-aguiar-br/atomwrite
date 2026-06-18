@@ -282,6 +282,8 @@ fn prescan_json_schema() -> Option<String> {
         "rollback",
         "apply",
         "completions",
+        "prune-backups",
+        "edit-loop",
     ];
     for arg in &args[1..] {
         if SUBCOMMANDS.contains(&arg.as_str()) {
