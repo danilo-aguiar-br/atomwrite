@@ -30,9 +30,9 @@ fn rollback_creates_backup() {
         output.status
     );
 
-    // Modify to v2.
+    // Modify to v2 (--no-backup to avoid interfering with the explicit backup above).
     let output = common::atomwrite()
-        .args(["--workspace", ws, "write"])
+        .args(["--workspace", ws, "write", "--no-backup"])
         .arg(&target)
         .write_stdin("version_two\n")
         .output()

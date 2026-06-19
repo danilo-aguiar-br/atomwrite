@@ -19,6 +19,16 @@
 - Todo arquivo recebe checksum BLAKE3: detecta drift, verifica integridade, habilita locking otimista
 
 
+## O Que Há De Novo Na v0.1.23 (2026-06-19)
+
+- GAP-2026-015 fechado — `allow_hyphen_values` adicionado a 15 campos CLI de texto livre em 8 structs; valores iniciando com `-` (bullet points Markdown, números negativos, YAML, diffs) não causam mais exit 2
+- GAP-2026-016 fechado — backup habilitado por padrão em 9 structs que mutam conteúdo (`write`, `edit`, `edit-loop`, `replace`, `transform`, `apply`, `set`, `del`, `case`); use `--no-backup` ou `ATOMWRITE_BACKUP=0` para opt-out
+- GAP-2026-017 fechado — guarda de shrink bloqueia writes que reduzem tamanho do arquivo em >50% quando `--expect-checksum` está ativo; passe `--allow-shrink` para override
+- GAP-2026-018 fechado — `edit --old-file <PATH> --new-file <PATH>` lê conteúdo de match/substituição de arquivos dentro do processo atomwrite, contornando shell expansion e limite ARG_MAX do kernel (~131 KB); validação de cross-mixing rejeita `--old` + `--new-file` (exit 65); strip de trailing newline garante paridade com argv
+- 609+ testes passando, 31 novos para v0.1.23
+- 4 novos ADRs: 0041 (allow-hyphen-values), 0042 (backup-by-default), 0043 (shrink-guard), 0044 (edit-old-file-new-file)
+
+
 ## O Que Há De Novo Na v0.1.22 (2026-06-17)
 - **2 novos sub-comandos**: `edit-loop` e `prune-backups`
 - **`edit-loop <PATH>`** — aplica N pares de substituição `{old, new}` via NDJSON no stdin em 1 invocação (reduz overhead de 5x subprocess para edições em lote). ADR-0039

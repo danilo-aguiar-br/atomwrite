@@ -761,3 +761,67 @@ printf '%s\n' '{"old":"existe","new":"X"}' '{"old":"ausente","new":"Y"}' \
 - 2 novos ADRs: 0039 (edit-loop helper), 0040 (prune-backups subcommand)
 - 2 novos schemas NDJSON: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
 - 32 sub-comandos totais (de 30 em v0.1.20)
+
+
+## v0.1.23 — Novidades
+
+### backup-by-default (GAP-2026-016)
+
+Todos os 9 comandos que mutam conteúdo agora criam backup antes de escrever por padrão. O backup é auto-deletado após sucesso.
+
+```bash
+# Antes da v0.1.23: sem backup a menos que solicitado explicitamente
+atomwrite --workspace . write target.rs < new.rs
+
+# v0.1.23+: backup criado automaticamente, deletado após sucesso
+# Mesmo comando, agora mais seguro por padrão
+
+# Opt-out quando performance importa:
+atomwrite --workspace . write --no-backup target.rs < new.rs
+
+# Opt-out global via ambiente:
+ATOMWRITE_BACKUP=0 atomwrite --workspace . write target.rs < new.rs
+```
+
+### guarda de shrink (GAP-2026-017)
+
+Writes que reduzem tamanho do arquivo em >50% são bloqueados quando `--expect-checksum` está ativo.
+
+```bash
+# BLOQUEADO se stdin for <50% do tamanho do alvo:
+CS=$(atomwrite --workspace . read --json target.rs | jaq -r '.checksum')
+echo "tiny" | atomwrite --workspace . write --expect-checksum "$CS" target.rs
+# Exit 65: stdin is 99% smaller than target; pass --allow-shrink to confirm
+
+# Override quando truncamento é intencional:
+echo "tiny" | atomwrite --workspace . write --expect-checksum "$CS" --allow-shrink target.rs
+```
+
+### --old-file/--new-file para edit (GAP-2026-018)
+
+Lê conteúdo de match/substituição de arquivos em vez de argumentos CLI, contornando o ARG_MAX do kernel.
+
+```bash
+# Antes: conteúdo no argv (limitado a ~131 KB)
+atomwrite --workspace . edit target.rs --old "$(cat old.txt)" --new "$(cat new.txt)"
+
+# v0.1.23+: conteúdo lido de arquivos (sem limite de tamanho)
+atomwrite --workspace . edit target.rs --old-file old.txt --new-file new.txt
+
+# Multi-par com arquivos:
+atomwrite --workspace . edit target.rs \
+  --old-file a.txt --new-file a2.txt \
+  --old-file b.txt --new-file b2.txt
+```
+
+### allow_hyphen_values (GAP-2026-015)
+
+Valores iniciando com `-` agora são aceitos como dados em 15 campos CLI.
+
+```bash
+# Antes da v0.1.23: exit 2 (ARGUMENT_PARSE_ERROR)
+atomwrite --workspace . edit target.md --old "- bullet antigo" --new "- bullet novo"
+
+# v0.1.23+: funciona corretamente
+atomwrite --workspace . edit target.md --old "- bullet antigo" --new "- bullet novo"
+```

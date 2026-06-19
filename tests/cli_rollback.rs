@@ -20,9 +20,9 @@ fn rollback_restores_latest() {
         output.status
     );
 
-    // Modify file via atomwrite (atomic rename preserves backup hardlink)
+    // Modify file via atomwrite (--no-backup to avoid overwriting the explicit backup)
     let output = common::atomwrite()
-        .args(["--workspace", ws, "write"])
+        .args(["--workspace", ws, "write", "--no-backup"])
         .arg(&file)
         .write_stdin("modified content")
         .output()
@@ -63,7 +63,7 @@ fn rollback_dry_run_does_not_modify() {
     );
 
     let output = common::atomwrite()
-        .args(["--workspace", ws, "write"])
+        .args(["--workspace", ws, "write", "--no-backup"])
         .arg(&file)
         .write_stdin("changed")
         .output()

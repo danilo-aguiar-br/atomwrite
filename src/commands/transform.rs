@@ -17,6 +17,7 @@ use ast_grep_language::SupportLang;
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 use crate::cli::{GlobalArgs, TransformArgs};
+use crate::commands::resolve_backup;
 use crate::ndjson_types::{Summary, TransformResult};
 use crate::output::NdjsonWriter;
 use crate::signal::ShutdownSignal;
@@ -53,6 +54,8 @@ pub fn cmd_transform(
     writer: &mut NdjsonWriter<impl Write>,
     shutdown: &ShutdownSignal,
 ) -> Result<()> {
+    let effective_backup = resolve_backup(args.backup, args.no_backup);
+
     // G44: multi-rule mode dispatch.
     if args.rules.is_some() || args.inline_rules.is_some() {
         return cmd_transform_multi(args, global, writer, shutdown);
@@ -164,7 +167,7 @@ pub fn cmd_transform(
 
     let max_size = global.effective_max_filesize();
     let shutdown_flag = shutdown.flag();
-    let backup_flag = args.backup;
+    let backup_flag = effective_backup;
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
             let pattern = pattern.clone();
@@ -362,6 +365,7 @@ fn cmd_transform_multi(
     _shutdown: &ShutdownSignal,
 ) -> Result<()> {
     let start = Instant::now();
+    let effective_backup = resolve_backup(args.backup, args.no_backup);
 
     // Load the YAML rules.
     let rules: Vec<YamlRule> = if let Some(path) = &args.rules {
@@ -404,7 +408,8 @@ fn cmd_transform_multi(
             dry_run: args.dry_run,
             rules: None,
             inline_rules: None,
-            backup: args.backup,
+            backup: effective_backup,
+            no_backup: false,
         };
 
         // Emit a "rule_begin" event so consumers can correlate subsequent

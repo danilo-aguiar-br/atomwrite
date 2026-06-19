@@ -13,6 +13,7 @@ use serde::Deserialize;
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 use crate::cli::{EditArgs, FuzzyMode, GlobalArgs};
+use crate::commands::resolve_backup;
 use crate::error::AtomwriteError;
 
 fn find_str(haystack: &str, needle: &str) -> Option<usize> {
@@ -26,6 +27,60 @@ struct FuzzyInfo {
     strategy: String,
     strategies_tried: u64,
     similarity: Option<f64>,
+}
+
+fn strip_file_trailing_newline(s: String) -> String {
+    if s.ends_with("\r\n") {
+        s[..s.len() - 2].to_string()
+    } else if s.ends_with('\n') {
+        s[..s.len() - 1].to_string()
+    } else {
+        s
+    }
+}
+
+fn resolve_edit_pairs(args: &EditArgs, workspace: &Path) -> Result<(Vec<String>, Vec<String>)> {
+    if (!args.old.is_empty() && !args.new_file.is_empty())
+        || (!args.old_file.is_empty() && !args.new.is_empty())
+    {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "cannot mix --old with --new-file or --old-file with --new; \
+                     use both from the same source (--old/--new or --old-file/--new-file)"
+                .into(),
+        }
+        .into());
+    }
+    if !args.old_file.is_empty() {
+        if args.old_file.len() != args.new_file.len() {
+            return Err(AtomwriteError::InvalidInput {
+                reason: format!(
+                    "--old-file count ({}) must match --new-file count ({})",
+                    args.old_file.len(),
+                    args.new_file.len()
+                ),
+            }
+            .into());
+        }
+        let mut olds = Vec::with_capacity(args.old_file.len());
+        let mut news = Vec::with_capacity(args.new_file.len());
+        for (of, nf) in args.old_file.iter().zip(args.new_file.iter()) {
+            let of_path = crate::path_safety::validate_path(of, workspace)?;
+            let nf_path = crate::path_safety::validate_path(nf, workspace)?;
+            let old_raw =
+                std::fs::read_to_string(&of_path).map_err(|_| AtomwriteError::NotFound {
+                    path: of_path.clone(),
+                })?;
+            let new_raw =
+                std::fs::read_to_string(&nf_path).map_err(|_| AtomwriteError::NotFound {
+                    path: nf_path.clone(),
+                })?;
+            olds.push(strip_file_trailing_newline(old_raw));
+            news.push(strip_file_trailing_newline(new_raw));
+        }
+        Ok((olds, news))
+    } else {
+        Ok((args.old.clone(), args.new.clone()))
+    }
 }
 
 /// Apply surgical edits to a file by line number, marker, or exact match.
@@ -46,6 +101,7 @@ pub fn cmd_edit(
 ) -> Result<()> {
     let start = Instant::now();
     let path = crate::path_safety::validate_path(&args.path, workspace)?;
+    let effective_backup = resolve_backup(args.backup, args.no_backup);
 
     if !path.exists() {
         return Err(AtomwriteError::NotFound { path: path.clone() }.into());
@@ -91,16 +147,24 @@ pub fn cmd_edit(
         );
     }
 
-    if !args.old.is_empty() && args.old.len() != args.new.len() {
+    let (effective_old, effective_new) = resolve_edit_pairs(args, workspace)?;
+
+    if !effective_old.is_empty() && effective_old.len() != effective_new.len() {
         bail!(
-            "--old and --new must be provided in equal pairs ({} old, {} new)",
-            args.old.len(),
-            args.new.len()
+            "--old/--old-file and --new/--new-file must be provided in equal pairs ({} old, {} new)",
+            effective_old.len(),
+            effective_new.len()
         );
     }
 
-    let (edited, mode, fuzzy_info, multi_report) = if !args.old.is_empty() {
-        let (e, m, fi, report) = edit_old_new(&original, args)?;
+    let (edited, mode, fuzzy_info, multi_report) = if !effective_old.is_empty() {
+        let (e, m, fi, report) = edit_old_new(
+            &original,
+            &effective_old,
+            &effective_new,
+            args.fuzzy,
+            args.partial,
+        )?;
         (e, m, Some(fi), report)
     } else if args.after_line.is_some()
         || args.before_line.is_some()
@@ -144,7 +208,7 @@ pub fn cmd_edit(
     };
 
     let opts = AtomicWriteOptions {
-        backup: args.backup,
+        backup: effective_backup,
         syntax_check: false,
         retention: args.retention,
         preserve_timestamps: args.preserve_timestamps,
@@ -168,12 +232,20 @@ pub fn cmd_edit(
         None => (None, None, None, None),
     };
 
+    let from_file = !args.old_file.is_empty();
     let (edits, pairs_total, pair_results) = match multi_report {
-        Some(report) => (
-            report.applied,
-            Some(report.pairs_total),
-            Some(report.pair_results),
-        ),
+        Some(mut report) => {
+            if from_file {
+                for pr in &mut report.pair_results {
+                    pr.source = Some("file".into());
+                }
+            }
+            (
+                report.applied,
+                Some(report.pairs_total),
+                Some(report.pair_results),
+            )
+        }
         None => (1, None, None),
     };
 
@@ -234,6 +306,7 @@ fn cmd_edit_multi(
     workspace: &Path,
     start: Instant,
 ) -> Result<()> {
+    let effective_backup = resolve_backup(args.backup, args.no_backup);
     let mut reader = BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
     let mut ops: Vec<MultiEdit> = Vec::with_capacity(8);
     let mut line_buf = String::new();
@@ -399,7 +472,7 @@ fn cmd_edit_multi(
     }
 
     let opts = AtomicWriteOptions {
-        backup: args.backup,
+        backup: effective_backup,
         syntax_check: false,
         retention: args.retention,
         preserve_timestamps: args.preserve_timestamps,
@@ -448,14 +521,17 @@ struct MultiReport {
 
 fn edit_old_new(
     original: &str,
-    args: &EditArgs,
+    old: &[String],
+    new: &[String],
+    fuzzy: FuzzyMode,
+    partial: bool,
 ) -> Result<(String, String, FuzzyInfo, Option<MultiReport>)> {
-    if args.old.len() > 1 {
-        return edit_old_new_multi(original, args);
+    if old.len() > 1 {
+        return edit_old_new_multi(original, old, new, fuzzy, partial);
     }
-    let old = &args.old[0];
-    let new = args.new.first().map(|s| s.as_str()).unwrap_or("");
-    match match_pair(original, old, new, args.fuzzy) {
+    let old_str = &old[0];
+    let new_str = new.first().map(|s| s.as_str()).unwrap_or("");
+    match match_pair(original, old_str, new_str, fuzzy) {
         Ok((edited, info)) => {
             let mode = if info.strategy == "exact" {
                 "exact".into()
@@ -464,9 +540,7 @@ fn edit_old_new(
             };
             Ok((edited, mode, info, None))
         }
-        // --partial semantics with a single pair: zero applicable pairs maps
-        // to NO_MATCHES (exit 1) instead of INVALID_INPUT (exit 65).
-        Err(_) if args.partial => Err(AtomwriteError::NoMatches.into()),
+        Err(_) if partial => Err(AtomwriteError::NoMatches.into()),
         Err(err) => Err(err.into()),
     }
 }
@@ -655,18 +729,21 @@ fn match_line_trimmed(content: &[&str], pattern: &[&str]) -> Option<(usize, usiz
 
 fn edit_old_new_multi(
     original: &str,
-    args: &EditArgs,
+    old: &[String],
+    new: &[String],
+    fuzzy: FuzzyMode,
+    partial: bool,
 ) -> Result<(String, String, FuzzyInfo, Option<MultiReport>)> {
-    let pairs_total = args.old.len() as u64;
+    let pairs_total = old.len() as u64;
     let mut content = original.to_string();
-    let mut pair_results: Vec<PairResult> = Vec::with_capacity(args.old.len());
+    let mut pair_results: Vec<PairResult> = Vec::with_capacity(old.len());
     let mut applied = 0u64;
     let mut any_fuzzy = false;
     let mut max_strategies_tried = 0u64;
 
-    for (i, (old, new)) in args.old.iter().zip(args.new.iter()).enumerate() {
+    for (i, (old_str, new_str)) in old.iter().zip(new.iter()).enumerate() {
         let index = (i + 1) as u64;
-        match match_pair(&content, old, new, args.fuzzy) {
+        match match_pair(&content, old_str, new_str, fuzzy) {
             Ok((edited, info)) => {
                 content = edited;
                 applied += 1;
@@ -677,14 +754,16 @@ fn edit_old_new_multi(
                     matched: true,
                     strategy: Some(info.strategy),
                     similarity: info.similarity,
+                    source: None,
                 });
             }
-            Err(_) if args.partial => {
+            Err(_) if partial => {
                 pair_results.push(PairResult {
                     index,
                     matched: false,
                     strategy: None,
                     similarity: None,
+                    source: None,
                 });
             }
             Err(err) => {
@@ -697,9 +776,8 @@ fn edit_old_new_multi(
                     matched: false,
                     strategy: None,
                     similarity: None,
+                    source: None,
                 });
-                // All-or-nothing default: pairs after `index` were never
-                // attempted and are therefore absent from `pair_results`.
                 return Err(AtomwriteError::EditPairFailed {
                     index,
                     total: pairs_total,

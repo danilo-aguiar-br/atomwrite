@@ -13,6 +13,7 @@ use serde::Serialize;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::cli::{CaseArgs, GlobalArgs, IdentifierCase};
+use crate::commands::resolve_backup;
 use crate::output::NdjsonWriter;
 
 #[derive(Debug, Serialize)]
@@ -49,6 +50,7 @@ pub fn cmd_case(
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
     let dry_run = args.dry_run;
+    let effective_backup = resolve_backup(args.backup, args.no_backup);
 
     // Apply each requested identifier rename.
     let mut total_identifiers = 0u64;
@@ -103,7 +105,7 @@ pub fn cmd_case(
                 continue;
             }
             let opts = AtomicWriteOptions {
-                backup: args.backup,
+                backup: effective_backup,
                 syntax_check: false,
                 retention: 5,
                 preserve_timestamps: args.preserve_timestamps,

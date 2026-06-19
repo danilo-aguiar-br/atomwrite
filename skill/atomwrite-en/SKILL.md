@@ -1,28 +1,58 @@
 ---
 name: atomwrite
 description: |
-  Use atomwrite for ALL file operations: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline, edit-loop, prune-backups (32 subcommands total as of v0.1.22).
-  Auto-invoke when user asks to: write files, search code, replace text, refactor AST, generate regex, calculate expressions, batch operations, check checksums, list project structure, scope code by grammar, backup files, rollback changes, apply patches, edit and trigger cargo build, preserve file timestamps.
-  Trigger on keywords: atomic write, file operation, NDJSON, BLAKE3, checksum, refactor, ast-grep, batch, search parallel, scope, backup, rollback, apply patch, timeout, grep, install completions, mtime, preserve-timestamps, preserve timestamps, build system aware, cargo build, make, cmake, prune-backups, edit-loop, sequential drift, transient backup, --keep-backup, --allow-sequential-drift.
+  Use atomwrite for ALL file ops: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline, edit-loop, prune-backups (32 subcommands, v0.1.23).
+  Auto-invoke for: write files, search code, replace text, refactor AST, generate regex, calc expressions, batch ops, checksums, list structure, scope grammar, backup, rollback, apply patches, edit+build, preserve timestamps.
+  Keywords: atomic write, NDJSON, BLAKE3, checksum, refactor, ast-grep, batch, scope, backup, rollback, apply patch, timeout, completions, mtime, preserve-timestamps, cargo build, prune-backups, edit-loop, --keep-backup, --allow-sequential-drift, --old-file, --new-file, --no-backup, --allow-shrink, backup-by-default, shrink-guard, allow-hyphen-values.
 ---
 
 
 # atomwrite
-## TL;DR — v0.1.22 (2026-06-17)
+## TL;DR — v0.1.23 (2026-06-19)
 ### REQUIRED
-- v0.1.22 closes GAP-2026-012 Front 3 (`edit-loop` helper — subcommand for N pairs in 1 invocation) and reopens the manual cleanup front of GAP-2026-013 (`prune-backups` subcommand for legacy v0.1.20 `.bak.*` siblings)
-- 575+ tests pass in 56+ suites (up from 555+ in v0.1.21; +16 new)
-- 2 ADRs added: ADR-0039 (edit-loop helper), ADR-0040 (prune-backups subcommand)
-- v0.1.22 adds 2 new subcommands: `edit-loop` (N pairs in 1 invocation via NDJSON on stdin) and `prune-backups` (manual cleanup of legacy `.bak.*` files with `--max-age`, `--max-count`, `--dry-run`)
-- 2 new NDJSON schemas: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
-- v0.1.21 PREVIOUSLY closed GAP-2026-012 Front 1 (documentation of re-capture pattern) + Front 2 (`--allow-sequential-drift` opt-in), GAP-2026-013 Problem C (`--backup` parity across 4/4 subcommands), GAP-2026-014 v2 (backups deleted after success by default; `--keep-backup` opt-in preserves them)
-- v0.1.20 PREVIOUSLY closed 11 GAP-2026 (001-011); renamed `--lang` to `--locale` (BREAKING CLI change; env var `ATOMWRITE_LANG` and Rust field `args.global.lang` stay stable); added intention guards (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`) on `write`
-- All v0.1.21 and v0.1.22 additions are additive and opt-in (default `write` behavior unchanged)
+- v0.1.23 closes 4 GAPs (015-018): `allow_hyphen_values` in 15 CLI fields, backup-by-default in 9 structs, shrink-guard on `--expect-checksum`, `--old-file`/`--new-file` for `edit`
+- 609 tests pass in 60+ suites (up from 575+ in v0.1.22; +31 new)
+- 4 ADRs added: ADR-0041 (allow_hyphen_values), ADR-0042 (backup-by-default), ADR-0043 (shrink-guard), ADR-0044 (--old-file/--new-file)
+- BEHAVIORAL CHANGE: `--backup` is now `true` by default in 9 structs — USE `--no-backup` for opt-out
+- BEHAVIORAL CHANGE: `write --expect-checksum` now BLOCKS when stdin is less than 50% of original size — USE `--allow-shrink` to override
+- v0.1.22 PREVIOUSLY closed GAP-2026-012 Front 3 (`edit-loop` helper) and GAP-2026-013 (`prune-backups` subcommand)
+- v0.1.21 PREVIOUSLY closed GAP-2026-012 Fronts 1+2, GAP-2026-013 Problem C, GAP-2026-014 v2
+- v0.1.20 PREVIOUSLY closed 11 GAP-2026 (001-011); renamed `--lang` to `--locale` (BREAKING)
+- All v0.1.23 additions are backward-compatible EXCEPT backup-by-default
+
+## v0.1.23 (2026-06-19) — Data Safety by Default
+
+### GAP-2026-015 — allow_hyphen_values in 15 CLI fields
+- 15 clap fields now accept `allow_hyphen_values = true`
+- Fixes values starting with `-` being rejected as unknown flags
+- ADR-0041 documents the 15 affected fields and rationale
+
+### GAP-2026-016 — backup-by-default in 9 structs
+- `--backup` is now `true` by default in 9 command structs
+- Backup is created BEFORE overwrite and DELETED after success
+- USE `--no-backup` to disable backup when performance is priority
+- ADR-0042 documents the 9 structs and migration path
+
+### GAP-2026-017 — shrink-guard with --expect-checksum
+- `write --expect-checksum` now BLOCKS writes that shrink the file by more than 50%
+- Exit 65 with `shrink_blocked: true` in the NDJSON envelope
+- USE `--allow-shrink` to permit intentional truncation
+- ADR-0043 documents the threshold and rationale
+
+### GAP-2026-018 — --old-file/--new-file for edit
+- `edit` accepts `--old-file <PATH>` and `--new-file <PATH>` to read content from files on disk
+- Avoids ARG_MAX limits for large match/replacement content
+- `--old-file` and `--old` are mutually exclusive via `conflicts_with`
+- Cross-mixing (`--old` + `--new-file`) returns exit 65 (`INVALID_INPUT`)
+- File content has trailing newline stripped for argv parity
+- Response includes `source: "arg"|"file"` in `pair_results`
+- ADR-0044 documents the design and traceability
+
 
 ## v0.1.22 (2026-06-17) — prune-backups and edit-loop Sub-commands
 
-- **`prune-backups [PATHS]...`** — clean up legacy `.bak.YYYYMMDD_HHMMSS` backups by age or count
-- **`edit-loop [PATH]`** — apply N `{old, new}` pairs via NDJSON on stdin in 1 invocation
+- `prune-backups [PATHS]...` — clean up legacy `.bak.YYYYMMDD_HHMMSS` backups by age or count
+- `edit-loop [PATH]` — apply N `{old, new}` pairs via NDJSON on stdin in 1 invocation
 - 2 ADRs added (0039, 0040)
 
 
@@ -55,6 +85,10 @@ description: |
 - USE `--max-size <BYTES>` to limit accepted stdin size
 - USE `--line-ending lf|crlf|cr|auto` to normalize line endings (default: auto)
 - Response includes `checksum` (BLAKE3) and `bytes_written`
+- KNOW that since v0.1.23 `--backup` is `true` by default — backup is created BEFORE overwrite and DELETED after success
+- USE `--no-backup` to disable backup when performance is priority
+- KNOW that since v0.1.23 `--expect-checksum` BLOCKS writes that shrink the file by more than 50% (exit 65 with `shrink_blocked: true`)
+- USE `--allow-shrink` to permit intentional truncation when `--expect-checksum` is active
 ### FORBIDDEN
 - NEVER write without `--workspace`
 - NEVER pass file content as a CLI argument
@@ -208,6 +242,12 @@ atomwrite --workspace . replace --preserve-timestamps 'old_api' 'new_api' src/
 - USE `--preserve-timestamps` to keep the original file mtime (default: mtime is updated to reflect the edit). Add this when integrating with build systems (cargo, make, cmake) that need stable timestamps
 - Pipe new content via stdin when using `--range`, `--after-line`, or `--before-line`
 - Note: `edit` and `replace` now update the mtime of the file by default (v0.1.3+). This is the correct behavior for cargo/make/cmake so they detect the change. For backup or reproducible builds, pass `--preserve-timestamps` to keep the original timestamp
+- USE `--old-file <PATH>` to read match content from a file on disk (alternative to `--old` for large content)
+- USE `--new-file <PATH>` to read replacement content from a file (alternative to `--new` for large content)
+- KNOW that `--old-file` and `--old` are mutually exclusive via `conflicts_with` — clap emits exit 2 automatically
+- KNOW that cross-mixing (`--old` + `--new-file` or `--old-file` + `--new`) returns exit 65 (`INVALID_INPUT`)
+- KNOW that file content has trailing newline stripped via `strip_file_trailing_newline()` for argv parity
+- KNOW that the response includes `source: "arg"|"file"` in `pair_results` for traceability
 ### Correct Pattern — Edit by Text
 ```bash
 atomwrite --workspace . edit src/main.rs --old "old_text" --new "new_text"
@@ -266,6 +306,34 @@ echo "new block" | atomwrite --workspace . edit src/main.rs --between "// START"
 ```bash
 echo '{"old":"foo","new":"bar"}
 {"old":"baz","new":"qux"}' | atomwrite --workspace . edit --multi src/main.rs
+```
+### Correct Pattern — Edit via File (v0.1.23, GAP-018)
+```bash
+# Read match and replacement content from files on disk
+atomwrite --workspace . edit src/main.rs --old-file old.txt --new-file new.txt
+# Multiple pairs via file
+atomwrite --workspace . edit src/main.rs --old-file a.txt --new-file a2.txt --old-file b.txt --new-file b2.txt
+# Large content (200+ KB) without ARG_MAX limit
+echo "large content..." | atomwrite --workspace . write /tmp/old.txt
+echo "new content..." | atomwrite --workspace . write /tmp/new.txt
+atomwrite --workspace . edit target.rs --old-file /tmp/old.txt --new-file /tmp/new.txt
+```
+### Correct Pattern — Shrink Guard (v0.1.23, GAP-017)
+```bash
+# Write with expect-checksum BLOCKS shrink > 50% by default
+CS=$(atomwrite --workspace . read src/main.rs | jaq -r '.checksum')
+echo "small" | atomwrite --workspace . write --expect-checksum "$CS" src/main.rs
+# Exit 65: stdin is 95% smaller than target; pass --allow-shrink to confirm
+
+# Explicit override for intentional truncation
+echo "small" | atomwrite --workspace . write --expect-checksum "$CS" --allow-shrink src/main.rs
+```
+### Correct Pattern — Backup by Default (v0.1.23, GAP-016)
+```bash
+# v0.1.23: backup is created automatically (and deleted after success)
+echo "new" | atomwrite --workspace . write target.txt
+# Disable backup when performance is priority
+echo "new" | atomwrite --workspace . write --no-backup target.txt
 ```
 
 
@@ -1080,10 +1148,12 @@ python3 -c "import json, jsonschema; \\
 
 ## Tests and Quality Gates (v0.1.12)
 ### REQUIRED — Quality Posture
-- **542 tests in 47 test suites pass with zero regressions** as of v0.1.20
-- **Test count decomposition**: 320 baseline (v0.1.10) + +29 (v0.1.11) + +96 (v0.1.12) + +2 (v0.1.14) + +14 (v0.1.15: 8 G117 + 6 G118) = 461 (v0.1.15) + +41 (v0.1.18: G118 + G119 + G120 + 2 ADRs) = 502 (v0.1.18) + +13 (v0.1.19: ADR-0031 G121 path resolution + ADR-0032 query S-expr + ADR-0033 exit code consolidation) = 515 (v0.1.19) + +27 (v0.1.20: 11 GAP-2026 + 4 ADRs) = 542 total
-- **v0.1.12 new test files (10)**: `cli_set`, `cli_case`, `cli_query`, `cli_outline`, `cli_get_del`, `cli_v012_syntax_check`, `cli_v012_wal`, `cli_v012_audit_regressions` (27 tests), `cli_v012_xattr_reflink`, `cli_v012_batch4_regressions` (23 tests)
-- **v0.1.12 test coverage by category**: G72 syntax check (16 tests), G114 WAL (8 tests), v14 query/outline (10 tests), TOML dotted path (6 tests), set/get/del/case (15 tests), audit regressions (50 tests)
+- 609 tests in 60+ test suites pass with zero regressions as of v0.1.23
+- Test count decomposition: 320 baseline (v0.1.10) + +29 (v0.1.11) + +96 (v0.1.12) + +2 (v0.1.14) + +14 (v0.1.15: 8 G117 + 6 G118) = 461 (v0.1.15) + +41 (v0.1.18: G118 + G119 + G120 + 2 ADRs) = 502 (v0.1.18) + +13 (v0.1.19: ADR-0031 G121 path resolution + ADR-0032 query S-expr + ADR-0033 exit code consolidation) = 515 (v0.1.19) + +27 (v0.1.20: 11 GAP-2026 + 4 ADRs) = 542 total
+- v0.1.21 to v0.1.23 decomposition: +13 (v0.1.21: drift + backup parity) + +16 (v0.1.22: edit-loop + prune-backups) + +31 (v0.1.23: 12 hyphen + 7 backup + 4 shrink + 8 old-file) = 609 total
+- New v0.1.23 test files (4): `cli_v0123_hyphen_values`, `cli_v0123_backup_default`, `cli_v0123_shrink_guard`, `cli_v0123_old_file`
+- v0.1.12 new test files (10): `cli_set`, `cli_case`, `cli_query`, `cli_outline`, `cli_get_del`, `cli_v012_syntax_check`, `cli_v012_wal`, `cli_v012_audit_regressions` (27 tests), `cli_v012_xattr_reflink`, `cli_v012_batch4_regressions` (23 tests)
+- v0.1.12 test coverage by category: G72 syntax check (16 tests), G114 WAL (8 tests), v14 query/outline (10 tests), TOML dotted path (6 tests), set/get/del/case (15 tests), audit regressions (50 tests)
 - 8 official gates pass on every commit: `fmt`, `clippy`, `build`, `test`, `doc`, `deny`, `audit`, `msrv`
 - 3 cross-compile targets pass: `x86_64-pc-windows-gnu`, `i686-pc-windows-gnu`, `x86_64-pc-windows-msvc`
 - Cargo deny and cargo audit both report zero vulnerabilities (time 0.3.47+ resolved RUSTSEC-2026-0009 via DEPTH_LIMIT=32)

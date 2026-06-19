@@ -64,3 +64,12 @@ pub mod transform;
 pub mod wal_stats;
 /// Atomic file creation and overwrite.
 pub mod write;
+
+/// Resolve effective backup flag from CLI args and environment.
+/// Priority: `ATOMWRITE_BACKUP` env > `no_backup` flag > `backup` default.
+pub(crate) fn resolve_backup(backup: bool, no_backup: bool) -> bool {
+    if let Ok(val) = std::env::var("ATOMWRITE_BACKUP") {
+        return val != "0";
+    }
+    backup && !no_backup
+}

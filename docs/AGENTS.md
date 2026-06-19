@@ -4,6 +4,15 @@
 [Leia em Português](AGENTS.pt-BR.md)
 
 
+## What's New in v0.1.23
+
+- GAP-2026-015 closed — `allow_hyphen_values = true` added to 15 CLI text-accepting fields in 8 structs. Values starting with `-` (Markdown bullets `- item`, negative numbers `-5`, YAML entries `- key: val`, diff content `--- a/file`) are now accepted as data, not parsed as flags. Excluded: `CaseArgs.subvert` (incompatible with `num_args = 2..`). See ADR-0041.
+- GAP-2026-016 closed — backup is now enabled by default in 9 content-mutating structs: `WriteArgs`, `EditArgs`, `EditLoopArgs`, `ReplaceArgs`, `TransformArgs`, `ApplyArgs`, `SetArgs`, `DelArgs`, `CaseArgs`. Backup is auto-deleted after success (`keep_backup: false` default unchanged). Opt-out: `--no-backup` flag or `ATOMWRITE_BACKUP=0` env var. Precedence: CLI flag > env var > default (true). 4 non-content structs unchanged: `DeleteArgs`, `MoveArgs`, `CopyArgs`, `RollbackArgs`. See ADR-0042.
+- GAP-2026-017 closed — writes that shrink file size by >50% are now BLOCKED when `--expect-checksum` is active. Returns exit 65 (`INVALID_INPUT`) with suggestion to pass `--allow-shrink`. The `risk_assessment` (L1) becomes blocking (not just informative) when `--expect-checksum` is active and the file shrinks. Without `--expect-checksum`, behavior is unchanged. See ADR-0043.
+- GAP-2026-018 closed — new `--old-file <PATH>` and `--new-file <PATH>` flags on `edit`. Content is read from files inside the atomwrite process, bypassing shell expansion and kernel ARG_MAX (~131 KB). `conflicts_with` prevents mixing `--old` with `--old-file` (exit 2). Cross-mixing guard rejects `--old` + `--new-file` and `--old-file` + `--new` (exit 65). `strip_file_trailing_newline()` strips one trailing newline for argv parity. `PairResult.source` reports "arg" or "file". See ADR-0044.
+- 609+ tests passing (31 new: 12 hyphen + 7 backup + 4 shrink + 8 old-file)
+- 4 new ADRs: 0041, 0042, 0043, 0044
+
 ## What's New in v0.1.22
 
 - **GAP-2026-012 Front 3 closed** — new subcommand `edit-loop [PATH]` applies N pairs `{old, new}` in 1 invocation via NDJSON on stdin. Reduces 5 sequential `edit` calls (5 subprocess spawns, 5 checksum recaptures) to a single atomic write. Supports `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`. See `tests/cli_v0121_edit_loop.rs` and ADR-0039.

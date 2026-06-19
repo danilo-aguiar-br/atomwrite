@@ -95,7 +95,7 @@ pub struct AtomicWriteOptions {
 impl Default for AtomicWriteOptions {
     fn default() -> Self {
         Self {
-            backup: false,
+            backup: true,
             retention: 5,
             preserve_timestamps: false,
             backup_output_dir: None,
@@ -996,7 +996,7 @@ mod tests {
     #[test]
     fn atomic_write_options_default_values() {
         let opts = AtomicWriteOptions::default();
-        assert!(!opts.backup);
+        assert!(opts.backup);
         assert_eq!(opts.retention, 5);
         assert!(!opts.preserve_timestamps);
     }

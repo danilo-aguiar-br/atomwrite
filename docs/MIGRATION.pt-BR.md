@@ -78,7 +78,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 
 ## Versão Atual
-- atomwrite está na v0.1.22
+- atomwrite está na v0.1.23
 - Este documento cobre migração de v0.1.0 a v0.1.15, com seções detalhadas para v0.1.12 a v0.1.15, v0.1.11 a v0.1.12 e grandes transições anteriores
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
 
@@ -665,3 +665,23 @@ Esta release adiciona 2 novos sub-comandos para fechar o último GAP-2026-012 e 
 - 2 novos ADRs: 0039 (edit-loop helper), 0040 (prune-backups subcommand)
 - 2 novos schemas NDJSON: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
 - Cross-compile verificado em 3 targets Windows
+
+
+## v0.1.22 para v0.1.23
+
+### Mudanças Comportamentais (Ação Necessária)
+
+- backup-by-default: todos os 9 comandos que mutam conteúdo (`write`, `edit`, `edit-loop`, `replace`, `transform`, `apply`, `set`, `del`, `case`) agora criam backup ANTES de escrever por padrão. O backup é auto-deletado após sucesso (default existente `keep_backup: false` inalterado). Se seu pipeline depende de NENHUM arquivo de backup ser criado (ex.: verifica ausência de arquivos `.bak.*`), adicione `--no-backup` ao comando ou defina `ATOMWRITE_BACKUP=0` globalmente
+- guarda de shrink: `write --expect-checksum` agora BLOQUEIA writes que reduzem o arquivo em mais de 50%. Se seu pipeline legitimamente trunca arquivos usando `--expect-checksum`, adicione `--allow-shrink` ao comando. Sem `--expect-checksum`, o comportamento é inalterado
+
+### Mudanças Aditivas (Sem Ação Necessária)
+
+- `allow_hyphen_values`: 15 campos CLI em 8 structs agora aceitam valores iniciando com `-`. Anteriormente causavam exit 2 (ARGUMENT_PARSE_ERROR). Nenhuma migração necessária — isso corrige um bug
+- `edit --old-file <PATH> --new-file <PATH>`: novas flags que leem conteúdo de match/substituição de arquivos em vez de argumentos CLI. Contorna o ARG_MAX do kernel (~131 KB). Cross-mixing de `--old` com `--new-file` (ou vice-versa) retorna exit 65. Nenhuma migração necessária — são flags novas opt-in
+
+### Checklist de Migração
+
+- Se usa `write` sem `--backup`: nenhuma ação necessária (backup auto-deleta após sucesso)
+- Se verifica ausência de arquivos `.bak.*` em CI: adicione `--no-backup` ou defina `ATOMWRITE_BACKUP=0`
+- Se usa `write --expect-checksum` para truncar arquivos legitimamente: adicione `--allow-shrink`
+- Se passa valores iniciando com `-` para `edit --old`, `search`, `replace`, `calc`, `regex`, `transform`, `read --grep`, `query --query`: a correção é automática, nenhuma migração necessária

@@ -78,7 +78,7 @@ All additive. No existing dependency removed.
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
 ## Current Version
-- atomwrite is at v0.1.22 (released 2026-06-17)
+- atomwrite is at v0.1.23
 - This document covers migration from v0.1.0 through v0.1.22, with detailed sections for v0.1.20 to v0.1.22, v0.1.18 to v0.1.20, v0.1.12 to v0.1.18, v0.1.11 to v0.1.12, and earlier major transitions
 - See the sections below for additive changes and breaking changes in each version
 
@@ -628,3 +628,23 @@ For the complete migration guide, see `docs/MIGRATION-v0.1.21-to-v0.1.22.md`.
 - 2 new ADRs (0039, 0040)
 - 2 new NDJSON schemas (`edit-loop-output.schema.json`, `prune-backups-output.schema.json`)
 - 32 subcommands total (up from 30 in v0.1.20)
+
+
+## v0.1.22 to v0.1.23
+
+### Behavioral Changes (Action Required)
+
+- backup-by-default: all 9 content-mutating commands (`write`, `edit`, `edit-loop`, `replace`, `transform`, `apply`, `set`, `del`, `case`) now create a backup BEFORE writing by default. The backup is auto-deleted after success (existing `keep_backup: false` default unchanged). If your pipeline depends on NO backup file being created (e.g., checks for `.bak.*` files), add `--no-backup` to the command or set `ATOMWRITE_BACKUP=0` globally
+- shrink guard: `write --expect-checksum` now BLOCKS writes that shrink the file by more than 50%. If your pipeline legitimately truncates files while using `--expect-checksum`, add `--allow-shrink` to the command. Without `--expect-checksum`, behavior is unchanged
+
+### Additive Changes (No Action Required)
+
+- `allow_hyphen_values`: 15 CLI fields across 8 structs now accept values starting with `-`. Previously these caused exit 2 (ARGUMENT_PARSE_ERROR). No migration needed — this fixes a bug
+- `edit --old-file <PATH> --new-file <PATH>`: new flags that read match/replacement content from files instead of CLI arguments. Bypasses kernel ARG_MAX (~131 KB). Cross-mixing `--old` with `--new-file` (or vice versa) returns exit 65. No migration needed — these are new opt-in flags
+
+### Migration Checklist
+
+- If using `write` without `--backup`: no action needed (backup auto-deletes after success)
+- If checking for `.bak.*` file absence in CI: add `--no-backup` or set `ATOMWRITE_BACKUP=0`
+- If using `write --expect-checksum` to legitimately truncate files: add `--allow-shrink`
+- If passing values starting with `-` to `edit --old`, `search`, `replace`, `calc`, `regex`, `transform`, `read --grep`, `query --query`: the fix is automatic, no migration needed

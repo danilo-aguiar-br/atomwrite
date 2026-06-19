@@ -11,6 +11,7 @@ use serde::Serialize;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::cli::{DelArgs, GlobalArgs};
+use crate::commands::resolve_backup;
 use crate::output::NdjsonWriter;
 
 #[derive(Debug, Serialize)]
@@ -36,6 +37,7 @@ pub fn cmd_del(
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
+    let effective_backup = resolve_backup(args.backup, args.no_backup);
     let validated = crate::path_safety::validate_path(&args.path, &workspace)?;
     if !validated.exists() {
         bail!("file does not exist: {}", validated.display());
@@ -92,7 +94,7 @@ pub fn cmd_del(
     }
 
     let opts = AtomicWriteOptions {
-        backup: args.backup,
+        backup: effective_backup,
         syntax_check: false,
         retention: 5,
         preserve_timestamps: args.preserve_timestamps,

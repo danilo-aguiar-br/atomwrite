@@ -282,6 +282,9 @@ pub struct PairResult {
     /// Similarity score of the fuzzy match, 0.0-1.0 (block-anchor and context-aware only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub similarity: Option<f64>,
+    /// Source of the match/replacement content: `"arg"` or `"file"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// NDJSON output for a surgical edit operation.
@@ -1102,6 +1105,7 @@ mod tests {
                 matched: true,
                 strategy: Some("exact".into()),
                 similarity: None,
+                source: None,
             }]),
             mtime_preserved: Some(false),
         };

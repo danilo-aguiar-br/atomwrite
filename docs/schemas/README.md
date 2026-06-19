@@ -1,6 +1,6 @@
 # atomwrite JSON Schemas
 
-_Last updated: 2026-06-17 (v0.1.22) — 29 schemas in index_
+_Last updated: 2026-06-19 (v0.1.23) — 29 schemas in index_
 
 ## English
 ### Purpose
@@ -11,7 +11,7 @@ _Last updated: 2026-06-17 (v0.1.22) — 29 schemas in index_
 ### Schema Index
 - `write-output.schema.json` -- output of `atomwrite write`
 - `read-output.schema.json` -- output of `atomwrite read`
-- `edit-output.schema.json` -- output of `atomwrite edit` (v0.1.15: adds `pairs_total` and `pair_results` -- G117)
+- `edit-output.schema.json` -- output of `atomwrite edit` (v0.1.15: adds `pairs_total` and `pair_results` -- G117) (v0.1.23: adds `source` field in `pair_results` -- GAP-2026-018)
 - `search-match.schema.json` -- output of `atomwrite search` (per-match event)
 - `replace-result.schema.json` -- output of `atomwrite replace` (per-file event)
 - `delete-output.schema.json` -- output of `atomwrite delete`
@@ -47,7 +47,7 @@ _Last updated: 2026-06-17 (v0.1.22) — 29 schemas in index_
 
 
 ## Português
-### Última atualização: 2026-06-17 (v0.1.22) — 29 schemas no índice
+### Última atualização: 2026-06-19 (v0.1.23) — 29 schemas no índice
 
 ### Objetivo
 - Cada schema descreve a saída NDJSON de um subcomando do atomwrite
@@ -57,7 +57,7 @@ _Last updated: 2026-06-17 (v0.1.22) — 29 schemas in index_
 ### Índice de Schemas
 - `write-output.schema.json` -- saída do `atomwrite write`
 - `read-output.schema.json` -- saída do `atomwrite read`
-- `edit-output.schema.json` -- saída do `atomwrite edit` (v0.1.15: adiciona `pairs_total` e `pair_results` -- G117)
+- `edit-output.schema.json` -- saída do `atomwrite edit` (v0.1.15: adiciona `pairs_total` e `pair_results` -- G117) (v0.1.23: adiciona campo `source` em `pair_results` -- GAP-2026-018)
 - `search-match.schema.json` -- saída do `atomwrite search` (evento por match)
 - `replace-result.schema.json` -- saída do `atomwrite replace` (evento por arquivo)
 - `delete-output.schema.json` -- saída do `atomwrite delete`

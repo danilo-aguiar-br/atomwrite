@@ -16,6 +16,7 @@ use regex::Regex;
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 use crate::cli::{GlobalArgs, ReplaceArgs};
+use crate::commands::resolve_backup;
 use crate::ndjson_types::{DryRunPlan, ReplaceResult, Summary};
 use crate::output::NdjsonWriter;
 use crate::signal::ShutdownSignal;
@@ -64,7 +65,7 @@ pub fn cmd_replace(
     let max_replacements = args.max_replacements;
     let dry_run = args.dry_run;
     let preview = args.preview;
-    let backup = args.backup;
+    let backup = resolve_backup(args.backup, args.no_backup);
     let keep_backup = args.keep_backup;
     let ws: Arc<std::path::Path> = Arc::from(workspace.as_path());
     let expect_ck: Option<Arc<str>> = args.expect_checksum.clone().map(Into::into);

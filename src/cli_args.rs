@@ -260,7 +260,11 @@ pub struct ReadArgs {
     pub verify_checksum: Option<String>,
 
     /// Filter lines matching this regex (substring of file content).
-    #[arg(long, help = "Filter returned lines to those matching this regex")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Filter returned lines to those matching this regex"
+    )]
     pub grep: Option<String>,
 }
 
@@ -279,9 +283,17 @@ pub struct WriteArgs {
     /// Target file path.
     pub target: PathBuf,
 
-    /// Create backup before overwriting.
-    #[arg(long, help = "Create backup before overwriting")]
+    /// Create backup before mutating (default: true).
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Create backup before mutating (default: true; use --no-backup to disable)"
+    )]
     pub backup: bool,
+
+    /// Disable automatic pre-write backup.
+    #[arg(long, help = "Disable automatic pre-write backup")]
+    pub no_backup: bool,
 
     /// Number of backups to retain.
     #[arg(long, default_value_t = 5, help = "Number of backups to retain")]
@@ -317,6 +329,13 @@ pub struct WriteArgs {
         help = "Only write if current checksum matches (optimistic lock)"
     )]
     pub expect_checksum: Option<String>,
+
+    /// Allow writes that shrink the file by >50% when --expect-checksum is active.
+    #[arg(
+        long,
+        help = "Allow writes that shrink the file by >50% when --expect-checksum is active"
+    )]
+    pub allow_shrink: bool,
 
     /// Line ending normalization mode.
     #[arg(
@@ -457,28 +476,47 @@ pub struct EditArgs {
     pub delete_range: Option<String>,
 
     /// Insert stdin content after first match of text.
-    #[arg(long, help = "Insert stdin content after first match of text")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Insert stdin content after first match of text"
+    )]
     pub after_match: Option<String>,
 
     /// Insert stdin content before first match of text.
-    #[arg(long, help = "Insert stdin content before first match of text")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Insert stdin content before first match of text"
+    )]
     pub before_match: Option<String>,
 
     /// Two markers delimiting content to replace with stdin.
     #[arg(
         long,
         num_args = 2,
+        allow_hyphen_values = true,
         help = "Replace content between two markers with stdin"
     )]
     pub between: Option<Vec<String>>,
 
     /// Exact text to find (repeatable for multiple replacements).
-    #[arg(long, action = clap::ArgAction::Append, help = "Exact text to find (repeatable)")]
+    #[arg(long, allow_hyphen_values = true, action = clap::ArgAction::Append, help = "Exact text to find (repeatable)")]
     pub old: Vec<String>,
 
     /// Replacement text for --old (repeatable, must match --old count).
-    #[arg(long, action = clap::ArgAction::Append, help = "Replacement text for --old (repeatable)")]
+    #[arg(long, allow_hyphen_values = true, action = clap::ArgAction::Append, help = "Replacement text for --old (repeatable)")]
     pub new: Vec<String>,
+
+    /// Path to file containing exact text to find (alternative to --old for large content).
+    #[arg(long, conflicts_with = "old", action = clap::ArgAction::Append,
+          help = "Read match text from file (repeatable; alternative to --old for large content)")]
+    pub old_file: Vec<PathBuf>,
+
+    /// Path to file containing replacement text (alternative to --new for large content).
+    #[arg(long, conflicts_with = "new", action = clap::ArgAction::Append,
+          help = "Read replacement text from file (repeatable; alternative to --new for large content)")]
+    pub new_file: Vec<PathBuf>,
 
     /// Fuzzy matching mode for --old/--new.
     #[arg(
@@ -543,13 +581,17 @@ pub struct EditArgs {
     pub wal_policy: crate::wal::WalPolicy,
 
     /// v0.1.21 GAP-013 C: create a `.bak` file before editing. Default is
-    /// `false` for back-compat; pass `--backup` to enable the same
-    /// pre-write snapshot semantics as `write --backup`.
+    /// Create backup before mutating (default: true).
     #[arg(
         long,
-        help = "Create .bak backup before editing (default: false; paridade com write/replace)"
+        default_value_t = true,
+        help = "Create backup before mutating (default: true; use --no-backup to disable)"
     )]
     pub backup: bool,
+
+    /// Disable automatic pre-write backup.
+    #[arg(long, help = "Disable automatic pre-write backup")]
+    pub no_backup: bool,
 
     /// v0.1.21 GAP-013 C: number of backups to retain when --backup is active.
     /// Mirrors `write --retention`. Default: 5.
@@ -596,9 +638,17 @@ pub struct EditLoopArgs {
     )]
     pub allow_sequential_drift: bool,
 
-    /// Create a `.bak` snapshot of the target before writing.
-    #[arg(long, help = "Create .bak backup before writing (default: false)")]
+    /// Create backup before mutating (default: true).
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Create backup before mutating (default: true; use --no-backup to disable)"
+    )]
     pub backup: bool,
+
+    /// Disable automatic pre-write backup.
+    #[arg(long, help = "Disable automatic pre-write backup")]
+    pub no_backup: bool,
 
     /// Number of backups to retain when `--backup` is active.
     #[arg(
@@ -640,6 +690,7 @@ pub struct EditLoopArgs {
 #[derive(Args, Debug)]
 pub struct SearchArgs {
     /// Search pattern (regex by default).
+    #[arg(allow_hyphen_values = true)]
     pub pattern: String,
 
     /// Paths to search within.
@@ -776,8 +827,10 @@ pub enum SortBy {
 #[derive(Args, Debug)]
 pub struct ReplaceArgs {
     /// Pattern to search for.
+    #[arg(allow_hyphen_values = true)]
     pub pattern: String,
     /// Replacement text.
+    #[arg(allow_hyphen_values = true)]
     pub replacement: String,
 
     /// Paths to search within.
@@ -800,9 +853,17 @@ pub struct ReplaceArgs {
     )]
     pub literal: bool,
 
-    /// Create backup before modifying.
-    #[arg(long, help = "Create backup before modifying")]
+    /// Create backup before mutating (default: true).
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Create backup before mutating (default: true; use --no-backup to disable)"
+    )]
     pub backup: bool,
+
+    /// Disable automatic pre-write backup.
+    #[arg(long, help = "Disable automatic pre-write backup")]
+    pub no_backup: bool,
 
     /// Glob patterns for file inclusion.
     #[arg(short = 'g', long, action = clap::ArgAction::Append, help = "Include files matching glob")]
@@ -905,6 +966,7 @@ pub struct ExtractArgs {
 #[derive(Args, Debug)]
 pub struct CalcArgs {
     /// Math expression to evaluate.
+    #[arg(allow_hyphen_values = true)]
     pub expression: Option<String>,
 
     /// Read expressions from stdin.
@@ -916,6 +978,7 @@ pub struct CalcArgs {
 #[derive(Args, Debug)]
 pub struct RegexArgs {
     /// Example strings for regex generation.
+    #[arg(allow_hyphen_values = true)]
     pub examples: Vec<String>,
 
     /// Read examples from stdin.
@@ -955,11 +1018,21 @@ pub struct TransformArgs {
     pub paths: Vec<PathBuf>,
 
     /// AST pattern to match.
-    #[arg(short = 'p', long, help = "AST pattern to match (single-rule mode)")]
+    #[arg(
+        short = 'p',
+        long,
+        allow_hyphen_values = true,
+        help = "AST pattern to match (single-rule mode)"
+    )]
     pub pattern: Option<String>,
 
     /// Rewrite template for matched patterns.
-    #[arg(short = 'r', long, help = "Rewrite template (single-rule mode)")]
+    #[arg(
+        short = 'r',
+        long,
+        allow_hyphen_values = true,
+        help = "Rewrite template (single-rule mode)"
+    )]
     pub rewrite: Option<String>,
 
     /// Source language for AST parsing.
@@ -987,12 +1060,24 @@ pub struct TransformArgs {
     pub rules: Option<PathBuf>,
 
     /// Inline YAML rules (alternative to --rules).
-    #[arg(long, help = "Apply multiple rules from inline YAML string")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        help = "Apply multiple rules from inline YAML string"
+    )]
     pub inline_rules: Option<String>,
 
-    /// Create backup before modifying.
-    #[arg(long, help = "Create backup before modifying")]
+    /// Create backup before mutating (default: true).
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Create backup before mutating (default: true; use --no-backup to disable)"
+    )]
     pub backup: bool,
+
+    /// Disable automatic pre-write backup.
+    #[arg(long, help = "Disable automatic pre-write backup")]
+    pub no_backup: bool,
 }
 
 /// Arguments for the batch subcommand.
@@ -1162,9 +1247,17 @@ pub struct ApplyArgs {
     #[arg(long, value_enum, default_value_t = PatchFormat::Auto, help = "Patch format: auto, unified, search-replace, full, markdown")]
     pub format: PatchFormat,
 
-    /// Create backup before applying patch.
-    #[arg(long, help = "Create backup of target before patching")]
+    /// Create backup before mutating (default: true).
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Create backup before mutating (default: true; use --no-backup to disable)"
+    )]
     pub backup: bool,
+
+    /// Disable automatic pre-write backup.
+    #[arg(long, help = "Disable automatic pre-write backup")]
+    pub no_backup: bool,
 
     /// v0.1.21 GAP-014 v2: keep the backup after a successful apply.
     /// Default is to delete it quietly. On failure the backup is always
@@ -1201,9 +1294,16 @@ pub struct SetArgs {
     pub key_path: String,
     /// New value (auto-coerced to bool/int/float/string).
     pub value: String,
-    /// Create backup before modifying.
-    #[arg(long, help = "Create backup before modifying")]
+    /// Create backup before mutating (default: true).
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Create backup before mutating (default: true; use --no-backup to disable)"
+    )]
     pub backup: bool,
+    /// Disable automatic pre-write backup.
+    #[arg(long, help = "Disable automatic pre-write backup")]
+    pub no_backup: bool,
     /// Preserve original file timestamps.
     #[arg(long, help = "Preserve original mtime/atime")]
     pub preserve_timestamps: bool,
@@ -1225,9 +1325,16 @@ pub struct DelArgs {
     pub path: PathBuf,
     /// Dotted path to the key (e.g. `dependencies.serde`).
     pub key_path: String,
-    /// Create backup before modifying.
-    #[arg(long, help = "Create backup before modifying")]
+    /// Create backup before mutating (default: true).
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Create backup before mutating (default: true; use --no-backup to disable)"
+    )]
     pub backup: bool,
+    /// Disable automatic pre-write backup.
+    #[arg(long, help = "Disable automatic pre-write backup")]
+    pub no_backup: bool,
     /// Preserve original file timestamps.
     #[arg(long, help = "Preserve original mtime/atime")]
     pub preserve_timestamps: bool,
@@ -1262,9 +1369,16 @@ pub struct CaseArgs {
     /// Target case style for the new identifier.
     #[arg(long, value_enum, default_value_t = IdentifierCase::Snake, help = "Target case style")]
     pub to: IdentifierCase,
-    /// Create backup before modifying.
-    #[arg(long, help = "Create backup before modifying")]
+    /// Create backup before mutating (default: true).
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "Create backup before mutating (default: true; use --no-backup to disable)"
+    )]
     pub backup: bool,
+    /// Disable automatic pre-write backup.
+    #[arg(long, help = "Disable automatic pre-write backup")]
+    pub no_backup: bool,
     /// Preserve original file timestamps.
     #[arg(long, help = "Preserve original mtime/atime")]
     pub preserve_timestamps: bool,
@@ -1296,6 +1410,7 @@ pub struct QueryArgs {
     #[arg(
         short = 'Q',
         long,
+        allow_hyphen_values = true,
         value_name = "PATTERN",
         help = "S-expression pattern (e.g. '(function_item name: (identifier) @name)')"
     )]

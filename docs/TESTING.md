@@ -40,7 +40,18 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 - Snapshot tests via `insta`
 - Signal tests (SIGINT, SIGTERM, SIGPIPE)
 
-## What's New in v0.1.22 (Current)
+## What's New in v0.1.23 (Current)
+
+- 609 tests passing (575 baseline v0.1.22 + 12 GAP-2026-015 + 7 GAP-2026-016 + 4 GAP-2026-017 + 8 GAP-2026-018 + 3 from [Unreleased] Windows CI)
+- 32 subcommands (unchanged from v0.1.22)
+- 26 ADRs in docs/decisions/ (0019-0044)
+- GAP-2026-015 (allow_hyphen_values) closed; 15 CLI fields across 8 structs now accept values starting with `-`
+- GAP-2026-016 (backup-by-default) closed; backup enabled by default in 9 content-mutating structs
+- GAP-2026-017 (shrink guard) closed; writes shrinking >50% blocked when --expect-checksum active
+- GAP-2026-018 (--old-file/--new-file) closed; edit reads match/replacement from files, bypassing ARG_MAX
+- New tests: `tests/cli_v0123_hyphen_values.rs` (12), `tests/cli_v0123_backup_default.rs` (7), `tests/cli_v0123_shrink_guard.rs` (4), `tests/cli_v0123_old_file.rs` (8)
+
+## What's New in v0.1.22
 
 - 575+ tests passing (542 baseline v0.1.18 + 16 GAP-2026-012 tests v0.1.21 + 12 GAP-2026-014 v2 backup-delete tests v0.1.21 + 5 GAP-2026-013 edit-backup tests v0.1.21)
 - 32 subcommands (30 baseline v0.1.18 + `edit-loop` + `prune-backups` from v0.1.22)
@@ -67,7 +78,7 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 ### How to Run
 
 ```bash
-# Run all 575+ tests
+# Run all 609+ tests
 cargo test
 
 # Run only the v0.1.12 regression suite

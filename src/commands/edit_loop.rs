@@ -17,6 +17,7 @@ use serde::Deserialize;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::cli::{EditLoopArgs, GlobalArgs};
+use crate::commands::resolve_backup;
 use crate::ndjson_types::{EditLoopPairResult, EditLoopSummary};
 use crate::output::NdjsonWriter;
 use crate::path_safety::validate_path;
@@ -54,6 +55,7 @@ pub fn cmd_edit_loop(
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
     let target = validate_path(&args.path, &workspace)?;
+    let effective_backup = resolve_backup(args.backup, args.no_backup);
 
     if !target.exists() {
         return Err(crate::error::AtomwriteError::NotFound {
@@ -115,7 +117,7 @@ pub fn cmd_edit_loop(
     }
 
     let opts = AtomicWriteOptions {
-        backup: args.backup,
+        backup: effective_backup,
         syntax_check: args.syntax_check.is_some(),
         retention: args.retention,
         preserve_timestamps: false,

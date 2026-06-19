@@ -11,6 +11,7 @@ use anyhow::{Context, Result, bail};
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 use crate::cli::{GlobalArgs, WriteArgs};
+use crate::commands::resolve_backup;
 use crate::error::AtomwriteError;
 use crate::ndjson_types::WriteOutput;
 use crate::output::NdjsonWriter;
@@ -42,6 +43,7 @@ pub fn cmd_write(
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
     let resolved = crate::path_safety::validate_path(&args.target, &workspace)?;
+    let effective_backup = resolve_backup(args.backup, args.no_backup);
 
     let stdin_bytes_read;
     let mut content = {
@@ -102,6 +104,23 @@ pub fn cmd_write(
         }
     }
 
+    // GAP-2026-017: block writes that shrink >50% when --expect-checksum is active
+    if args.expect_checksum.is_some() && !args.allow_shrink && resolved.exists() {
+        let original_size = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
+        let new_size = content.len() as u64;
+        if original_size > 0 && new_size < original_size / 2 {
+            let shrink_pct = 100u64.saturating_sub(new_size.saturating_mul(100) / original_size);
+            return Err(AtomwriteError::InvalidInput {
+                reason: format!(
+                    "stdin is {}% smaller than target ({} -> {} bytes); \
+                     pass --allow-shrink to confirm intentional truncation",
+                    shrink_pct, original_size, new_size
+                ),
+            }
+            .into());
+        }
+    }
+
     let target_str = args.target.display().to_string();
 
     if args.dry_run {
@@ -117,7 +136,7 @@ pub fn cmd_write(
     }
 
     // GAP-2026-011 L2 — require-backup guard
-    if args.require_backup && !args.backup && resolved.exists() {
+    if args.require_backup && !effective_backup && resolved.exists() {
         return Err(AtomwriteError::InvalidInput {
             reason: "--require-backup is set but --backup is not; pass --backup or remove --require-backup".into(),
         }
@@ -142,7 +161,7 @@ pub fn cmd_write(
 
     // GAP-2026-011 L5 — auto-rotate guard
     let auto_rotate_active = args.auto_rotate
-        && args.backup
+        && effective_backup
         && resolved.exists()
         && std::fs::metadata(&resolved)
             .and_then(|m| m.modified())
@@ -168,6 +187,17 @@ pub fn cmd_write(
                     "\x1b[33mwarning:\x1b[0m write risk: {} ({}% delta, {} -> {} bytes)",
                     level, delta_pct, original, new_bytes
                 );
+                // GAP-2026-017: block shrink when --expect-checksum is active
+                if args.expect_checksum.is_some() && !args.allow_shrink && new_bytes < original {
+                    return Err(AtomwriteError::InvalidInput {
+                        reason: format!(
+                            "write risk {} ({}% size delta, {} -> {} bytes) blocked with --expect-checksum; \
+                             pass --allow-shrink to override",
+                            level, delta_pct, original, new_bytes
+                        ),
+                    }
+                    .into());
+                }
                 Some(crate::ndjson_types::WriteRiskAssessment {
                     original_bytes: original,
                     new_bytes,
@@ -186,7 +216,7 @@ pub fn cmd_write(
     };
 
     let opts = AtomicWriteOptions {
-        backup: args.backup || auto_rotate_active,
+        backup: effective_backup || auto_rotate_active,
         syntax_check: args.syntax_check,
         retention: args.retention,
         preserve_timestamps: args.preserve_timestamps,

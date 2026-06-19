@@ -19,6 +19,124 @@
 - **Total de testes: 303/303 PASSAM** (eram 302; +1 do novo teste de regressão).
 
 
+## [0.1.23] - 2026-06-19
+
+#### GAP-2026-015 — `allow_hyphen_values` ausente em 15 campos CLI de texto livre em 8 structs
+- **Bug** — O Clap v4 trata qualquer token iniciando com `-` como flag CLI por padrão. 15 campos em 8 structs de argumentos (EditArgs, SearchArgs, ReplaceArgs, CalcArgs, RegexArgs, TransformArgs, ReadArgs, QueryArgs) aceitam conteúdo texto livre mas não tinham `allow_hyphen_values = true`. Passar `--old "- bullet point"` ou `search "-deprecated"` ou `calc "-5 + 3"` causava `ARGUMENT_PARSE_ERROR` (exit 2). Em pipelines de agentes LLM, isso disparava falhas em cascata: exit 2 mascarado por pipe jaq, workaround do agente via write truncante, perda catastrófica de dados.
+- **Correção** — Adicionado `allow_hyphen_values = true` a todos os 15 atributos `#[arg]` afetados em `src/cli_args.rs`. Tier 1 (EditArgs): `old`, `new`, `after_match`, `before_match`, `between`. Tier 2 (posicionais): `SearchArgs.pattern`, `ReplaceArgs.pattern`/`replacement`, `CalcArgs.expression`, `RegexArgs.examples`. Tier 3 (nomeados): `TransformArgs.pattern`/`rewrite`/`inline_rules`, `ReadArgs.grep`, `QueryArgs.query`. Excluído: `CaseArgs.subvert` (incompatível com `num_args = 2..` — parser guloso consome flags seguintes).
+
+#### ADR
+- ADR-0041 — allow-hyphen-values-edit: 15 campos em 8 structs ganham `allow_hyphen_values = true` para aceitar conteúdo Markdown/YAML/diff e números negativos com hífens iniciais
+
+#### Validação
+- `cargo build --release` OK
+- `cargo clippy --all-targets -- -D warnings` OK
+- 12 novos testes de regressão em `tests/cli_v0123_hyphen_values.rs`
+- 1 novo ADR: 0041 (allow-hyphen-values-edit)
+- 1 fechamento GAP-2026 (015)
+
+### GAP-2026-016 — backup-by-default para comandos que mutam conteúdo
+
+- Alterado default de `backup` de `false` para `true` em 9 structs que mutam conteúdo: `WriteArgs`, `EditArgs`, `EditLoopArgs`, `ReplaceArgs`, `TransformArgs`, `ApplyArgs`, `SetArgs`, `DelArgs`, `CaseArgs`
+- Alterado `AtomicWriteOptions::default().backup` de `false` para `true`
+- Adicionada flag `--no-backup` a todas as 9 structs para opt-out explícito
+- Adicionada variável de ambiente `ATOMWRITE_BACKUP=0` para opt-out global
+- Adicionado helper `resolve_backup()` em `src/commands/mod.rs`
+- Default existente `keep_backup: false` inalterado — backup auto-deletado após sucesso
+- 4 structs não-conteúdo inalteradas: `DeleteArgs`, `MoveArgs`, `CopyArgs`, `RollbackArgs`
+- ADR: `docs/decisions/0042-backup-by-default.md`
+- 7 novos testes de regressão em `tests/cli_v0123_backup_default.rs`
+
+### GAP-2026-017 — guarda de shrink com --expect-checksum
+
+- Adicionada flag `--allow-shrink` em `WriteArgs`
+- Writes que reduzem arquivo em >50% agora são BLOQUEADOS quando `--expect-checksum` está ativo
+- Retorna exit 65 (INVALID_INPUT) com sugestão de passar `--allow-shrink`
+- Tornado `risk_assessment` (L1) bloqueante quando `--expect-checksum` está ativo e arquivo encolhe
+- Sem `--expect-checksum`, comportamento inalterado (compatível retroativamente)
+- ADR: `docs/decisions/0043-shrink-guard.md`
+- 4 novos testes de regressão em `tests/cli_v0123_shrink_guard.rs`
+
+### GAP-2026-018 — --old-file/--new-file para o comando edit
+
+- Adicionadas flags `--old-file <PATH>` e `--new-file <PATH>` em `EditArgs` como alternativas a `--old`/`--new`
+- Conteúdo lido de arquivos dentro do processo atomwrite, contornando shell expansion e limite ARG_MAX do kernel (~131 KB)
+- `conflicts_with` impede mistura de `--old` com `--old-file` (exit 2 em conflito)
+- Caminhos validados contra jail do workspace (`validate_path`)
+- Adicionado campo `source` em `PairResult` ("arg" ou "file") para rastreabilidade da origem do conteúdo
+- Trailing newline stripping: `strip_file_trailing_newline()` remove exatamente uma quebra de linha final (`\n` ou `\r\n`) do conteúdo de arquivo para paridade com comportamento argv (arquivos criados por `echo` têm trailing newline que valores argv não têm)
+- Validação de cross-mixing: guarda runtime rejeita `--old` + `--new-file` e `--old-file` + `--new` com exit 65 (`INVALID_INPUT`) e mensagem "cannot mix --old with --new-file or --old-file with --new"
+- ADR: `docs/decisions/0044-edit-old-file-new-file.md`
+- 8 novos testes de regressão em `tests/cli_v0123_old_file.rs`
+
+### Validação
+- `cargo test` — todos os testes passam (609 total, 31 novos para v0.1.23)
+- `cargo clippy --all-targets -- -D warnings` — zero warnings
+- `cargo fmt --check` — zero diffs
+- 4 novos ADRs: 0041 (allow-hyphen-values), 0042 (backup-by-default), 0043 (shrink-guard), 0044 (edit-old-file-new-file)
+- 4 GAP-2026 fechados (015, 016, 017, 018)
+
+
+## [0.1.22] - 2026-06-17
+
+### Adicionado
+
+- Sub-comando `prune-backups` para limpeza manual de backups legados (flags `--max-age`, `--max-count`, `--dry-run`)
+- Sub-comando `edit-loop` para N edições em 1 invocação via NDJSON no stdin
+- ADR-0039 (`docs/decisions/0039-edit-loop-helper.md`)
+- ADR-0040 (`docs/decisions/0040-prune-backups-subcommand.md`)
+- 2 schemas NDJSON (`prune-backups-output.schema.json`, `edit-loop-output.schema.json`)
+
+### Testes
+
+- 16 novos testes de regressão (3+4+3+3+2+2)
+- 2 novos property tests sob feature `slow-tests`
+- Cobertura ≥ 80% em código novo
+
+### Documentação
+
+- Marcadores `[FECHADO v0.1.21]` em `gaps.md` para 3 gaps
+- Seção "Padrão Correto — Edits Sequenciais com Re-captura de Checksum" em SKILLs EN/PT
+- Exemplo copy-paste de loop `while` em `docs/HOW_TO_USE.md`
+- Seções v0.1.21 em `docs/AGENTS.pt-BR.md`
+
+
+## [0.1.21] - 2026-06-17
+
+#### GAP-2026-012 — `--allow-sequential-drift` para pipelines sequenciais de `edit`
+- **Contexto** — Agentes que encadeiam múltiplas chamadas `edit` no mesmo arquivo sem re-capturar `checksum_after` entre invocações recebem `STATE_DRIFT` (exit 82) em toda chamada após a primeira. A documentação cobria o cenário paralelo mas não o sequencial (agente único, arquivo único, edições em lock-step).
+- **Correção — nova flag opt-in `--allow-sequential-drift` em `edit`** — quando setada, `cmd_edit` emite `tracing::warn!` nomeando o drift e prossegue com a edição (exit 0 em sucesso). O comportamento default permanece inalterado: `STATE_DRIFT` (exit 82) ainda dispara em mismatch de checksum quando a flag está ausente. Dois padrões válidos para pipelines sequenciais: (a) re-capturar `checksum_after` após cada `edit` e passar para a próxima chamada; (b) passar `--allow-sequential-drift` uma vez em cada chamada e deixar o pré-estado de cada chamada diferir do original. Veja `SKILL.md` para a receita de loop `while` e `docs/HOW_TO_USE.md` para o exemplo copy-paste.
+
+#### GAP-2026-013 Problema C — `--backup` e `--keep-backup` expostos em `edit`, `rollback`, `replace`, `apply`, `batch`
+- **Bug (violação de paridade de API)** — `edit` e `rollback` hardcodavam `backup: false` em `AtomicWriteOptions` enquanto `write` e `replace` expunham `--backup`. Usuários que tentavam `--backup` em `edit`/`rollback` eram silenciosamente ignorados. As structs `ReplaceArgs`, `ApplyArgs` e `BatchArgs` tinham o mesmo buraco.
+- **Correção — `--backup`, `--retention` e `--keep-backup` propagados em 6 subcomandos** — `edit` ganha `backup`, `retention`, `keep_backup`; `rollback` ganha `backup`, `keep_backup`; `replace`, `apply`, `batch` ganham `keep_backup`. Os 3 sites hardcoded `backup: false` em `src/commands/edit.rs:139`, `src/commands/edit.rs:393` e `src/commands/rollback.rs:108` são substituídos por `args.backup`. Paridade de subcomando para `--backup` agora é 4/4 (write, edit, replace, rollback); 6/6 subcomandos honram `--keep-backup` (write, edit, replace, rollback, apply, batch).
+
+#### GAP-2026-014 v2 — backups são deletados após escritas bem-sucedidas por default
+- **Contexto** — `cleanup_old_backups_in` podava por contagem, deixando backups vivos indefinidamente até que 5 mais novos tomassem seu lugar. Toda operação bem-sucedida com `--backup` deixava lixo persistente em disco; scripts de CI que rodavam `fd '*.bak.*' . | wc -l` viam contagens crescentes proporcionais ao volume de escrita.
+- **Correção — `keep_backup: bool` em `AtomicWriteOptions`, default `false`** — novo helper `delete_backup_quietly(path)` remove o backup após `atomic_write_inner` retornar sucesso. `ErrorKind::NotFound` é mapeado para `Ok(())` (idempotência). Em erros não-NotFound, `tracing::warn!` é emitido e a operação prossegue (cleanup é logado, não propagado). Em caminhos de falha o backup é preservado como antes. `keep_backup: true` é o opt-in explícito para preservar o backup; o comportamento prévio de `--backup` de deixar backups em disco agora só é acessível via `--keep-backup`. 6 subcomandos aceitam a flag: `write`, `edit`, `replace`, `rollback`, `apply`, `batch`. Veja `docs/decisions/0038-backup-cumprido-deleta.md`.
+
+#### Paridade — `apply` e `batch` agora honram `--keep-backup`
+- `apply` propaga `args.keep_backup` para a chamada interna de `atomic_write` para que um patch bem-sucedido não deixe um `.bak` sibling para trás por default.
+- `batch` propaga `--keep-backup` para toda op `write`/`edit`/`replace` no manifesto NDJSON. `keep_backup` por op no NDJSON sobrescreve o default em nível de batch.
+
+#### ADR
+- ADR-0038 — backup cumprido deleta: justificativa para `keep_backup` default `false` + helper `delete_backup_quietly`; alternativas rejeitadas são scheduler, subcomando `prune-backups` e cleanup por idade (todas subsumidas por deleção-após-sucesso).
+
+#### Migration Notes
+- **Breaking change** — `write --backup` e `replace --backup` não deixam mais um sibling `.bak` em disco após uma escrita bem-sucedida. O comportamento pré-v0.1.21 de backup vive para sempre acabou. Adicione `--keep-backup` a qualquer script que dependa do backup persistindo através da operação, ou reescreva para ler o backup antes da escrita completar.
+- **Breaking change** — `edit` e `rollback` agora aceitam `--backup` mas o ignoram sem reclamação se as pré-condições da camada atômica rejeitarem. O novo opt-in é a flag explícita `--backup`; scripts antigos que chamavam `edit` com a suposição de sem backup ainda recebem sem backup por default.
+- **Não-breaking** — `apply --keep-backup` e `batch --keep-backup` são aditivos. Comportamento default (sem backup) permanece inalterado.
+
+#### Validation
+- `cargo build --release` OK
+- `cargo clippy --all-targets -- -D warnings` OK
+- 555+ testes passando (542 baseline v0.1.20 + 13 novos: 6 em `cli_v0121_backup_keep_flag`, 2 em `cli_v0121_edit_backup`, 3 em `cli_v0121_sequential_drift`, 1 em `cli_v0121_rollback_backup`, 1 em `cli_v0121_apply_keep`, 1 em `cli_v0121_batch_keep`, 1 em `proptest_v0121_backup_delete`)
+- 1 novo ADR: 0038 (backup cumprido deleta)
+- 3 novos GAP-2026 fechados (012, 013 Problema C, 014 v2)
+- Cross-compile verificado em 3 targets Windows: x86_64-gnu, i686-gnu, x86_64-msvc
+- Smoke test de migração: `fd '*.bak.*' . | wc -l` reporta 0 em uma execução pós-sucesso; reporta 1 quando `--keep-backup` está setado
+
+
 ## [0.1.20] - 2026-06-15
 
 > **NOTA — Renomeação de flag (ADR-0037)** — a flag global `--lang` foi renomeada para `--locale`. **A env var `ATOMWRITE_LANG` permanece inalterada** (a renomeação foi apenas no flag CLI long-form; o env var e o campo programático `args.global.lang` seguem estáveis). Os valores aceitos permanecem `en` e `pt-BR`. O alias `--lang` foi REMOVIDO desta flag global e LIBERADO para subcomandos — agora passe `--lang` para subcomandos que o aceitam como alias (ex.: `atomwrite scope --lang rust`). Veja `docs/decisions/0037-global-locale-rename.md` para a justificativa completa.
@@ -86,66 +204,6 @@
 - 4 novos ADRs: 0034 (help-driven testing), 0035 (write intention guards), 0036 (edit partial), 0037 (locale rename)
 - 11 GAP-2026 fechados (001-011), 100% cobertura dos gaps de auditoria local
 - Cross-compile verificado em 3 targets Windows: x86_64-gnu, i686-gnu, x86_64-msvc
-
-## [0.1.21] - 2026-06-17
-
-#### GAP-2026-012 — `--allow-sequential-drift` para pipelines sequenciais de `edit`
-- **Contexto** — Agentes que encadeiam múltiplas chamadas `edit` no mesmo arquivo sem re-capturar `checksum_after` entre invocações recebem `STATE_DRIFT` (exit 82) em toda chamada após a primeira. A documentação cobria o cenário paralelo mas não o sequencial (agente único, arquivo único, edições em lock-step).
-- **Correção — nova flag opt-in `--allow-sequential-drift` em `edit`** — quando setada, `cmd_edit` emite `tracing::warn!` nomeando o drift e prossegue com a edição (exit 0 em sucesso). O comportamento default permanece inalterado: `STATE_DRIFT` (exit 82) ainda dispara em mismatch de checksum quando a flag está ausente. Dois padrões válidos para pipelines sequenciais: (a) re-capturar `checksum_after` após cada `edit` e passar para a próxima chamada; (b) passar `--allow-sequential-drift` uma vez em cada chamada e deixar o pré-estado de cada chamada diferir do original. Veja `SKILL.md` para a receita de loop `while` e `docs/HOW_TO_USE.md` para o exemplo copy-paste.
-
-#### GAP-2026-013 Problema C — `--backup` e `--keep-backup` expostos em `edit`, `rollback`, `replace`, `apply`, `batch`
-- **Bug (violação de paridade de API)** — `edit` e `rollback` hardcodavam `backup: false` em `AtomicWriteOptions` enquanto `write` e `replace` expunham `--backup`. Usuários que tentavam `--backup` em `edit`/`rollback` eram silenciosamente ignorados. As structs `ReplaceArgs`, `ApplyArgs` e `BatchArgs` tinham o mesmo buraco.
-- **Correção — `--backup`, `--retention` e `--keep-backup` propagados em 6 subcomandos** — `edit` ganha `backup`, `retention`, `keep_backup`; `rollback` ganha `backup`, `keep_backup`; `replace`, `apply`, `batch` ganham `keep_backup`. Os 3 sites hardcoded `backup: false` em `src/commands/edit.rs:139`, `src/commands/edit.rs:393` e `src/commands/rollback.rs:108` são substituídos por `args.backup`. Paridade de subcomando para `--backup` agora é 4/4 (write, edit, replace, rollback); 6/6 subcomandos honram `--keep-backup` (write, edit, replace, rollback, apply, batch).
-
-#### GAP-2026-014 v2 — backups são deletados após escritas bem-sucedidas por default
-- **Contexto** — `cleanup_old_backups_in` podava por contagem, deixando backups vivos indefinidamente até que 5 mais novos tomassem seu lugar. Toda operação bem-sucedida com `--backup` deixava lixo persistente em disco; scripts de CI que rodavam `fd '*.bak.*' . | wc -l` viam contagens crescentes proporcionais ao volume de escrita.
-- **Correção — `keep_backup: bool` em `AtomicWriteOptions`, default `false`** — novo helper `delete_backup_quietly(path)` remove o backup após `atomic_write_inner` retornar sucesso. `ErrorKind::NotFound` é mapeado para `Ok(())` (idempotência). Em erros não-NotFound, `tracing::warn!` é emitido e a operação prossegue (cleanup é logado, não propagado). Em caminhos de falha o backup é preservado como antes. `keep_backup: true` é o opt-in explícito para preservar o backup; o comportamento prévio de `--backup` de deixar backups em disco agora só é acessível via `--keep-backup`. 6 subcomandos aceitam a flag: `write`, `edit`, `replace`, `rollback`, `apply`, `batch`. Veja `docs/decisions/0038-backup-cumprido-deleta.md`.
-
-#### Paridade — `apply` e `batch` agora honram `--keep-backup`
-- `apply` propaga `args.keep_backup` para a chamada interna de `atomic_write` para que um patch bem-sucedido não deixe um `.bak` sibling para trás por default.
-- `batch` propaga `--keep-backup` para toda op `write`/`edit`/`replace` no manifesto NDJSON. `keep_backup` por op no NDJSON sobrescreve o default em nível de batch.
-
-#### ADR
-- ADR-0038 — backup cumprido deleta: justificativa para `keep_backup` default `false` + helper `delete_backup_quietly`; alternativas rejeitadas são scheduler, subcomando `prune-backups` e cleanup por idade (todas subsumidas por deleção-após-sucesso).
-
-#### Migration Notes
-- **Breaking change** — `write --backup` e `replace --backup` não deixam mais um sibling `.bak` em disco após uma escrita bem-sucedida. O comportamento pré-v0.1.21 de backup vive para sempre acabou. Adicione `--keep-backup` a qualquer script que dependa do backup persistindo através da operação, ou reescreva para ler o backup antes da escrita completar.
-- **Breaking change** — `edit` e `rollback` agora aceitam `--backup` mas o ignoram sem reclamação se as pré-condições da camada atômica rejeitarem. O novo opt-in é a flag explícita `--backup`; scripts antigos que chamavam `edit` com a suposição de sem backup ainda recebem sem backup por default.
-- **Não-breaking** — `apply --keep-backup` e `batch --keep-backup` são aditivos. Comportamento default (sem backup) permanece inalterado.
-
-#### Validation
-- `cargo build --release` OK
-- `cargo clippy --all-targets -- -D warnings` OK
-- 555+ testes passando (542 baseline v0.1.20 + 13 novos: 6 em `cli_v0121_backup_keep_flag`, 2 em `cli_v0121_edit_backup`, 3 em `cli_v0121_sequential_drift`, 1 em `cli_v0121_rollback_backup`, 1 em `cli_v0121_apply_keep`, 1 em `cli_v0121_batch_keep`, 1 em `proptest_v0121_backup_delete`)
-- 1 novo ADR: 0038 (backup cumprido deleta)
-- 3 novos GAP-2026 fechados (012, 013 Problema C, 014 v2)
-- Cross-compile verificado em 3 targets Windows: x86_64-gnu, i686-gnu, x86_64-msvc
-- Smoke test de migração: `fd '*.bak.*' . | wc -l` reporta 0 em uma execução pós-sucesso; reporta 1 quando `--keep-backup` está setado
-
-
-
-## [0.1.22] - 2026-06-17
-
-### Adicionado
-
-- Sub-comando `prune-backups` para limpeza manual de backups legados (flags `--max-age`, `--max-count`, `--dry-run`)
-- Sub-comando `edit-loop` para N edições em 1 invocação via NDJSON no stdin
-- ADR-0039 (`docs/decisions/0039-edit-loop-helper.md`)
-- ADR-0040 (`docs/decisions/0040-prune-backups-subcommand.md`)
-- 2 schemas NDJSON (`prune-backups-output.schema.json`, `edit-loop-output.schema.json`)
-
-### Testes
-
-- 16 novos testes de regressão (3+4+3+3+2+2)
-- 2 novos property tests sob feature `slow-tests`
-- Cobertura ≥ 80% em código novo
-
-### Documentação
-
-- Marcadores `[FECHADO v0.1.21]` em `gaps.md` para 3 gaps
-- Seção "Padrão Correto — Edits Sequenciais com Re-captura de Checksum" em SKILLs EN/PT
-- Exemplo copy-paste de loop `while` em `docs/HOW_TO_USE.md`
-- Seções v0.1.21 em `docs/AGENTS.pt-BR.md`
 
 
 ## [0.1.19] - 2026-06-14

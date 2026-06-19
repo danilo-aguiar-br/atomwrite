@@ -41,3 +41,11 @@
   - [PT-BR](0039-edit-loop-helper.pt-BR.md) — tradução automática
 - [0040 — prune backups subcommand](0040-prune-backups-subcommand.md) — cleanup manual para legados v0.1.20; flags --max-age e --max-count
   - [PT-BR](0040-prune-backups-subcommand.pt-BR.md) — tradução automática
+- [0041 — allow_hyphen_values edit](0041-allow-hyphen-values-edit.md) — allow_hyphen_values for 15 CLI text-accepting fields across 8 structs; prevents exit 2 cascade in agent pipelines
+  - [PT-BR](0041-allow-hyphen-values-edit.pt-BR.md) — tradução automática
+- [0042 — backup-by-default](0042-backup-by-default.md) — backup default true in 9 content-mutating structs; --no-backup and ATOMWRITE_BACKUP=0 for opt-out
+  - [PT-BR](0042-backup-by-default.pt-BR.md) — tradução automática
+- [0043 — shrink guard](0043-shrink-guard.md) — blocking shrink guard (exit 65) when --expect-checksum is active and stdin shrinks >50%; --allow-shrink for override
+  - [PT-BR](0043-shrink-guard.pt-BR.md) — tradução automática
+- [0044 — edit --old-file/--new-file](0044-edit-old-file-new-file.md) — --old-file/--new-file to bypass ARG_MAX; cross-mixing validation and trailing newline stripping
+  - [PT-BR](0044-edit-old-file-new-file.pt-BR.md) — tradução automática

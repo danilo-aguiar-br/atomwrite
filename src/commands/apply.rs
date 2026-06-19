@@ -11,6 +11,7 @@ use anyhow::Result;
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 use crate::cli::{ApplyArgs, GlobalArgs, PatchFormat};
+use crate::commands::resolve_backup;
 use crate::error::AtomwriteError;
 use crate::ndjson_types::ApplyResult;
 use crate::output::NdjsonWriter;
@@ -33,6 +34,7 @@ pub fn cmd_apply(
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
     let target = crate::path_safety::validate_path(&args.file, &workspace)?;
+    let effective_backup = resolve_backup(args.backup, args.no_backup);
 
     let max_stdin = global.effective_max_filesize();
     let mut patch = String::new();
@@ -91,7 +93,7 @@ pub fn cmd_apply(
     }
 
     let opts = AtomicWriteOptions {
-        backup: args.backup,
+        backup: effective_backup,
         syntax_check: false,
         retention: args.retention,
         preserve_timestamps: false,

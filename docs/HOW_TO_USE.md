@@ -794,3 +794,67 @@ printf '%s
 - 2 new ADRs: 0039 (edit-loop helper), 0040 (prune-backups subcommand)
 - 2 new NDJSON schemas: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
 - 32 subcommands total (up from 30 in v0.1.20)
+
+
+## v0.1.23 — What Is New
+
+### backup-by-default (GAP-2026-016)
+
+All 9 content-mutating commands now create a backup before writing by default. The backup is auto-deleted after success.
+
+```bash
+# Before v0.1.23: no backup unless explicitly requested
+atomwrite --workspace . write target.rs < new.rs
+
+# v0.1.23+: backup created automatically, deleted after success
+# Same command, now safer by default
+
+# Opt-out when performance matters:
+atomwrite --workspace . write --no-backup target.rs < new.rs
+
+# Global opt-out via environment:
+ATOMWRITE_BACKUP=0 atomwrite --workspace . write target.rs < new.rs
+```
+
+### shrink guard (GAP-2026-017)
+
+Writes that shrink file size by >50% are blocked when `--expect-checksum` is active.
+
+```bash
+# This is BLOCKED if stdin is <50% of target size:
+CS=$(atomwrite --workspace . read --json target.rs | jaq -r '.checksum')
+echo "tiny" | atomwrite --workspace . write --expect-checksum "$CS" target.rs
+# Exit 65: stdin is 99% smaller than target; pass --allow-shrink to confirm
+
+# Override when truncation is intentional:
+echo "tiny" | atomwrite --workspace . write --expect-checksum "$CS" --allow-shrink target.rs
+```
+
+### --old-file/--new-file for edit (GAP-2026-018)
+
+Read match/replacement content from files instead of CLI arguments, bypassing kernel ARG_MAX.
+
+```bash
+# Before: content in argv (limited to ~131 KB)
+atomwrite --workspace . edit target.rs --old "$(cat old.txt)" --new "$(cat new.txt)"
+
+# v0.1.23+: content read from files (no size limit)
+atomwrite --workspace . edit target.rs --old-file old.txt --new-file new.txt
+
+# Multi-pair with files:
+atomwrite --workspace . edit target.rs \
+  --old-file a.txt --new-file a2.txt \
+  --old-file b.txt --new-file b2.txt
+```
+
+### allow_hyphen_values (GAP-2026-015)
+
+Values starting with `-` are now accepted as data in 15 CLI fields.
+
+```bash
+# Before v0.1.23: exit 2 (ARGUMENT_PARSE_ERROR)
+atomwrite --workspace . edit target.md --old "- old bullet" --new "- new bullet"
+
+# v0.1.23+: works correctly
+atomwrite --workspace . edit target.md --old "- old bullet" --new "- new bullet"
+```

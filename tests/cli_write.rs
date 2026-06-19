@@ -634,6 +634,7 @@ fn v0_1_20_require_backup_blocks_overwrite_without_backup() {
             dir.path().to_str().unwrap(),
             "write",
             "--require-backup",
+            "--no-backup",
         ])
         .arg(&target)
         .write_stdin("<html>new</html>\n")

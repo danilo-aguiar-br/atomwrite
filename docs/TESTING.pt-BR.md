@@ -40,7 +40,18 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 - Testes de snapshot via `insta`
 - Testes de sinal (SIGINT, SIGTERM, SIGPIPE)
 
-## O Que Há de Novo na v0.1.22 (Atual)
+## O Que Há de Novo na v0.1.23 (Atual)
+
+- 609 testes passando (575 baseline v0.1.22 + 12 GAP-2026-015 + 7 GAP-2026-016 + 4 GAP-2026-017 + 8 GAP-2026-018 + 3 de [Unreleased] CI Windows)
+- 32 subcomandos (inalterado desde v0.1.22)
+- 26 ADRs em docs/decisions/ (0019-0044)
+- GAP-2026-015 (allow_hyphen_values) fechado; 15 campos CLI em 8 structs agora aceitam valores iniciando com `-`
+- GAP-2026-016 (backup-by-default) fechado; backup habilitado por padrão em 9 structs que mutam conteúdo
+- GAP-2026-017 (guarda de shrink) fechado; writes que reduzem >50% bloqueados quando --expect-checksum ativo
+- GAP-2026-018 (--old-file/--new-file) fechado; edit lê match/substituição de arquivos, contornando ARG_MAX
+- Novos testes: `tests/cli_v0123_hyphen_values.rs` (12), `tests/cli_v0123_backup_default.rs` (7), `tests/cli_v0123_shrink_guard.rs` (4), `tests/cli_v0123_old_file.rs` (8)
+
+## O Que Há de Novo na v0.1.22
 
 - 575+ testes passando (542 baseline v0.1.18 + 16 testes GAP-2026-012 v0.1.21 + 12 testes GAP-2026-014 v2 backup-delete v0.1.21 + 5 testes GAP-2026-013 edit-backup v0.1.21)
 - 32 subcomandos (30 baseline v0.1.18 + `edit-loop` + `prune-backups` da v0.1.22)
@@ -67,7 +78,7 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 ### Como Executar
 
 ```bash
-# Executar todos os 575+ testes
+# Executar todos os 609+ testes
 cargo test
 
 # Executar apenas a suíte de regressão v0.1.12
