@@ -37,7 +37,7 @@ fn get_toml_top_level() {
     assert_eq!(event.get("found").and_then(|v| v.as_bool()), Some(true));
     assert_eq!(
         event.get("value").and_then(|v| v.as_str()),
-        Some("\"0.1.0\"")
+        Some("0.1.0")
     );
 }
 
@@ -59,19 +59,23 @@ fn get_toml_missing_key_returns_not_found() {
         .output()
         .expect("get");
 
-    assert!(
-        output.status.success(),
-        "get on missing key should still succeed (found=false): {}",
+    assert_eq!(
+        output.status.code(),
+        Some(4),
+        "get on missing key should return exit 4 (FILE_NOT_FOUND): {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let events = common::parse_ndjson(stdout.as_bytes());
-    let get_event = events
+    let err_event = events
         .iter()
-        .find(|e| e.get("type").and_then(|v| v.as_str()) == Some("get"));
-    if let Some(event) = get_event {
-        assert_eq!(event.get("found").and_then(|v| v.as_bool()), Some(false));
-    }
+        .find(|e| e.get("error").and_then(|v| v.as_bool()) == Some(true));
+    assert!(err_event.is_some(), "should emit JSON error envelope");
+    let err = err_event.unwrap();
+    assert_eq!(
+        err.get("code").and_then(|v| v.as_str()),
+        Some("FILE_NOT_FOUND")
+    );
 }
 
 #[test]

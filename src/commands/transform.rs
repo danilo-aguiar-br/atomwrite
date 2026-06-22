@@ -105,8 +105,10 @@ pub fn cmd_transform(
 
     let extensions = crate::lang_utils::lang_extensions(lang_str);
 
-    let mut walker = ignore::WalkBuilder::new(&args.paths[0]);
-    for p in args.paths.iter().skip(1) {
+    let canonical_paths =
+        crate::commands::path_resolution::resolve_paths_against_workspace(&args.paths, &workspace)?;
+    let mut walker = ignore::WalkBuilder::new(&canonical_paths[0]);
+    for p in canonical_paths.iter().skip(1) {
         walker.add(p);
     }
     walker
@@ -135,7 +137,7 @@ pub fn cmd_transform(
     }
 
     if !args.include.is_empty() || !args.exclude.is_empty() {
-        let mut overrides_builder = ignore::overrides::OverrideBuilder::new(&args.paths[0]);
+        let mut overrides_builder = ignore::overrides::OverrideBuilder::new(&canonical_paths[0]);
         for glob in &args.include {
             overrides_builder
                 .add(glob)

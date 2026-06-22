@@ -33,6 +33,8 @@ pub fn cmd_delete(
     let mut deleted = 0u64;
     let mut _bytes_freed = 0u64;
 
+    let mut visited = 0u64;
+
     for path in &args.paths {
         let path = crate::path_safety::validate_path(path, &workspace)?;
 
@@ -47,11 +49,41 @@ pub fn cmd_delete(
             .into());
         }
 
-        if path.is_file() {
-            let path_str = path.display().to_string();
+        let files_to_delete: Vec<std::path::PathBuf> = if path.is_dir() {
+            let mut files = Vec::new();
+            let mut walker_builder = ignore::WalkBuilder::new(&path);
+            walker_builder
+                .hidden(!global.hidden)
+                .git_ignore(!global.no_gitignore)
+                .follow_links(global.follow_symlinks);
+
+            if !args.include.is_empty() || !args.exclude.is_empty() {
+                let mut overrides = ignore::overrides::OverrideBuilder::new(&path);
+                for pat in &args.include {
+                    overrides.add(pat)?;
+                }
+                for pat in &args.exclude {
+                    overrides.add(&format!("!{pat}"))?;
+                }
+                walker_builder.overrides(overrides.build()?);
+            }
+
+            for entry in walker_builder.build().flatten() {
+                if entry.file_type().is_some_and(|ft| ft.is_file()) {
+                    files.push(entry.into_path());
+                }
+            }
+            files
+        } else {
+            vec![path.clone()]
+        };
+
+        for file_path in &files_to_delete {
+            visited += 1;
+            let path_str = file_path.display().to_string();
             let meta =
-                std::fs::metadata(&path).with_context(|| format!("cannot stat {path_str}"))?;
-            let hash = checksum::hash_file(&path, global.effective_max_filesize())?;
+                std::fs::metadata(file_path).with_context(|| format!("cannot stat {path_str}"))?;
+            let hash = checksum::hash_file(file_path, global.effective_max_filesize())?;
             let size = meta.len();
 
             if args.dry_run {
@@ -62,17 +94,19 @@ pub fn cmd_delete(
                     would_modify: true,
                     details: Some(format!("{size} bytes")),
                 })?;
+                deleted += 1;
+                _bytes_freed += size;
                 continue;
             }
 
             if args.backup {
-                crate::atomic::create_backup(&path, args.retention)?;
+                crate::atomic::create_backup(file_path, args.retention)?;
             }
 
-            std::fs::remove_file(&path)
-                .with_context(|| format!("cannot delete {}", path.display()))?;
+            std::fs::remove_file(file_path)
+                .with_context(|| format!("cannot delete {}", file_path.display()))?;
 
-            if let Some(parent) = path.parent() {
+            if let Some(parent) = file_path.parent() {
                 if let Err(e) = platform::fsync_dir(parent) {
                     tracing::warn!(
                         path = %parent.display(),
@@ -93,14 +127,33 @@ pub fn cmd_delete(
                 elapsed_ms: start.elapsed().as_millis() as u64,
             })?;
         }
+
+        if path.is_dir() && !args.dry_run && files_to_delete.is_empty() {
+            std::fs::remove_dir_all(&path)
+                .with_context(|| format!("cannot remove directory {}", path.display()))?;
+        } else if path.is_dir() && !args.dry_run {
+            let mut dirs_to_remove = Vec::new();
+            for entry in walkdir::WalkDir::new(&path)
+                .contents_first(true)
+                .into_iter()
+                .flatten()
+            {
+                if entry.file_type().is_dir() {
+                    dirs_to_remove.push(entry.into_path());
+                }
+            }
+            for dir in &dirs_to_remove {
+                let _ = std::fs::remove_dir(dir);
+            }
+        }
     }
 
     writer.write_event(&Summary {
         r#type: "summary",
-        files_visited: args.paths.len() as u64,
+        files_visited: visited,
         files_matched: deleted,
         files_modified: Some(deleted),
-        files_skipped: Some(args.paths.len() as u64 - deleted),
+        files_skipped: Some(visited.saturating_sub(deleted)),
         total_matches: None,
         total_replacements: None,
         elapsed_ms: start.elapsed().as_millis() as u64,

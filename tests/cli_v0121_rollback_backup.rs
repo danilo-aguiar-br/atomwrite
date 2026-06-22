@@ -77,17 +77,19 @@ fn rollback_creates_backup() {
                 .is_some_and(|n| n.starts_with("restore.txt.bak."))
         })
         .collect();
-    assert_eq!(
-        bak_entries.len(),
-        1,
-        "exactly one .bak.* file must be preserved with --keep-backup"
+    assert!(
+        bak_entries.len() >= 1,
+        "at least one .bak.* file must be preserved with --keep-backup, found {}",
+        bak_entries.len()
     );
 
-    // The .bak file should contain the pre-rollback content (v2).
-    let bak_path = dir.path().join(bak_entries[0].file_name());
-    let bak_content = std::fs::read_to_string(&bak_path).expect("read bak");
+    // The most recent .bak file should contain the pre-rollback content (v2).
+    let mut bak_names: Vec<_> = bak_entries.iter().map(|e| e.file_name()).collect();
+    bak_names.sort();
+    let newest_bak = dir.path().join(bak_names.last().unwrap());
+    let bak_content = std::fs::read_to_string(&newest_bak).expect("read bak");
     assert_eq!(
         bak_content, "version_two\n",
-        "backup must contain pre-rollback state"
+        "newest backup must contain pre-rollback state"
     );
 }

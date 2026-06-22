@@ -796,6 +796,42 @@ printf '%s
 - 32 subcommands total (up from 30 in v0.1.20)
 
 
+## v0.1.24 — What Is New
+
+- ERROR HANDLING OVERHAUL
+  - ALL user-facing errors now emit structured JSON on stdout with typed exit codes
+  - 20 `anyhow::bail!()` calls converted to `AtomwriteError` variants
+  - Exit code mapping: `NotFound` → exit 4, `InvalidInput` → exit 65
+  - Agents and parsers receive actionable JSON in ALL error paths (no more silent exit 1)
+- CRITICAL BUG FIXES
+  - `delete --recursive` now traverses directories (was silently skipping)
+  - `hash --recursive` now walks directories (was accepted but never walked)
+  - `search --multiline` now propagates flag to SearcherBuilder (was broken)
+  - `replace` rejects empty pattern (was destroying files silently)
+  - `batch --transaction` reverts `move`/`copy` on rollback (was leaving orphans)
+  - `read --line/--lines` no longer panics on out-of-range indices
+- WORKSPACE PATH RESOLUTION
+  - `scope`, `count`, `transform`, `diff` now resolve paths against `--workspace`
+  - Previously these commands used CWD, bypassing the workspace jail
+- BACKUP IMPROVEMENTS
+  - Timestamp format: `YYYYMMDD_HHMMSS_mmm` (millisecond resolution prevents collisions)
+  - `rollback --timestamp` accepts prefix match (backward-compatible)
+  - `prune-backups --max-count` sorts by filename instead of mtime (deterministic)
+- VALUE QUOTING FIXES
+  - `get` JSON/TOML values no longer doubly-quoted (returns raw value)
+  - `set`/`del` `old_value`/`removed_value` no longer doubly-quoted
+  - `set` TOML nested keys now correctly return `old_value`
+- MINOR FIXES
+  - `write` skips risk_assessment for `--append`/`--prepend`
+  - `scope` reports `files_modified: null` in read-only mode
+  - `wal-stats`/`wal-heal` include `type` field in NDJSON
+  - `hash --stdin` no longer requires PATHS argument
+  - `edit --multi` field `op` now optional (inferred as "exact")
+  - `regex` warns when examples look like flags
+  - `case --subvert` uses exact `num_args=2` (was greedy)
+  - `scope --query comments --delete` removes entire line_comment nodes
+
+
 ## v0.1.23 — What Is New
 
 ### backup-by-default (GAP-2026-016)

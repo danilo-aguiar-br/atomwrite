@@ -28,8 +28,11 @@ pub fn cmd_diff(
     let start = Instant::now();
 
     let max_size = global.effective_max_filesize();
-    let content_a = crate::file_io::read_file_string(&args.file_a, max_size)?;
-    let content_b = crate::file_io::read_file_string(&args.file_b, max_size)?;
+    let workspace = global.resolve_workspace()?;
+    let resolved_a = crate::path_safety::validate_path(&args.file_a, &workspace)?;
+    let resolved_b = crate::path_safety::validate_path(&args.file_b, &workspace)?;
+    let content_a = crate::file_io::read_file_string(&resolved_a, max_size)?;
+    let content_b = crate::file_io::read_file_string(&resolved_b, max_size)?;
 
     let algo = match args.algorithm {
         DiffAlgorithm::Myers => Algorithm::Myers,

@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use ast_grep_core::AstGrep;
-use ast_grep_core::matcher::{MatcherExt, Pattern};
+use ast_grep_core::matcher::Pattern;
 use ast_grep_language::SupportLang;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
@@ -124,8 +124,10 @@ pub fn cmd_scope(
 
     let workspace = global.resolve_workspace()?;
 
-    let mut walker = ignore::WalkBuilder::new(&args.paths[0]);
-    for p in args.paths.iter().skip(1) {
+    let canonical_paths =
+        crate::commands::path_resolution::resolve_paths_against_workspace(&args.paths, &workspace)?;
+    let mut walker = ignore::WalkBuilder::new(&canonical_paths[0]);
+    for p in canonical_paths.iter().skip(1) {
         walker.add(p);
     }
     walker
@@ -146,7 +148,7 @@ pub fn cmd_scope(
     }
 
     if !args.include.is_empty() || !args.exclude.is_empty() {
-        let mut overrides = ignore::overrides::OverrideBuilder::new(&args.paths[0]);
+        let mut overrides = ignore::overrides::OverrideBuilder::new(&canonical_paths[0]);
         for pat in &args.include {
             overrides.add(pat)?;
         }
@@ -218,10 +220,7 @@ pub fn cmd_scope(
 
                 let grep = AstGrep::new(&content, lang);
                 let root = grep.root();
-                let matches: Vec<_> = root
-                    .dfs()
-                    .filter(|node| pattern.match_node(node.clone()).is_some())
-                    .collect();
+                let matches: Vec<_> = root.find_all(&pattern).collect();
 
                 if matches.is_empty() {
                     fs.fetch_add(1, Ordering::Relaxed);
@@ -229,14 +228,40 @@ pub fn cmd_scope(
                 }
 
                 let scopes_matched = matches.len() as u64;
+
+                let is_read_only = !delete && action.is_none() && replace_with.is_none();
+                if is_read_only {
+                    fm.fetch_add(1, Ordering::Relaxed);
+                    let checksum = checksum::hash_bytes(content.as_bytes());
+                    let _ = tx.send(ScopeEvent::Result(ScopeResult {
+                        r#type: "scoped",
+                        path: path.display().to_string(),
+                        language: lang_name.to_string(),
+                        query: qn.to_string(),
+                        action: "none".to_owned(),
+                        scopes_matched,
+                        bytes_before: content.len() as u64,
+                        bytes_after: content.len() as u64,
+                        checksum_before: checksum.clone(),
+                        checksum_after: checksum,
+                        elapsed_ms: file_start.elapsed().as_millis() as u64,
+                    }));
+                    return ignore::WalkState::Continue;
+                }
+
                 let mut edits: Vec<(usize, usize, String)> = Vec::with_capacity(matches.len());
 
                 for m in &matches {
                     let range = m.range();
-                    let matched_text = &content[range.start..range.end];
+                    let (effective_start, effective_end) = if delete {
+                        expand_to_full_line(&content, range.start, range.end)
+                    } else {
+                        (range.start, range.end)
+                    };
+                    let matched_text = &content[effective_start..effective_end];
                     let replacement =
                         apply_scope_action(matched_text, delete, action, replace_with.as_deref());
-                    edits.push((range.start, range.end, replacement.into_owned()));
+                    edits.push((effective_start, effective_end, replacement.into_owned()));
                 }
 
                 edits.sort_by_key(|e| std::cmp::Reverse(e.0));
@@ -319,10 +344,13 @@ pub fn cmd_scope(
         r#type: "summary",
         files_visited: files_visited.load(Ordering::Relaxed),
         files_matched: files_modified.load(Ordering::Relaxed),
-        files_modified: if !args.dry_run {
-            Some(files_modified.load(Ordering::Relaxed))
-        } else {
-            None
+        files_modified: {
+            let is_read_only = !args.delete && args.action.is_none() && args.replace_with.is_none();
+            if !args.dry_run && !is_read_only {
+                Some(files_modified.load(Ordering::Relaxed))
+            } else {
+                None
+            }
         },
         files_skipped: Some(files_skipped.load(Ordering::Relaxed)),
         total_matches: None,
@@ -332,6 +360,19 @@ pub fn cmd_scope(
 
     writer.write_event(&summary)?;
     Ok(())
+}
+
+fn expand_to_full_line(content: &str, start: usize, end: usize) -> (usize, usize) {
+    let bytes = content.as_bytes();
+    let line_start = bytes[..start]
+        .iter()
+        .rposition(|&b| b == b'\n')
+        .map_or(0, |pos| pos + 1);
+    let line_end = bytes[end..]
+        .iter()
+        .position(|&b| b == b'\n')
+        .map_or(content.len(), |pos| end + pos + 1);
+    (line_start, line_end)
 }
 
 fn apply_scope_action<'a>(

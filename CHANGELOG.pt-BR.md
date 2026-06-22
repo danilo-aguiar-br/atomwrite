@@ -8,15 +8,85 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
-## [Unreleased]
+## [0.1.24] - 2026-06-21
 
-### Corrigido (Falhas de CI - GAP 23 barra invertida Windows em manifestos JSON)
-- **11 testes do `cli_batch` deixam de falhar no `windows-2025-vs2026`** — Os testes construíam o manifesto NDJSON via `format!` + `Path::display()`. No Windows o path nativo da plataforma usa barras invertidas (`C:\Users\...\Temp\.tmpXXXX\file.txt`), e o `format!` não as escapa. O resultado é uma string JSON com sequências de escape inválidas (`\U`, `\r`, `\A`, `\L`, `\T`), que o `serde_path_to_error::deserialize` rejeita com `invalid escape`. O `cmd_batch` então retorna `bail!` e sai com código não-zero, falhando o `assert!(output.status.success())`. O teste passava no Linux/macOS apenas porque os paths usam barras normais, que são válidas em strings JSON sem escape.
-  - Adicionado helper `common::manifest(&[serde_json::Value]) -> String` em `tests/common/mod.rs` que serializa cada op via `serde_json::to_string`, garantindo escape JSON correto de barras invertidas, aspas, caracteres de controle e Unicode.
-  - Refatorados todos os 11 testes afetados em `tests/cli_batch.rs` para usar o novo helper via macro `serde_json::json!`.
-  - Refatorados 2 testes adicionais com o mesmo padrão de bug: `tests/snapshot_write.rs::batch_summary_ndjson_structure_snapshot` e `tests/ndjson_valid_test.rs::ndjson_batch_output_valid` (também adicionado o `mod common;` faltante neste último).
-  - Adicionado teste de regressão `batch_write_escapes_backslash_in_target_path` que constrói uma string de path com barra invertida forçada em qualquer plataforma, para que o bug seja capturado em toda execução de CI, não apenas no Windows.
-- **Total de testes: 303/303 PASSAM** (eram 302; +1 do novo teste de regressão).
+### Correções Críticas
+- GAP-027: `delete --recursive` agora percorre diretórios (antes pulava silenciosamente)
+- GAP-035: `read --line/--lines` não entra mais em panic com índices fora do range
+- GAP-037: `search --multiline` agora propaga flag corretamente ao SearcherBuilder
+- GAP-046: `batch --transaction` agora reverte `move`/`copy` no rollback
+- GAP-050: `replace` rejeita padrão vazio (antes destruía todos os arquivos silenciosamente)
+
+### Correções Médias
+- GAP-019: `ARGUMENT_PARSE_ERROR` (exit 2) agora inclui campo `suggestion` acionável (ADR-0045)
+- GAP-020: `diff` agora resolve paths contra `--workspace` (ADR-0046)
+- GAP-021: `scope` em modo read-only agora reporta `files_matched` corretamente (ADR-0047)
+- GAP-022: `scope`/`count`/`transform` agora resolvem walk roots contra `--workspace`
+- GAP-023: Formato de timestamp de backup alterado para `YYYYMMDD_HHMMSS_mmm` (resolução em milissegundos previne colisões)
+- GAP-028: `scope --query comments --delete` agora remove nós AST `line_comment` inteiros
+- GAP-029: Saída NDJSON de `wal-stats`/`wal-heal` agora inclui campo `type`
+- GAP-032: `hash --stdin` não exige mais argumento PATHS (`required_unless_present = "stdin"`)
+- GAP-033: `--require-backup` agora detecta corretamente quando backup está desabilitado via `--no-backup`
+- GAP-036: Campo `op` em `edit --multi` agora é opcional (inferido como `"exact"` quando `old`+`new` presentes)
+- GAP-038: `delete --recursive` agora remove subdiretórios vazios (travessia depth-first)
+- GAP-039: Valores JSON de `get` não são mais duplamente quotados
+- GAP-040: `get` de chave inexistente retorna exit 4 (`NOT_FOUND`) com envelope JSON
+- GAP-042: Valores TOML string de `get` não são mais duplamente quotados
+- GAP-043: `old_value`/`removed_value` de `set`/`del` não são mais duplamente quotados
+- GAP-044: `hash` de arquivo inexistente retorna exit 4 (`NOT_FOUND`) com envelope JSON
+- GAP-045: `set` TOML agora lê corretamente old_value de chaves aninhadas via descida manual
+- GAP-047: `case --subvert` alterado de `num_args=2..` (greedy) para `num_args=2` (par exato)
+- GAP-048: `hash --recursive` agora implementa travessia de diretório via WalkBuilder
+- GAP-049: `prune-backups --max-count` agora ordena por nome de arquivo (lexicográfico) em vez de mtime
+
+### Correções Baixas
+- GAP-024: `write` pula risk_assessment para `--append`/`--prepend` (sem possibilidade de perda de dados)
+- GAP-025: `regex` removeu `allow_hyphen_values`; usar separador POSIX `--` para exemplos com hífen
+- GAP-026: `scope` summary não reporta mais `files_modified` em modo read-only
+- GAP-030: `read --format raw` pula heurística binária (não sugere mais `--force-text` inexistente)
+- GAP-031: Formato de `edit --multi` corrigido (campo `op` agora opcional)
+- GAP-034: Warning de `regex` adicionado quando flags parecem exemplos (duplicata do GAP-025)
+- GAP-041: `read --lines/--head/--tail` com range vazio retorna conteúdo vazio em vez de `"\n"`
+
+### Auditoria de Erros Tipados (GAP-051 a GAP-070)
+- Convertidos 20 `anyhow::bail!()` para variantes tipadas `AtomwriteError`
+- Todos os erros voltados ao usuário agora emitem JSON estruturado no stdout com exit codes corretos
+- Mapeamento: `NotFound` → exit 4, `InvalidInput` → exit 65
+- Comandos afetados: `set`, `del`, `get`, `query`, `outline`, `edit`, `batch`, `write`, `prune-backups`, `extract`
+- GAP-051: `set`/`del` arquivo não encontrado → exit 4 com JSON
+- GAP-052: `del` chave inexistente sem `--force-missing` → exit 4 com JSON
+- GAP-053: `query`/`outline` arquivo não encontrado → exit 4 com JSON
+- GAP-054: `edit --delete-range`/`--range` invertido → exit 65 com JSON
+- GAP-055: `set`/`del`/`get` formato não suportado → exit 65 com JSON
+- GAP-056: `batch` manifesto vazio → exit 65 com JSON
+- GAP-057: `query` sem modo especificado → exit 65 com JSON
+- GAP-058: `query --language` não suportada → exit 65 com JSON
+- GAP-059: `query` detecção de linguagem falhou → exit 65 com JSON
+- GAP-060: `edit` sem modo especificado → exit 65 com JSON
+- GAP-061: `edit --old/--new` contagem incompatível → exit 65 com JSON
+- GAP-062: `edit --multi` stdin vazio → exit 65 com JSON
+- GAP-063: `edit --between` com 1 marcador → exit 65 com JSON
+- GAP-064: `edit` sem operação de linha/marcador → exit 65 com JSON
+- GAP-065: `write --confirm` abortado → exit 65 com JSON
+- GAP-066: `batch` com operações falhas → exit 65 com JSON
+- GAP-067: `batch` rollback de transação → exit 65 com JSON
+- GAP-068: `prune-backups` sem filtro → exit 65 com JSON
+- GAP-069: `extract` overflow de nesting JSON → exit 65 com JSON
+- GAP-070: `edit --multi` validação per-op → exit 65 com JSON
+
+### Correção CI (Windows)
+- 11 testes do `cli_batch` corrigidos no `windows-2025-vs2026` — manifesto NDJSON agora usa escape JSON correto via helper `common::manifest`
+- Adicionado teste de regressão `batch_write_escapes_backslash_in_target_path`
+
+### ADRs
+- ADR-0045: Suggestion acionável para erros de parsing do clap
+- ADR-0046: Retrofit diff resolve-first
+- ADR-0047: Correção do modo read-only do scope
+
+### Validação
+- `cargo test` — 621 testes passam (0 falhas, 3 ignorados)
+- `cargo clippy --all-targets -- -D warnings` — zero warnings
+- `cargo fmt --check` — zero diferenças
 
 
 ## [0.1.23] - 2026-06-19

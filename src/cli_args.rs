@@ -41,7 +41,7 @@ pub enum ShellType {
 #[derive(Args, Debug)]
 pub struct HashArgs {
     /// File paths to hash.
-    #[arg(required = true)]
+    #[arg(required_unless_present = "stdin")]
     pub paths: Vec<PathBuf>,
 
     /// Expected BLAKE3 hash for verification.
@@ -501,11 +501,11 @@ pub struct EditArgs {
     pub between: Option<Vec<String>>,
 
     /// Exact text to find (repeatable for multiple replacements).
-    #[arg(long, allow_hyphen_values = true, action = clap::ArgAction::Append, help = "Exact text to find (repeatable)")]
+    #[arg(long, allow_hyphen_values = true, action = clap::ArgAction::Append, help = "Exact text to find (repeatable; for content >1KB or with special chars, prefer --old-file)")]
     pub old: Vec<String>,
 
     /// Replacement text for --old (repeatable, must match --old count).
-    #[arg(long, allow_hyphen_values = true, action = clap::ArgAction::Append, help = "Replacement text for --old (repeatable)")]
+    #[arg(long, allow_hyphen_values = true, action = clap::ArgAction::Append, help = "Replacement text for --old (repeatable; for content >1KB or with special chars, prefer --new-file)")]
     pub new: Vec<String>,
 
     /// Path to file containing exact text to find (alternative to --old for large content).
@@ -978,7 +978,8 @@ pub struct CalcArgs {
 #[derive(Args, Debug)]
 pub struct RegexArgs {
     /// Example strings for regex generation.
-    #[arg(allow_hyphen_values = true)]
+    /// Use `--` before examples that start with a hyphen: `regex --digits -- "-ex1" "--ex2"`
+    #[arg(help = "Example strings (use -- before hyphenated examples)")]
     pub examples: Vec<String>,
 
     /// Read examples from stdin.
@@ -1364,7 +1365,7 @@ pub struct CaseArgs {
     /// Target file paths to rewrite.
     pub paths: Vec<PathBuf>,
     /// Pairs of old new identifiers (must be even count).
-    #[arg(long = "subvert", num_args = 2.., value_name = "OLD NEW", help = "Old and new identifier (repeat for multiple pairs)")]
+    #[arg(long = "subvert", num_args = 2, value_name = "OLD NEW", help = "Old and new identifier (repeat for multiple pairs)")]
     pub subvert: Vec<String>,
     /// Target case style for the new identifier.
     #[arg(long, value_enum, default_value_t = IdentifierCase::Snake, help = "Target case style")]

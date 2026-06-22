@@ -62,6 +62,7 @@ pub fn cmd_search(
     let max_filesize = args.max_filesize;
     let max_columns = args.max_columns;
     let no_begin_end = args.no_begin_end;
+    let multiline = args.multiline;
 
     let shutdown_flag = shutdown.flag();
     let walker_thread = std::thread::spawn(move || {
@@ -75,6 +76,7 @@ pub fn cmd_search(
 
             let mut searcher = SearcherBuilder::new()
                 .line_number(true)
+                .multi_line(multiline)
                 .invert_match(invert)
                 .before_context(context_lines)
                 .after_context(context_lines)

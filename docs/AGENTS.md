@@ -4,6 +4,30 @@
 [Leia em Português](AGENTS.pt-BR.md)
 
 
+## What's New in v0.1.24
+
+- 52 bugs fixed (GAP-2026-019 through GAP-2026-070) in comprehensive end-to-end audit
+- TYPED ERROR AUDIT: ALL `anyhow::bail!()` in user-facing paths converted to `AtomwriteError` variants. Every error now emits structured JSON on stdout with the correct exit code. No more silent exit 1 without JSON envelope.
+- Exit code changes: paths that returned exit 1 now return exit 4 (NotFound) or exit 65 (InvalidInput). Agents MUST update error parsers.
+- `delete --recursive` NOW WORKS (was no-op for directories)
+- `hash --recursive` NOW WORKS (was accepted but never walked directories)
+- `search --multiline` NOW WORKS (flag was not propagated to SearcherBuilder)
+- `replace` REJECTS empty pattern (was silently destroying all files)
+- `batch --transaction` properly reverts `move`/`copy` on rollback
+- `scope`/`count`/`transform`/`diff` now resolve walk roots against `--workspace`
+- `get`/`set`/`del` values no longer doubly-quoted (raw value in JSON response)
+- Backup timestamp: `YYYYMMDD_HHMMSS_mmm` (millisecond resolution prevents collision)
+- `rollback --timestamp` accepts PREFIX match (backward-compatible with old format)
+- `prune-backups --max-count` sorts by filename (lexicographic) instead of mtime
+- `case --subvert` changed from greedy `num_args=2..` to exact `num_args=2`
+- `edit --multi` field `op` now optional (inferred as "exact" when `old`+`new` present)
+- `hash --stdin` no longer requires PATHS argument
+- `regex` removed `allow_hyphen_values`; use POSIX `--` for hyphen-starting examples
+- ARGUMENT_PARSE_ERROR (exit 2) gains context-aware `suggestion` field (ADR-0045)
+- 3 new ADRs: 0045 (clap suggestion), 0046 (diff resolve-first), 0047 (scope read-only)
+- 621 tests passing (12 new)
+
+
 ## What's New in v0.1.23
 
 - GAP-2026-015 closed — `allow_hyphen_values = true` added to 15 CLI text-accepting fields in 8 structs. Values starting with `-` (Markdown bullets `- item`, negative numbers `-5`, YAML entries `- key: val`, diff content `--- a/file`) are now accepted as data, not parsed as flags. Excluded: `CaseArgs.subvert` (incompatible with `num_args = 2..`). See ADR-0041.

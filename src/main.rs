@@ -64,7 +64,7 @@ fn main() -> ExitCode {
                 }
                 _ => {
                     let msg = clap_err.to_string();
-                    let suggestion = extract_clap_tip(&msg);
+                    let suggestion = enrich_clap_suggestion(&msg);
                     let ej = atomwrite::error::ErrorJson {
                         error: true,
                         code: "ARGUMENT_PARSE_ERROR",
@@ -252,6 +252,37 @@ fn extract_clap_tip(msg: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn enrich_clap_suggestion(msg: &str) -> Option<String> {
+    let clap_tip = extract_clap_tip(msg);
+    let msg_lower = msg.to_ascii_lowercase();
+
+    let mentions_edit_args = msg_lower.contains("--old")
+        || msg_lower.contains("--new")
+        || msg_lower.contains("--after-match")
+        || msg_lower.contains("--before-match")
+        || msg_lower.contains("--between");
+
+    let is_edit_subcommand =
+        msg.contains("Usage: atomwrite edit") || msg.contains("atomwrite edit ");
+
+    let hyphen_value_error = msg.contains("wasn't expected")
+        || msg.contains("unexpected argument")
+        || (msg.contains("tip:") && msg.contains("'--'"));
+
+    if mentions_edit_args || (hyphen_value_error && is_edit_subcommand) {
+        let base = "For content with special characters (hyphens, quotes, shell metacharacters), \
+                    use --old-file <PATH> and --new-file <PATH> to read content from files \
+                    instead of CLI arguments. This bypasses shell expansion and argument \
+                    parsing entirely.";
+        return Some(match clap_tip {
+            Some(tip) => format!("{base} (original clap tip: {tip})"),
+            None => base.to_string(),
+        });
+    }
+
+    clap_tip
 }
 
 fn prescan_json_schema() -> Option<String> {

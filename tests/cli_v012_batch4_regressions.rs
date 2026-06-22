@@ -315,7 +315,7 @@ fn case_subvert_three_count_odd_failure() {
     let dir = tempdir().unwrap();
     let f = dir.path().join("a.rs");
     std::fs::write(&f, "let user_id = 1;\n").unwrap();
-    // --subvert with 3 args (odd): validation error
+    // --subvert with 1 arg: clap rejects at parse time (num_args=2 requires exactly 2)
     aw().arg("--workspace")
         .arg(dir.path())
         .arg("case")
@@ -324,8 +324,6 @@ fn case_subvert_three_count_odd_failure() {
         .arg("pascal")
         .arg("--subvert")
         .arg("user_id")
-        .arg("UserId")
-        .arg("extra")
         .assert()
         .failure();
 }

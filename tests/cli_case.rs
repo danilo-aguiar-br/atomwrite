@@ -212,6 +212,7 @@ fn case_odd_subvert_count_fails() {
     let workspace = dir.path().to_str().unwrap();
     let f = write_file(dir.path(), "a.rs", "x = 1\n");
 
+    // With num_args=2, clap rejects a single value for --subvert at parse time.
     let output = common::atomwrite()
         .args([
             "--workspace",
@@ -220,18 +221,9 @@ fn case_odd_subvert_count_fails() {
             f.to_str().unwrap(),
             "--subvert",
             "x",
-            "y",
-            "z",
         ])
         .output()
         .expect("case");
 
-    assert!(!output.status.success(), "odd subvert count should fail");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let combined = format!("{stderr}{stdout}");
-    assert!(
-        combined.contains("even") || combined.contains("odd"),
-        "got: {combined}"
-    );
+    assert!(!output.status.success(), "single subvert value should fail at parse");
 }

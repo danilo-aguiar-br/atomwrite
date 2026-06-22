@@ -69,7 +69,7 @@ pub fn cmd_rollback(
             .find(|p| {
                 p.file_name()
                     .and_then(|n| n.to_str())
-                    .is_some_and(|n| n == needle)
+                    .is_some_and(|n| n == needle || n.starts_with(&needle))
             })
             .cloned()
             .ok_or_else(|| AtomwriteError::NotFound {

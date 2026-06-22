@@ -5,7 +5,7 @@
 
 use std::io::Write;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::cli::{GetArgs, GlobalArgs};
@@ -35,7 +35,7 @@ pub fn cmd_get(
     let workspace = global.resolve_workspace()?;
     let validated = crate::path_safety::validate_path(&args.path, &workspace)?;
     if !validated.exists() {
-        bail!("file does not exist: {}", validated.display());
+        return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
     let content = std::fs::read_to_string(&validated)
         .with_context(|| format!("cannot read {}", validated.display()))?;
@@ -51,14 +51,25 @@ pub fn cmd_get(
             let v: serde_json::Value =
                 serde_json::from_str(&content).with_context(|| "invalid JSON in source")?;
             let pointer = format!("/{}", args.key_path.replace('.', "/"));
-            let val = v.pointer(&pointer).map(|x| x.to_string());
+            let val = v.pointer(&pointer).map(|x| match x {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            });
             (val, v.pointer(&pointer).is_some(), "json")
         }
-        other => bail!(
-            "unsupported format for `get` (extension: {:?}); supported: toml, json",
-            other
-        ),
+        other => {
+            return Err(crate::error::AtomwriteError::InvalidInput {
+                reason: format!(
+                    "unsupported format for `get` (extension: {other:?}); supported: toml, json"
+                ),
+            }
+            .into());
+        }
     };
+
+    if !found {
+        return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
+    }
 
     let output = GetResult {
         r#type: "get",
@@ -94,5 +105,13 @@ fn get_toml_path(doc: &toml_edit::DocumentMut, key_path: &str) -> (Option<String
         }
         let _ = i;
     }
-    (Some(current.to_string().trim().to_owned()), true)
+    let val_str = if let Some(v) = current.as_value() {
+        match v.as_str() {
+            Some(s) => s.to_owned(),
+            None => v.to_string().trim().to_owned(),
+        }
+    } else {
+        current.to_string().trim().to_owned()
+    };
+    (Some(val_str), true)
 }

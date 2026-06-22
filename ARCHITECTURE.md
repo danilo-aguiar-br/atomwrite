@@ -207,6 +207,7 @@ v0.1.18 additions (G118 universal resolve-first):
 - `WorkspaceJail` suggestion adapts based on whether the user supplied `--workspace` or `ATOMWRITE_WORKSPACE`
 - Legacy `ErrorJson::from_error(err)` delegates to `from_error_with_context` with `ErrorContext::default()` (backward compatible)
 - 25 error variants total (20 baseline from v0.1.4 + 5 added in v0.1.12: `LockTimeout` 83, `SyntaxError` 88, `ExdevFallbackDisabled` 91, `CopyBackBlake3Failed` 92, `OrphanJournal` 93)
+- v0.1.24 typed error audit: ALL user-facing `anyhow::bail!()` converted to `AtomwriteError` variants; no error path returns generic exit 1 without JSON envelope
 
 
 ## Architectural Decision Records (ADRs)
@@ -233,10 +234,20 @@ v0.1.18 additions (G118 universal resolve-first):
 - 0035 — count --by-size: list the largest files in the tree with sizes and line counts (v0.1.20)
 - 0036 — read --mode raw|envelope: select between byte-stream output and structured NDJSON envelope (v0.1.20)
 - 0037 — search --no-begin-end: disable the implicit ^ and $ anchor decoration in regex output (v0.1.20)
+- 0038 — backup cumprido deleta: `keep_backup` default false + `delete_backup_quietly` helper (v0.1.21)
+- 0039 — edit-loop: sub-command for N pairs in 1 invocation via NDJSON (v0.1.22)
+- 0040 — prune-backups: manual cleanup of legacy `.bak` files (v0.1.22)
+- 0041 — allow_hyphen_values for 15 CLI text fields (v0.1.23)
+- 0042 — backup-by-default in 9 content-mutating structs (v0.1.23)
+- 0043 — shrink guard with --expect-checksum (v0.1.23)
+- 0044 — --old-file/--new-file to bypass ARG_MAX (v0.1.23)
+- 0045 — actionable suggestion for clap parse errors (v0.1.24)
+- 0046 — diff resolve-first retrofit (v0.1.24)
+- 0047 — scope read-only mode fix (v0.1.24)
 
 
 ## Test Architecture
-- 542 tests across 47 test suites (152 unit tests inside `src/` + integration suites + doctests)
+- 621 tests across 51 test suites (152 unit tests inside `src/` + integration suites + doctests)
 - Unit tests are colocated with the code under `#[cfg(test)]` modules
 - Integration tests live in `tests/` and use `assert_cmd` + `predicates` for shell-out tests
 - Property-based tests via `proptest` for checksum and backup

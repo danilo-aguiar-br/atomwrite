@@ -78,9 +78,79 @@ Todas aditivas. Nenhuma dependência existente removida.
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 
 ## Versão Atual
-- atomwrite está na v0.1.23
-- Este documento cobre migração de v0.1.0 a v0.1.15, com seções detalhadas para v0.1.12 a v0.1.15, v0.1.11 a v0.1.12 e grandes transições anteriores
+- atomwrite está na v0.1.24
+- Este documento cobre migração de v0.1.0 a v0.1.24
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
+
+
+## v0.1.23 para v0.1.24 (2026-06-21)
+
+### Mudanças de Comportamento (Breaking)
+
+- Formato de timestamp de backup: `YYYYMMDD_HHMMSS` alterado para `YYYYMMDD_HHMMSS_mmm` (sufixo de milissegundos)
+- `rollback --timestamp` agora aceita match por PREFIXO (ex: `--timestamp 20260621_120000` casa com `file.bak.20260621_120000_042`)
+- `prune-backups --max-count` agora ordena por NOME de arquivo (lexicográfico) em vez de mtime
+- `replace` rejeita padrão vazio com exit 65 (antes destruía arquivos silenciosamente)
+- `get` de chave inexistente retorna exit 4 (era exit 0 com `found: false`)
+- `hash` de arquivo inexistente retorna exit 4 (era exit 0 silenciosamente)
+- `regex` removeu `allow_hyphen_values` no campo examples; usar POSIX `--` para exemplos com hífen
+
+### Tratamento de Erros (Breaking para parsers)
+
+- 20 chamadas `anyhow::bail!()` convertidas para variantes tipadas `AtomwriteError`
+- TODOS os erros voltados ao usuário agora emitem JSON estruturado no stdout com exit codes corretos
+- Exit codes alterados: muitos caminhos que retornavam exit 1 agora retornam exit 4 (NotFound) ou exit 65 (InvalidInput)
+- Comandos afetados: `set`, `del`, `get`, `query`, `outline`, `edit`, `batch`, `write`, `prune-backups`, `extract`
+
+### Correções (Podem Afetar Comportamento Existente)
+
+- `delete --recursive` AGORA FUNCIONA (era no-op para diretórios)
+- `hash --recursive` AGORA FUNCIONA (era aceito mas nunca caminhava)
+- `search --multiline` AGORA FUNCIONA (não era propagado ao SearcherBuilder)
+- `scope --query comments --delete` agora remove nós line_comment inteiros (antes só removia `//`)
+- `scope`/`count`/`transform` agora resolvem walk roots contra `--workspace` (usavam CWD)
+- `diff` agora resolve paths contra `--workspace`
+- `batch --transaction` agora reverte operações `move`/`copy` no rollback
+- `case --subvert` alterado de greedy `num_args=2..` para exato `num_args=2`
+- Valores JSON/TOML de `get` não são mais duplamente quotados
+- `old_value`/`removed_value` de `set`/`del` não são mais duplamente quotados
+
+### Aditivo (Não-Breaking)
+
+- `write` pula risk_assessment para `--append`/`--prepend`
+- `scope` summary emite `files_modified: null` em modo read-only
+- Saída NDJSON de `wal-stats`/`wal-heal` agora inclui campo `type`
+- `hash --stdin` não exige mais argumento PATHS
+- Campo `op` em `edit --multi` agora é opcional (inferido como `"exact"`)
+- `read --format raw` pula heurística binária
+- `read --line/--lines` não entra mais em panic com índices fora do range
+- `read --lines/--head/--tail` range vazio retorna conteúdo vazio em vez de `"\n"`
+- `set` TOML chaves aninhadas agora retornam `old_value` corretamente
+- `regex` emite warning quando exemplos parecem flags
+- `--require-backup` agora detecta override via `--no-backup`
+- ARGUMENT_PARSE_ERROR (exit 2) ganha campo `suggestion` acionável
+
+### ADRs Adicionados
+
+- ADR-0045: Suggestion acionável para erros de parsing do clap
+- ADR-0046: Retrofit diff resolve-first
+- ADR-0047: Correção do modo read-only do scope
+
+### Ação de Migração
+
+- Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.24"`
+- Se você parseia exit codes: atualize handlers para caminhos que mudaram de exit 1 para exit 4 ou exit 65
+- Se usa `rollback --timestamp`: formato antigo ainda funciona (prefix match é retrocompatível)
+- Se usa `prune-backups --max-count`: resultados podem diferir (lexicográfico vs mtime)
+- Se faz match de nomes de backup com regex: atualize para aceitar sufixo opcional `_\d{3}`
+- Se passa padrão vazio para `replace`: agora é rejeitado (era bug de destruição silenciosa)
+- MSRV inalterado em Rust 1.88
+
+### Cobertura de Testes
+
+- 621 testes passando (609 na v0.1.23 + 12 novos na v0.1.24)
+- 3 ADRs adicionados (0045-0047)
+- Veja `gaps.md` para a auditoria completa de 52 issues resolvidos
 
 
 ## v0.1.12 para v0.1.15 (Atual)

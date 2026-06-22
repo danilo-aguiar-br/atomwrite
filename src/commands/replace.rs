@@ -338,6 +338,13 @@ enum ReplaceErrorKind {
 }
 
 fn compile_pattern(args: &ReplaceArgs) -> Result<Regex> {
+    if args.pattern.is_empty() {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: "pattern must not be empty".to_string(),
+        }
+        .into());
+    }
+
     let pattern_str = if args.literal || !args.regex {
         regex::escape(&args.pattern)
     } else {

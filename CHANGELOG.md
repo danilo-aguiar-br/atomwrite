@@ -8,6 +8,83 @@
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.24] - 2026-06-21
+
+### Bug Fixes (Critical)
+- GAP-027: `delete --recursive` now traverses directories (was silently skipping)
+- GAP-035: `read --line/--lines` no longer panics on out-of-range indices
+- GAP-037: `search --multiline` now correctly propagates flag to SearcherBuilder
+- GAP-046: `batch --transaction` now properly reverts `move`/`copy` operations on rollback
+- GAP-050: `replace` rejects empty pattern (previously destroyed all files silently)
+
+### Bug Fixes (Medium)
+- GAP-019: `ARGUMENT_PARSE_ERROR` (exit 2) gains context-aware `suggestion` field pointing to `--old-file`/`--new-file` (ADR-0045)
+- GAP-020: `diff` now resolves paths against `--workspace` (ADR-0046)
+- GAP-021: `scope` read-only mode now correctly reports `files_matched` (ADR-0047)
+- GAP-022: `scope`/`count`/`transform` now resolve walk roots against `--workspace`
+- GAP-023: Backup timestamp format changed to `YYYYMMDD_HHMMSS_mmm` (millisecond resolution prevents collisions)
+- GAP-028: `scope --query comments --delete` now removes entire `line_comment` AST nodes
+- GAP-029: `wal-stats`/`wal-heal` NDJSON output now includes `type` field
+- GAP-032: `hash --stdin` no longer requires PATHS argument (`required_unless_present = "stdin"`)
+- GAP-033: `--require-backup` now correctly detects when backup is disabled via `--no-backup`
+- GAP-036: `edit --multi` field `op` is now optional (inferred as `"exact"` when `old`+`new` present)
+- GAP-038: `delete --recursive` now removes empty subdirectories (depth-first traversal)
+- GAP-039: `get` JSON values no longer doubly-quoted (returns raw string value)
+- GAP-040: `get` of non-existent key returns exit 4 (`NOT_FOUND`) with JSON envelope
+- GAP-042: `get` TOML string values no longer doubly-quoted
+- GAP-043: `set`/`del` `old_value`/`removed_value` no longer doubly-quoted
+- GAP-044: `hash` of non-existent file returns exit 4 (`NOT_FOUND`) with JSON envelope
+- GAP-045: `set` TOML now correctly reads nested key old_value via manual table descent
+- GAP-047: `case --subvert` changed from `num_args=2..` (greedy) to `num_args=2` (exact pair)
+- GAP-048: `hash --recursive` now implements directory traversal via WalkBuilder
+- GAP-049: `prune-backups --max-count` now sorts by filename (lexicographic) instead of mtime
+
+### Bug Fixes (Low)
+- GAP-024: `write` risk_assessment skipped for `--append`/`--prepend` (no data loss possible)
+- GAP-025: `regex` removed `allow_hyphen_values`; use POSIX `--` separator for hyphen-starting examples
+- GAP-026: `scope` summary no longer reports `files_modified` in read-only mode
+- GAP-030: `read --format raw` skips binary heuristic (no longer suggests non-existent `--force-text`)
+- GAP-031: `edit --multi` format corrected (field `op` now optional)
+- GAP-034: `regex` flags after positionals warning added (duplicate fix of GAP-025)
+- GAP-041: `read --lines/--head/--tail` with empty range returns empty content instead of `"\n"`
+
+### Typed Error Audit (GAP-051 through GAP-070)
+- Converted 20 `anyhow::bail!()` calls to typed `AtomwriteError` variants
+- All user-facing errors now emit structured JSON on stdout with correct exit codes
+- Exit code mapping: `NotFound` → exit 4, `InvalidInput` → exit 65
+- Commands affected: `set`, `del`, `get`, `query`, `outline`, `edit`, `batch`, `write`, `prune-backups`, `extract`
+- GAP-051: `set`/`del` file not found → exit 4 with JSON
+- GAP-052: `del` key not found without `--force-missing` → exit 4 with JSON
+- GAP-053: `query`/`outline` file not found → exit 4 with JSON
+- GAP-054: `edit --delete-range`/`--range` inverted → exit 65 with JSON
+- GAP-055: `set`/`del`/`get` unsupported format → exit 65 with JSON
+- GAP-056: `batch` empty manifest → exit 65 with JSON
+- GAP-057: `query` no mode specified → exit 65 with JSON
+- GAP-058: `query --language` unsupported → exit 65 with JSON
+- GAP-059: `query` language detection failed → exit 65 with JSON
+- GAP-060: `edit` no mode specified → exit 65 with JSON
+- GAP-061: `edit --old/--new` count mismatch → exit 65 with JSON
+- GAP-062: `edit --multi` empty stdin → exit 65 with JSON
+- GAP-063: `edit --between` with 1 marker → exit 65 with JSON
+- GAP-064: `edit` no line/marker operation → exit 65 with JSON
+- GAP-065: `write --confirm` aborted → exit 65 with JSON
+- GAP-066: `batch` with failed operations → exit 65 with JSON
+- GAP-067: `batch` transaction rollback → exit 65 with JSON
+- GAP-068: `prune-backups` without filter → exit 65 with JSON
+- GAP-069: `extract` JSON nesting overflow → exit 65 with JSON
+- GAP-070: `edit --multi` per-op validation → exit 65 with JSON
+
+### ADRs
+- ADR-0045: Actionable suggestion for clap parse errors
+- ADR-0046: diff resolve-first retrofit
+- ADR-0047: scope read-only mode fix
+
+### Validation
+- `cargo test` — 621 tests pass (0 failures, 3 ignored)
+- `cargo clippy --all-targets -- -D warnings` — zero warnings
+- `cargo fmt --check` — zero diffs
+
+
 ## [0.1.23] - 2026-06-19
 
 ### GAP-2026-015 — `allow_hyphen_values` for 15 CLI fields across 8 structs

@@ -907,13 +907,14 @@ fn cleanup_old_backups_in(parent: &Path, prefix_name: &str, retention: u8) {
 fn utc_timestamp_formatted() -> String {
     use std::time::SystemTime;
     // duration_since fails only if system clock precedes UNIX epoch — defaults to 1970-01-01
-    let secs = SystemTime::now()
+    let duration = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+        .unwrap_or_default();
+    let secs = duration.as_secs();
+    let millis = duration.subsec_millis();
 
     let (year, month, day, hour, min, sec) = epoch_to_utc(secs);
-    format!("{year:04}{month:02}{day:02}_{hour:02}{min:02}{sec:02}")
+    format!("{year:04}{month:02}{day:02}_{hour:02}{min:02}{sec:02}_{millis:03}")
 }
 
 /// Return the current UTC time as an RFC 3339 string (e.g. `2024-01-15T14:30:22Z`).

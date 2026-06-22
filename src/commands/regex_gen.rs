@@ -26,6 +26,23 @@ pub fn cmd_regex(
 ) -> Result<()> {
     let start = Instant::now();
 
+    // GAP-2026-025: warn when examples look like flags (allow_hyphen_values quirk)
+    const KNOWN_FLAGS: &[&str] = &[
+        "--digits", "--words", "--spaces", "--repetitions",
+        "--case-insensitive", "--no-anchors", "--stdin",
+    ];
+    for ex in &args.examples {
+        if KNOWN_FLAGS.contains(&ex.as_str())
+            || matches!(ex.as_str(), "-d" | "-w" | "-s" | "-r" | "-i")
+        {
+            eprintln!(
+                "\x1b[33mwarning:\x1b[0m example {:?} looks like a flag; \
+                 place flags BEFORE examples: `atomwrite regex {} \"ex1\" \"ex2\"`",
+                ex, ex
+            );
+        }
+    }
+
     let examples = if args.stdin || args.examples.is_empty() {
         let reader = std::io::BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
         let lines: Vec<String> = reader

@@ -31,7 +31,7 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::Serialize;
 use tree_sitter::{Query as TsQuery, StreamingIterator};
 use tree_sitter_language_pack::{Node, get_language, get_parser, has_language};
@@ -88,7 +88,7 @@ pub fn cmd_query(
     let workspace = global.resolve_workspace()?;
     let validated = crate::path_safety::validate_path(&args.path, &workspace)?;
     if !validated.exists() {
-        bail!("file does not exist: {}", validated.display());
+        return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
     let content = std::fs::read(&validated)
         .with_context(|| format!("cannot read {}", validated.display()))?;
@@ -167,7 +167,10 @@ pub fn cmd_query(
             &mut node_count,
         )?;
     } else {
-        bail!("must specify one of --query <KIND>, --tree, or --kinds");
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: "must specify one of --query <KIND>, --tree, or --kinds".into(),
+        }
+        .into());
     }
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -190,16 +193,22 @@ pub(crate) fn resolve_language_name(
 ) -> Result<String> {
     if let Some(name) = override_lang {
         if !has_language(name) {
-            bail!("unsupported language override: {name}");
+            return Err(crate::error::AtomwriteError::InvalidInput {
+                reason: format!("unsupported language override: {name}"),
+            }
+            .into());
         }
         return Ok(name.to_owned());
     }
     match crate::syntax_check::detect_language_name(path, content) {
         Some(name) => Ok(name),
-        None => bail!(
-            "could not detect language for {}; pass --language <LANG>",
-            path.display()
-        ),
+        None => Err(crate::error::AtomwriteError::InvalidInput {
+            reason: format!(
+                "could not detect language for {}; pass --language <LANG>",
+                path.display()
+            ),
+        }
+        .into()),
     }
 }
 

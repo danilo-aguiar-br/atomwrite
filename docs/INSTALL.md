@@ -1,7 +1,7 @@
 # Installation Guide
 
 - Complete instructions for installing atomwrite on Linux, macOS, and Windows
-- Current target version: v0.1.22 (adds `edit-loop` and `prune-backups` subcommands, `--allow-sequential-drift` opt-in flag on `edit`, `--backup` parity 4/4 across mutating subcommands, `--keep-backup` opt-in flag on 6 subcommands, 575+ tests, ADRs 0038/0039/0040)
+- Current target version: v0.1.24 (52 bugs fixed, typed error audit, 621 tests, ADRs 0045-0047)
 - Sections ordered by platform, with prerequisites and troubleshooting
 
 
@@ -50,7 +50,7 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 
 ### Test Coverage
 
-- 542 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118 in v0.1.15)
+- 621 tests passing (609 in v0.1.23 + 12 in v0.1.24)
 - 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/`
 - See [docs/decisions/README.md](README.md) for architectural decisions
@@ -64,8 +64,8 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Install atomwrite v0.1.22 from crates.io
-cargo install atomwrite --locked --version "^0.1.22"
+# Install atomwrite v0.1.24 from crates.io
+cargo install atomwrite --locked --version "^0.1.24"
 
 # Verify
 atomwrite --version
@@ -307,7 +307,7 @@ This release introduces a new safety layer called **intention guards** and renam
 
 ### Statistics
 
-- 542 tests passing in 47 integration suites, 0 failures
+- 621 tests passing (609 in v0.1.23 + 12 in v0.1.24)
 - 11 GAP-2026 closed
 - 3 Windows cross-compile targets green
 - 19 ADRs in `docs/decisions/` (0019-0037)

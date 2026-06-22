@@ -7,7 +7,7 @@ use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::time::Instant;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
@@ -150,11 +150,14 @@ pub fn cmd_edit(
     let (effective_old, effective_new) = resolve_edit_pairs(args, workspace)?;
 
     if !effective_old.is_empty() && effective_old.len() != effective_new.len() {
-        bail!(
-            "--old/--old-file and --new/--new-file must be provided in equal pairs ({} old, {} new)",
-            effective_old.len(),
-            effective_new.len()
-        );
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: format!(
+                "--old/--old-file and --new/--new-file must be provided in equal pairs ({} old, {} new)",
+                effective_old.len(),
+                effective_new.len()
+            ),
+        }
+        .into());
     }
 
     let (edited, mode, fuzzy_info, multi_report) = if !effective_old.is_empty() {
@@ -179,9 +182,10 @@ pub fn cmd_edit(
         let (e, m) = edit_by_marker(&original, &lines, args, stdin, max_size)?;
         (e, m, None, None)
     } else {
-        bail!(
-            "no edit mode specified: use --old/--new, --after-line, --before-line, --range, --delete-range, --after-match, --before-match, or --between"
-        );
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: "no edit mode specified: use --old/--new, --after-line, --before-line, --range, --delete-range, --after-match, --before-match, or --between".into(),
+        }
+        .into());
     };
 
     let path_str = path.display().to_string();
@@ -279,7 +283,8 @@ pub fn cmd_edit(
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MultiEdit {
-    op: String,
+    #[serde(default)]
+    op: Option<String>,
     #[serde(default)]
     line: Option<usize>,
     #[serde(default)]
@@ -292,6 +297,18 @@ struct MultiEdit {
     old: Option<String>,
     #[serde(default)]
     new: Option<String>,
+}
+
+impl MultiEdit {
+    fn effective_op(&self) -> &str {
+        if let Some(ref op) = self.op {
+            return op.as_str();
+        }
+        if self.old.is_some() && self.new.is_some() {
+            return "exact";
+        }
+        "unknown"
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -335,7 +352,10 @@ fn cmd_edit_multi(
     }
 
     if ops.is_empty() {
-        bail!("--multi requires at least one edit operation on stdin");
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: "--multi requires at least one edit operation on stdin".into(),
+        }
+        .into());
     }
 
     let content_lines = lines_from_str(&original);
@@ -343,35 +363,37 @@ fn cmd_edit_multi(
 
     // Validate all operations before applying
     for op in &ops {
-        match op.op.as_str() {
+        let effective = op.effective_op();
+        match effective {
             "insert-after" | "insert-before" => {
                 let n = op
                     .line
-                    .ok_or_else(|| anyhow::anyhow!("op '{}' requires 'line'", op.op))?;
+                    .ok_or_else(|| anyhow::anyhow!("op '{}' requires 'line'", effective))?;
                 if n == 0 || n > total {
-                    bail!(
-                        "op '{}': line {} out of range (file has {} lines)",
-                        op.op,
-                        n,
-                        total
-                    );
+                    return Err(crate::error::AtomwriteError::InvalidInput {
+                        reason: format!(
+                            "op '{}': line {} out of range (file has {} lines)",
+                            effective, n, total
+                        ),
+                    }
+                    .into());
                 }
             }
             "replace-range" | "delete-range" => {
                 let s = op
                     .start
-                    .ok_or_else(|| anyhow::anyhow!("op '{}' requires 'start'", op.op))?;
+                    .ok_or_else(|| anyhow::anyhow!("op '{}' requires 'start'", effective))?;
                 let e = op
                     .end
-                    .ok_or_else(|| anyhow::anyhow!("op '{}' requires 'end'", op.op))?;
+                    .ok_or_else(|| anyhow::anyhow!("op '{}' requires 'end'", effective))?;
                 if s == 0 || e == 0 || s > total || e > total || s > e {
-                    bail!(
-                        "op '{}': range {}:{} invalid (file has {} lines)",
-                        op.op,
-                        s,
-                        e,
-                        total
-                    );
+                    return Err(crate::error::AtomwriteError::InvalidInput {
+                        reason: format!(
+                            "op '{}': range {}:{} invalid (file has {} lines)",
+                            effective, s, e, total
+                        ),
+                    }
+                    .into());
                 }
             }
             "exact" => {
@@ -380,17 +402,25 @@ fn cmd_edit_multi(
                     .as_deref()
                     .ok_or_else(|| anyhow::anyhow!("op 'exact' requires 'old'"))?;
                 if find_str(&original, old).is_none() {
-                    bail!("op 'exact': old string not found: {:?}", old);
+                    return Err(crate::error::AtomwriteError::InvalidInput {
+                        reason: format!("op 'exact': old string not found: {:?}", old),
+                    }
+                    .into());
                 }
             }
-            other => bail!("unknown op: {:?}", other),
+            other => {
+                return Err(crate::error::AtomwriteError::InvalidInput {
+                    reason: format!("unknown op: {:?}", other),
+                }
+                .into());
+            }
         }
     }
 
     // Sort line-based ops by descending line to avoid index drift
     // Separate exact ops (they work on the accumulated string, not line indices)
-    let mut exact_ops: Vec<&MultiEdit> = ops.iter().filter(|o| o.op == "exact").collect();
-    let mut line_ops: Vec<&MultiEdit> = ops.iter().filter(|o| o.op != "exact").collect();
+    let mut exact_ops: Vec<&MultiEdit> = ops.iter().filter(|o| o.effective_op() == "exact").collect();
+    let mut line_ops: Vec<&MultiEdit> = ops.iter().filter(|o| o.effective_op() != "exact").collect();
     line_ops.sort_by(|a, b| {
         let la = a.line.or(a.start).unwrap_or(0);
         let lb = b.line.or(b.start).unwrap_or(0);
@@ -400,7 +430,7 @@ fn cmd_edit_multi(
     let mut result_lines: Vec<String> = content_lines;
 
     for op in &line_ops {
-        match op.op.as_str() {
+        match op.effective_op() {
             "insert-after" => {
                 let n = op
                     .line
@@ -1099,7 +1129,10 @@ fn edit_by_line(
         return Ok((join_lines(&result_lines), "delete_range".into()));
     }
 
-    bail!("no line-mode edit operation specified");
+    Err(crate::error::AtomwriteError::InvalidInput {
+        reason: "no line-mode edit operation specified".into(),
+    }
+    .into())
 }
 
 fn edit_by_marker(
@@ -1133,7 +1166,10 @@ fn edit_by_marker(
 
     if let Some(ref markers) = args.between {
         if markers.len() != 2 {
-            bail!("--between requires exactly 2 markers");
+            return Err(crate::error::AtomwriteError::InvalidInput {
+                reason: "--between requires exactly 2 markers".into(),
+            }
+            .into());
         }
         let content = read_stdin_text(stdin, max_size)?;
         let start_idx = find_line_with(lines, &markers[0])?;
@@ -1146,7 +1182,10 @@ fn edit_by_marker(
     }
 
     let _ = original;
-    bail!("no marker-mode edit operation specified");
+    Err(crate::error::AtomwriteError::InvalidInput {
+        reason: "no marker-mode edit operation specified".into(),
+    }
+    .into())
 }
 
 fn validate_line_num(n: usize, total: usize) -> Result<usize> {
@@ -1162,7 +1201,10 @@ fn validate_line_num(n: usize, total: usize) -> Result<usize> {
 fn parse_range(s: &str, total: usize) -> Result<(usize, usize)> {
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() != 2 {
-        bail!("invalid range format: expected N:M, got {s}");
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: format!("invalid range format: expected N:M, got {s}"),
+        }
+        .into());
     }
     let start = parts[0]
         .parse::<usize>()
@@ -1174,7 +1216,10 @@ fn parse_range(s: &str, total: usize) -> Result<(usize, usize)> {
         .min(total);
 
     if start >= end {
-        bail!("invalid range: start ({}) >= end ({})", start + 1, end);
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: format!("invalid range: start ({}) >= end ({})", start + 1, end),
+        }
+        .into());
     }
 
     Ok((start, end))

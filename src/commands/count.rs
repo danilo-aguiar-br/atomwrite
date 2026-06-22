@@ -21,7 +21,7 @@ use crate::output::NdjsonWriter;
 /// Backups are categorized under a dedicated "backup" extension key rather
 /// than letting the timestamp be treated as a real extension (GAP-2026-007).
 static BACKUP_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\.bak\.\d{8}_\d{6}$").expect("valid backup regex"));
+    LazyLock::new(|| Regex::new(r"\.bak\.\d{8}_\d{6}(_\d{3})?$").expect("valid backup regex"));
 
 /// Count lines, pattern matches, or files grouped by extension.
 ///
@@ -38,8 +38,10 @@ pub fn cmd_count(
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
 
-    let mut walker = ignore::WalkBuilder::new(&args.paths[0]);
-    for p in args.paths.iter().skip(1) {
+    let canonical_paths =
+        crate::commands::path_resolution::resolve_paths_against_workspace(&args.paths, &workspace)?;
+    let mut walker = ignore::WalkBuilder::new(&canonical_paths[0]);
+    for p in canonical_paths.iter().skip(1) {
         walker.add(p);
     }
     walker
@@ -57,7 +59,7 @@ pub fn cmd_count(
         walker.types(types_builder.build().context("build types")?);
     }
     if !args.exclude.is_empty() {
-        let mut overrides = ignore::overrides::OverrideBuilder::new(&args.paths[0]);
+        let mut overrides = ignore::overrides::OverrideBuilder::new(&canonical_paths[0]);
         for pat in &args.exclude {
             overrides.add(&format!("!{pat}"))?;
         }

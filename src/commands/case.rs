@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use heck::{ToKebabCase, ToLowerCamelCase, ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
 use serde::Serialize;
 
@@ -58,7 +58,10 @@ pub fn cmd_case(
 
     for pair in args.subvert.chunks(2) {
         if pair.len() != 2 {
-            bail!("--subvert expects an even number of identifiers (old new pairs); got odd count");
+            return Err(crate::error::AtomwriteError::InvalidInput {
+                reason: "--subvert expects an even number of identifiers (old new pairs); got odd count".into(),
+            }
+            .into());
         }
         let from = &pair[0];
         let to = &pair[1];
@@ -97,7 +100,7 @@ pub fn cmd_case(
                     path: validated.display().to_string(),
                     identifier: format!("{from} -> {converted}"),
                     from_style: detect_case_style(from),
-                    to_style: format!("{to:?}"),
+                    to_style: case_style_name(&args.to),
                     before,
                     after,
                     elapsed_ms: 0,
@@ -121,7 +124,7 @@ pub fn cmd_case(
                 path: validated.display().to_string(),
                 identifier: format!("{from} -> {converted}"),
                 from_style: detect_case_style(from),
-                to_style: format!("{to:?}"),
+                to_style: case_style_name(&args.to),
                 before,
                 after,
                 elapsed_ms: start.elapsed().as_millis() as u64,
@@ -136,6 +139,16 @@ pub fn cmd_case(
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
     Ok(())
+}
+
+fn case_style_name(style: &IdentifierCase) -> String {
+    match style {
+        IdentifierCase::Snake => "snake_case".into(),
+        IdentifierCase::Camel => "camelCase".into(),
+        IdentifierCase::Pascal => "PascalCase".into(),
+        IdentifierCase::Kebab => "kebab-case".into(),
+        IdentifierCase::ScreamingSnake => "SCREAMING_SNAKE".into(),
+    }
 }
 
 /// Best-effort detection of the input identifier's case style for

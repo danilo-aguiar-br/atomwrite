@@ -49,3 +49,9 @@
   - [PT-BR](0043-shrink-guard.pt-BR.md) — tradução automática
 - [0044 — edit --old-file/--new-file](0044-edit-old-file-new-file.md) — --old-file/--new-file to bypass ARG_MAX; cross-mixing validation and trailing newline stripping
   - [PT-BR](0044-edit-old-file-new-file.pt-BR.md) — tradução automática
+- [0045 — clap error actionable suggestion](0045-clap-error-actionable-suggestion.md) — ARGUMENT_PARSE_ERROR (exit 2) gains context-aware `suggestion` field pointing to --old-file/--new-file when error involves hyphen values
+  - [PT-BR](0045-clap-error-actionable-suggestion.pt-BR.md) — tradução automática
+- [0046 — diff resolve-first retrofit](0046-diff-resolve-first-retrofit.md) — diff now resolves file_a and file_b against workspace via validate_path (was the only command violating ADR-0027 convention)
+  - [PT-BR](0046-diff-resolve-first-retrofit.pt-BR.md) — tradução automática
+- [0047 — scope read-only mode fix](0047-scope-readonly-mode-fix.md) — scope read-only mode now correctly reports files_matched via Node::find_all; files_modified=None when no action configured
+  - [PT-BR](0047-scope-readonly-mode-fix.pt-BR.md) — tradução automática

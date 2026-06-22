@@ -204,6 +204,7 @@ Adições v0.1.12:
 - Sugestão de `WorkspaceJail` se adapta com base em se o usuário forneceu `--workspace` ou `ATOMWRITE_WORKSPACE`
 - Legacy `ErrorJson::from_error(err)` delega para `from_error_with_context` com `ErrorContext::default()` (compatibilidade retroativa)
 - 25 variantes de erro no total (20 baseline de v0.1.4 + 5 adicionadas em v0.1.12: `LockTimeout` 83, `SyntaxError` 88, `ExdevFallbackDisabled` 91, `CopyBackBlake3Failed` 92, `OrphanJournal` 93)
+- v0.1.24 auditoria de erros tipados: TODOS os `anyhow::bail!()` voltados ao usuário convertidos para variantes `AtomwriteError`; nenhum caminho de erro retorna exit 1 genérico sem envelope JSON
 
 
 ## Architecture Decision Records (ADRs)
@@ -232,10 +233,20 @@ Adições v0.1.12:
 - 0035 — count --by-size: lista os maiores arquivos da árvore com tamanhos e contagem de linhas (v0.1.20)
 - 0036 — read --mode raw|envelope: seleciona entre saída byte-stream e envelope NDJSON estruturado (v0.1.20)
 - 0037 — search --no-begin-end: desabilita a decoração implícita de âncoras ^ e $ na saída regex (v0.1.20)
+- 0038 — backup cumprido deleta: `keep_backup` default false + helper `delete_backup_quietly` (v0.1.21)
+- 0039 — edit-loop: sub-comando para N pares em 1 invocação via NDJSON (v0.1.22)
+- 0040 — prune-backups: limpeza manual de arquivos `.bak` legados (v0.1.22)
+- 0041 — allow_hyphen_values para 15 campos CLI de texto (v0.1.23)
+- 0042 — backup-by-default em 9 structs que mutam conteúdo (v0.1.23)
+- 0043 — guarda de shrink com --expect-checksum (v0.1.23)
+- 0044 — --old-file/--new-file para contornar ARG_MAX (v0.1.23)
+- 0045 — suggestion acionável para erros de parsing do clap (v0.1.24)
+- 0046 — retrofit diff resolve-first (v0.1.24)
+- 0047 — correção do modo read-only do scope (v0.1.24)
 
 
 ## Arquitetura de Testes
-- 542 testes em 47 suítes de teste (152 testes unitários dentro de `src/` + suítes de integração + doctests)
+- 621 testes em 51 suítes de teste (152 testes unitários dentro de `src/` + suítes de integração + doctests)
 - Testes unitários são colocalizados com o código sob módulos `#[cfg(test)]`
 - Testes de integração vivem em `tests/` e usam `assert_cmd` + `predicates` para testes shell-out
 - Testes property-based via `proptest` para checksum e backup

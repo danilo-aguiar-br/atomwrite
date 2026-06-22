@@ -78,9 +78,79 @@ All additive. No existing dependency removed.
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
 ## Current Version
-- atomwrite is at v0.1.23
-- This document covers migration from v0.1.0 through v0.1.22, with detailed sections for v0.1.20 to v0.1.22, v0.1.18 to v0.1.20, v0.1.12 to v0.1.18, v0.1.11 to v0.1.12, and earlier major transitions
+- atomwrite is at v0.1.24
+- This document covers migration from v0.1.0 through v0.1.24
 - See the sections below for additive changes and breaking changes in each version
+
+
+## v0.1.23 to v0.1.24 (2026-06-21)
+
+### Behavioral Changes (Breaking)
+
+- Backup timestamp format: `YYYYMMDD_HHMMSS` changed to `YYYYMMDD_HHMMSS_mmm` (millisecond suffix)
+- `rollback --timestamp` now accepts PREFIX match (e.g. `--timestamp 20260621_120000` matches `file.bak.20260621_120000_042`)
+- `prune-backups --max-count` now sorts by FILENAME (lexicographic) instead of mtime
+- `replace` rejects empty pattern with exit 65 (previously destroyed files silently)
+- `get` of non-existent key returns exit 4 (was exit 0 with `found: false`)
+- `hash` of non-existent file returns exit 4 (was exit 0 silently)
+- `regex` removed `allow_hyphen_values` on examples field; use POSIX `--` for hyphen-starting examples
+
+### Error Handling (Breaking for parsers)
+
+- 20 `anyhow::bail!()` calls converted to typed `AtomwriteError` variants
+- ALL user-facing errors now emit structured JSON on stdout with correct exit codes
+- Exit codes changed: many paths that returned exit 1 now return exit 4 (NotFound) or exit 65 (InvalidInput)
+- Commands affected: `set`, `del`, `get`, `query`, `outline`, `edit`, `batch`, `write`, `prune-backups`, `extract`
+
+### Bug Fixes (May Affect Existing Behavior)
+
+- `delete --recursive` NOW WORKS (was a no-op for directories)
+- `hash --recursive` NOW WORKS (was accepted but never walked)
+- `search --multiline` NOW WORKS (was not propagated to SearcherBuilder)
+- `scope --query comments --delete` now removes entire line_comment nodes (was removing only `//`)
+- `scope`/`count`/`transform` now resolve walk roots against `--workspace` (was using CWD)
+- `diff` now resolves paths against `--workspace`
+- `batch --transaction` now reverts `move`/`copy` operations on rollback
+- `case --subvert` changed from greedy `num_args=2..` to exact `num_args=2`
+- `get` JSON/TOML values no longer doubly-quoted
+- `set`/`del` `old_value`/`removed_value` no longer doubly-quoted
+
+### Additive (Non-Breaking)
+
+- `write` risk_assessment skipped for `--append`/`--prepend`
+- `scope` summary emits `files_modified: null` in read-only mode
+- `wal-stats`/`wal-heal` NDJSON output now includes `type` field
+- `hash --stdin` no longer requires PATHS argument
+- `edit --multi` field `op` is now optional (inferred as `"exact"`)
+- `read --format raw` skips binary heuristic
+- `read --line/--lines` no longer panics on out-of-range indices
+- `read --lines/--head/--tail` empty range returns empty content instead of `"\n"`
+- `set` TOML nested keys now correctly return `old_value`
+- `regex` emits warning when examples look like flags
+- `--require-backup` now detects `--no-backup` override
+- ARGUMENT_PARSE_ERROR (exit 2) gains context-aware `suggestion` field
+
+### ADRs Added
+
+- ADR-0045: Actionable suggestion for clap parse errors
+- ADR-0046: diff resolve-first retrofit
+- ADR-0047: scope read-only mode fix
+
+### Migration Action
+
+- Update version pin: `cargo install atomwrite --locked --version "^0.1.24"`
+- If you parse exit codes: update handlers for paths that changed from exit 1 to exit 4 or exit 65
+- If you use `rollback --timestamp`: old format still works (prefix match is backward-compatible)
+- If you use `prune-backups --max-count`: results may differ (lexicographic vs mtime ordering)
+- If you match backup filenames with regex: update to accept optional `_\d{3}` suffix
+- If you pass empty pattern to `replace`: this is now rejected (was a silent data-destruction bug)
+- MSRV unchanged at Rust 1.88
+
+### Test Coverage
+
+- 621 tests passing (609 in v0.1.23 + 12 new for v0.1.24)
+- 3 ADRs added (0045-0047)
+- See `gaps.md` for the full audit of 52 resolved issues
 
 
 ## v0.1.18 to v0.1.20 (2026-06-15)

@@ -152,7 +152,10 @@ pub fn cmd_batch(
     }
 
     if ops.is_empty() {
-        bail!("empty batch manifest: no operations provided");
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: "empty batch manifest: no operations provided".into(),
+        }
+        .into());
     }
 
     // In transaction mode, snapshot all existing files before any mutation.
@@ -171,6 +174,8 @@ pub fn cmd_batch(
 
     // Track files created during the transaction so they can be removed on rollback.
     let mut created_files: Vec<PathBuf> = Vec::new();
+    // Track moves so they can be reversed (target → source) on rollback.
+    let mut moves_to_reverse: Vec<(PathBuf, PathBuf)> = Vec::new();
 
     let mut succeeded: u64 = 0;
     let mut failed: u64 = 0;
@@ -186,8 +191,9 @@ pub fn cmd_batch(
         }
 
         let op_start = Instant::now();
-        // Pre-snapshot existence for "write" ops so we know if we created a new file
-        let was_new_file = if transaction && !dry_run && op.op == "write" {
+        // Pre-snapshot existence so we know if the op created a new file at target.
+        let creates_target = matches!(op.op.as_str(), "write" | "move" | "copy");
+        let was_new_file = if transaction && !dry_run && creates_target {
             op.resolve_file_path()
                 .ok()
                 .map(std::path::Path::new)
@@ -210,6 +216,20 @@ pub fn cmd_batch(
                         .and_then(|p| crate::path_safety::validate_path(p, &workspace).ok())
                     {
                         created_files.push(target);
+                    }
+                }
+                if transaction && !dry_run && op.op == "move" {
+                    if let (Some(src), Some(tgt)) = (
+                        op.source.as_deref().or(op.path.as_deref()),
+                        op.target.as_deref(),
+                    ) {
+                        if let (Ok(s), Ok(t)) = (
+                            crate::path_safety::validate_path(std::path::Path::new(src), &workspace),
+                            crate::path_safety::validate_path(std::path::Path::new(tgt), &workspace),
+                        ) {
+                            tracing::debug!(source = %s.display(), target = %t.display(), "recorded move for rollback");
+                            moves_to_reverse.push((s, t));
+                        }
                     }
                 }
                 let event = BatchOpResult {
@@ -237,7 +257,7 @@ pub fn cmd_batch(
                 writer.write_event(&event)?;
 
                 if transaction {
-                    match rollback_transaction(&backups, &created_files, &workspace) {
+                    match rollback_transaction(&backups, &created_files, &moves_to_reverse, &workspace) {
                         Ok((restored, removed)) => {
                             let rollback_event = RollbackEvent {
                                 r#type: "rollback",
@@ -246,13 +266,19 @@ pub fn cmd_batch(
                                 total_reverted: restored + removed,
                             };
                             writer.write_event(&rollback_event)?;
-                            bail!(
-                                "transaction rolled back after failure at operation {idx}: {e:#}"
-                            );
+                            return Err(crate::error::AtomwriteError::InvalidInput {
+                                reason: format!(
+                                    "transaction rolled back after failure at operation {idx}: {e:#}"
+                                ),
+                            }
+                            .into());
                         }
                         Err(rb_err) => {
                             tracing::error!(error = %rb_err, "rollback failed");
-                            bail!("transaction rollback failed: {rb_err:#}");
+                            return Err(crate::error::AtomwriteError::InvalidInput {
+                                reason: format!("transaction rollback failed: {rb_err:#}"),
+                            }
+                            .into());
                         }
                     }
                 }
@@ -274,7 +300,10 @@ pub fn cmd_batch(
     writer.write_event(&summary)?;
 
     if failed > 0 {
-        bail!("{failed} batch operation(s) failed");
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: format!("{failed} batch operation(s) failed"),
+        }
+        .into());
     }
 
     Ok(())
@@ -310,9 +339,20 @@ fn collect_target_paths(ops: &[BatchOp], workspace: &std::path::Path) -> Vec<Pat
 fn rollback_transaction(
     backups: &[(PathBuf, PathBuf)],
     created_files: &[PathBuf],
+    moves_to_reverse: &[(PathBuf, PathBuf)],
     workspace: &std::path::Path,
 ) -> Result<(u64, u64)> {
     let mut restored = 0u64;
+
+    // Reverse moves first (target → source) before restoring backups.
+    for (source, target) in moves_to_reverse.iter().rev() {
+        if target.exists() && !source.exists() {
+            std::fs::rename(target, source)
+                .with_context(|| format!("cannot reverse move {} → {}", target.display(), source.display()))?;
+            restored += 1;
+        }
+    }
+
     for (original, backup) in backups {
         if backup.exists() {
             let content = std::fs::read(backup)

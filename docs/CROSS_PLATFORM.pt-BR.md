@@ -54,7 +54,7 @@ Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
 
 ### Cobertura de Testes
 
-- 542 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118 na v0.1.15)
+- 621 testes passando (609 na v0.1.23 + 12 na v0.1.24)
 - Gate de cross-compile: `cargo test --test cross_compile_check -- --ignored` valida targets Windows GNU/MSVC
 - 5 testes de sinal em `tests/signal_test.rs` cobrem SIGINT/SIGTERM/SIGPIPE/batch/shutdown
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
@@ -227,8 +227,8 @@ Esta release introduz uma nova camada de segurança chamada **intention guards**
 
 ### Estatísticas
 
-- 542 testes passando em 47 suites de integração, 0 falhas
-- 11 GAP-2026 fechados
+- 621 testes passando em 51 suites de integração, 0 falhas
+- 52 GAP-2026 fechados (019-070)
 - 3 targets de cross-compile Windows verdes
 - 19 ADRs em `docs/decisions/` (0019-0037)
 

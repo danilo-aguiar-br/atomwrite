@@ -136,9 +136,10 @@ pub fn cmd_write(
     }
 
     // GAP-2026-011 L2 — require-backup guard
-    if args.require_backup && !effective_backup && resolved.exists() {
+    // GAP-2026-033: check no_backup explicitly since backup has default_value_t=true
+    if args.require_backup && (args.no_backup || !effective_backup) && resolved.exists() {
         return Err(AtomwriteError::InvalidInput {
-            reason: "--require-backup is set but --backup is not; pass --backup or remove --require-backup".into(),
+            reason: "--require-backup is set but --no-backup disables backup; remove --no-backup or remove --require-backup".into(),
         }
         .into());
     }
@@ -154,7 +155,10 @@ pub fn cmd_write(
             let mut input = String::new();
             let _ = handle.read_line(&mut input);
             if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
-                bail!("aborted by user (confirm=no)");
+                return Err(AtomwriteError::InvalidInput {
+                    reason: "aborted by user (confirm=no)".into(),
+                }
+                .into());
             }
         }
     }
@@ -170,7 +174,8 @@ pub fn cmd_write(
             .is_some_and(|age| age < std::time::Duration::from_secs(24 * 3600));
 
     // GAP-2026-011 L1 + L6 — size guard and risk_assessment telemetry
-    let risk_assessment = if resolved.exists() {
+    // GAP-2026-024: skip risk_assessment for append/prepend (never causes data loss)
+    let risk_assessment = if resolved.exists() && !args.append && !args.prepend {
         let original = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
         let new_bytes = content.len() as u64;
         if original > 0 {

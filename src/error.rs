@@ -576,8 +576,8 @@ fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
             path.display()
         )),
         AtomwriteError::BinaryFile { .. } => Some(
-            "binary content detected; use read --stat for metadata only or use --force-text \
-             to override detection (read-only commands)"
+            "binary content detected; use read --stat for metadata only \
+             or use read --format raw to emit raw bytes without JSON envelope"
                 .into(),
         ),
         AtomwriteError::FifoDetected { .. } => {

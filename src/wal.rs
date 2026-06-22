@@ -600,6 +600,9 @@ pub fn journal_started_with_guard(
 /// Snapshot of journal state for `wal-stats` (G119 L5 telemetry).
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct WalStats {
+    /// Envelope type discriminator for NDJSON consumers.
+    #[serde(rename = "type")]
+    pub r#type: &'static str,
     /// Total number of sidecar journals found in the workspace.
     pub total_journals: u64,
     /// Breakdown by terminal state.
@@ -695,6 +698,7 @@ pub fn compute_wal_stats(workspace: &Path) -> Result<WalStats> {
     let estimated_reclaim_bytes = if auto_heal_recommended { total_size } else { 0 };
 
     Ok(WalStats {
+        r#type: "wal_stats",
         total_journals: total,
         by_state,
         oldest_journal_age_secs: oldest_age,
@@ -778,6 +782,9 @@ fn parse_journal_state(path: &Path) -> Option<(&'static str, u64)> {
 /// Result of an auto-heal pass on startup (G119 L3).
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AutoHealReport {
+    /// Envelope type discriminator for NDJSON consumers.
+    #[serde(rename = "type")]
+    pub r#type: &'static str,
     /// Number of stale `Committed`/`Aborted` journals removed.
     pub removed: u64,
     /// Number of journals preserved (`Started` = potential orphans).
@@ -850,6 +857,7 @@ pub fn auto_heal_on_startup(
     }
 
     Ok(AutoHealReport {
+        r#type: "wal_heal",
         removed,
         preserved,
         malformed,

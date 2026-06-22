@@ -96,19 +96,17 @@ pub fn cmd_prune_backups(
         // footgun. The default dry-run does NOT mitigate this because
         // the operator may have explicitly passed `--dry-run false`.
         if args.max_age_secs.is_none() && args.max_count.is_none() {
-            anyhow::bail!(
-                "refusing to prune without --max-age-secs or --max-count; \
-                 pass at least one to define the retention policy"
-            );
+            return Err(crate::error::AtomwriteError::InvalidInput {
+                reason: "refusing to prune without --max-age-secs or --max-count; \
+                         pass at least one to define the retention policy"
+                    .into(),
+            }
+            .into());
         }
 
         if let Some(max_count) = args.max_count {
             if max_count > 0 {
-                backups.sort_by_key(|p| {
-                    p.metadata()
-                        .and_then(|m| m.modified())
-                        .unwrap_or(SystemTime::UNIX_EPOCH)
-                });
+                backups.sort();
                 let to_delete = backups.len().saturating_sub(usize::from(max_count));
                 backups.truncate(to_delete);
             }

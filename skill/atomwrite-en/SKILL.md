@@ -1,14 +1,123 @@
 ---
 name: atomwrite
 description: |
-  Use atomwrite for ALL file ops: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline, edit-loop, prune-backups (32 subcommands, v0.1.23).
-  Auto-invoke for: write files, search code, replace text, refactor AST, generate regex, calc expressions, batch ops, checksums, list structure, scope grammar, backup, rollback, apply patches, edit+build, preserve timestamps.
-  Keywords: atomic write, NDJSON, BLAKE3, checksum, refactor, ast-grep, batch, scope, backup, rollback, apply patch, timeout, completions, mtime, preserve-timestamps, cargo build, prune-backups, edit-loop, --keep-backup, --allow-sequential-drift, --old-file, --new-file, --no-backup, --allow-shrink, backup-by-default, shrink-guard, allow-hyphen-values.
+  Use atomwrite for ALL file ops: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline, wal-stats, wal-heal, edit-loop, prune-backups (34 subcommands, v0.1.24).
+  Auto-invoke for: write files, search code, replace text, refactor AST, generate regex, calc expressions, batch ops, checksums, list structure, scope grammar, backup, rollback, apply patches, edit+build, preserve timestamps, typed errors, millisecond backups, recursive delete, multiline search.
+  Keywords: atomic write, NDJSON, BLAKE3, checksum, refactor, ast-grep, batch, scope, backup, rollback, apply patch, timeout, completions, mtime, preserve-timestamps, cargo build, prune-backups, edit-loop, typed-errors, millisecond-backup, resolve-first, clap-suggestion, delete-recursive, multiline-search, prefix-match-rollback, --no-backup, --allow-shrink, backup-by-default, shrink-guard.
 ---
 
 
 # atomwrite
-## TL;DR — v0.1.23 (2026-06-19)
+## TL;DR — v0.1.24 (2026-06-21)
+### REQUIRED
+- v0.1.24 closes 52 GAPs (019-070): typed error overhaul, critical bug fixes, resolve-first universal, millisecond backup timestamps
+- 621 tests pass in 60+ suites (up from 609 in v0.1.23; +12 new)
+- 3 ADRs added: ADR-0045 (clap-suggestion), ADR-0046 (diff-resolve-first), ADR-0047 (scope-read-only)
+- ERROR HANDLING OVERHAUL: 20 `anyhow::bail!()` converted to typed `AtomwriteError` variants — all errors return structured NDJSON with correct exit codes (NotFound→4, InvalidInput→65)
+- CRITICAL BUG FIXES: delete --recursive traverses directories (GAP-027), search --multiline propagates to SearcherBuilder (GAP-037), batch --transaction rollback covers move/copy (GAP-046), read --line/--lines bounds check prevents panic (GAP-035), replace rejects empty pattern (GAP-050)
+- WORKSPACE PATH RESOLUTION: diff, scope, count, transform now resolve paths against --workspace (GAP-020, GAP-022, ADR-0046)
+- BACKUP: timestamp format now YYYYMMDD_HHMMSS_mmm (millisecond resolution, GAP-023); rollback --timestamp accepts prefix match
+- VALUE QUOTING: get/set/del no longer double-quote string values (GAP-039, GAP-042, GAP-043)
+- SCOPE READ-ONLY: scope without action reports files_matched correctly, files_modified=null (GAP-021, GAP-026, ADR-0047)
+- v0.1.23 PREVIOUSLY closed 4 GAPs (015-018)
+- v0.1.22 PREVIOUSLY closed GAP-2026-012 Front 3 and GAP-2026-013
+- v0.1.20 PREVIOUSLY closed 11 GAP-2026 (001-011)
+
+
+## v0.1.24 (2026-06-21) — Typed Errors and 52 Bug Fixes
+
+### Error Handling Overhaul (GAP-051 to GAP-070)
+- 20 bare `anyhow::bail!()` calls converted to typed `AtomwriteError` variants
+- ALL errors now return structured NDJSON envelope with correct exit codes
+- `NotFound` errors return exit 4 (was exit 1): set/del/get file missing, query/outline file missing, hash file missing
+- `InvalidInput` errors return exit 65 (was exit 1): empty pattern, invalid range, unsupported format, missing mode, count mismatch, aborted confirm
+- Affected commands: set, del, get, query, outline, edit, batch, write, prune-backups, extract, replace
+- ADR-0045 documents the clap error suggestion injection for --old-file/--new-file guidance
+
+### Critical Bug Fixes
+- `delete --recursive` now TRAVERSES directories via WalkBuilder (GAP-027) — previously skipped directory content
+- `delete --recursive` removes empty subdirectories in contents_first order (GAP-038)
+- `search --multiline` propagates flag to BOTH matcher AND SearcherBuilder (GAP-037) — previously only matcher received it
+- `batch --transaction` rollback now covers `move` and `copy` operations (GAP-046) — previously only `write` was rolled back
+- `read --line`/`--lines` bounds check prevents panic on out-of-range indices (GAP-035)
+- `replace` rejects empty pattern with `InvalidInput` exit 65 (GAP-050) — previously matched zero-width between every character, DESTROYING files
+- `read --lines`/`--head`/`--tail` with empty range no longer returns spurious `"\n"` (GAP-041)
+
+### Workspace Path Resolution (GAP-020, GAP-022)
+- `diff` now resolves both file paths against --workspace (ADR-0046)
+- `scope`, `count`, `transform` now resolve walk roots against --workspace (GAP-022)
+- ALL path-accepting commands now use the resolve-first convention (ADR-0027 universal)
+
+### Backup Improvements (GAP-023)
+- Timestamp format changed to `YYYYMMDD_HHMMSS_mmm` (millisecond resolution)
+- Prevents collision when backup-by-default and explicit backup in same second
+- `rollback --timestamp` accepts PREFIX match — `20260621_120000` matches `file.bak.20260621_120000_042`
+- BACKWARD COMPATIBLE: old backups without milliseconds still work
+
+### Value Quoting Fixes (GAP-039, GAP-042, GAP-043, GAP-045)
+- `get` JSON no longer double-quotes string values (was `"\"hello\""`, now `"hello"`)
+- `get` TOML no longer includes surrounding quotes
+- `set`/`del` `old_value`/`removed_value` fields fixed identically
+- `set` TOML nested key `old_value` now resolves (was always null)
+
+### Scope Read-Only Mode (GAP-021, GAP-026, ADR-0047)
+- `scope` without `--delete`/`--action`/`--replace-with` correctly reports `files_matched`
+- `files_modified` is `null` in read-only mode (was incorrectly showing match count)
+- Node matching rewritten with `Node::find_all` instead of manual DFS
+
+### Minor Fixes
+- `hash --stdin` no longer requires PATHS argument (GAP-032)
+- `hash --recursive` implements directory walk via WalkBuilder (GAP-048)
+- `hash` of nonexistent file returns exit 4 instead of silent skip (GAP-044)
+- `edit --multi` accepts `{old,new}` JSON without `op` field (GAP-031, GAP-036)
+- `regex` removes `allow_hyphen_values` greedy behavior (GAP-025, GAP-034) — use `--` separator for hyphenated examples
+- `case --subvert` takes exactly 2 args per occurrence (GAP-047) — was greedy, consuming file path
+- `risk_assessment` skipped for append/prepend operations (GAP-024) — prevents false positive
+- `--require-backup` guard checks effective backup state (GAP-033)
+- `read --format raw` skips binary heuristic (GAP-030)
+- `wal-stats`/`wal-heal` NDJSON includes `type` field (GAP-029)
+- `scope --query comments --delete` captures full `line_comment` node (GAP-028)
+- `prune-backups --max-count` sorts lexicographically (GAP-049)
+- `get` of nonexistent key returns exit 4 (GAP-040)
+
+
+### Correct Pattern — Typed Error Handling (v0.1.24)
+```bash
+# All errors now return structured NDJSON — no more bare exit 1
+atomwrite --workspace . get config.toml nonexistent.key
+# Exit 4: {"error":true,"code":"FILE_NOT_FOUND","exit":4,"message":"key not found","suggestion":"check key path"}
+
+# Replace rejects empty pattern (was silently destructive before v0.1.24)
+atomwrite --workspace . replace '' 'X' src/
+# Exit 65: {"error":true,"code":"INVALID_INPUT","exit":65,"message":"empty pattern rejected"}
+```
+
+### Correct Pattern — Millisecond Backup Timestamps (v0.1.24)
+```bash
+# Backup timestamps now include milliseconds to prevent collision
+atomwrite --workspace . backup src/main.rs
+# Creates: src/main.rs.bak.20260621_120000_042
+
+# Rollback accepts prefix match (backward-compatible with old format)
+atomwrite --workspace . rollback src/main.rs --timestamp 20260621_120000
+# Matches both old format and new _mmm suffix
+```
+
+### Correct Pattern — Delete Recursive (v0.1.24, GAP-027)
+```bash
+# delete --recursive now actually traverses directories
+atomwrite --workspace . delete --recursive --yes logs/
+# Removes all files AND empty subdirectories (contents_first order)
+```
+
+### Correct Pattern — Multiline Search (v0.1.24, GAP-037)
+```bash
+# --multiline now properly propagates to both matcher AND searcher
+atomwrite --workspace . search --multiline 'fn main\(\).*\{[^}]*\}' src/ --include '*.rs'
+```
+
+
+## v0.1.23 (2026-06-19) — Data Safety by Default
 ### REQUIRED
 - v0.1.23 closes 4 GAPs (015-018): `allow_hyphen_values` in 15 CLI fields, backup-by-default in 9 structs, shrink-guard on `--expect-checksum`, `--old-file`/`--new-file` for `edit`
 - 609 tests pass in 60+ suites (up from 575+ in v0.1.22; +31 new)
@@ -1148,9 +1257,9 @@ python3 -c "import json, jsonschema; \\
 
 ## Tests and Quality Gates (v0.1.12)
 ### REQUIRED — Quality Posture
-- 609 tests in 60+ test suites pass with zero regressions as of v0.1.23
+- 621 tests in 60+ test suites pass with zero regressions as of v0.1.24
 - Test count decomposition: 320 baseline (v0.1.10) + +29 (v0.1.11) + +96 (v0.1.12) + +2 (v0.1.14) + +14 (v0.1.15: 8 G117 + 6 G118) = 461 (v0.1.15) + +41 (v0.1.18: G118 + G119 + G120 + 2 ADRs) = 502 (v0.1.18) + +13 (v0.1.19: ADR-0031 G121 path resolution + ADR-0032 query S-expr + ADR-0033 exit code consolidation) = 515 (v0.1.19) + +27 (v0.1.20: 11 GAP-2026 + 4 ADRs) = 542 total
-- v0.1.21 to v0.1.23 decomposition: +13 (v0.1.21: drift + backup parity) + +16 (v0.1.22: edit-loop + prune-backups) + +31 (v0.1.23: 12 hyphen + 7 backup + 4 shrink + 8 old-file) = 609 total
+- v0.1.21 to v0.1.24 decomposition: +13 (v0.1.21: drift + backup parity) + +16 (v0.1.22: edit-loop + prune-backups) + +31 (v0.1.23: 12 hyphen + 7 backup + 4 shrink + 8 old-file) + +12 (v0.1.24: typed-errors + bug-fixes + path-resolution) = 621 total
 - New v0.1.23 test files (4): `cli_v0123_hyphen_values`, `cli_v0123_backup_default`, `cli_v0123_shrink_guard`, `cli_v0123_old_file`
 - v0.1.12 new test files (10): `cli_set`, `cli_case`, `cli_query`, `cli_outline`, `cli_get_del`, `cli_v012_syntax_check`, `cli_v012_wal`, `cli_v012_audit_regressions` (27 tests), `cli_v012_xattr_reflink`, `cli_v012_batch4_regressions` (23 tests)
 - v0.1.12 test coverage by category: G72 syntax check (16 tests), G114 WAL (8 tests), v14 query/outline (10 tests), TOML dotted path (6 tests), set/get/del/case (15 tests), audit regressions (50 tests)

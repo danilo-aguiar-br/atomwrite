@@ -40,7 +40,26 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 - Testes de snapshot via `insta`
 - Testes de sinal (SIGINT, SIGTERM, SIGPIPE)
 
-## O Que Há de Novo na v0.1.23 (Atual)
+## O Que Há de Novo na v0.1.24 (Atual)
+
+- 621 testes passando, 0 falhas, 3 ignorados (gate de cross-compile)
+- 52 gaps resolvidos (GAP-2026-019 a GAP-2026-070)
+- 20 `anyhow::bail!()` convertidos para `AtomwriteError` tipado (testes unitários inline por comando)
+- 3 novos ADRs (0045-0047)
+
+### Novos Arquivos de Teste (v0.1.24)
+
+- `tests/cli_v0124_clap_suggestion.rs` — 5 testes para GAP-019 (sugestões acionáveis de erro clap)
+- `tests/cli_gap020_diff_workspace.rs` — 3 testes para GAP-020 (diff resolve-first)
+- `tests/cli_gap021_scope_readonly.rs` — 4 testes para GAP-021 (scope modo read-only)
+
+### Correções Validadas por Suítes Existentes
+
+- GAP-022 a GAP-070: correções validadas por testes de integração existentes nos arquivos `cli_*.rs`
+- Cada conversão `bail!` → `AtomwriteError` inclui asserções `#[cfg(test)]` inline
+- `cargo test` confirma 621 total: 609 (v0.1.23) + 5 (GAP-019) + 3 (GAP-020) + 4 (GAP-021)
+
+## O Que Há de Novo na v0.1.23
 
 - 609 testes passando (575 baseline v0.1.22 + 12 GAP-2026-015 + 7 GAP-2026-016 + 4 GAP-2026-017 + 8 GAP-2026-018 + 3 de [Unreleased] CI Windows)
 - 32 subcomandos (inalterado desde v0.1.22)

@@ -1,6 +1,6 @@
 # atomwrite JSON Schemas
 
-_Last updated: 2026-06-19 (v0.1.23) — 29 schemas in index_
+_Last updated: 2026-06-21 (v0.1.24) — 29 schemas in index_
 
 ## English
 ### Purpose
@@ -47,7 +47,7 @@ _Last updated: 2026-06-19 (v0.1.23) — 29 schemas in index_
 
 
 ## Português
-### Última atualização: 2026-06-19 (v0.1.23) — 29 schemas no índice
+### Última atualização: 2026-06-21 (v0.1.24) — 29 schemas no índice
 
 ### Objetivo
 - Cada schema descreve a saída NDJSON de um subcomando do atomwrite

@@ -1,7 +1,7 @@
 # Guia de Instalação
 
 - Instruções completas para instalar atomwrite em Linux, macOS e Windows
-- Versão alvo atual: v0.1.12 (corrige compilação Windows 10/11, adiciona sugestões de erro context-aware, 6 novos subcomandos, G72 verificação de sintaxe real, G114 sidecar WAL, 5 novos códigos de erro, reflink copy, fallback EXDEV)
+- Versão alvo atual: v0.1.24 (52 bugs corrigidos, auditoria de erros tipados, 621 testes, ADRs 0045-0047)
 - Seções ordenadas por plataforma, com pré-requisitos e solução de problemas
 
 
@@ -50,7 +50,7 @@ O fix do Windows 10/11 de v0.1.4 é preservado (cargo install agora funciona). v
 
 ### Cobertura de Testes
 
-- 542 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118 na v0.1.15)
+- 621 testes passando (609 na v0.1.23 + 12 na v0.1.24)
 - 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/`
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
@@ -64,8 +64,8 @@ O fix do Windows 10/11 de v0.1.4 é preservado (cargo install agora funciona). v
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Instalar atomwrite v0.1.22 do crates.io
-cargo install atomwrite --locked --version "^0.1.22"
+# Instalar atomwrite v0.1.24 do crates.io
+cargo install atomwrite --locked --version "^0.1.24"
 
 # Verificar
 atomwrite --version
@@ -308,7 +308,7 @@ Esta release introduz uma nova camada de segurança chamada **intention guards**
 
 ### Estatísticas
 
-- 542 testes passando em 47 suites de integração, 0 falhas
+- 621 testes passando (609 na v0.1.23 + 12 na v0.1.24)
 - 11 GAP-2026 fechados
 - 3 targets de cross-compile Windows verdes
 - 19 ADRs em `docs/decisions/` (0019-0037)

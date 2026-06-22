@@ -54,7 +54,7 @@ This section summarizes cross-platform-relevant changes in v0.1.12.
 
 ### Test Coverage
 
-- 542 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118 in v0.1.15)
+- 621 tests passing (609 in v0.1.23 + 12 in v0.1.24)
 - Cross-compile gate: `cargo test --test cross_compile_check -- --ignored` validates Windows GNU/MSVC targets
 - 5 signal tests in `tests/signal_test.rs` cover SIGINT/SIGTERM/SIGPIPE/batch/shutdown
 - See [docs/decisions/README.md](README.md) for architectural decisions
@@ -227,8 +227,8 @@ This release introduces a new safety layer called **intention guards** and renam
 
 ### Statistics
 
-- 542 tests passing in 47 integration suites, 0 failures
-- 11 GAP-2026 closed
+- 621 tests passing in 51 integration suites, 0 failures
+- 52 GAP-2026 closed (019-070)
 - 3 Windows cross-compile targets green
 - 19 ADRs in `docs/decisions/` (0019-0037)
 

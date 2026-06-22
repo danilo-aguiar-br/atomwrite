@@ -20,7 +20,7 @@
 use std::io::Write;
 use std::time::Instant;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::cli::{GlobalArgs, OutlineArgs};
@@ -94,7 +94,7 @@ pub fn cmd_outline(
     let workspace = global.resolve_workspace()?;
     let validated = crate::path_safety::validate_path(&args.path, &workspace)?;
     if !validated.exists() {
-        bail!("file does not exist: {}", validated.display());
+        return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
     let content = std::fs::read(&validated)
         .with_context(|| format!("cannot read {}", validated.display()))?;

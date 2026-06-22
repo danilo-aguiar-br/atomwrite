@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
@@ -51,7 +51,7 @@ pub fn cmd_set(
 
     let validated = crate::path_safety::validate_path(&args.path, &workspace)?;
     if !validated.exists() {
-        bail!("file does not exist: {}", validated.display());
+        return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
 
     let original = std::fs::read_to_string(&validated)
@@ -60,10 +60,14 @@ pub fn cmd_set(
     let (new_content, old_value, format) = match validated.extension().and_then(|s| s.to_str()) {
         Some("toml") => toml_set(&original, &args.key_path, &args.value)?,
         Some("json") => json_set(&original, &args.key_path, &args.value)?,
-        other => bail!(
-            "unsupported format for `set` (extension: {:?}); supported: toml, json",
-            other
-        ),
+        other => {
+            return Err(crate::error::AtomwriteError::InvalidInput {
+                reason: format!(
+                    "unsupported format for `set` (extension: {other:?}); supported: toml, json"
+                ),
+            }
+            .into());
+        }
     };
 
     let opts = AtomicWriteOptions {
@@ -118,9 +122,7 @@ fn toml_set(
     let mut doc: toml_edit::DocumentMut = original
         .parse()
         .with_context(|| format!("invalid TOML in source: {original}"))?;
-    let old_value = doc
-        .get(key_path)
-        .map(|item| item.to_string().trim().to_owned());
+    let old_value = get_toml_value(&doc, key_path);
     // toml_edit's `doc["a.b"]` adds a flat key; we need to navigate the
     // dotted path manually and update the leaf, which preserves the
     // existing formatting (comments, key order, table headers).
@@ -198,7 +200,10 @@ fn json_set(
         serde_json::from_str(original).with_context(|| "invalid JSON in source")?;
     let old_value = value_json
         .pointer(&json_pointer(key_path))
-        .map(|v| v.to_string());
+        .map(|v| match v {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        });
     // Convert key_path "a.b.c" to JSON pointer "/a/b/c"
     apply_json_pointer(&mut value_json, &json_pointer(key_path), value);
     let new_content = serde_json::to_string_pretty(&value_json)?;
@@ -286,6 +291,31 @@ fn parse_json_value(s: &str) -> serde_json::Value {
         }
     }
     serde_json::Value::String(s.to_owned())
+}
+
+fn get_toml_value(doc: &toml_edit::DocumentMut, key_path: &str) -> Option<String> {
+    let segments: Vec<&str> = key_path.split('.').collect();
+    if segments.is_empty() {
+        return None;
+    }
+    let mut current: &toml_edit::Item = doc.as_item();
+    for seg in &segments {
+        match current.as_table() {
+            Some(table) => match table.get(seg) {
+                Some(item) => current = item,
+                None => return None,
+            },
+            None => return None,
+        }
+    }
+    if let Some(v) = current.as_value() {
+        match v.as_str() {
+            Some(s) => Some(s.to_owned()),
+            None => Some(v.to_string().trim().to_owned()),
+        }
+    } else {
+        Some(current.to_string().trim().to_owned())
+    }
 }
 
 #[allow(dead_code)]

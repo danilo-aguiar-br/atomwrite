@@ -1033,3 +1033,77 @@ atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
 atomwrite --workspace . prune-backups --max-age 0 --dry-run false . \
   && fd '*.bak.*' . | wc -l | jaq -e '. == 0'
 ```
+
+
+## v0.1.24 — Recipes
+
+### Typed Error Handling in Agent Pipelines
+
+All errors now emit structured JSON on stdout. Parse exit codes deterministically:
+
+```bash
+# Safe pipeline: check exit code BEFORE parsing stdout
+output=$(atomwrite --workspace . get config.toml database.pool.max 2>/dev/null)
+exit_code=$?
+case $exit_code in
+  0) echo "$output" | jaq -r '.value' ;;
+  4) echo "key not found" ;;
+  65) echo "$output" | jaq -r '.suggestion' ;;
+  *) echo "unexpected: exit $exit_code" ;;
+esac
+```
+
+### Delete Recursive (Now Works)
+
+```bash
+# v0.1.24: delete --recursive actually traverses and removes
+atomwrite --workspace . delete --recursive --yes logs/
+
+# Dry-run first to preview
+atomwrite --workspace . delete --recursive --dry-run logs/
+```
+
+### Hash Recursive (Now Works)
+
+```bash
+# v0.1.24: hash --recursive walks directories
+atomwrite --workspace . hash --recursive src/
+```
+
+### Search Multiline (Now Works)
+
+```bash
+# v0.1.24: multiline patterns actually match across lines
+atomwrite --workspace . search --multiline 'fn main\(\).*\{' src/ --include '*.rs'
+```
+
+### Replace Rejects Empty Pattern
+
+```bash
+# v0.1.24: empty pattern is rejected (was silently destructive)
+atomwrite --workspace . replace '' 'X' src/
+# Exit 65: INVALID_INPUT — empty pattern would match every position
+
+# Correct usage: explicit pattern
+atomwrite --workspace . replace 'old_api' 'new_api' src/
+```
+
+### Backup Timestamp With Milliseconds
+
+```bash
+# v0.1.24: timestamps include milliseconds to prevent collision
+atomwrite --workspace . backup config.toml
+# Creates: config.toml.bak.20260621_143022_847
+
+# Rollback accepts prefix match (backward-compatible)
+atomwrite --workspace . rollback config.toml --timestamp 20260621_143022
+```
+
+### Get Values Without Double Quotes
+
+```bash
+# v0.1.24: get returns raw value, not JSON-serialized string
+atomwrite --workspace . get Cargo.toml package.version
+# Output: {"type":"result","value":"0.1.24",...}
+# NOT: {"type":"result","value":"\"0.1.24\"",...}  (old behavior)
+```

@@ -77,7 +77,7 @@ cargo fmt -- --check
 - Use `insta` for snapshot testing of NDJSON output
 - Use `proptest` for property-based testing where applicable
 - Target at least 80% coverage for new code
-- Run the full suite before submitting: `cargo test` (542 tests in v0.1.20)
+- Run the full suite before submitting: `cargo test` (621 tests in v0.1.24)
 
 
 ## Documentation
@@ -141,7 +141,7 @@ cargo fmt -- --check
 ## Quality Gates
 - Run `cargo fmt --check` before committing
 - Run `cargo clippy --all-targets -- -D warnings` for lint checks
-- Run `cargo test` for the full test suite (542 tests in v0.1.20)
+- Run `cargo test` for the full test suite (621 tests in v0.1.24)
 - Run `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` for documentation checks
 - Run `cargo audit` for security advisories
 - Run `cargo deny check` for license and dependency policy (see `deny.toml`)

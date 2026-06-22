@@ -6,7 +6,7 @@
 use std::io::Write;
 use std::time::Instant;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
@@ -40,7 +40,7 @@ pub fn cmd_del(
     let effective_backup = resolve_backup(args.backup, args.no_backup);
     let validated = crate::path_safety::validate_path(&args.path, &workspace)?;
     if !validated.exists() {
-        bail!("file does not exist: {}", validated.display());
+        return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
     let original = std::fs::read_to_string(&validated)
         .with_context(|| format!("cannot read {}", validated.display()))?;
@@ -58,24 +58,27 @@ pub fn cmd_del(
                 let mut v: serde_json::Value =
                     serde_json::from_str(&original).with_context(|| "invalid JSON in source")?;
                 let pointer = format!("/{}", args.key_path.replace('.', "/"));
-                let removed = v.pointer(&pointer).map(|x| x.to_string());
+                let removed = v.pointer(&pointer).map(|x| match x {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                });
                 let existed = removed.is_some();
                 remove_json_pointer(&mut v, &pointer);
                 let new_content = serde_json::to_string_pretty(&v)?;
                 (new_content, removed, existed, "json")
             }
-            other => bail!(
-                "unsupported format for `del` (extension: {:?}); supported: toml, json",
-                other
-            ),
+            other => {
+                return Err(crate::error::AtomwriteError::InvalidInput {
+                    reason: format!(
+                        "unsupported format for `del` (extension: {other:?}); supported: toml, json"
+                    ),
+                }
+                .into());
+            }
         };
 
     if !existed && !args.force_missing {
-        bail!(
-            "key path '{}' not found in {}",
-            args.key_path,
-            validated.display()
-        );
+        return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
 
     if !existed && args.force_missing {
@@ -187,7 +190,16 @@ fn remove_toml_path(doc: &mut toml_edit::DocumentMut, key_path: &str) -> Option<
         }
     }
     let table = current.as_table_mut()?;
-    let removed = table.get(last).map(|item| item.to_string());
+    let removed = table.get(last).map(|item| {
+        if let Some(v) = item.as_value() {
+            match v.as_str() {
+                Some(s) => s.to_owned(),
+                None => v.to_string().trim().to_owned(),
+            }
+        } else {
+            item.to_string().trim().to_owned()
+        }
+    });
     table.remove(last);
     removed
 }

@@ -763,6 +763,42 @@ printf '%s\n' '{"old":"existe","new":"X"}' '{"old":"ausente","new":"Y"}' \
 - 32 sub-comandos totais (de 30 em v0.1.20)
 
 
+## v0.1.24 — Novidades
+
+- REFORMULAÇÃO DO TRATAMENTO DE ERROS
+  - TODOS os erros voltados ao usuário agora emitem JSON estruturado no stdout com exit codes tipados
+  - 20 chamadas `anyhow::bail!()` convertidas para variantes `AtomwriteError`
+  - Mapeamento de exit code: `NotFound` → exit 4, `InvalidInput` → exit 65
+  - Agentes e parsers recebem JSON acionável em TODOS os caminhos de erro (sem mais exit 1 silencioso)
+- CORREÇÕES DE BUGS CRÍTICOS
+  - `delete --recursive` agora percorre diretórios (antes pulava silenciosamente)
+  - `hash --recursive` agora percorre diretórios (era aceito mas nunca percorrido)
+  - `search --multiline` agora propaga a flag para o SearcherBuilder (estava quebrado)
+  - `replace` rejeita pattern vazio (antes destruía arquivos silenciosamente)
+  - `batch --transaction` reverte `move`/`copy` no rollback (antes deixava órfãos)
+  - `read --line/--lines` não entra mais em panic com índices fora de faixa
+- RESOLUÇÃO DE CAMINHO DO WORKSPACE
+  - `scope`, `count`, `transform`, `diff` agora resolvem caminhos contra `--workspace`
+  - Antes esses comandos usavam o CWD, contornando o jail do workspace
+- MELHORIAS DE BACKUP
+  - Formato de timestamp: `YYYYMMDD_HHMMSS_mmm` (resolução de milissegundos previne colisões)
+  - `rollback --timestamp` aceita match por prefixo (retrocompatível)
+  - `prune-backups --max-count` ordena por nome de arquivo em vez de mtime (determinístico)
+- CORREÇÕES DE ASPAS EM VALORES
+  - Valores JSON/TOML do `get` não têm mais aspas duplicadas (retorna valor cru)
+  - `old_value`/`removed_value` do `set`/`del` não têm mais aspas duplicadas
+  - Chaves TOML aninhadas no `set` agora retornam `old_value` corretamente
+- CORREÇÕES MENORES
+  - `write` pula risk_assessment para `--append`/`--prepend`
+  - `scope` reporta `files_modified: null` em modo read-only
+  - `wal-stats`/`wal-heal` incluem o campo `type` no NDJSON
+  - `hash --stdin` não exige mais o argumento PATHS
+  - Campo `op` do `edit --multi` agora é opcional (inferido como "exact")
+  - `regex` avisa quando exemplos parecem flags
+  - `case --subvert` usa `num_args=2` exato (era greedy)
+  - `scope --query comments --delete` remove nós line_comment inteiros
+
+
 ## v0.1.23 — Novidades
 
 ### backup-by-default (GAP-2026-016)

@@ -19,13 +19,27 @@
 - Every file gets a BLAKE3 checksum: detect drift, verify integrity, enable optimistic locking
 
 
+## What Is New In v0.1.24 (2026-06-21)
+
+- 52 bugs fixed in comprehensive end-to-end audit (GAP-019 through GAP-070)
+- ALL user-facing errors now emit typed JSON on stdout (20 bail! converted to AtomwriteError)
+- `delete --recursive`, `hash --recursive`, `search --multiline` now actually work
+- `replace` rejects empty pattern (was a silent data-destruction bug)
+- Backup timestamp resolution improved to milliseconds (prevents collision)
+- `scope`/`count`/`transform`/`diff` now resolve paths against `--workspace`
+- `get`/`set`/`del` values no longer doubly-quoted
+- `batch --transaction` properly reverts `move`/`copy` on rollback
+- 3 new ADRs (0045-0047)
+- 621 tests passing, 12 new for v0.1.24
+
+
 ## What Is New In v0.1.23 (2026-06-19)
 
 - GAP-2026-015 closed — `allow_hyphen_values` added to 15 CLI text-accepting fields across 8 structs; values starting with `-` (Markdown bullets, negative numbers, YAML, diffs) no longer cause exit 2
 - GAP-2026-016 closed — backup enabled by default in 9 content-mutating structs (`write`, `edit`, `edit-loop`, `replace`, `transform`, `apply`, `set`, `del`, `case`); use `--no-backup` or `ATOMWRITE_BACKUP=0` to opt out
 - GAP-2026-017 closed — shrink guard blocks writes that reduce file size by >50% when `--expect-checksum` is active; pass `--allow-shrink` to override
 - GAP-2026-018 closed — `edit --old-file <PATH> --new-file <PATH>` reads match/replacement content from files inside the atomwrite process, bypassing shell expansion and kernel ARG_MAX (~131 KB limit); cross-mixing validation rejects `--old` + `--new-file` (exit 65); trailing newline stripping ensures argv parity
-- 609+ tests passing, 31 new for v0.1.23
+- 621+ tests passing, 12 new for v0.1.24
 - 4 new ADRs: 0041 (allow-hyphen-values), 0042 (backup-by-default), 0043 (shrink-guard), 0044 (edit-old-file-new-file)
 
 

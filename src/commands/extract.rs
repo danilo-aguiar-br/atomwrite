@@ -72,10 +72,13 @@ fn extract_json(
     let mut parsed: serde_json::Value = serde_json::from_str(line)?;
 
     if !check_depth(&parsed, crate::constants::MAX_JSON_DEPTH) {
-        anyhow::bail!(
-            "JSON nesting depth exceeds maximum of {}",
-            crate::constants::MAX_JSON_DEPTH
-        );
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: format!(
+                "JSON nesting depth exceeds maximum of {}",
+                crate::constants::MAX_JSON_DEPTH
+            ),
+        }
+        .into());
     }
 
     if fields.is_empty() {

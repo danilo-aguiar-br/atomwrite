@@ -139,24 +139,26 @@ fn write_raw(
     args: &ReadArgs,
     is_binary: bool,
 ) -> Result<()> {
-    if is_binary {
-        return Err(AtomwriteError::BinaryFile {
-            path: args.path.clone(),
-        }
-        .into());
-    }
-
-    let text = String::from_utf8_lossy(data);
-    let filtered = apply_line_filters(&text, args);
-
     writer.flush()?;
     let inner = std::io::stdout();
     let mut lock = inner.lock();
-    match lock.write_all(filtered.as_bytes()) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => return Ok(()),
-        Err(e) => return Err(e.into()),
+
+    if is_binary {
+        match lock.write_all(data) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => return Ok(()),
+            Err(e) => return Err(e.into()),
+        }
+    } else {
+        let text = String::from_utf8_lossy(data);
+        let filtered = apply_line_filters(&text, args);
+        match lock.write_all(filtered.as_bytes()) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => return Ok(()),
+            Err(e) => return Err(e.into()),
+        }
     }
+
     let _ = lock.flush();
     Ok(())
 }
@@ -167,12 +169,18 @@ fn apply_line_filters(text: &str, args: &ReadArgs) -> String {
 
     if let Some(ref range_str) = args.lines {
         if let Some((start, end)) = parse_range_str(range_str, total) {
+            if start >= end {
+                return String::new();
+            }
             return all_lines[start..end].join("\n") + "\n";
         }
     }
 
     if let Some(line_num) = args.line {
         let idx = line_num.saturating_sub(1);
+        if idx >= total {
+            return String::new();
+        }
         let ctx = args.context;
         let start = idx.saturating_sub(ctx);
         let end = (idx + ctx + 1).min(total);
@@ -181,10 +189,16 @@ fn apply_line_filters(text: &str, args: &ReadArgs) -> String {
 
     if let Some(n) = args.head {
         let end = n.min(total);
+        if end == 0 {
+            return String::new();
+        }
         return all_lines[..end].join("\n") + "\n";
     }
 
     if let Some(n) = args.tail {
+        if n == 0 {
+            return String::new();
+        }
         let start = total.saturating_sub(n);
         return all_lines[start..].join("\n") + "\n";
     }
@@ -208,8 +222,11 @@ fn parse_range_str(s: &str, total: usize) -> Option<(usize, usize)> {
     if parts.len() != 2 {
         return None;
     }
-    let start = parts[0].parse::<usize>().ok()?.saturating_sub(1);
+    let start = parts[0].parse::<usize>().ok()?.saturating_sub(1).min(total);
     let end = parts[1].parse::<usize>().ok()?.min(total);
+    if start >= end {
+        return Some((0, 0));
+    }
     Some((start, end))
 }
 

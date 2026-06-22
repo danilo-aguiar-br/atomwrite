@@ -1035,3 +1035,77 @@ atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
 atomwrite --workspace . prune-backups --max-age 0 --dry-run false . \
   && fd '*.bak.*' . | wc -l | jaq -e '. == 0'
 ```
+
+
+## v0.1.24 — Receitas
+
+### Tratamento de Erros Tipados em Pipelines de Agentes
+
+Todos os erros agora emitem JSON estruturado no stdout. Parse exit codes de forma determinística:
+
+```bash
+# Pipeline seguro: verificar exit code ANTES de parsear stdout
+output=$(atomwrite --workspace . get config.toml database.pool.max 2>/dev/null)
+exit_code=$?
+case $exit_code in
+  0) echo "$output" | jaq -r '.value' ;;
+  4) echo "chave não encontrada" ;;
+  65) echo "$output" | jaq -r '.suggestion' ;;
+  *) echo "inesperado: exit $exit_code" ;;
+esac
+```
+
+### Delete Recursivo (Agora Funciona)
+
+```bash
+# v0.1.24: delete --recursive agora percorre e remove
+atomwrite --workspace . delete --recursive --yes logs/
+
+# Dry-run primeiro para pré-visualizar
+atomwrite --workspace . delete --recursive --dry-run logs/
+```
+
+### Hash Recursivo (Agora Funciona)
+
+```bash
+# v0.1.24: hash --recursive caminha diretórios
+atomwrite --workspace . hash --recursive src/
+```
+
+### Search Multiline (Agora Funciona)
+
+```bash
+# v0.1.24: padrões multiline agora casam através de linhas
+atomwrite --workspace . search --multiline 'fn main\(\).*\{' src/ --include '*.rs'
+```
+
+### Replace Rejeita Padrão Vazio
+
+```bash
+# v0.1.24: padrão vazio é rejeitado (antes era destrutivo silenciosamente)
+atomwrite --workspace . replace '' 'X' src/
+# Exit 65: INVALID_INPUT — padrão vazio casaria em toda posição
+
+# Uso correto: padrão explícito
+atomwrite --workspace . replace 'old_api' 'new_api' src/
+```
+
+### Timestamp de Backup com Milissegundos
+
+```bash
+# v0.1.24: timestamps incluem milissegundos para prevenir colisão
+atomwrite --workspace . backup config.toml
+# Cria: config.toml.bak.20260621_143022_847
+
+# Rollback aceita match por prefixo (retrocompatível)
+atomwrite --workspace . rollback config.toml --timestamp 20260621_143022
+```
+
+### Get Valores Sem Aspas Duplas
+
+```bash
+# v0.1.24: get retorna valor raw, não string serializada JSON
+atomwrite --workspace . get Cargo.toml package.version
+# Saída: {"type":"result","value":"0.1.24",...}
+# NÃO: {"type":"result","value":"\"0.1.24\"",...}  (comportamento antigo)
+```
