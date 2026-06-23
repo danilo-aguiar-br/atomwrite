@@ -190,6 +190,7 @@ pub fn cmd_search(
     });
 
     let mut has_matches = false;
+    let sort_active = args.sort.is_some();
     // Buffer events per path so that parallel walker threads do not interleave
     // Begin/Match/End events for different files in the NDJSON output.
     let mut buffer: std::collections::BTreeMap<std::path::PathBuf, Vec<SearchEvent>> =
@@ -211,11 +212,12 @@ pub fn cmd_search(
             SearchEvent::End { path, .. } => {
                 let path_buf = path.to_path_buf();
                 buffer.entry(path_buf.clone()).or_default().push(event);
-                // Flush all events for this path now that we have End
-                if let Some(events) = buffer.remove(&path_buf) {
-                    open_paths.remove(&path_buf);
-                    for ev in events {
-                        emit_search_event(&ev, writer, args, &mut has_matches)?;
+                if !sort_active {
+                    if let Some(events) = buffer.remove(&path_buf) {
+                        open_paths.remove(&path_buf);
+                        for ev in events {
+                            emit_search_event(&ev, writer, args, &mut has_matches)?;
+                        }
                     }
                 }
             }
@@ -228,7 +230,8 @@ pub fn cmd_search(
         }
     }
 
-    // Flush any remaining buffered events (e.g. on shutdown)
+    // Flush remaining buffered events. When --sort is active, ALL events are
+    // here and BTreeMap emits them in sorted path order.
     for (_, events) in buffer {
         for ev in events {
             emit_search_event(&ev, writer, args, &mut has_matches)?;

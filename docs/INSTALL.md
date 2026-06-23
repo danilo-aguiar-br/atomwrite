@@ -341,7 +341,7 @@ This release closes 3 GAP-2026 items and changes default behavior for backup ret
 This release adds 2 new subcommands for cleanup and N-edits-in-1-invocation patterns:
 
 - **`prune-backups [PATHS]...`** — manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` siblings
-  - Flags: `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (default true)
+  - Flags: `--max-age-secs <SECONDS>`, `--max-count <N>`, `--dry-run` (default true)
   - NDJSON output with per-backup lines and summary
 - **`edit-loop <PATH>`** — apply N `{old, new}` pairs via NDJSON on stdin in 1 invocation
   - Flags: `--workspace`, `--expect-checksum`, `--partial`, `--fuzzy`, `--backup`, `--keep-backup`
@@ -359,7 +359,7 @@ cargo install atomwrite --locked --version "^0.1.22"
 atomwrite --version
 
 # Smoke test the new subcommands
-atomwrite --workspace . prune-backups --max-age 86400 .
+atomwrite --workspace . prune-backups --max-age-secs 86400 .
 printf '%s\n' '{"old":"foo","new":"bar"}' \
   | atomwrite --workspace . edit-loop src/foo.rs
 ```

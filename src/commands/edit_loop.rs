@@ -67,22 +67,24 @@ pub fn cmd_edit_loop(
     let max_size = global.effective_max_filesize();
     let mut content = crate::file_io::read_file_string(&target, max_size)?;
 
-    // Parse NDJSON pairs from stdin. Each non-blank line is a JSON object.
-    // Use `.take(max_size)` to bound the read so that the call returns even
-    // if the parent process keeps the write end of the stdin pipe open
-    // (defensive: some test harnesses and shell pipelines do not close the
-    // pipe immediately, and a plain `read_to_string` would block forever
-    // waiting for EOF in those cases — see audit 2026-06-17).
+    // Parse pairs from stdin. Accepts both JSON array and NDJSON (one object
+    // per line). Detection: if the first non-whitespace byte is `[`, parse
+    // as a JSON array; otherwise parse as NDJSON lines.
     let mut buf = String::new();
     stdin.take(max_size).read_to_string(&mut buf)?;
-    let pairs: Vec<EditPair> = buf
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| {
-            serde_json::from_str::<EditPair>(l)
-                .with_context(|| format!("failed to parse NDJSON pair: {l}"))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let trimmed = buf.trim_start();
+    let pairs: Vec<EditPair> = if trimmed.starts_with('[') {
+        serde_json::from_str::<Vec<EditPair>>(trimmed)
+            .with_context(|| "failed to parse JSON array of edit pairs")?
+    } else {
+        buf.lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| {
+                serde_json::from_str::<EditPair>(l)
+                    .with_context(|| format!("failed to parse NDJSON pair: {l}"))
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
 
     // Apply each pair in order. `replacen(.., 1)` matches the single-pair
     // `edit` semantics: only the first occurrence is touched.

@@ -56,11 +56,11 @@ fn get_toml_missing_key_returns_not_found() {
         .output()
         .expect("get");
 
-    // GAP-111: missing key returns INVALID_INPUT (exit 65), not FILE_NOT_FOUND (exit 4)
+    // GAP-137: missing key now returns FILE_NOT_FOUND (exit 4) as documented
     assert_eq!(
         output.status.code(),
-        Some(65),
-        "get on missing key should return exit 65 (INVALID_INPUT): {}",
+        Some(4),
+        "get on missing key should return exit 4 (FILE_NOT_FOUND): {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -72,7 +72,7 @@ fn get_toml_missing_key_returns_not_found() {
     let err = err_event.unwrap();
     assert_eq!(
         err.get("code").and_then(|v| v.as_str()),
-        Some("INVALID_INPUT")
+        Some("FILE_NOT_FOUND")
     );
 }
 

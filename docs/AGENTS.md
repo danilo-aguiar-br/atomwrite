@@ -59,7 +59,7 @@
 ## What's New in v0.1.22
 
 - **GAP-2026-012 Front 3 closed** — new subcommand `edit-loop [PATH]` applies N pairs `{old, new}` in 1 invocation via NDJSON on stdin. Reduces 5 sequential `edit` calls (5 subprocess spawns, 5 checksum recaptures) to a single atomic write. Supports `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`. See `tests/cli_v0121_edit_loop.rs` and ADR-0039.
-- **GAP-2026-013 Front 2 closed** — new subcommand `prune-backups [PATHS]...` provides manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` files from v0.1.20 and earlier. Flags: `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (defaults to true for safety). Reuses `cleanup_old_backups_in` from `src/atomic.rs`. See `tests/cli_v0121_prune_backups.rs` and ADR-0040.
+- **GAP-2026-013 Front 2 closed** — new subcommand `prune-backups [PATHS]...` provides manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` files from v0.1.20 and earlier. Flags: `--max-age-secs <SECONDS>`, `--max-count <N>`, `--dry-run` (defaults to true for safety). Reuses `cleanup_old_backups_in` from `src/atomic.rs`. See `tests/cli_v0121_prune_backups.rs` and ADR-0040.
 - 2 new NDJSON schemas: `edit-loop-output.schema.json` (with `pairs_total`, `pairs_applied`, `pairs_unmatched`, `pair_results[].index`, `pair_results[].matched`) and `prune-backups-output.schema.json` (with `action`, `path`, `reason`, `total`, `elapsed_ms`).
 - 32 subcommands total (added `edit-loop` and `prune-backups` to the previous 30).
 
@@ -222,7 +222,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `wal-stats` -- (v0.1.18) inspects WAL journal state for telemetry and debugging; scope via `--workspace <DIR>`; NDJSON report with `terminal_committed`, `terminal_aborted`, `total_bytes`, `oldest_age_secs`
 - `wal-heal` -- (v0.1.18) removes orphan terminal journals older than `--threshold-secs` (default 3600s); wall-clock budget via `--max-duration-ms` (default 100ms)
 - `edit-loop` -- (v0.1.22) applies N `{old, new}` pairs in 1 invocation via NDJSON on stdin; supports `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`
-- `prune-backups` -- (v0.1.22) manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` files (v0.1.20 and earlier); flags `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` for safety); NDJSON output with `path`, `reason`, `action`, `total`
+- `prune-backups` -- (v0.1.22) manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` files (v0.1.20 and earlier); flags `--max-age-secs <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` for safety); NDJSON output with `path`, `reason`, `action`, `total`
 - `verify` -- (v0.1.25) verify a file checksum against an expected BLAKE3 hash; delegates to `hash --verify`; exit 0 on match, exit 81 on mismatch
 
 
@@ -310,7 +310,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 
 ## REQUIRED -- Exit Codes
 - 0: success
-- 1: no matches (search/replace found nothing)
+- 1: no matches (search/replace/transform/scope found nothing)
 - 4: file not found
 - 13: permission denied
 - 28: disk full
@@ -405,7 +405,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 
 ## PROHIBITED -- Common Pitfalls
 - NEVER interpret stderr as data; it only contains tracing logs
-- NEVER assume exit code 1 is a fatal error; it means zero matches in search
+- NEVER assume exit code 1 is a fatal error; it means zero matches in search, replace, transform or scope
 - NEVER omit `--workspace` when running as an agent
 - NEVER omit `--dry-run` before destructive batch operations
 - NEVER use unquoted expressions with `calc`; the shell will interpolate them
@@ -484,16 +484,16 @@ printf '%s\n' '{"old":"existe","new":"X"}' '{"old":"ausente","new":"Y"}' \
 
 ```bash
 # Default --dry-run true: lista o que SERIA removido
-atomwrite --workspace . prune-backups --max-age 86400 .
+atomwrite --workspace . prune-backups --max-age-secs 86400 .
 
 # Remove backups mais antigos que 24 horas
-atomwrite --workspace . prune-backups --max-age 86400 --dry-run false .
+atomwrite --workspace . prune-backups --max-age-secs 86400 --dry-run false .
 
 # Mantém apenas os 3 backups mais recentes por diretório
 atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
 
 # Pipeline CI: afirma zero backups órfãos após limpeza
-atomwrite --workspace . prune-backups --max-age 0 --dry-run false . \
+atomwrite --workspace . prune-backups --max-age-secs 0 --dry-run false . \
   && fd '*.bak.*' . | wc -l | jaq -e '. == 0'
 ```
 

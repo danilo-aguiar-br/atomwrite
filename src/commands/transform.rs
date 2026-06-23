@@ -338,16 +338,22 @@ pub fn cmd_transform(
         std::panic::resume_unwind(panic_payload);
     }
 
+    let total_repl = total_replacements.load(Ordering::Relaxed);
+
     writer.write_event(&Summary {
         r#type: "summary",
         files_visited: files_visited.load(Ordering::Relaxed),
         files_matched: files_transformed.load(Ordering::Relaxed),
         files_modified: Some(files_transformed.load(Ordering::Relaxed)),
         files_skipped: Some(files_skipped.load(Ordering::Relaxed)),
-        total_matches: Some(total_replacements.load(Ordering::Relaxed)),
-        total_replacements: Some(total_replacements.load(Ordering::Relaxed)),
+        total_matches: Some(total_repl),
+        total_replacements: Some(total_repl),
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
+
+    if total_repl == 0 {
+        return Err(crate::error::AtomwriteError::NoMatches.into());
+    }
 
     Ok(())
 }

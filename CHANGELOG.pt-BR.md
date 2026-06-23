@@ -8,6 +8,37 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.26] - 2026-06-23
+
+### Correções Altas — Consistência de Exit Codes
+- GAP-141: `replace` com zero matches agora retorna exit 1 (NO_MATCHES) — antes retornava silenciosamente exit 0
+- GAP-145: `transform` com zero matches agora retorna exit 1 (NO_MATCHES) — antes retornava silenciosamente exit 0
+- GAP-146: `scope` com zero matches agora retorna exit 1 (NO_MATCHES) — antes retornava silenciosamente exit 0
+- GAP-147: `search --sort path` agora garante ordenação global determinística — antes era não-determinística com walker paralelo
+
+### Correções Médias
+- GAP-136: `read --verify-checksum` com hash errado agora retorna exit 81 (CHECKSUM_VERIFY_FAILED) — antes retornava exit 82 (STATE_DRIFT)
+- GAP-137: `get` para chave ausente agora retorna exit 4 (NOT_FOUND) — antes retornava exit 65 (INVALID_INPUT), revertendo GAP-111 da v0.1.25
+- GAP-144: Padrões de query Rust do `scope` (fn, pub-fn, async-fn, unsafe-fn, struct, pub-struct, enum, pub-enum, trait, impl) agora casam com tipos de retorno, generics e implementações de trait via padrões AST duais
+
+### Correções Baixas
+- GAP-135: Subcomando `verify` agora aceita argumentos posicionais: `verify <PATH> <HASH>` — antes exigia flag `--checksum`
+- GAP-142: `edit-loop` agora aceita entrada JSON array `[{...},{...}]` além de NDJSON (um objeto por linha)
+
+### Esclarecimentos de Documentação (BY-DESIGN)
+- GAP-138: Saída de `query --kinds` é stream NDJSON de `{type:"query_kind"}` por kind (não um objeto JSON único com array `kinds`)
+- GAP-139: `case --to <style>` requer pares `--subvert OLD NEW` (scanning global de identificadores não está implementado)
+- GAP-140: `write` com stdin vazio requer flag `--allow-empty-stdin` (guarda G120 é intencional)
+- GAP-143: Flag de `prune-backups` é `--max-age-secs` (não `--max-age`) para tornar a unidade explícita
+
+### Validação
+- `cargo test` — 631 testes passam (0 falhas, 3 ignorados)
+- `cargo clippy --all-targets -- -D warnings` — zero warnings
+- `cargo fmt --check` — zero diferenças
+- Auditoria e2e: 535 cenários em 11 rodadas contra binário real
+- 13 gaps auditados: 9 CODE resolvidos, 4 BY-DESIGN documentados
+
+
 ## [0.1.25] - 2026-06-22
 
 ### Novos Recursos

@@ -44,7 +44,7 @@
 ## O Que Há de Novo na v0.1.22
 
 - **GAP-2026-012 Frente 3 fechado** — novo sub-comando `edit-loop [PATH]` aplica N pares `{old, new}` em 1 invocação via NDJSON no stdin. Reduz 5 chamadas `edit` sequenciais (5 spawns de subprocess, 5 recapturas de checksum) para uma única escrita atômica. Suporta `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`. Veja `tests/cli_v0121_edit_loop.rs` e ADR-0039.
-- **GAP-2026-013 Frente 2 fechado** — novo sub-comando `prune-backups [PATHS]...` oferece limpeza manual de arquivos `.bak.YYYYMMDD_HHMMSS` legados da v0.1.20 e anteriores. Flags: `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (default true para segurança). Reusa `cleanup_old_backups_in` de `src/atomic.rs`. Veja `tests/cli_v0121_prune_backups.rs` e ADR-0040.
+- **GAP-2026-013 Frente 2 fechado** — novo sub-comando `prune-backups [PATHS]...` oferece limpeza manual de arquivos `.bak.YYYYMMDD_HHMMSS` legados da v0.1.20 e anteriores. Flags: `--max-age-secs <SECONDS>`, `--max-count <N>`, `--dry-run` (default true para segurança). Reusa `cleanup_old_backups_in` de `src/atomic.rs`. Veja `tests/cli_v0121_prune_backups.rs` e ADR-0040.
 - 2 novos schemas NDJSON: `edit-loop-output.schema.json` (com `pairs_total`, `pairs_applied`, `pairs_unmatched`, `pair_results[].index`, `pair_results[].matched`) e `prune-backups-output.schema.json` (com `action`, `path`, `reason`, `total`, `elapsed_ms`).
 - 32 subcomandos no total (adicionados `edit-loop` e `prune-backups` aos 30 anteriores).
 
@@ -207,7 +207,7 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - `wal-stats` -- (v0.1.18) inspeciona estado do journal WAL para telemetria e debug; escopo via `--workspace <DIR>`; relatório NDJSON com `terminal_committed`, `terminal_aborted`, `total_bytes`, `oldest_age_secs`
 - `wal-heal` -- (v0.1.18) remove journals terminais órfãos mais antigos que `--threshold-secs` (padrão 3600s); budget de wall-clock via `--max-duration-ms` (padrão 100ms)
 - `edit-loop` -- (v0.1.22) aplica N pares `{old, new}` em 1 invocação via NDJSON no stdin; suporta `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`
-- `prune-backups` -- (v0.1.22) limpeza manual de arquivos `.bak.YYYYMMDD_HHMMSS` legados (v0.1.20 e anteriores); flags `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` para segurança); saída NDJSON com `path`, `reason`, `action`, `total`
+- `prune-backups` -- (v0.1.22) limpeza manual de arquivos `.bak.YYYYMMDD_HHMMSS` legados (v0.1.20 e anteriores); flags `--max-age-secs <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` para segurança); saída NDJSON com `path`, `reason`, `action`, `total`
 
 
 ## OBRIGATÓRIO -- Contrato de Saída
@@ -468,16 +468,16 @@ printf '%s\n' '{"old":"existe","new":"X"}' '{"old":"ausente","new":"Y"}' \
 
 ```bash
 # Default --dry-run true: lista o que SERIA removido
-atomwrite --workspace . prune-backups --max-age 86400 .
+atomwrite --workspace . prune-backups --max-age-secs 86400 .
 
 # Remove backups mais antigos que 24 horas
-atomwrite --workspace . prune-backups --max-age 86400 --dry-run false .
+atomwrite --workspace . prune-backups --max-age-secs 86400 --dry-run false .
 
 # Mantém apenas os 3 backups mais recentes por diretório
 atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
 
 # Pipeline CI: afirma zero backups órfãos após limpeza
-atomwrite --workspace . prune-backups --max-age 0 --dry-run false . \
+atomwrite --workspace . prune-backups --max-age-secs 0 --dry-run false . \
   && fd '*.bak.*' . | wc -l | jaq -e '. == 0'
 ```
 

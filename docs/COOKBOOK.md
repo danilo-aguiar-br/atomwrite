@@ -1021,16 +1021,16 @@ printf '%s\n' '{"old":"exists","new":"X"}' '{"old":"absent","new":"Y"}' \
 
 ```bash
 # Default --dry-run true: list what WOULD be removed
-atomwrite --workspace . prune-backups --max-age 86400 .
+atomwrite --workspace . prune-backups --max-age-secs 86400 .
 
 # Remove backups older than 24 hours
-atomwrite --workspace . prune-backups --max-age 86400 --dry-run false .
+atomwrite --workspace . prune-backups --max-age-secs 86400 --dry-run false .
 
 # Keep only the 3 most recent backups per directory
 atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
 
 # CI pipeline: assert zero backup orphans after cleanup
-atomwrite --workspace . prune-backups --max-age 0 --dry-run false . \
+atomwrite --workspace . prune-backups --max-age-secs 0 --dry-run false . \
   && fd '*.bak.*' . | wc -l | jaq -e '. == 0'
 ```
 

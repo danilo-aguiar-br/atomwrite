@@ -469,7 +469,7 @@ atomwrite get package.json scripts.build
 - If the key is missing, returns `{"found": false, "value": null}`
 - TOML dotted path: `dependencies.serde.features[0]`
 - JSON pointer (RFC 6901): `/dependencies/serde/features/0`
-- Exit 0 even when key is missing; use `found` field to detect
+- Exit 4 when key is missing (v0.1.26 GAP-137; was exit 0 in v0.1.24, exit 65 in v0.1.25)
 
 ### del
 - Remove a key at a dotted path in a TOML or JSON file
@@ -752,17 +752,17 @@ This release adds 2 new subcommands to address the legacy backup cleanup and the
 ### `prune-backups` Subcommand
 
 - Manual cleanup of `.bak.YYYYMMDD_HHMMSS` siblings left by v0.1.20-era `--backup` operations
-- Flags: `--max-age <SECONDS>` (delete older than N), `--max-count <N>` (keep at most N most-recent), `--dry-run` (default `true` for safety)
+- Flags: `--max-age-secs <SECONDS>` (delete older than N), `--max-count <N>` (keep at most N most-recent), `--dry-run` (default `true` for safety)
 - NDJSON output: one line per backup (`path`, `age_secs`, `size_bytes`, `action`) plus a `summary` line
 - Exit 0 (scan complete), 1 (NO_MATCHES), 65 (precondition failed)
-- Refuses to run without `--max-age` or `--max-count` (VAI-PSIQUE-CHECK)
+- Refuses to run without `--max-age-secs` or `--max-count` (VAI-PSIQUE-CHECK)
 
 ```bash
 # List backups that would be removed (default --dry-run true)
-atomwrite --workspace . prune-backups --max-age 86400 .
+atomwrite --workspace . prune-backups --max-age-secs 86400 .
 
 # Actually remove backups older than 24 hours
-atomwrite --workspace . prune-backups --max-age 86400 --dry-run false .
+atomwrite --workspace . prune-backups --max-age-secs 86400 --dry-run false .
 
 # Keep only the 3 most recent backups per directory
 atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
@@ -805,7 +805,7 @@ This release resolves 49 gaps (GAP-071 through GAP-134) discovered in 6 rounds o
 
 ```bash
 # Verify a file checksum against an expected BLAKE3 hash
-atomwrite --workspace . verify src/main.rs --checksum abc123def456
+atomwrite --workspace . verify src/main.rs abc123def456
 # Exit 0 on match, exit 81 on mismatch
 ```
 

@@ -48,10 +48,9 @@ pub fn cmd_read(
     if let Some(ref expected) = args.verify_checksum {
         let verified = &hash == expected;
         if !verified {
-            return Err(AtomwriteError::StateDrift {
+            return Err(AtomwriteError::ChecksumVerifyFailed {
                 path: path.clone(),
                 expected: expected.clone(),
-                actual: hash,
             }
             .into());
         }

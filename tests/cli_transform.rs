@@ -87,7 +87,13 @@ fn transform_no_match_produces_summary_only() {
         .output()
         .expect("run");
 
-    assert!(output.status.success());
+    // GAP-145: transform with zero matches now returns exit 1 (NO_MATCHES)
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "transform with zero matches should return exit 1 (NO_MATCHES): {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let events = common::parse_ndjson(&output.stdout);
 
     let transformed: Vec<_> = events

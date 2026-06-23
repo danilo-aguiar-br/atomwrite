@@ -78,9 +78,46 @@ Todas aditivas. Nenhuma dependência existente removida.
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 
 ## Versão Atual
-- atomwrite está na v0.1.25
-- Este documento cobre migração de v0.1.0 a v0.1.25
+- atomwrite está na v0.1.26
+- Este documento cobre migração de v0.1.0 a v0.1.26
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
+
+
+## v0.1.25 para v0.1.26 (2026-06-23)
+
+### Correções de Bugs (Podem Afetar Comportamento)
+
+- `replace` com zero matches agora retorna exit 1 (`NO_MATCHES`) em vez de exit 0 (GAP-141)
+- `transform` com zero matches agora retorna exit 1 (`NO_MATCHES`) em vez de exit 0 (GAP-145)
+- `scope` com zero matches agora retorna exit 1 (`NO_MATCHES`) em vez de exit 0 (GAP-146)
+- `read --verify-checksum` com hash errado agora retorna exit 81 (`CHECKSUM_VERIFY_FAILED`) em vez de exit 82 (GAP-136)
+- `get` para chave ausente REVERTIDO para exit 4 (`FILE_NOT_FOUND`) — reverte a mudança da v0.1.25 GAP-111 para exit 65 (GAP-137)
+- `search --sort path` agora garante ordenação global determinística via buffer BTreeMap (GAP-147)
+- Queries Rust do `scope` agora usam padrões AST duais para capturar generics e return types (GAP-144)
+- Checksum do `verify` agora é argumento posicional: `verify <PATH> <HASH>` (GAP-135)
+- `edit-loop` agora aceita input JSON array além de NDJSON (GAP-142)
+
+### Esclarecimentos de Documentação (BY-DESIGN)
+
+- Output do `query --kinds` é NDJSON stream (um objeto por kind), não array JSON único (GAP-138)
+- `case` requer `--subvert OLD NEW` — scanning global não implementado (GAP-139)
+- `write` com stdin vazio requer flag `--allow-empty-stdin` (GAP-140)
+- Flag do `prune-backups` é `--max-age-secs` (não `--max-age`) para explicitar unidade (GAP-143)
+
+### Ação de Migração
+
+- Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.26"`
+- Se parseia exit codes de `get` para chave ausente: exit agora é 4 (era 65 na v0.1.25, era 4 na v0.1.24)
+- Se verifica exit codes de `replace`/`transform`/`scope`: zero matches agora retorna exit 1 (era exit 0)
+- Se usa `verify --checksum <HASH>`: mude para posicional `verify <PATH> <HASH>`
+- Se usa `prune-backups --max-age`: mude para `--max-age-secs`
+- MSRV inalterado em Rust 1.88
+
+### Cobertura de Testes
+
+- 631+ testes passando
+- 13 gaps resolvidos (9 CODE + 4 BY-DESIGN) em 5 rodadas de auditoria
+- Veja `gaps.md` para a auditoria completa
 
 
 ## v0.1.24 para v0.1.25 (2026-06-22)
@@ -761,7 +798,7 @@ Esta release adiciona 2 novos sub-comandos para fechar o último GAP-2026-012 e 
 ### Sub-comandos Adicionados
 
 - **`prune-backups [PATHS]...`** — limpeza manual de backups `.bak.YYYYMMDD_HHMMSS` legados
-  - Flags: `--max-age <SECONDS>` (deleta backups mais antigos que N segundos), `--max-count <N>` (mantém N mais recentes), `--dry-run` (lista sem deletar; default `true` para segurança)
+  - Flags: `--max-age-secs <SECONDS>` (deleta backups mais antigos que N segundos), `--max-count <N>` (mantém N mais recentes), `--dry-run` (lista sem deletar; default `true` para segurança)
   - Saída NDJSON com `scanned`, `deleted`, `kept`, `elapsed_ms`, `dry_run`
   - Exit 0 em scan completo, 1 se nenhum backup encontrado, 65 em falha de precondição
   - Veja `docs/decisions/0040-prune-backups-subcommand.md`

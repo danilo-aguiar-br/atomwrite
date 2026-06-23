@@ -8,6 +8,37 @@
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.26] - 2026-06-23
+
+### Bug Fixes (High) — Exit Code Consistency
+- GAP-141: `replace` with zero matches now returns exit 1 (NO_MATCHES) — was silently returning exit 0
+- GAP-145: `transform` with zero matches now returns exit 1 (NO_MATCHES) — was silently returning exit 0
+- GAP-146: `scope` with zero matches now returns exit 1 (NO_MATCHES) — was silently returning exit 0
+- GAP-147: `search --sort path` now guarantees deterministic global ordering — was non-deterministic with parallel walker
+
+### Bug Fixes (Medium)
+- GAP-136: `read --verify-checksum` with wrong hash now returns exit 81 (CHECKSUM_VERIFY_FAILED) — was returning exit 82 (STATE_DRIFT)
+- GAP-137: `get` for missing key now returns exit 4 (NOT_FOUND) — was returning exit 65 (INVALID_INPUT), reverting GAP-111 from v0.1.25
+- GAP-144: `scope` Rust query patterns (fn, pub-fn, async-fn, unsafe-fn, struct, pub-struct, enum, pub-enum, trait, impl) now match return types, generics, and trait implementations via dual AST patterns
+
+### Bug Fixes (Low)
+- GAP-135: `verify` subcommand now takes positional arguments: `verify <PATH> <HASH>` — was requiring `--checksum` flag
+- GAP-142: `edit-loop` now accepts JSON array input `[{...},{...}]` in addition to NDJSON (one object per line)
+
+### Documentation Clarifications (BY-DESIGN)
+- GAP-138: `query --kinds` output is NDJSON stream of `{type:"query_kind"}` per kind (not a single JSON object with `kinds` array)
+- GAP-139: `case --to <style>` requires `--subvert OLD NEW` pairs (global identifier scanning is not implemented)
+- GAP-140: `write` with empty stdin requires `--allow-empty-stdin` flag (guard G120 is intentional)
+- GAP-143: `prune-backups` flag is `--max-age-secs` (not `--max-age`) to make the unit explicit
+
+### Validation
+- `cargo test` — 631 tests pass (0 failures, 3 ignored)
+- `cargo clippy --all-targets -- -D warnings` — zero warnings
+- `cargo fmt --check` — zero diffs
+- E2E audit: 535 scenarios across 11 rounds against real binary
+- 13 gaps audited: 9 CODE resolved, 4 BY-DESIGN documented
+
+
 ## [0.1.25] - 2026-06-22
 
 ### New Features

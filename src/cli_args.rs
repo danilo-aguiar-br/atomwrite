@@ -64,7 +64,6 @@ pub struct VerifyArgs {
     pub path: PathBuf,
 
     /// Expected BLAKE3 checksum.
-    #[arg(long, short = 'c', required = true)]
     pub checksum: String,
 }
 

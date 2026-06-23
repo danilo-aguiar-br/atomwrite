@@ -2,12 +2,11 @@
 
 > Atomic file operations for LLM agents — one CLI, zero corruption
 
-atomwrite is a Rust CLI that provides 28 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
+atomwrite is a Rust CLI that provides 33 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
-**Latest release: v0.1.22** (2026-06-17) — 2 new subcommands (`edit-loop` for N pairs in 1 invocation via NDJSON; `prune-backups` for manual cleanup of legacy `.bak.*` files with `--max-age`, `--max-count`, `--dry-run`), 16+ new regression tests, ADRs 0039 and 0040, 2 new NDJSON schemas (`edit-loop-output`, `prune-backups-output`), 575+ tests, 32 subcommands total. Highlights (v0.1.21, 2026-06-17): 3 GAP-2026 closures (012 sequential drift via `--allow-sequential-drift`, 013 Problem C `--backup` parity across 4 subcommands, 014 v2 `--keep-backup` deletes-after-success default), 555+ tests, ADR-0038 (backup cumprido deleta), new `--keep-backup` flag on 6 subcommands (write, edit, replace, rollback, apply, batch), `--allow-sequential-drift` on `edit` for sequential pipelines. Highlights (v0.1.20, 2026-06-15): 11 GAP-2026 closed, intention guards (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`), `--locale` rename (was `--lang`), 542 tests in 47 suites, ADRs 0031-0037. See `CHANGELOG.md` for full release notes and `docs/decisions/` for the ADRs (0019-0040).
-**Latest release: v0.1.20** (2026-06-15) — 11 GAP-2026 closed, intention guards (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`), `--locale` rename (was `--lang`), `count --by-size`, `read --mode`, `search --no-begin-end`, `write --preserve-timestamps`, `scope --lang` alias, 542 tests in 47 suites, ADRs 0031-0037. Highlights (v0.1.19, 2026-06-14): G121 path resolution helper, real S-expression query, 7 exit code documentation drifts consolidated. See `CHANGELOG.md` for full release notes and `docs/decisions/` for the ADRs (0019-0037).
+**Latest release: v0.1.26** (2026-06-23) — 9 bug fixes (GAP-135 to GAP-147): exit code consistency for replace/transform/scope zero-matches (exit 1), search --sort path deterministic ordering, read --verify-checksum exit 81, get missing key exit 4, scope dual AST patterns for Rust generics/return types, verify positional args, edit-loop JSON array input. 4 documentation clarifications (BY-DESIGN). 631+ tests, 33 subcommands. See `CHANGELOG.md` for full notes.
 
-**Previous release: v0.1.19** (2026-06-14) — G121 path resolution helper that unifies jail resolution across all write subcommands; real S-expression `query` mode via `tree-sitter`; consolidation of 7 exit code documentation drifts to match the canonical list (ADR-0031).
+**Previous release: v0.1.25** (2026-06-22) — .atomwrite.toml config file, verify subcommand, Jaro-Winkler fuzzy matching, 49 bug fixes, 631 tests. See `CHANGELOG.md`.
 
 ## Installation
 
@@ -17,7 +16,7 @@ cargo install atomwrite
 
 Parsers for 305 languages are NOT bundled; they are downloaded on first use by `tree-sitter-language-pack` and cached in `~/.cache/tree-sitter-language-pack/parsers/`. Install footprint stays small (~5-10 MB vs 1+ GB if all 305 parsers were bundled).
 
-## 28 Subcommands
+## 33 Subcommands
 
 ### Core I/O
 - `read` -- read files with metadata, checksum, optional content. `--mode raw|envelope` selects byte-stream vs NDJSON envelope (v0.1.20)
@@ -48,6 +47,17 @@ Parsers for 305 languages are NOT bundled; they are downloaded on first use by `
 - `backup` -- create timestamped backups with BLAKE3 checksums
 - `rollback` -- restore from a previous backup
 - `batch` -- NDJSON-driven batch operations (transactional)
+
+### Batch helpers (v0.1.22)
+- `edit-loop` -- N edits in 1 invocation via JSON array or NDJSON stdin
+- `prune-backups` -- manual cleanup of legacy `.bak.*` files with `--max-age-secs`, `--max-count`
+
+### WAL diagnostics (v0.1.15)
+- `wal-stats` -- snapshot of WAL journal state (counts, ages, sizes)
+- `wal-heal` -- remove orphan terminal journals older than threshold
+
+### Verification (v0.1.25)
+- `verify <PATH> <HASH>` -- verify BLAKE3 checksum of a file (delegates to `hash --verify`)
 
 ### Structured config editors (v14 Tier 3, v0.1.12)
 - `set <PATH> <KEY_PATH> <VALUE>` -- write a value at a dotted path in a TOML or JSON file. Preserves comments and key order via `toml_edit`. Auto-coerces int/bool/float/string.
@@ -151,7 +161,7 @@ Every command outputs **NDJSON** (one JSON object per line) to stdout. The last 
 ## Exit Codes
 
 - 0: success
-- 1: no matches (search) / zero results
+- 1: no matches (search, replace, transform, scope) / zero results
 - 4: file not found
 - 13: permission denied
 - 28: disk full

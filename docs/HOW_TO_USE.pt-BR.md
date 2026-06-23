@@ -471,10 +471,10 @@ atomwrite get Cargo.toml package.version
 atomwrite get package.json scripts.build
 ```
 
-- Se a chave estiver ausente, retorna `{"found": false, "value": null}`
+- Se a chave estiver ausente, retorna exit 4 (`FILE_NOT_FOUND`) com envelope de erro NDJSON
 - Caminho dotted TOML: `dependencies.serde.features[0]`
 - Pointer JSON (RFC 6901): `/dependencies/serde/features/0`
-- Exit 0 mesmo quando a chave está ausente; use o campo `found` para detectar
+- Exit 4 quando a chave está ausente (v0.1.26 GAP-137; era exit 0 na v0.1.24, exit 65 na v0.1.25)
 
 ### del
 - Remove uma chave em um caminho dotted em um arquivo TOML ou JSON
@@ -719,17 +719,17 @@ Esta release adiciona 2 novos sub-comandos para cobrir limpeza manual de backups
 ### Sub-comando `prune-backups`
 
 - Limpeza manual de siblings `.bak.YYYYMMDD_HHMMSS` deixados por operações `--backup` da era v0.1.20
-- Flags: `--max-age <SECONDS>` (deleta mais antigos que N), `--max-count <N>` (mantém no máximo N mais recentes), `--dry-run` (default `true` para segurança)
+- Flags: `--max-age-secs <SECONDS>` (deleta mais antigos que N), `--max-count <N>` (mantém no máximo N mais recentes), `--dry-run` (default `true` para segurança)
 - Saída NDJSON: uma linha por backup (`path`, `age_secs`, `size_bytes`, `action`) mais uma linha `summary`
 - Saída 0 (scan completo), 1 (NO_MATCHES), 65 (precondição falhou)
-- Recusa rodar sem `--max-age` ou `--max-count` (VAI-PSIQUE-CHECK)
+- Recusa rodar sem `--max-age-secs` ou `--max-count` (VAI-PSIQUE-CHECK)
 
 ```bash
 # Listar backups que seriam removidos (default --dry-run true)
-atomwrite --workspace . prune-backups --max-age 86400 .
+atomwrite --workspace . prune-backups --max-age-secs 86400 .
 
 # Remover de fato backups mais antigos que 24 horas
-atomwrite --workspace . prune-backups --max-age 86400 --dry-run false .
+atomwrite --workspace . prune-backups --max-age-secs 86400 --dry-run false .
 
 # Manter apenas os 3 backups mais recentes por diretório
 atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
@@ -772,7 +772,7 @@ Esta release resolve 49 gaps (GAP-071 a GAP-134) descobertos em 6 rodadas de aud
 
 ```bash
 # Verificar checksum de arquivo contra hash BLAKE3 esperado
-atomwrite --workspace . verify src/main.rs --checksum abc123def456
+atomwrite --workspace . verify src/main.rs abc123def456
 # Exit 0 em match, exit 81 em mismatch
 ```
 

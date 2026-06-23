@@ -373,6 +373,13 @@ pub fn cmd_scope(
     };
 
     writer.write_event(&summary)?;
+
+    if files_modified.load(Ordering::Relaxed) == 0
+        && files_skipped.load(Ordering::Relaxed) == files_visited.load(Ordering::Relaxed)
+    {
+        return Err(crate::error::AtomwriteError::NoMatches.into());
+    }
+
     Ok(())
 }
 
@@ -501,16 +508,43 @@ fn lookup_rust_queries(name: &str) -> Result<Vec<String>> {
     let qs: Vec<&str> = match name {
         "comments" => vec!["// $$BODY\\s*", "/* $$$BODY */"],
         "strings" => vec!["\"$$$BODY\""],
-        "fn" => vec!["fn $NAME($$$ARGS) { $$$BODY }"],
-        "pub-fn" => vec!["pub fn $NAME($$$ARGS) { $$$BODY }"],
-        "async-fn" => vec!["async fn $NAME($$$ARGS) { $$$BODY }"],
-        "unsafe-fn" => vec!["unsafe fn $NAME($$$ARGS) { $$$BODY }"],
-        "struct" => vec!["struct $NAME { $$$FIELDS }"],
-        "pub-struct" => vec!["pub struct $NAME { $$$FIELDS }"],
-        "enum" => vec!["enum $NAME { $$$VARIANTS }"],
-        "pub-enum" => vec!["pub enum $NAME { $$$VARIANTS }"],
-        "trait" => vec!["trait $NAME { $$$BODY }"],
-        "impl" => vec!["impl $TYPE { $$$BODY }"],
+        "fn" => vec![
+            "fn $NAME($$$ARGS) -> $RET { $$$BODY }",
+            "fn $NAME($$$ARGS) { $$$BODY }",
+        ],
+        "pub-fn" => vec![
+            "pub fn $NAME($$$ARGS) -> $RET { $$$BODY }",
+            "pub fn $NAME($$$ARGS) { $$$BODY }",
+        ],
+        "async-fn" => vec![
+            "async fn $NAME($$$ARGS) -> $RET { $$$BODY }",
+            "async fn $NAME($$$ARGS) { $$$BODY }",
+        ],
+        "unsafe-fn" => vec![
+            "unsafe fn $NAME($$$ARGS) -> $RET { $$$BODY }",
+            "unsafe fn $NAME($$$ARGS) { $$$BODY }",
+        ],
+        "struct" => vec![
+            "struct $NAME<$$$GEN> { $$$FIELDS }",
+            "struct $NAME { $$$FIELDS }",
+        ],
+        "pub-struct" => vec![
+            "pub struct $NAME<$$$GEN> { $$$FIELDS }",
+            "pub struct $NAME { $$$FIELDS }",
+        ],
+        "enum" => vec![
+            "enum $NAME<$$$GEN> { $$$VARIANTS }",
+            "enum $NAME { $$$VARIANTS }",
+        ],
+        "pub-enum" => vec![
+            "pub enum $NAME<$$$GEN> { $$$VARIANTS }",
+            "pub enum $NAME { $$$VARIANTS }",
+        ],
+        "trait" => vec!["trait $NAME<$$$GEN> { $$$BODY }", "trait $NAME { $$$BODY }"],
+        "impl" => vec![
+            "impl $TRAIT for $TYPE { $$$BODY }",
+            "impl $TYPE { $$$BODY }",
+        ],
         "mod" => vec!["mod $NAME { $$$BODY }"],
         "closure" => vec!["|$$$ARGS| $$$BODY"],
         "unsafe" => vec!["unsafe { $$$BODY }"],
@@ -668,8 +702,12 @@ mod tests {
         let result = lookup_rust_queries("fn");
         assert!(result.is_ok());
         let qs = result.unwrap();
-        assert_eq!(qs.len(), 1);
-        assert!(qs[0].contains("fn $NAME"));
+        assert_eq!(
+            qs.len(),
+            2,
+            "fn should produce 2 patterns (with and without return type)"
+        );
+        assert!(qs.iter().all(|q| q.contains("fn $NAME")));
     }
 
     #[test]

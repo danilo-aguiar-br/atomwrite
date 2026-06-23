@@ -78,9 +78,46 @@ All additive. No existing dependency removed.
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
 ## Current Version
-- atomwrite is at v0.1.25
-- This document covers migration from v0.1.0 through v0.1.25
+- atomwrite is at v0.1.26
+- This document covers migration from v0.1.0 through v0.1.26
 - See the sections below for additive changes and breaking changes in each version
+
+
+## v0.1.25 to v0.1.26 (2026-06-23)
+
+### Bug Fixes (May Affect Behavior)
+
+- `replace` with zero matches now returns exit 1 (`NO_MATCHES`) instead of exit 0 (GAP-141)
+- `transform` with zero matches now returns exit 1 (`NO_MATCHES`) instead of exit 0 (GAP-145)
+- `scope` with zero matches now returns exit 1 (`NO_MATCHES`) instead of exit 0 (GAP-146)
+- `read --verify-checksum` with wrong hash now returns exit 81 (`CHECKSUM_VERIFY_FAILED`) instead of exit 82 (GAP-136)
+- `get` for missing key REVERTED to exit 4 (`FILE_NOT_FOUND`) — reverses v0.1.25 GAP-111 change to exit 65 (GAP-137)
+- `search --sort path` now guarantees deterministic global ordering via BTreeMap buffer (GAP-147)
+- `scope` Rust queries now use dual AST patterns to capture generics and return types (GAP-144)
+- `verify` checksum is now a positional argument: `verify <PATH> <HASH>` (GAP-135)
+- `edit-loop` now accepts JSON array input in addition to NDJSON (GAP-142)
+
+### Documentation Clarifications (BY-DESIGN)
+
+- `query --kinds` output is NDJSON stream (one object per kind), not single JSON array (GAP-138)
+- `case` requires `--subvert OLD NEW` — global scanning not implemented (GAP-139)
+- `write` with empty stdin requires `--allow-empty-stdin` flag (GAP-140)
+- `prune-backups` flag is `--max-age-secs` (not `--max-age`) to make unit explicit (GAP-143)
+
+### Migration Action
+
+- Update version pin: `cargo install atomwrite --locked --version "^0.1.26"`
+- If you parse `get` exit codes for missing keys: exit is now 4 (was 65 in v0.1.25, was 4 in v0.1.24)
+- If you check `replace`/`transform`/`scope` exit codes: zero matches now returns exit 1 (was exit 0)
+- If you use `verify --checksum <HASH>`: change to positional `verify <PATH> <HASH>`
+- If you use `prune-backups --max-age`: change to `--max-age-secs`
+- MSRV unchanged at Rust 1.88
+
+### Test Coverage
+
+- 631+ tests passing
+- 13 gaps resolved (9 CODE + 4 BY-DESIGN) across 5 audit rounds
+- See `gaps.md` for the full audit
 
 
 ## v0.1.24 to v0.1.25 (2026-06-22)
@@ -385,7 +422,7 @@ atomwrite v0.1.2 now compiles on macOS arm64 (Apple Silicon) and macOS x86_64. T
 - Performance improvements
 
 ### Planned Stabilizations for 1.0
-- NDJSON output schemas for all 30 subcommands
+- NDJSON output schemas for all 33 subcommands
 - Exit code assignments
 - Error code strings (`FILE_NOT_FOUND`, `STATE_DRIFT`, etc)
 - Global flag names and behavior
@@ -729,7 +766,7 @@ For the complete migration guide, see `docs/MIGRATION-v0.1.21-to-v0.1.22.md`.
 ### Subcommands Added
 
 - **`prune-backups [PATHS]...`** — manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` siblings
-  - Flags: `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` for safety)
+  - Flags: `--max-age-secs <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` for safety)
   - NDJSON output with per-backup lines and summary
   - Exit 0 (scan complete), 1 (NO_MATCHES), 65 (precondition failed)
 - **`edit-loop <PATH>`** — apply N `{old, new}` substitution pairs in 1 invocation via NDJSON on stdin

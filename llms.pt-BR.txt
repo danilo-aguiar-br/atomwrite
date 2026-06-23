@@ -2,13 +2,13 @@
 
 > Operações atômicas de arquivo para agentes LLM — um CLI, zero corrupção
 
-atomwrite é um CLI Rust que fornece 28 subcomandos para manipulação de arquivos com garantias de escrita atômica. Toda escrita usa tempfile + fsync + rename + fsync do diretório. Toda resposta é NDJSON com checksums BLAKE3. Construído para agentes LLM que precisam de operações de arquivo confiáveis e estruturadas sem risco de corrupção.
+atomwrite é um CLI Rust que fornece 33 subcomandos para manipulação de arquivos com garantias de escrita atômica. Toda escrita usa tempfile + fsync + rename + fsync do diretório. Toda resposta é NDJSON com checksums BLAKE3. Construído para agentes LLM que precisam de operações de arquivo confiáveis e estruturadas sem risco de corrupção.
 
-**Release mais recente: v0.1.22** (2026-06-17) — 2 novos sub-comandos (`edit-loop` para N pares em 1 invocação via NDJSON; `prune-backups` para limpeza manual de arquivos `.bak.*` legados com `--max-age`, `--max-count`, `--dry-run`), 16+ novos testes de regressão, ADRs 0039 e 0040, 2 novos schemas NDJSON (`edit-loop-output`, `prune-backups-output`), 575+ testes, 32 sub-comandos totais. Destaques anteriores (v0.1.21, 2026-06-17): 3 fechamentos de GAP-2026 (012 drift sequencial via `--allow-sequential-drift`, 013 Problema C paridade `--backup` em 4 sub-comandos, 014 v2 `--keep-backup` deleta-após-sucesso como default), 555+ testes, ADR-0038 (backup cumprido deleta), nova flag `--keep-backup` em 6 sub-comandos (write, edit, replace, rollback, apply, batch), `--allow-sequential-drift` em `edit` para pipelines sequenciais. Destaques anteriores (v0.1.20, 2026-06-15): 11 GAP-2026 fechados, intention guards (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`), renomeação `--locale` (era `--lang`), `count --by-size`, `read --mode`, `search --no-begin-end`, `write --preserve-timestamps`, alias `scope --lang`, 542 testes em 47 suites, ADRs 0031-0037. Veja `CHANGELOG.pt-BR.md` para as notas completas e `docs/decisions/` para os ADRs (0019-0040).
+**Release mais recente: v0.1.26** (2026-06-23) — 9 correções de bugs (GAP-135 a GAP-147): consistência de exit codes para replace/transform/scope zero-matches (exit 1), search --sort path ordenação determinística, read --verify-checksum exit 81, get chave ausente exit 4, scope padrões AST duais para generics/return types Rust, verify args posicionais, edit-loop input JSON array. 4 esclarecimentos de documentação (BY-DESIGN). 631+ testes, 33 subcomandos. Veja `CHANGELOG.pt-BR.md` para notas completas.
 
-**Release anterior: v0.1.19** (2026-06-14) — Helper de resolução de caminho G121 que unifica a resolução do jail em todos os subcomandos de escrita; modo `query` S-expression real via `tree-sitter`; consolidação de 7 derivas de documentação de exit codes para casar com a lista canônica (ADR-0031).
+**Release anterior: v0.1.25** (2026-06-22) — Arquivo de configuração .atomwrite.toml, subcomando verify, fuzzy matching Jaro-Winkler, 49 correções, 631 testes. Veja `CHANGELOG.pt-BR.md`.
 
-## 28 Subcomandos
+## 33 Subcomandos
 
 ### I/O Principal (7)
 - `read` — ler arquivos com metadados, checksum, conteúdo opcional. `--mode raw|envelope` seleciona byte-stream vs envelope NDJSON
@@ -39,6 +39,17 @@ atomwrite é um CLI Rust que fornece 28 subcomandos para manipulação de arquiv
 - `backup` — criar backups com timestamp com checksums BLAKE3
 - `rollback` — restaurar de um backup anterior
 - `batch` — operações em lote dirigidas por NDJSON (transacional)
+
+### Helpers de lote (2)
+- `edit-loop` — N edições em 1 invocação via JSON array ou NDJSON stdin
+- `prune-backups` — limpeza manual de arquivos `.bak.*` legados com `--max-age-secs`, `--max-count`
+
+### Diagnóstico WAL (2)
+- `wal-stats` — snapshot do estado dos journals WAL (contagens, idades, tamanhos)
+- `wal-heal` — remover journals terminais órfãos mais antigos que o threshold
+
+### Verificação (1)
+- `verify <PATH> <HASH>` — verificar checksum BLAKE3 de um arquivo (delega para `hash --verify`)
 
 ### Editores estruturados de configuração (v14 Tier 3, v0.1.12) (4)
 - `set <PATH> <KEY_PATH> <VALUE>` — escrever um valor em um caminho dotted em um arquivo TOML ou JSON. Preserva comentários e ordem das chaves via `toml_edit`. Auto-coage int/bool/float/string.
@@ -78,7 +89,7 @@ Além da verificação de sintaxe G72 em `write --syntax-check` (24 linguagens, 
 
 ## Documentação Principal
 
-- [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.pt-BR.md): Documentação completa com todos os 28 comandos e exemplos
+- [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.pt-BR.md): Documentação completa com todos os 33 subcomandos e exemplos
 - [HOW_TO_USE](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/HOW_TO_USE.pt-BR.md): Guia de início rápido
 - [COOKBOOK](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/COOKBOOK.pt-BR.md): Receitas para tarefas comuns
 - [AGENTS](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.pt-BR.md): Arquivo de descoberta de agente com contrato de saída e budget de tokens
@@ -89,7 +100,7 @@ Além da verificação de sintaxe G72 em `write --syntax-check` (24 linguagens, 
 - [CHANGELOG](https://github.com/daniloaguiarbr/atomwrite/blob/main/CHANGELOG.pt-BR.md): Histórico de releases
 - [CONTRIBUTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/CONTRIBUTING.pt-BR.md): Setup de desenvolvimento e diretrizes
 - [SECURITY](https://github.com/daniloaguiarbr/atomwrite/blob/main/SECURITY.pt-BR.md): Reporte de vulnerabilidades
-- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 22 ADRs (decisões arquiteturais da v0.1.12 + v0.1.19 + v0.1.20 + v0.1.21 + v0.1.22)
-- [docs/schemas/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/schemas/): 24 contratos estáveis de JSON Schema
+- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 29 ADRs (0019-0047, decisões arquiteturais da v0.1.12 até v0.1.24)
+- [docs/schemas/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/schemas/): 29 contratos estáveis de JSON Schema
 - [Crates.io](https://crates.io/crates/atomwrite): Registro de pacotes
 - [Repositório](https://github.com/daniloaguiarbr/atomwrite): Código-fonte
