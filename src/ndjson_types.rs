@@ -36,6 +36,9 @@ pub struct WriteOutput {
     pub wal_policy: &'static str,
     /// Platform-specific fsync methods used.
     pub platform: PlatformInfo,
+    /// Whether the original mtime was preserved (--preserve-timestamps).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mtime_preserved: Option<bool>,
     /// GAP-2026-011 L6: risk telemetry for size-delta warnings. Omitted
     /// when the write is below the configured risk threshold (default
     /// 50% delta) and no other guard was triggered.
@@ -52,8 +55,8 @@ pub struct WriteRiskAssessment {
     pub original_bytes: u64,
     /// New file size after the write.
     pub new_bytes: u64,
-    /// |new - original| / original * 100, clamped to u8.
-    pub size_delta_pct: u8,
+    /// |new - original| / original * 100.
+    pub size_delta_pct: u32,
     /// "low" (<70%) | "medium" (70-89%) | "high" (>=90%).
     pub risk_level: &'static str,
     /// Which guard triggered the assessment (always "size" for L1).
@@ -324,6 +327,9 @@ pub struct EditOutput {
     /// Similarity score of the fuzzy match, 0.0-1.0 (only present for `block_anchor` strategy).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub similarity: Option<f64>,
+    /// Unified diff preview showing what the fuzzy match changed (truncated to 500 chars).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff_preview: Option<String>,
     /// Total number of `--old`/`--new` pairs requested (multi-pair mode only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pairs_total: Option<u64>,
@@ -660,7 +666,8 @@ pub struct HashOutput {
     pub source: Option<&'static str>,
     /// Hash algorithm name.
     pub algorithm: &'static str,
-    /// Computed hash value.
+    /// Computed hash value (GAP-107: renamed to `checksum` for schema consistency).
+    #[serde(rename = "checksum")]
     pub value: String,
     /// File size in bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -704,6 +711,9 @@ pub struct MoveOutput {
     pub cross_device: bool,
     /// Whether the operation was atomic.
     pub atomic: bool,
+    /// Path to backup file, if created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_path: Option<String>,
     /// Duration in milliseconds.
     pub elapsed_ms: u64,
 }
@@ -1027,6 +1037,7 @@ mod tests {
                 fsync: "sync_data",
                 dir_fsync: "sync_all",
             },
+            mtime_preserved: None,
             risk_assessment: None,
         };
         assert_valid_ndjson_object(&val);
@@ -1099,6 +1110,7 @@ mod tests {
             strategy: Some("block_anchor".into()),
             strategies_tried: Some(8),
             similarity: Some(0.95),
+            diff_preview: None,
             pairs_total: Some(2),
             pair_results: Some(vec![PairResult {
                 index: 1,
@@ -1146,6 +1158,7 @@ mod tests {
                 fsync: "sync_data",
                 dir_fsync: "best_effort",
             },
+            mtime_preserved: None,
             risk_assessment: None,
         };
         let json = serde_json::to_value(&val).unwrap();
@@ -1398,6 +1411,7 @@ mod tests {
             checksum: "mhash".into(),
             cross_device: false,
             atomic: true,
+            backup_path: None,
             elapsed_ms: 3,
         };
         assert_valid_ndjson_object(&val);

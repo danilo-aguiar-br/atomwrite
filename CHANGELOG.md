@@ -8,6 +8,74 @@
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.25] - 2026-06-22
+
+### New Features
+- GAP-072: `.atomwrite.toml` configuration file with hierarchy: CLI > env > local > XDG global > defaults
+- GAP-079: `verify` subcommand (delegates to `hash --verify` for BLAKE3 checksum verification)
+- GAP-085: Jaro-Winkler fuzzy matching (`context_aware_jw` strategy) for short strings in edit
+- GAP-086: Property-based tests for fuzzy matching via proptest (5 properties)
+- GAP-087: `edit --fuzzy-threshold <FLOAT>` for configurable fuzzy match sensitivity
+- GAP-088: Fuzzy diff highlighting via `similar::TextDiff` in `FuzzyInfo.diff_preview`
+- GAP-081: `scope` actions `symbols` (ASCII→Unicode operators) and `normalize` (NFC normalization)
+
+### Bug Fixes (Critical)
+- GAP-101: `write --backup` no longer reports phantom `backup_path` for auto-deleted backups
+- GAP-102: `set` no longer misroutes key when descending into scalar TOML values (now exits 65)
+- GAP-127: `case` without `--subvert` now returns exit 65 with clear message instead of silent no-op
+
+### Bug Fixes (High)
+- GAP-073/098: I/O errors via `anyhow::Context` now emit NDJSON envelope instead of raw text on stderr
+- GAP-084: Removed all `.unwrap()` calls from production code paths (replaced with typed errors)
+- GAP-093: Flag conflict validation via `conflicts_with` for append/prepend, fixed/regex, literal/regex
+- GAP-103: `copy --preserve` now preserves source file permissions (Unix)
+- GAP-104: `copy --backup` now retains `.bak` file on disk (was auto-deleted)
+- GAP-105: `replace --backup` now retains `.bak` file on disk (was auto-deleted)
+- GAP-106: `write --require-backup` now forces backup retention on disk
+- GAP-120: `size_delta_pct` in risk_assessment changed from u8 to u32 (fixes overflow for deltas >255%)
+
+### Bug Fixes (Medium)
+- GAP-075: `delete --older-than` with human-readable duration (s/m/h/d/w)
+- GAP-076: `delete --confirm` as preview mode (same as `--dry-run`)
+- GAP-077: `replace --preserve-case` with `adapt_case()` (UPPER/lower/Title)
+- GAP-078: `search --pcre2` flag returns exit 65 when PCRE2 feature is not enabled
+- GAP-080: `transform --verify-parse` re-parses output with tree-sitter after rewrite
+- GAP-091: `edit --multi` help text updated to mention `--fuzzy` mode inheritance
+- GAP-095: `replace --preserve-case` regex now case-insensitive (added `(?i)` to pattern)
+- GAP-096: `write --preserve-timestamps` now emits `mtime_preserved` field in NDJSON
+- GAP-097: 3 JSON schemas updated to match real binary output (del-result, write-output, read-output)
+- GAP-107: `hash` output field renamed from `value` to `checksum` (matches schema)
+- GAP-108: `batch` move/copy now requires `"force":true` to overwrite existing targets
+- GAP-109: `outline --positions` now emits `start_byte`, `end_byte`, `start_column`, `end_column`
+- GAP-110: `list` on non-existent directory now returns exit 4 (was exit 0 with empty summary)
+- GAP-111: `get`/`del` on missing key returns INVALID_INPUT (exit 65) instead of FILE_NOT_FOUND (exit 4)
+- GAP-112: `move --backup` now includes `backup_path` in NDJSON output
+- GAP-116: `list --long` modified field now emits ISO 8601 format instead of raw epoch
+- GAP-117: Documented flags `--no-reflink`, `--preserve-xattr`, `--preserve-hardlinks` added to CLI
+- GAP-118: `copy --backup` no longer requires `--force` to overwrite (parity with `move --backup`)
+- GAP-119: `write --auto-rotate` now retains backup on disk
+- GAP-121: `--json-schema` for hash, delete, move, copy now emits correct type-specific schemas
+- GAP-123: `scope --query comments` now captures block comments (`/* */`) in addition to line comments
+- GAP-124: `prescan_json_schema()` now recognizes get, del, set, outline, query, case subcommands
+- GAP-128: `list --count-by-ext` now filters backup timestamp suffixes (consistent with `count --by-extension`)
+- GAP-133: `copy --preserve` now copies source mtime/atime via `filetime::set_file_times()`
+- GAP-134: `scope --query test-fn` returns actionable error instead of cryptic ast-grep multi-node error
+
+### Bug Fixes (Low)
+- GAP-099: Fixed 2 clippy warnings in test files (collapsible_if, len_zero)
+- GAP-100: Fixed 27 rustfmt divergences across source and test files
+- GAP-113: Risk telemetry default changed to 255 (disabled) — user must opt-in via `--risk-threshold`
+- GAP-114: `extract` now filters begin/end/summary events from search pipeline
+- GAP-115: `wal-stats --dry-run` now emits NDJSON plan event (was silent)
+
+### Validation
+- `cargo test` — 631 tests pass (0 failures, 3 ignored)
+- `cargo clippy --all-targets -- -D warnings` — zero warnings
+- `cargo fmt --check` — zero diffs
+- E2E audit: ~505 scenarios across 6 rounds against real binary
+- 64 gaps audited total: 49 resolved, 5 pre-existing, 10 reclassified, 0 pending
+
+
 ## [0.1.24] - 2026-06-21
 
 ### Bug Fixes (Critical)

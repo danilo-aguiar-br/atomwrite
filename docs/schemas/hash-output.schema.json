@@ -1,83 +1,62 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "WriteOutput",
-  "description": "NDJSON output for write, delete, move, copy, and hash operations.",
+  "title": "HashOutput",
+  "description": "NDJSON output for BLAKE3 hash computation.",
   "type": "object",
   "properties": {
-    "type": {
-      "description": "Event type discriminator.",
+    "algorithm": {
+      "description": "Hash algorithm name.",
       "type": "string"
     },
-    "status": {
-      "description": "Operation outcome: \"ok\" or \"error\".",
-      "type": "string"
-    },
-    "path": {
-      "description": "Absolute path of the target file.",
-      "type": "string"
-    },
-    "bytes_written": {
-      "description": "Number of bytes written.",
-      "type": "integer",
+    "bytes": {
+      "description": "File size in bytes.",
+      "type": [
+        "integer",
+        "null"
+      ],
       "format": "uint64",
       "minimum": 0
     },
     "checksum": {
-      "description": "BLAKE3 checksum after writing.",
+      "description": "Computed hash value (GAP-107: renamed to `checksum` for schema consistency).",
       "type": "string"
     },
-    "checksum_before": {
-      "description": "BLAKE3 checksum before writing, if the file existed.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "backup_path": {
-      "description": "Backup file path, if a backup was created.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "elapsed_ms": {
-      "description": "Operation duration in milliseconds.",
+      "description": "Duration in milliseconds.",
       "type": "integer",
       "format": "uint64",
       "minimum": 0
     },
-    "platform": {
-      "description": "Platform-specific fsync methods used.",
-      "$ref": "#/$defs/PlatformInfo"
+    "path": {
+      "description": "File path, absent for stdin.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "description": "Source identifier for stdin input.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "verified": {
+      "description": "Verification result against expected hash.",
+      "type": [
+        "boolean",
+        "null"
+      ]
     }
   },
   "required": [
     "type",
-    "status",
-    "path",
-    "bytes_written",
+    "algorithm",
     "checksum",
-    "elapsed_ms",
-    "platform"
-  ],
-  "$defs": {
-    "PlatformInfo": {
-      "description": "Platform-specific fsync method names for diagnostics.",
-      "type": "object",
-      "properties": {
-        "fsync": {
-          "description": "File fsync method name (e.g. \"F_FULLFSYNC\" or \"sync_data\").",
-          "type": "string"
-        },
-        "dir_fsync": {
-          "description": "Directory fsync method name (e.g. \"sync_all\" or \"best_effort\").",
-          "type": "string"
-        }
-      },
-      "required": [
-        "fsync",
-        "dir_fsync"
-      ]
-    }
-  }
+    "elapsed_ms"
+  ]
 }

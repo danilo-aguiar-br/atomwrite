@@ -73,6 +73,7 @@ pub fn cmd_replace(
     let max_size = global.effective_max_filesize();
     let shutdown_flag = shutdown.flag();
     let preserve_timestamps = args.preserve_timestamps;
+    let preserve_case = args.preserve_case;
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
             let pattern = pattern.clone();
@@ -123,8 +124,13 @@ pub fn cmd_replace(
                     }
                 };
 
-                let (replaced, count) =
-                    apply_replacement(&pattern, &content, &replacement, max_replacements);
+                let (replaced, count) = apply_replacement(
+                    &pattern,
+                    &content,
+                    &replacement,
+                    max_replacements,
+                    preserve_case,
+                );
 
                 if count == 0 {
                     fs_skip.fetch_add(1, Ordering::Relaxed);
@@ -179,7 +185,8 @@ pub fn cmd_replace(
                     strict_atomic: false,
                     syntax_check: false,
                     wal_policy: crate::wal::WalPolicy::Auto,
-                    keep_backup,
+                    // GAP-105: retain backup when --backup is explicitly active
+                    keep_backup: keep_backup || backup,
                 };
 
                 match atomic_write(&path, replaced.as_bytes(), &opts, &ws) {
@@ -357,7 +364,40 @@ fn compile_pattern(args: &ReplaceArgs) -> Result<Regex> {
         pattern_str
     };
 
+    let pattern_str = if args.preserve_case {
+        format!("(?i){pattern_str}")
+    } else {
+        pattern_str
+    };
+
     Regex::new(&pattern_str).with_context(|| format!("invalid pattern: {}", args.pattern))
+}
+
+fn adapt_case(original: &str, replacement: &str) -> String {
+    if original
+        .chars()
+        .all(|c| !c.is_alphabetic() || c.is_uppercase())
+        && original.chars().any(|c| c.is_alphabetic())
+    {
+        replacement.to_uppercase()
+    } else if original
+        .chars()
+        .all(|c| !c.is_alphabetic() || c.is_lowercase())
+    {
+        replacement.to_lowercase()
+    } else if original.starts_with(|c: char| c.is_uppercase()) {
+        let mut chars = replacement.chars();
+        match chars.next() {
+            Some(first) => {
+                let mut s = first.to_uppercase().to_string();
+                s.push_str(chars.as_str());
+                s
+            }
+            None => String::new(),
+        }
+    } else {
+        replacement.to_owned()
+    }
 }
 
 fn apply_replacement<'a>(
@@ -365,11 +405,30 @@ fn apply_replacement<'a>(
     content: &'a str,
     replacement: &str,
     max_replacements: Option<usize>,
+    preserve_case: bool,
 ) -> (Cow<'a, str>, u64) {
     let count = pattern.find_iter(content).count() as u64;
 
     if count == 0 {
         return (Cow::Borrowed(content), 0);
+    }
+
+    if preserve_case {
+        let limit = max_replacements.unwrap_or(usize::MAX);
+        let mut result = String::with_capacity(content.len());
+        let mut last_end = 0;
+        let mut applied = 0u64;
+        for m in pattern.find_iter(content) {
+            if applied >= limit as u64 {
+                break;
+            }
+            result.push_str(&content[last_end..m.start()]);
+            result.push_str(&adapt_case(m.as_str(), replacement));
+            last_end = m.end();
+            applied += 1;
+        }
+        result.push_str(&content[last_end..]);
+        return (Cow::Owned(result), applied);
     }
 
     let replaced = match max_replacements {

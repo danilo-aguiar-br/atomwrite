@@ -390,7 +390,7 @@ fn edit_expect_checksum_accepts_correct() {
         .arg(&path)
         .output()
         .expect("hash");
-    let checksum = common::parse_ndjson(&hash_out.stdout)[0]["value"]
+    let checksum = common::parse_ndjson(&hash_out.stdout)[0]["checksum"]
         .as_str()
         .expect("checksum")
         .to_string();
@@ -1071,13 +1071,13 @@ fn edit_one_token_drift_in_block_matches_via_context_aware_fallback() {
     assert_eq!(events[0]["fuzzy"], true);
     let strategy = events[0]["strategy"].as_str().expect("strategy");
     assert!(
-        strategy == "block_anchor" || strategy == "context_aware",
-        "expected block_anchor or context_aware, got {strategy}"
+        strategy == "block_anchor" || strategy == "context_aware" || strategy == "context_aware_jw",
+        "expected block_anchor, context_aware, or context_aware_jw, got {strategy}"
     );
     if let Some(sim) = events[0]["similarity"].as_f64() {
         assert!(
-            (0.70..=0.85).contains(&sim),
-            "similarity {sim} outside expected band [0.70, 0.85]"
+            (0.70..=0.95).contains(&sim),
+            "similarity {sim} outside expected band [0.70, 0.95]"
         );
     }
 

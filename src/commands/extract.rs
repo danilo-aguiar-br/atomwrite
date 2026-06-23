@@ -40,6 +40,12 @@ pub fn cmd_extract(
         }
 
         if trimmed.starts_with('{') {
+            if let Ok(obj) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                let typ = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                if matches!(typ, "begin" | "end" | "summary") {
+                    continue;
+                }
+            }
             extract_json(trimmed, &args.fields, writer)?;
         } else {
             extract_text(trimmed, &args.fields, args.delimiter.as_deref(), writer)?;

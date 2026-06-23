@@ -276,4 +276,7 @@ pub enum Commands {
 
     /// v0.1.22 ADR-0039: apply N `old`/`new` pairs from NDJSON stdin in one write.
     EditLoop(EditLoopArgs),
+
+    /// Verify file integrity by comparing BLAKE3 checksum
+    Verify(crate::cli_args::VerifyArgs),
 }

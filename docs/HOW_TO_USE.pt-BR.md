@@ -553,8 +553,9 @@ atomwrite outline src/main.rs --positions
 
 
 ## Configuração
-- atomwrite não requer arquivos de configuração
-- Todo comportamento é controlado via flags de linha de comando
+- Desde a v0.1.25, atomwrite suporta um arquivo de configuração opcional `.atomwrite.toml`
+- Hierarquia: flags CLI > variáveis de ambiente > `.atomwrite.toml` local > XDG `~/.config/atomwrite/config.toml` > defaults
+- O arquivo de configuração é opcional; atomwrite funciona sem nenhuma configuração
 - Use `--workspace` para definir o limite do diretório do projeto
 - Use `--json-schema` para inspecionar o formato de saída em tempo de execução
 - Gere completions de shell com `atomwrite completions bash` ou auto-instale com `atomwrite completions bash --install` (escreve no diretório XDG)
@@ -761,6 +762,70 @@ printf '%s\n' '{"old":"existe","new":"X"}' '{"old":"ausente","new":"Y"}' \
 - 2 novos ADRs: 0039 (edit-loop helper), 0040 (prune-backups subcommand)
 - 2 novos schemas NDJSON: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
 - 32 sub-comandos totais (de 30 em v0.1.20)
+
+
+## v0.1.25 — Novidades
+
+Esta release resolve 49 gaps (GAP-071 a GAP-134) descobertos em 6 rodadas de auditoria e2e com ~505 cenários.
+
+### Novo Subcomando: verify
+
+```bash
+# Verificar checksum de arquivo contra hash BLAKE3 esperado
+atomwrite --workspace . verify src/main.rs --checksum abc123def456
+# Exit 0 em match, exit 81 em mismatch
+```
+
+### Arquivo de Configuração: .atomwrite.toml
+
+atomwrite agora suporta um arquivo de configuração opcional. Hierarquia: CLI > env > `.atomwrite.toml` local > XDG `~/.config/atomwrite/config.toml` > defaults.
+
+```toml
+# .atomwrite.toml (raiz do projeto)
+[defaults]
+backup = true
+workspace = "."
+
+[fuzzy]
+mode = "auto"
+threshold = 0.85
+
+[search]
+max_filesize = 10485760
+```
+
+### Novas Flags
+
+- `delete --older-than <DURATION>` — filtrar por idade com sufixos s/m/h/d/w
+- `delete --confirm` — modo preview (emite NDJSON `type: "plan"`)
+- `replace --preserve-case` — adapta case da substituição (UPPER/lower/Title)
+- `search --pcre2` — solicitar backend PCRE2 (exit 65 quando feature não compilada)
+- `edit --fuzzy-threshold <FLOAT>` — sobrescrever threshold de fuzzy matching
+- `scope --action symbols` — converter operadores para símbolos Unicode (=> → ⇒, -> → →)
+- `scope --action normalize` — aplicar normalização NFC Unicode
+- `copy --no-reflink`, `copy --preserve-xattr`, `move --preserve-hardlinks`
+
+### Melhorias no Fuzzy Matching
+
+- Jaro-Winkler adicionado como estratégia `context_aware_jw` para strings curtas (<60 chars)
+- Campo `diff_preview` nas respostas do edit mostra mini-diff quando fuzzy match é usado
+- `--fuzzy-threshold` permite ajuste fino do threshold por invocação (0.0 a 1.0)
+- Testes property-based via proptest validam 5 invariantes de fuzzy
+
+### Correções Críticas
+
+- `write --backup` não reporta mais `backup_path` fantasma para backups auto-deletados
+- `set` não redireciona mais chaves ao descer em valores scalar TOML
+- Overflow de `size_delta_pct` corrigido (u8 → u32 para deltas >255%)
+- Erros de I/O agora emitem envelope NDJSON estruturado (antes era texto no stderr + exit 1)
+- Campo de saída do `hash` renomeado de `value` para `checksum` (alinhamento com schema)
+
+### Estatísticas
+
+- 33 subcomandos (verify adicionado)
+- 631 testes passando, 0 falhas, 3 ignorados
+- 49 gaps resolvidos em 6 rodadas de auditoria
+- 3 JSON schemas atualizados
 
 
 ## v0.1.24 — Novidades

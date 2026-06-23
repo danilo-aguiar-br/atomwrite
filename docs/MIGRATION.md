@@ -78,9 +78,53 @@ All additive. No existing dependency removed.
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
 ## Current Version
-- atomwrite is at v0.1.24
-- This document covers migration from v0.1.0 through v0.1.24
+- atomwrite is at v0.1.25
+- This document covers migration from v0.1.0 through v0.1.25
 - See the sections below for additive changes and breaking changes in each version
+
+
+## v0.1.24 to v0.1.25 (2026-06-22)
+
+### Additive (Non-Breaking)
+- `.atomwrite.toml` configuration file with hierarchy: CLI > env > local > XDG global > defaults
+- New `verify` subcommand (delegates to `hash --verify`)
+- Jaro-Winkler fuzzy matching strategy for short strings in edit
+- `edit --fuzzy-threshold <FLOAT>` for configurable match sensitivity
+- `scope` actions `symbols` and `normalize` (NFC)
+- `delete --older-than` with human-readable duration
+- `delete --confirm` as preview mode
+- `replace --preserve-case` with case adaptation
+- `search --pcre2` flag (returns exit 65 when feature not enabled)
+- `transform --verify-parse` re-validates output via tree-sitter
+- `scope --query comments` now captures block comments in Rust
+- `copy --preserve` now copies source permissions and timestamps
+- `outline --positions` now emits byte offsets and column positions
+- Property-based fuzzy tests via proptest
+
+### Bug Fixes (May Affect Behavior)
+- `write --backup` no longer reports phantom `backup_path` (critical data integrity fix)
+- `set` rejects descent into scalar TOML values (was silently misrouting)
+- `case` without `--subvert` now exits 65 (was silent no-op)
+- I/O errors via anyhow now emit NDJSON envelopes (7 subcommands affected)
+- `hash` output field renamed from `value` to `checksum`
+- `batch` move/copy now requires `"force":true` to overwrite existing targets
+- `get`/`del` on missing key returns INVALID_INPUT (exit 65) instead of FILE_NOT_FOUND (exit 4)
+- `list --long` modified field now emits ISO 8601 format
+- `size_delta_pct` in risk_assessment changed from u8 to u32
+- Risk telemetry default changed to disabled (255)
+
+### Migration Action
+- Update version pin: `cargo install atomwrite --locked --version "^0.1.25"`
+- If you parse `hash` output: field `value` is now `checksum`
+- If you use `case` without `--subvert`: now exits 65 (add `--subvert` pairs explicitly)
+- If you parse `get`/`del` exit codes for missing keys: exit changed from 4 to 65
+- If you parse `batch` move/copy: existing targets now require `"force":true`
+- MSRV unchanged at Rust 1.88
+
+### Test Coverage
+- 631 tests passing (621 in v0.1.24 + 10 new for v0.1.25)
+- ~505 e2e scenarios across 6 audit rounds
+- See `gaps.md` for the full audit of 64 gaps
 
 
 ## v0.1.23 to v0.1.24 (2026-06-21)
@@ -697,7 +741,7 @@ For the complete migration guide, see `docs/MIGRATION-v0.1.21-to-v0.1.22.md`.
 - 575+ tests passing in 56+ integration suites, 0 failures
 - 2 new ADRs (0039, 0040)
 - 2 new NDJSON schemas (`edit-loop-output.schema.json`, `prune-backups-output.schema.json`)
-- 32 subcommands total (up from 30 in v0.1.20)
+- 33 subcommands total (32 from v0.1.22 + `verify` from v0.1.25)
 
 
 ## v0.1.22 to v0.1.23

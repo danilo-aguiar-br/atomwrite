@@ -1035,6 +1035,79 @@ atomwrite --workspace . prune-backups --max-age 0 --dry-run false . \
 ```
 
 
+## v0.1.25 — Recipes
+
+### Verify File Checksum
+
+```bash
+# Dedicated verify subcommand (delegates to hash --verify)
+atomwrite --workspace . verify src/main.rs --checksum abc123def456
+# Exit 0 on match, exit 81 on mismatch
+```
+
+### Delete Old Files by Age
+
+```bash
+# Delete files older than 7 days (duration suffixes: s/m/h/d/w)
+atomwrite --workspace . delete --older-than 7d --dry-run logs/
+atomwrite --workspace . delete --older-than 7d --yes logs/
+
+# Preview deletion plan with --confirm
+atomwrite --workspace . delete --confirm --older-than 1h tmp/
+```
+
+### Replace with Case Preservation
+
+```bash
+# Automatically adapt replacement case: Hello→Goodbye, HELLO→GOODBYE, hello→goodbye
+atomwrite --workspace . replace --preserve-case 'hello' 'goodbye' src/
+```
+
+### Configure Fuzzy Threshold
+
+```bash
+# Strict: only accept very close matches (0.99)
+atomwrite --workspace . edit src/main.rs --old "approximate_text" --new "new_text" --fuzzy-threshold 0.99
+
+# Loose: accept distant matches (0.5)
+atomwrite --workspace . edit src/main.rs --old "approximate_text" --new "new_text" --fuzzy-threshold 0.5 --fuzzy aggressive
+```
+
+### Scope Symbols and Normalize
+
+```bash
+# Convert operators to Unicode symbols: => → ⇒, -> → →, != → ≠
+atomwrite --workspace . scope src/ --lang rust --action symbols --dry-run
+
+# Apply NFC Unicode normalization
+atomwrite --workspace . scope src/ --lang rust --action normalize --dry-run
+```
+
+### Use .atomwrite.toml Config
+
+```bash
+# Create a project config (optional, CLI flags take precedence)
+cat > .atomwrite.toml << 'EOF'
+[defaults]
+backup = true
+
+[fuzzy]
+mode = "auto"
+threshold = 0.85
+EOF
+
+# atomwrite auto-loads .atomwrite.toml from project root
+atomwrite --workspace . edit src/main.rs --old "foo" --new "bar"
+```
+
+### Hash Output Uses checksum Field
+
+```bash
+# v0.1.25: field is "checksum" (was "value" in v0.1.24)
+atomwrite --workspace . hash src/main.rs | jaq -r '.checksum'
+```
+
+
 ## v0.1.24 — Recipes
 
 ### Typed Error Handling in Agent Pipelines

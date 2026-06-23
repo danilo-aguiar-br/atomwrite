@@ -28,8 +28,13 @@ pub fn cmd_regex(
 
     // GAP-2026-025: warn when examples look like flags (allow_hyphen_values quirk)
     const KNOWN_FLAGS: &[&str] = &[
-        "--digits", "--words", "--spaces", "--repetitions",
-        "--case-insensitive", "--no-anchors", "--stdin",
+        "--digits",
+        "--words",
+        "--spaces",
+        "--repetitions",
+        "--case-insensitive",
+        "--no-anchors",
+        "--stdin",
     ];
     for ex in &args.examples {
         if KNOWN_FLAGS.contains(&ex.as_str())

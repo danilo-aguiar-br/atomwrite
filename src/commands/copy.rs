@@ -58,7 +58,7 @@ pub fn cmd_copy(
         }
     }
 
-    if target.exists() && !args.force {
+    if target.exists() && !args.force && !args.backup {
         return Err(AtomwriteError::InvalidInput {
             reason: format!(
                 "target {} already exists, use --force to overwrite",
@@ -141,10 +141,28 @@ fn copy_file_atomic(
         strategy: None,
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
-        keep_backup: false,
+        // GAP-104: retain backup on disk when --backup is active
+        keep_backup: args.backup,
     };
 
     let result = atomic_write(target, &content, &opts, workspace)?;
+
+    // GAP-103: preserve source permissions after atomic write
+    #[cfg(unix)]
+    if args.preserve {
+        if let Ok(src_meta) = std::fs::metadata(source) {
+            let _ = std::fs::set_permissions(target, src_meta.permissions());
+        }
+    }
+
+    // GAP-133: preserve source mtime/atime after atomic write
+    if args.preserve {
+        if let Ok(src_meta) = std::fs::metadata(source) {
+            let mtime = filetime::FileTime::from_last_modification_time(&src_meta);
+            let atime = filetime::FileTime::from_last_access_time(&src_meta);
+            let _ = filetime::set_file_times(target, atime, mtime);
+        }
+    }
 
     if result.checksum != source_hash {
         return Err(AtomwriteError::InvalidInput {

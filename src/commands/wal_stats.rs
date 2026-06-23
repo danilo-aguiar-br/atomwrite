@@ -24,13 +24,14 @@ pub fn cmd_wal_stats(
     let workspace = global.resolve_workspace()?;
 
     if args.dry_run {
-        let _plan = crate::ndjson_types::DryRunPlan {
+        let plan = crate::ndjson_types::DryRunPlan {
             r#type: "plan",
             operation: "wal-stats".into(),
             path: workspace.display().to_string(),
             would_modify: false,
             details: Some("scan workspace for .atomwrite.journal.*.json sidecars".into()),
         };
+        writer.write_event(&plan)?;
         return Ok(());
     }
 

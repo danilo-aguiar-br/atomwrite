@@ -36,6 +36,15 @@ struct OutlineItem {
     signature: String,
     start_line: usize,
     end_line: usize,
+    // GAP-109: byte offsets emitted when --positions is active
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_byte: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_byte: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_column: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_column: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -148,13 +157,10 @@ fn walk_outline(
     path: &std::path::Path,
     lang_name: &str,
     kind_filter: &Option<Vec<String>>,
-    _show_positions: bool,
+    show_positions: bool,
     writer: &mut NdjsonWriter<impl Write>,
     items: &mut usize,
 ) -> Result<()> {
-    // Iterative DFS over the parse tree. We use a `Vec<Node>` stack to
-    // avoid the stack overflow that the previous recursive `TreeCursor`
-    // implementation suffered on large or pathological files.
     let mut stack: Vec<tree_sitter_language_pack::Node> = vec![root.clone()];
     while let Some(node) = stack.pop() {
         let kind = node.kind();
@@ -178,6 +184,27 @@ fn walk_outline(
                     signature,
                     start_line: start.row + 1,
                     end_line: end.row + 1,
+                    // GAP-109: include byte offsets when --positions is set
+                    start_byte: if show_positions {
+                        Some(node.start_byte())
+                    } else {
+                        None
+                    },
+                    end_byte: if show_positions {
+                        Some(node.end_byte())
+                    } else {
+                        None
+                    },
+                    start_column: if show_positions {
+                        Some(start.column)
+                    } else {
+                        None
+                    },
+                    end_column: if show_positions {
+                        Some(end.column)
+                    } else {
+                        None
+                    },
                 })?;
                 *items += 1;
             }

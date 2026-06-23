@@ -17,7 +17,7 @@ fn hash_single_file() {
     let events = common::parse_ndjson(&output.stdout);
     assert_eq!(events[0]["type"], "hash");
     assert_eq!(events[0]["algorithm"], "blake3");
-    assert!(events[0]["value"].is_string());
+    assert!(events[0]["checksum"].is_string());
     assert_eq!(events[0]["bytes"], 6);
 }
 
@@ -84,7 +84,7 @@ fn hash_stdin_mode() {
     assert!(output.status.success());
     let events = common::parse_ndjson(&output.stdout);
     assert_eq!(events[0]["source"], "stdin");
-    assert!(events[0]["value"].is_string());
+    assert!(events[0]["checksum"].is_string());
 }
 
 #[test]

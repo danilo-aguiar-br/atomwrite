@@ -179,8 +179,8 @@ pub fn cmd_write(
         let original = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
         let new_bytes = content.len() as u64;
         if original > 0 {
-            let delta_pct = ((new_bytes.abs_diff(original)) * 100 / original) as u8;
-            if delta_pct >= args.risk_threshold {
+            let delta_pct = ((new_bytes.abs_diff(original)) * 100 / original) as u32;
+            if delta_pct >= u32::from(args.risk_threshold) {
                 let level = if delta_pct >= 90 {
                     "high"
                 } else if delta_pct >= 70 {
@@ -229,7 +229,9 @@ pub fn cmd_write(
         strategy: None,
         strict_atomic: false,
         wal_policy: args.wal_policy,
-        keep_backup: args.keep_backup,
+        // GAP-106: --require-backup implies --keep-backup so the backup
+        // is retained on disk and the reported backup_path is valid.
+        keep_backup: args.keep_backup || args.require_backup || auto_rotate_active,
     };
 
     let result = atomic_write(&resolved, &content, &opts, &workspace)?;
@@ -246,6 +248,11 @@ pub fn cmd_write(
         stdin_bytes_read,
         wal_policy: args.wal_policy.as_str(),
         platform: result.platform,
+        mtime_preserved: if args.preserve_timestamps {
+            Some(true)
+        } else {
+            None
+        },
         risk_assessment,
     };
 

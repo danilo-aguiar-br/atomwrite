@@ -57,6 +57,17 @@ pub struct HashArgs {
     pub recursive: bool,
 }
 
+/// Arguments for the verify subcommand (alias for hash --verify).
+#[derive(Args, Debug)]
+pub struct VerifyArgs {
+    /// Path to the file to verify.
+    pub path: PathBuf,
+
+    /// Expected BLAKE3 checksum.
+    #[arg(long, short = 'c', required = true)]
+    pub checksum: String,
+}
+
 /// Arguments for the delete subcommand.
 #[derive(Args, Debug)]
 pub struct DeleteArgs {
@@ -83,6 +94,21 @@ pub struct DeleteArgs {
     /// Glob patterns for file exclusion.
     #[arg(long, action = clap::ArgAction::Append, help = "Exclude files matching glob")]
     pub exclude: Vec<String>,
+
+    /// Only delete files older than this duration (e.g. 30d, 24h, 1w, 60s).
+    #[arg(
+        long,
+        help = "Only delete files older than duration (e.g. 30d, 24h, 1w)"
+    )]
+    pub older_than: Option<String>,
+
+    /// List files then ask for confirmation before deleting.
+    #[arg(
+        long,
+        conflicts_with = "dry_run",
+        help = "List files then ask for confirmation"
+    )]
+    pub confirm: bool,
 
     /// Preview without deleting.
     #[arg(long, help = "Show what would be done without deleting")]
@@ -185,6 +211,10 @@ pub struct MoveArgs {
     /// Preview without moving.
     #[arg(long, help = "Show what would be done without moving")]
     pub dry_run: bool,
+
+    /// Preserve hardlink count on move (G55).
+    #[arg(long, help = "Preserve hardlink count on move")]
+    pub preserve_hardlinks: bool,
 }
 
 /// Arguments for the copy subcommand.
@@ -214,6 +244,14 @@ pub struct CopyArgs {
     /// Preview without copying.
     #[arg(long, help = "Show what would be done without copying")]
     pub dry_run: bool,
+
+    /// Disable reflink (copy-on-write) optimization (G64).
+    #[arg(long, help = "Disable reflink optimization; force full byte copy")]
+    pub no_reflink: bool,
+
+    /// Preserve extended attributes on copy (G39).
+    #[arg(long, help = "Preserve extended attributes (xattr) on copy")]
+    pub preserve_xattr: bool,
 }
 
 /// Arguments for the read subcommand.
@@ -304,11 +342,19 @@ pub struct WriteArgs {
     pub max_size: Option<u64>,
 
     /// Append content to end of file.
-    #[arg(long, help = "Append content to end of existing file")]
+    #[arg(
+        long,
+        conflicts_with = "prepend",
+        help = "Append content to end of existing file"
+    )]
     pub append: bool,
 
     /// Prepend content to beginning of file.
-    #[arg(long, help = "Prepend content to beginning of existing file")]
+    #[arg(
+        long,
+        conflicts_with = "append",
+        help = "Prepend content to beginning of existing file"
+    )]
     pub prepend: bool,
 
     /// Run post-write tree-sitter syntax check (G72). Aborts the
@@ -422,8 +468,8 @@ pub struct WriteArgs {
     #[arg(
         long,
         value_name = "PERCENT",
-        default_value_t = 50,
-        help = "Size delta threshold in percent to trigger risk warning (L1, default: 50)"
+        default_value_t = 255,
+        help = "Size delta threshold (percent) to trigger risk warning; default: off (set e.g. 50 to enable)"
     )]
     pub risk_threshold: u8,
 
@@ -527,8 +573,11 @@ pub struct EditArgs {
     )]
     pub fuzzy: FuzzyMode,
 
-    /// Read multiple edit operations as NDJSON from stdin.
-    #[arg(long, help = "Read multiple edit operations as NDJSON from stdin")]
+    /// Read multiple edit operations as NDJSON from stdin (inherits --fuzzy mode).
+    #[arg(
+        long,
+        help = "Read multiple edit operations as NDJSON from stdin (inherits --fuzzy mode)"
+    )]
     pub multi: bool,
 
     /// Expected checksum for optimistic locking.
@@ -567,6 +616,10 @@ pub struct EditArgs {
         help = "Apply matching --old/--new pairs and report the rest (default: all-or-nothing)"
     )]
     pub partial: bool,
+
+    /// Override the fuzzy similarity threshold (0.0–1.0).
+    #[arg(long, help = "Override fuzzy similarity threshold (0.0-1.0)")]
+    pub fuzzy_threshold: Option<f64>,
 
     /// WAL sidecar creation policy (G119 L1 prevention). See `write` for
     /// the full description; the same enum applies to edit operations
@@ -698,11 +751,21 @@ pub struct SearchArgs {
     pub paths: Vec<PathBuf>,
 
     /// Treat pattern as regex.
-    #[arg(short = 'e', long, help = "Treat pattern as regex (default)")]
+    #[arg(
+        short = 'e',
+        long,
+        conflicts_with = "fixed",
+        help = "Treat pattern as regex (default)"
+    )]
     pub regex: bool,
 
     /// Treat pattern as fixed string.
-    #[arg(short = 'F', long, help = "Treat pattern as fixed string")]
+    #[arg(
+        short = 'F',
+        long,
+        conflicts_with = "regex",
+        help = "Treat pattern as fixed string"
+    )]
     pub fixed: bool,
 
     /// Match whole words only.
@@ -808,6 +871,15 @@ pub struct SearchArgs {
         help = "Suppress begin/end events for files with no matches (cleaner output for empty searches)"
     )]
     pub no_begin_end: bool,
+
+    /// Use PCRE2 regex engine for lookahead/lookbehind support.
+    /// Requires the `pcre2` feature flag at build time.
+    #[arg(
+        short = 'P',
+        long,
+        help = "Use PCRE2 regex engine (requires pcre2 feature)"
+    )]
+    pub pcre2: bool,
 }
 
 /// Sort criterion for search results.
@@ -838,7 +910,7 @@ pub struct ReplaceArgs {
     pub paths: Vec<PathBuf>,
 
     /// Treat pattern as regex.
-    #[arg(long, help = "Treat pattern as regex")]
+    #[arg(long, conflicts_with = "literal", help = "Treat pattern as regex")]
     pub regex: bool,
 
     /// Match whole words only.
@@ -849,6 +921,7 @@ pub struct ReplaceArgs {
     #[arg(
         short = 'F',
         long,
+        conflicts_with = "regex",
         help = "Treat pattern as literal string (escape regex chars)"
     )]
     pub literal: bool,
@@ -891,6 +964,13 @@ pub struct ReplaceArgs {
     /// Preview without writing.
     #[arg(long, help = "Show what would be done without writing")]
     pub dry_run: bool,
+
+    /// Preserve original casing during replacement (UPPER→UPPER, lower→lower, Title→Title).
+    #[arg(
+        long,
+        help = "Preserve original casing (UPPER→UPPER, lower→lower, Title→Title)"
+    )]
+    pub preserve_case: bool,
 
     /// Preserve original modification time (mtime) of replaced files.
     /// Default is false: mtime is updated to reflect the change.
@@ -1079,6 +1159,13 @@ pub struct TransformArgs {
     /// Disable automatic pre-write backup.
     #[arg(long, help = "Disable automatic pre-write backup")]
     pub no_backup: bool,
+
+    /// Re-parse output with tree-sitter to detect syntax errors introduced by the rewrite.
+    #[arg(
+        long,
+        help = "Re-parse output with tree-sitter to verify syntax (exit 88 on error)"
+    )]
+    pub verify_parse: bool,
 }
 
 /// Arguments for the batch subcommand.
@@ -1365,7 +1452,12 @@ pub struct CaseArgs {
     /// Target file paths to rewrite.
     pub paths: Vec<PathBuf>,
     /// Pairs of old new identifiers (must be even count).
-    #[arg(long = "subvert", num_args = 2, value_name = "OLD NEW", help = "Old and new identifier (repeat for multiple pairs)")]
+    #[arg(
+        long = "subvert",
+        num_args = 2,
+        value_name = "OLD NEW",
+        help = "Old and new identifier (repeat for multiple pairs)"
+    )]
     pub subvert: Vec<String>,
     /// Target case style for the new identifier.
     #[arg(long, value_enum, default_value_t = IdentifierCase::Snake, help = "Target case style")]

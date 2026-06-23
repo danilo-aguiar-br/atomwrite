@@ -40,7 +40,14 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 - Snapshot tests via `insta`
 - Signal tests (SIGINT, SIGTERM, SIGPIPE)
 
-## What's New in v0.1.24 (Current)
+## What's New in v0.1.25 (Current)
+
+- 631 tests passing, 0 failures, 3 ignored (cross-compile gate)
+- 49 additional gaps resolved in 6 e2e audit rounds (GAP-071 through GAP-134)
+- Property-based fuzzy tests via proptest (5 properties in `tests/proptest_fuzzy.rs`)
+- ~505 e2e scenarios executed against real binary
+
+## What's New in v0.1.24
 
 - 621 tests passing, 0 failures, 3 ignored (cross-compile gate)
 - 52 gaps resolved (GAP-2026-019 through GAP-2026-070)
@@ -62,7 +69,7 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 ## What's New in v0.1.23
 
 - 609 tests passing (575 baseline v0.1.22 + 12 GAP-2026-015 + 7 GAP-2026-016 + 4 GAP-2026-017 + 8 GAP-2026-018 + 3 from [Unreleased] Windows CI)
-- 32 subcommands (unchanged from v0.1.22)
+- 33 subcommands (32 from v0.1.22 + `verify` from v0.1.25)
 - 26 ADRs in docs/decisions/ (0019-0044)
 - GAP-2026-015 (allow_hyphen_values) closed; 15 CLI fields across 8 structs now accept values starting with `-`
 - GAP-2026-016 (backup-by-default) closed; backup enabled by default in 9 content-mutating structs
@@ -72,8 +79,8 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 
 ## What's New in v0.1.22
 
-- 575+ tests passing (542 baseline v0.1.18 + 16 GAP-2026-012 tests v0.1.21 + 12 GAP-2026-014 v2 backup-delete tests v0.1.21 + 5 GAP-2026-013 edit-backup tests v0.1.21)
-- 32 subcommands (30 baseline v0.1.18 + `edit-loop` + `prune-backups` from v0.1.22)
+- 631+ tests passing (542 baseline v0.1.18 + 33 in v0.1.21-v0.1.22 + 46 in v0.1.23-v0.1.24 + 10 in v0.1.25)
+- 33 subcommands (30 baseline v0.1.18 + `edit-loop` + `prune-backups` from v0.1.22 + `verify` from v0.1.25)
 - 22 ADRs in docs/decisions/ (0019-0040)
 - 2 new NDJSON schemas: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
 
@@ -97,7 +104,7 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 ### How to Run
 
 ```bash
-# Run all 609+ tests
+# Run all 631+ tests
 cargo test
 
 # Run only the v0.1.12 regression suite
@@ -116,7 +123,7 @@ cargo test --test cross_compile_check -- --ignored
 
 - 20.19% line coverage via `cargo tarpaulin` (935/4631 lines covered)
 - Lower than ideal because tarpaulin only counts unit tests, not CLI integration tests
-- The integration test suite is the primary coverage metric (575+ tests across 47+ suites)
+- The integration test suite is the primary coverage metric (631+ tests across 63+ suites)
 
 ### Dependencies Added
 
@@ -140,7 +147,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ## Current Stats
 - 70+ Rust files across `src/` and `tests/`
-- **575+ tests total across 47+ test suites** (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency)
+- **631+ tests total across 63+ test suites** (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency)
 - **96 new tests added in v0.1.11+v0.1.12**:
   - 11 tests in `tests/cli_v012_regressions.rs` (GAP 13, GAP 14, GAP 18 fixes)
   - 27 tests in `tests/cli_v012_audit_regressions.rs` (v0.1.12 G72/G114 audit)

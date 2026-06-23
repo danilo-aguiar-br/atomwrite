@@ -1,83 +1,61 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "WriteOutput",
-  "description": "NDJSON output for write, delete, move, copy, and hash operations.",
+  "title": "MoveOutput",
+  "description": "NDJSON output for a completed move operation.",
   "type": "object",
   "properties": {
-    "type": {
-      "description": "Event type discriminator.",
-      "type": "string"
+    "atomic": {
+      "description": "Whether the operation was atomic.",
+      "type": "boolean"
     },
-    "status": {
-      "description": "Operation outcome: \"ok\" or \"error\".",
-      "type": "string"
+    "backup_path": {
+      "description": "Path to backup file, if created.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
-    "path": {
-      "description": "Absolute path of the target file.",
-      "type": "string"
-    },
-    "bytes_written": {
-      "description": "Number of bytes written.",
+    "bytes": {
+      "description": "File size in bytes.",
       "type": "integer",
       "format": "uint64",
       "minimum": 0
     },
     "checksum": {
-      "description": "BLAKE3 checksum after writing.",
+      "description": "BLAKE3 checksum.",
       "type": "string"
     },
-    "checksum_before": {
-      "description": "BLAKE3 checksum before writing, if the file existed.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "backup_path": {
-      "description": "Backup file path, if a backup was created.",
-      "type": [
-        "string",
-        "null"
-      ]
+    "cross_device": {
+      "description": "Whether a cross-device copy was needed.",
+      "type": "boolean"
     },
     "elapsed_ms": {
-      "description": "Operation duration in milliseconds.",
+      "description": "Duration in milliseconds.",
       "type": "integer",
       "format": "uint64",
       "minimum": 0
     },
-    "platform": {
-      "description": "Platform-specific fsync methods used.",
-      "$ref": "#/$defs/PlatformInfo"
+    "source": {
+      "description": "Source path.",
+      "type": "string"
+    },
+    "target": {
+      "description": "Target path.",
+      "type": "string"
+    },
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
     }
   },
   "required": [
     "type",
-    "status",
-    "path",
-    "bytes_written",
+    "source",
+    "target",
+    "bytes",
     "checksum",
-    "elapsed_ms",
-    "platform"
-  ],
-  "$defs": {
-    "PlatformInfo": {
-      "description": "Platform-specific fsync method names for diagnostics.",
-      "type": "object",
-      "properties": {
-        "fsync": {
-          "description": "File fsync method name (e.g. \"F_FULLFSYNC\" or \"sync_data\").",
-          "type": "string"
-        },
-        "dir_fsync": {
-          "description": "Directory fsync method name (e.g. \"sync_all\" or \"best_effort\").",
-          "type": "string"
-        }
-      },
-      "required": [
-        "fsync",
-        "dir_fsync"
-      ]
-    }
-  }
+    "cross_device",
+    "atomic",
+    "elapsed_ms"
+  ]
 }

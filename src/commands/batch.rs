@@ -40,6 +40,9 @@ pub struct BatchOp {
     old: Option<String>,
     #[serde(default)]
     new: Option<String>,
+    /// GAP-108: allow move/copy to overwrite existing target
+    #[serde(default)]
+    force: Option<bool>,
 }
 
 impl BatchOp {
@@ -224,8 +227,14 @@ pub fn cmd_batch(
                         op.target.as_deref(),
                     ) {
                         if let (Ok(s), Ok(t)) = (
-                            crate::path_safety::validate_path(std::path::Path::new(src), &workspace),
-                            crate::path_safety::validate_path(std::path::Path::new(tgt), &workspace),
+                            crate::path_safety::validate_path(
+                                std::path::Path::new(src),
+                                &workspace,
+                            ),
+                            crate::path_safety::validate_path(
+                                std::path::Path::new(tgt),
+                                &workspace,
+                            ),
                         ) {
                             tracing::debug!(source = %s.display(), target = %t.display(), "recorded move for rollback");
                             moves_to_reverse.push((s, t));
@@ -257,7 +266,12 @@ pub fn cmd_batch(
                 writer.write_event(&event)?;
 
                 if transaction {
-                    match rollback_transaction(&backups, &created_files, &moves_to_reverse, &workspace) {
+                    match rollback_transaction(
+                        &backups,
+                        &created_files,
+                        &moves_to_reverse,
+                        &workspace,
+                    ) {
                         Ok((restored, removed)) => {
                             let rollback_event = RollbackEvent {
                                 r#type: "rollback",
@@ -347,8 +361,13 @@ fn rollback_transaction(
     // Reverse moves first (target → source) before restoring backups.
     for (source, target) in moves_to_reverse.iter().rev() {
         if target.exists() && !source.exists() {
-            std::fs::rename(target, source)
-                .with_context(|| format!("cannot reverse move {} → {}", target.display(), source.display()))?;
+            std::fs::rename(target, source).with_context(|| {
+                format!(
+                    "cannot reverse move {} → {}",
+                    target.display(),
+                    source.display()
+                )
+            })?;
             restored += 1;
         }
     }
@@ -607,6 +626,17 @@ fn execute_move(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Res
         return Err(crate::error::AtomwriteError::NotFound { path: source }.into());
     }
 
+    // GAP-108: batch move must check target existence like standalone move
+    if dest.exists() && !op.force.unwrap_or(false) {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: format!(
+                "target {} already exists, use \"force\":true in the batch op to overwrite",
+                dest.display()
+            ),
+        }
+        .into());
+    }
+
     if dry_run {
         return Ok(format!("would move {source_str} to {dest_str}"));
     }
@@ -650,6 +680,17 @@ fn execute_copy(
 
     if !source.exists() {
         return Err(crate::error::AtomwriteError::NotFound { path: source }.into());
+    }
+
+    // GAP-108: batch copy must check target existence like standalone copy
+    if dest.exists() && !op.force.unwrap_or(false) {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: format!(
+                "target {} already exists, use \"force\":true in the batch op to overwrite",
+                dest.display()
+            ),
+        }
+        .into());
     }
 
     if dry_run {

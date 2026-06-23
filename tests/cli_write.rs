@@ -158,7 +158,7 @@ fn write_expect_checksum_accepts_correct() {
         .output()
         .expect("hash");
     let hash_events = common::parse_ndjson(&hash_out.stdout);
-    let checksum = hash_events[0]["value"].as_str().expect("checksum value");
+    let checksum = hash_events[0]["checksum"].as_str().expect("checksum value");
 
     let output = common::atomwrite()
         .args([
@@ -193,7 +193,7 @@ fn write_expect_checksum_drift_after_external_modify() {
         .arg(&target)
         .output()
         .expect("hash");
-    let checksum = common::parse_ndjson(&hash_out.stdout)[0]["value"]
+    let checksum = common::parse_ndjson(&hash_out.stdout)[0]["checksum"]
         .as_str()
         .expect("value")
         .to_string();
@@ -547,7 +547,7 @@ fn g120_l3_append_empty_stdin_with_matching_checksum_succeeds() {
         .arg(&target)
         .output()
         .expect("hash");
-    let checksum = common::parse_ndjson(&hash_out.stdout)[0]["value"]
+    let checksum = common::parse_ndjson(&hash_out.stdout)[0]["checksum"]
         .as_str()
         .expect("value")
         .to_string();

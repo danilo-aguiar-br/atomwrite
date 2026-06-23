@@ -1,27 +1,110 @@
 ---
 name: atomwrite
 description: |
-  Use atomwrite para TODAS as operações de arquivo: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline, wal-stats, wal-heal, edit-loop, prune-backups (34 subcomandos, v0.1.24).
-  Auto-invocar: escrever arquivos, buscar código, substituir texto, refatorar AST, gerar regex, calcular, lote, checksums, listar estrutura, scoping, backup, rollback, patches, editar com build, timestamps, erros tipados, backup milissegundos, delete recursivo, busca multilinha.
-  Palavras-chave: escrita atômica, NDJSON, BLAKE3, checksum, ast-grep, lote, scoping, backup, rollback, patch, timeout, completions, mtime, timestamps, cargo build, prune-backups, edit-loop, typed-errors, millisecond-backup, resolve-first, clap-suggestion, delete-recursive, multiline-search, prefix-match-rollback, --no-backup, --allow-shrink, backup-by-default, shrink-guard.
+  Use atomwrite para TODAS as operações de arquivo: read, write, edit, search, replace, hash, verify, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline, wal-stats, wal-heal, edit-loop, prune-backups (33 subcomandos, v0.1.25).
+  Auto-invocar: escrever arquivos, buscar código, substituir texto, refatorar AST, gerar regex, calcular, lote, checksums, verificar integridade, listar estrutura, scoping, backup, rollback, patches, config .atomwrite.toml, fuzzy Jaro-Winkler, scope symbols/normalize, delete por idade, preserve-case.
+  Palavras-chave: escrita atômica, NDJSON, BLAKE3, verify, .atomwrite.toml, config-file, fuzzy-threshold, Jaro-Winkler, context_aware_jw, diff_preview, pcre2, preserve-case, older-than, scope-symbols, scope-normalize, typed-errors, backup-by-default, shrink-guard, --no-backup, --allow-shrink.
 ---
 
 
 # atomwrite
-## TL;DR — v0.1.24 (2026-06-21)
+## TL;DR — v0.1.25 (2026-06-22)
 ### OBRIGATÓRIO
-- v0.1.24 fecha 52 GAPs (019-070): overhaul de erros tipados, correções críticas, resolve-first universal, timestamps com milissegundos
-- 621 testes passam em 60+ suítes (de 609 em v0.1.23; +12 novos)
-- 3 ADRs adicionados: ADR-0045 (clap-suggestion), ADR-0046 (diff-resolve-first), ADR-0047 (scope-read-only)
-- OVERHAUL DE ERROS: 20 `anyhow::bail!()` convertidos para variantes tipadas `AtomwriteError` — todos retornam NDJSON estruturado com exit codes corretos (NotFound→4, InvalidInput→65)
-- CORREÇÕES CRÍTICAS: delete --recursive traversa diretórios (GAP-027), search --multiline propaga para SearcherBuilder (GAP-037), batch --transaction rollback cobre move/copy (GAP-046), read --line/--lines previne panic (GAP-035), replace rejeita pattern vazio (GAP-050)
-- RESOLUÇÃO DE PATHS: diff, scope, count, transform resolvem contra --workspace (GAP-020, GAP-022, ADR-0046)
-- BACKUP: formato timestamp YYYYMMDD_HHMMSS_mmm (milissegundos, GAP-023); rollback --timestamp aceita prefix match
-- QUOTING: get/set/del não mais duplicam aspas em strings (GAP-039, GAP-042, GAP-043)
-- SCOPE READ-ONLY: scope sem ação reporta files_matched correto, files_modified=null (GAP-021, GAP-026, ADR-0047)
+- v0.1.25 fecha 49 GAPs (071-134): config file, verify subcommand, fuzzy Jaro-Winkler, scope symbols/normalize, 3 correções críticas
+- 631 testes passam em 63+ suítes (de 621 em v0.1.24; +10 novos)
+- 9 ADRs em `docs/decisions/` (0019-0027), 7 novos JSON schemas
+- NOVAS FEATURES: `.atomwrite.toml` config file (GAP-072), `verify` subcomando (GAP-079), fuzzy Jaro-Winkler `context_aware_jw` (GAP-085/087/088), `scope --action symbols|normalize` (GAP-081)
+- NOVAS FLAGS: `delete --older-than`, `delete --confirm`, `replace --preserve-case`, `search --pcre2`, `edit --fuzzy-threshold`, `scope --action symbols|normalize`
+- CORREÇÕES CRÍTICAS: write --backup phantom backup_path (GAP-101), set misroute em TOML escalar (GAP-102), case no-op silencioso (GAP-127)
+- MUDANÇAS COMPORTAMENTAIS: hash output `value`→`checksum` (GAP-107), batch move/copy requer `force:true` (GAP-108), get/del missing key→exit 65 (GAP-111)
+- BACKUP FIXES: copy/replace --backup retém .bak em disco (GAP-104/105), write --require-backup força retenção (GAP-106)
+- v0.1.24 PREVIAMENTE fechou 52 GAPs (019-070)
 - v0.1.23 PREVIAMENTE fechou 4 GAPs (015-018)
 - v0.1.22 PREVIAMENTE fechou GAP-2026-012 Frente 3 e GAP-2026-013
 - v0.1.20 PREVIAMENTE fechou 11 GAP-2026 (001-011)
+
+
+## v0.1.25 (2026-06-22) — Config, Verify e 49 Correções
+
+### Novas Features
+- GAP-072: `.atomwrite.toml` arquivo de configuração com hierarquia: CLI > env > local > XDG > defaults
+- GAP-079: subcomando `verify` (delega para `hash --verify` para verificação BLAKE3)
+- GAP-085: matching fuzzy Jaro-Winkler (`context_aware_jw`) para strings curtas no edit
+- GAP-086: testes property-based para fuzzy matching via proptest (5 propriedades)
+- GAP-087: `edit --fuzzy-threshold <FLOAT>` para sensibilidade configurável de matching
+- GAP-088: highlighting de diff fuzzy via `similar::TextDiff` em `FuzzyInfo.diff_preview`
+- GAP-081: `scope --action symbols|normalize` (ASCII→Unicode e NFC)
+
+### Correções Críticas
+- GAP-101: `write --backup` não mais reporta `backup_path` phantom para backups auto-deletados
+- GAP-102: `set` não mais roteava chave errada ao descer em valores TOML escalares (agora exit 65)
+- GAP-127: `case` sem `--subvert` retorna exit 65 com mensagem clara em vez de no-op silencioso
+
+### Novas Flags
+- `delete --older-than <DURATION>` com duração legível (s/m/h/d/w) — GAP-075
+- `delete --confirm` como modo preview (mesmo que `--dry-run`) — GAP-076
+- `replace --preserve-case` com `adapt_case()` (UPPER/lower/Title) — GAP-077
+- `search --pcre2` retorna exit 65 quando feature PCRE2 não está habilitada — GAP-078
+- `edit --fuzzy-threshold <FLOAT>` para sensibilidade configurável de matching — GAP-087
+- `scope --action symbols` converte operadores ASCII→Unicode — GAP-081
+- `scope --action normalize` normaliza texto para NFC — GAP-081
+
+### Mudanças de Comportamento
+- GAP-107: campo de saída do `hash` renomeado de `value` para `checksum` (casa com schema)
+- GAP-108: `batch` move/copy agora requer `"force":true` para sobrescrever alvos existentes
+- GAP-111: `get`/`del` em chave faltante retorna INVALID_INPUT (exit 65) em vez de FILE_NOT_FOUND (exit 4)
+- GAP-113: telemetria de risco default mudou para 255 (desabilitado) — usuário faz opt-in via `--risk-threshold`
+
+### Correções de Backup
+- GAP-104: `copy --backup` retém arquivo `.bak` em disco (era auto-deletado)
+- GAP-105: `replace --backup` retém arquivo `.bak` em disco (era auto-deletado)
+- GAP-106: `write --require-backup` força retenção de backup em disco
+- GAP-119: `write --auto-rotate` retém backup em disco
+
+### Estatísticas
+- 631 testes passando (621 na v0.1.24 + 10 novos)
+- 64 gaps auditados: 49 resolvidos, 5 pré-existentes, 10 reclassificados, 0 pendentes
+- 9 ADRs em `docs/decisions/` (0019-0027)
+- 7 novos JSON schemas
+
+### Padrão Correto — Verificar Checksum (v0.1.25)
+```bash
+atomwrite --workspace . verify src/main.rs abc123def456
+# Exit 0: checksum válido; Exit 81: checksum inválido
+```
+
+### Padrão Correto — Arquivo de Configuração (v0.1.25)
+```bash
+# Criar config local por projeto
+echo '[defaults]
+backup = true
+retention = 3
+line_ending = "lf"' | atomwrite --workspace . write .atomwrite.toml
+# Hierarquia: CLI > env > .atomwrite.toml local > XDG global > defaults
+```
+
+### Padrão Correto — Delete por Idade (v0.1.25)
+```bash
+atomwrite --workspace . delete --older-than 7d --dry-run logs/
+atomwrite --workspace . delete --older-than 1h --yes tmp/
+```
+
+### Padrão Correto — Replace Preservando Case (v0.1.25)
+```bash
+atomwrite --workspace . replace --preserve-case 'error' 'warning' src/
+# ERROR→WARNING, error→warning, Error→Warning
+```
+
+### Padrão Correto — Fuzzy Threshold (v0.1.25)
+```bash
+atomwrite --workspace . edit --fuzzy-threshold 0.8 src/main.rs --old "texto aprox" --new "texto exato"
+```
+
+### Padrão Correto — Scope Symbols e Normalize (v0.1.25)
+```bash
+atomwrite --workspace . scope src/ --lang rust --action symbols --dry-run
+atomwrite --workspace . scope src/ --lang rust --action normalize --dry-run
+```
 
 
 ## v0.1.24 (2026-06-21) — Erros Tipados e 52 Correções
@@ -268,6 +351,7 @@ atomwrite --workspace . read --stat src/main.rs
 - USAR `--max-filesize <BYTES>` para pular arquivos maiores que o cap (sobrescreve `--max-filesize` global)
 - USAR `--max-columns <N>` para truncar linhas de saída mais largas que N colunas (G68)
 - USAR `--include-fifo` para atravessar FIFO/named pipes (G56) — desabilitado por padrão por segurança
+- USAR `--pcre2` para habilitar engine PCRE2 (retorna exit 65 se feature não compilada) (v0.1.25, GAP-078)
 - Resposta é NDJSON com um objeto por match
 ### PROIBIDO
 - NUNCA tratar exit code 1 como falha em search
@@ -304,6 +388,7 @@ atomwrite --workspace . search 'error' src/ --max-columns 120
 - USAR `--expect-checksum <BLAKE3>` para locking otimista
 - USAR `--backup` para criar backup antes de modificar
 - USAR `--preserve-timestamps` para manter o mtime original dos arquivos modificados (padrão: mtime é atualizado para refletir a mudança). Adicione ao integrar com sistemas de build (cargo, make, cmake) que precisam de timestamps estáveis
+- USAR `--preserve-case` para preservar case do original (UPPER/lower/Title) via `adapt_case()` (v0.1.25, GAP-077)
 - Resposta inclui `matches`, `files_modified`, checksums por arquivo e campo `mtime_preserved`
 ### PROIBIDO
 - NUNCA executar replace sem `--dry-run` primeiro
@@ -339,6 +424,9 @@ atomwrite --workspace . replace --preserve-timestamps 'old_api' 'new_api' src/
 - USAR `--before-match "texto"` para inserir conteúdo antes do primeiro match
 - USAR `--between "inicio" "fim"` para substituir conteúdo entre dois marcadores
 - USAR `--fuzzy auto|off|aggressive` para controlar correspondência aproximada de texto
+- USAR `--fuzzy-threshold <FLOAT>` para ajustar sensibilidade do matching fuzzy (0.0-1.0, padrão auto) (v0.1.25, GAP-087)
+- SABER que v0.1.25 adiciona estratégia `context_aware_jw` (Jaro-Winkler) para strings curtas (GAP-085)
+- SABER que v0.1.25 adiciona campo `diff_preview` em `FuzzyInfo` com highlighting de diferenças (GAP-088)
 - USAR `--multi` para aplicar múltiplas edições de uma vez (lê NDJSON do stdin)
 - USAR `--expect-checksum <BLAKE3>` para locking otimista
 - USAR `--line-ending lf|crlf|cr|auto` para normalizar quebras de linha
@@ -475,6 +563,8 @@ atomwrite --workspace . transform --dry-run -p 'old_fn($$$A)' -r 'new_fn($$$A)' 
 - USAR `--pattern` para padrões AST customizados
 - USAR `--delete` para remover conteúdo correspondente
 - USAR `--action upper|lower|titlecase|squeeze` para transformações de texto
+- USAR `--action symbols` para converter operadores ASCII para Unicode (v0.1.25, GAP-081)
+- USAR `--action normalize` para normalizar texto para forma NFC (v0.1.25, GAP-081)
 - USAR `--replace-with "texto"` para substituição customizada
 - USAR `--include '*.rs'` para filtrar arquivos por extensão
 - USAR `--exclude '*.log'` para excluir arquivos por padrão glob
@@ -553,12 +643,27 @@ atomwrite --workspace . batch --file ops.ndjson --transaction
 - USAR `--stdin` para hashear conteúdo do stdin
 - USAR `--recursive` (`-r`) para hashear diretórios recursivamente
 - Resposta inclui `path` e `checksum` por arquivo
+- SABER que desde a v0.1.25 o campo de saída foi renomeado de `value` para `checksum` (GAP-107)
 ### Padrão Correto — Hash
 ```bash
 atomwrite --workspace . hash src/main.rs
 atomwrite --workspace . hash src/*.rs
 atomwrite --workspace . hash --verify abc123 src/main.rs
 echo "content" | atomwrite hash --stdin
+```
+
+
+## Operações de Verificação (v0.1.25)
+### OBRIGATÓRIO
+- USAR `verify` para verificar checksum BLAKE3 de um arquivo contra um hash esperado
+- Delega internamente para `hash --verify` — wrapper semântico para clareza
+- Exit 0 quando checksum casa; exit 81 quando não casa
+- Aceita `<PATH> <EXPECTED_HASH>` como argumentos posicionais
+### Padrão Correto — Verificação
+```bash
+atomwrite --workspace . verify src/main.rs abc123def456
+# Exit 0: checksum válido
+# Exit 81: checksum inválido
 ```
 
 
@@ -571,6 +676,8 @@ echo "content" | atomwrite hash --stdin
 - USAR `--exclude '*.rs'` para excluir por extensão
 - USAR `--yes` (`-y`) para pular confirmação
 - USAR `--dry-run` para pré-visualizar
+- USAR `--older-than <DURATION>` para filtrar por idade (s/m/h/d/w) — ex: `7d` para 7 dias (v0.1.25, GAP-075)
+- USAR `--confirm` como alias de `--dry-run` para modo preview (v0.1.25, GAP-076)
 ### Padrão Correto — Remoção
 ```bash
 atomwrite --workspace . delete --backup --retention 1 tmp/scratch.rs
@@ -1186,6 +1293,21 @@ cargo check --target x86_64-pc-windows-msvc --tests
 - `--lang <LOCALE>` — substituir locale de exibição (en, pt-BR) via env `ATOMWRITE_LANG`
 
 
+## Arquivo de Configuração (v0.1.25)
+### OBRIGATÓRIO
+- SABER que v0.1.25 introduz `.atomwrite.toml` como arquivo de configuração (GAP-072)
+- Hierarquia de precedência: flags CLI > variáveis de ambiente > `.atomwrite.toml` local > `$XDG_CONFIG_HOME/atomwrite/config.toml` > defaults
+- USAR `.atomwrite.toml` na raiz do workspace para definir defaults por projeto
+- VERIFICAR configuração ativa com `atomwrite --workspace . get .atomwrite.toml <key_path>`
+### Padrão Correto — Config por Projeto
+```bash
+echo '[defaults]
+backup = true
+retention = 3
+line_ending = "lf"' | atomwrite --workspace . write .atomwrite.toml
+```
+
+
 ## Introspecção de Schema JSON
 ### OBRIGATÓRIO
 - USAR a flag `--json-schema` para obter o schema de saída de qualquer subcomando
@@ -1251,9 +1373,9 @@ python3 -c "import json, jsonschema; \\
 
 ## Testes e Gates de Qualidade (v0.1.12)
 ### OBRIGATÓRIO — Postura de Qualidade
-- 621 testes em 60+ suítes de teste passam com zero regressões a partir da v0.1.24
+- 631 testes em 63+ suítes de teste passam com zero regressões a partir da v0.1.25
 - Decomposição da contagem de testes: 320 baseline (v0.1.10) + +29 (v0.1.11) + +96 (v0.1.12) + +2 (v0.1.14) + +14 (v0.1.15: 8 G117 + 6 G118) = 461 (v0.1.15) + +41 (v0.1.18: G118 + G119 + G120 + 2 ADRs) = 502 total
-- Decomposição v0.1.21 a v0.1.24: +13 (v0.1.21: drift + backup parity) + +16 (v0.1.22: edit-loop + prune-backups) + +31 (v0.1.23: 12 hyphen + 7 backup + 4 shrink + 8 old-file) + +12 (v0.1.24: typed-errors + bug-fixes + path-resolution) = 621 total
+- Decomposição v0.1.21 a v0.1.25: +13 (v0.1.21: drift + backup parity) + +16 (v0.1.22: edit-loop + prune-backups) + +31 (v0.1.23: 12 hyphen + 7 backup + 4 shrink + 8 old-file) + +12 (v0.1.24: typed-errors + bug-fixes + path-resolution) + +10 (v0.1.25: config + verify + fuzzy-proptest + scope-actions + bug-fixes) = 631 total
 - Novos arquivos de teste v0.1.23 (4): `cli_v0123_hyphen_values`, `cli_v0123_backup_default`, `cli_v0123_shrink_guard`, `cli_v0123_old_file`
 - Novos arquivos de teste v0.1.12 (10): `cli_set`, `cli_case`, `cli_query`, `cli_outline`, `cli_get_del`, `cli_v012_syntax_check`, `cli_v012_wal`, `cli_v012_audit_regressions` (27 testes), `cli_v012_xattr_reflink`, `cli_v012_batch4_regressions` (23 testes)
 - Cobertura de teste v0.1.12 por categoria: G72 syntax check (16 testes), G114 WAL (8 testes), v14 query/outline (10 testes), TOML dotted path (6 testes), set/get/del/case (15 testes), regressões de auditoria (50 testes)

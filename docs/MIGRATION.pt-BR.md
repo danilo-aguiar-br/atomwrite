@@ -78,9 +78,53 @@ Todas aditivas. Nenhuma dependência existente removida.
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 
 ## Versão Atual
-- atomwrite está na v0.1.24
-- Este documento cobre migração de v0.1.0 a v0.1.24
+- atomwrite está na v0.1.25
+- Este documento cobre migração de v0.1.0 a v0.1.25
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
+
+
+## v0.1.24 para v0.1.25 (2026-06-22)
+
+### Aditivo (Não-Breaking)
+- Arquivo de configuração `.atomwrite.toml` com hierarquia: CLI > env > local > XDG global > defaults
+- Novo subcomando `verify` (delega para `hash --verify`)
+- Estratégia fuzzy Jaro-Winkler para strings curtas no edit
+- `edit --fuzzy-threshold <FLOAT>` para sensibilidade configurável
+- Ações `symbols` e `normalize` (NFC) no `scope`
+- `delete --older-than` com duração legível por humanos
+- `delete --confirm` como modo preview
+- `replace --preserve-case` com adaptação de case
+- Flag `search --pcre2` (retorna exit 65 quando feature não habilitada)
+- `transform --verify-parse` re-valida output via tree-sitter
+- `scope --query comments` agora captura block comments em Rust
+- `copy --preserve` agora copia permissões e timestamps da origem
+- `outline --positions` agora emite byte offsets e posições de coluna
+- Testes property-based de fuzzy via proptest
+
+### Correções (Podem Afetar Comportamento)
+- `write --backup` não reporta mais `backup_path` fantasma (correção crítica de integridade)
+- `set` rejeita descida em valores escalares TOML (antes redirecionava silenciosamente)
+- `case` sem `--subvert` agora sai com exit 65 (antes era no-op silencioso)
+- Erros de I/O via anyhow agora emitem envelopes NDJSON (7 subcomandos afetados)
+- Campo de output do `hash` renomeado de `value` para `checksum`
+- `batch` move/copy agora exige `"force":true` para sobrescrever alvos existentes
+- `get`/`del` em chave ausente retorna INVALID_INPUT (exit 65) em vez de FILE_NOT_FOUND (exit 4)
+- Campo `modified` de `list --long` agora emite formato ISO 8601
+- `size_delta_pct` em risk_assessment alterado de u8 para u32
+- Default de telemetria de risco alterado para desabilitado (255)
+
+### Ação de Migração
+- Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.25"`
+- Se você parseia output do `hash`: campo `value` agora é `checksum`
+- Se usa `case` sem `--subvert`: agora sai com exit 65 (adicione pares `--subvert` explicitamente)
+- Se parseia exit codes de `get`/`del` para chave ausente: exit mudou de 4 para 65
+- Se parseia `batch` move/copy: alvos existentes agora exigem `"force":true`
+- MSRV inalterado em Rust 1.88
+
+### Cobertura de Testes
+- 631 testes passando (621 na v0.1.24 + 10 novos na v0.1.25)
+- ~505 cenários e2e em 6 rodadas de auditoria
+- Veja `gaps.md` para a auditoria completa de 64 gaps
 
 
 ## v0.1.23 para v0.1.24 (2026-06-21)

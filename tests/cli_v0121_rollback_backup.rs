@@ -78,7 +78,7 @@ fn rollback_creates_backup() {
         })
         .collect();
     assert!(
-        bak_entries.len() >= 1,
+        !bak_entries.is_empty(),
         "at least one .bak.* file must be preserved with --keep-backup, found {}",
         bak_entries.len()
     );

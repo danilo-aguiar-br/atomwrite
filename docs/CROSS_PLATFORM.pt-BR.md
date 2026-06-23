@@ -54,7 +54,7 @@ Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
 
 ### Cobertura de Testes
 
-- 621 testes passando (609 na v0.1.23 + 12 na v0.1.24)
+- 631 testes passando (621 na v0.1.24 + 10 na v0.1.25)
 - Gate de cross-compile: `cargo test --test cross_compile_check -- --ignored` valida targets Windows GNU/MSVC
 - 5 testes de sinal em `tests/signal_test.rs` cobrem SIGINT/SIGTERM/SIGPIPE/batch/shutdown
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais

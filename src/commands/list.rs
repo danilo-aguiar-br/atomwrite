@@ -5,14 +5,33 @@
 
 use std::collections::BTreeMap;
 use std::io::Write;
+use std::sync::LazyLock;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
 use ignore::WalkBuilder;
+use regex::Regex;
+
+static BACKUP_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\.bak\.\d{8}_\d{6}(_\d{3})?$").expect("valid backup regex"));
 
 use crate::cli::{GlobalArgs, ListArgs};
 use crate::ndjson_types::{ListEntry, ListSummary};
 use crate::output::NdjsonWriter;
+
+fn epoch_days_to_ymd(days: u64) -> (u64, u64, u64) {
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
 
 /// List project file structure with optional metadata as NDJSON.
 ///
@@ -34,6 +53,11 @@ pub fn cmd_list(
     } else {
         crate::path_safety::validate_path(&args.paths[0], &workspace)?
     };
+
+    // GAP-110: return FILE_NOT_FOUND when directory does not exist
+    if !root.exists() {
+        return Err(crate::error::AtomwriteError::NotFound { path: root }.into());
+    }
 
     let mut builder = WalkBuilder::new(&root);
     builder
@@ -111,7 +135,16 @@ pub fn cmd_list(
                         .modified()
                         .ok()
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| format!("{}Z", d.as_secs()));
+                        .map(|d| {
+                            let secs = d.as_secs();
+                            let days = secs / 86400;
+                            let rem = secs % 86400;
+                            let h = rem / 3600;
+                            let m = (rem % 3600) / 60;
+                            let s = rem % 60;
+                            let (y, mo, da) = epoch_days_to_ymd(days);
+                            format!("{y:04}-{mo:02}-{da:02}T{h:02}:{m:02}:{s:02}Z")
+                        });
                     (Some(sz), mod_str)
                 }
                 Err(_) => (None, None),
@@ -124,9 +157,16 @@ pub fn cmd_list(
         };
 
         if args.count_by_ext {
-            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                *by_ext.entry(ext.to_owned()).or_default() += 1;
-            }
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let ext = if BACKUP_RE.is_match(file_name) {
+                "backup".to_owned()
+            } else {
+                path.extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("(none)")
+                    .to_owned()
+            };
+            *by_ext.entry(ext).or_default() += 1;
         }
 
         let output = ListEntry {

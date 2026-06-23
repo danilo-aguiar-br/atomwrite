@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 use ast_grep_core::AstGrep;
 use ast_grep_core::matcher::Pattern;
 use ast_grep_language::SupportLang;
+use unicode_normalization::UnicodeNormalization;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
@@ -62,7 +63,7 @@ pub struct ScopeArgs {
     #[arg(
         long,
         value_enum,
-        help = "Transform action: upper, lower, titlecase, squeeze"
+        help = "Transform action: upper, lower, titlecase, squeeze, symbols, normalize"
     )]
     pub action: Option<ScopeAction>,
 
@@ -98,6 +99,10 @@ pub enum ScopeAction {
     Titlecase,
     /// Collapse consecutive repeated whitespace.
     Squeeze,
+    /// Convert ASCII symbols to Unicode equivalents.
+    Symbols,
+    /// NFC Unicode normalization.
+    Normalize,
 }
 
 /// Execute the scope subcommand.
@@ -115,11 +120,17 @@ pub fn cmd_scope(
     let start = Instant::now();
 
     let lang = parse_language(&args.language)?;
-    let pattern_str = resolve_pattern(&args.query, &args.pattern, &args.language)?;
-    let pattern =
-        Pattern::try_new(&pattern_str, lang).map_err(|e| AtomwriteError::InvalidInput {
-            reason: format!("invalid scope pattern: {e}"),
-        })?;
+    let pattern_strs = resolve_patterns(&args.query, &args.pattern, &args.language)?;
+    let patterns: Vec<Pattern> = pattern_strs
+        .iter()
+        .map(|ps| {
+            Pattern::try_new(ps, lang).map_err(|e| {
+                anyhow::anyhow!(AtomwriteError::InvalidInput {
+                    reason: format!("invalid scope pattern: {e}"),
+                })
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
     let query_name = args.query.clone().unwrap_or_else(|| "custom".to_owned());
 
     let workspace = global.resolve_workspace()?;
@@ -178,9 +189,10 @@ pub fn cmd_scope(
 
     let max_size = global.effective_max_filesize();
     let shutdown_flag = shutdown.flag();
+    let patterns = Arc::new(patterns);
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
-            let pattern = pattern.clone();
+            let patterns = Arc::clone(&patterns);
             let tx = tx.clone();
             let fv = Arc::clone(&fv);
             let fm = Arc::clone(&fm);
@@ -220,7 +232,7 @@ pub fn cmd_scope(
 
                 let grep = AstGrep::new(&content, lang);
                 let root = grep.root();
-                let matches: Vec<_> = root.find_all(&pattern).collect();
+                let matches: Vec<_> = patterns.iter().flat_map(|p| root.find_all(p)).collect();
 
                 if matches.is_empty() {
                     fs.fetch_add(1, Ordering::Relaxed);
@@ -303,6 +315,8 @@ pub fn cmd_scope(
                         Some(ScopeAction::Lower) => "lower",
                         Some(ScopeAction::Titlecase) => "titlecase",
                         Some(ScopeAction::Squeeze) => "squeeze",
+                        Some(ScopeAction::Symbols) => "symbols",
+                        Some(ScopeAction::Normalize) => "normalize",
                         None => "none",
                     }
                 };
@@ -392,6 +406,8 @@ fn apply_scope_action<'a>(
         Some(ScopeAction::Lower) => std::borrow::Cow::Owned(text.to_lowercase()),
         Some(ScopeAction::Titlecase) => std::borrow::Cow::Owned(titlecase(text)),
         Some(ScopeAction::Squeeze) => std::borrow::Cow::Owned(squeeze(text)),
+        Some(ScopeAction::Symbols) => std::borrow::Cow::Owned(symbolize(text)),
+        Some(ScopeAction::Normalize) => std::borrow::Cow::Owned(text.nfc().collect::<String>()),
         None => std::borrow::Cow::Borrowed(text),
     }
 }
@@ -425,13 +441,24 @@ fn squeeze(s: &str) -> String {
     result
 }
 
-fn resolve_pattern(
+fn symbolize(s: &str) -> String {
+    s.replace("=>", "⇒")
+        .replace("->", "→")
+        .replace("<-", "←")
+        .replace("!=", "≠")
+        .replace(">=", "≥")
+        .replace("<=", "≤")
+        .replace("...", "…")
+        .replace("--", "—")
+}
+
+fn resolve_patterns(
     query_name: &Option<String>,
     custom_pattern: &Option<String>,
     lang_str: &str,
-) -> Result<String> {
+) -> Result<Vec<String>> {
     if let Some(p) = custom_pattern {
-        return Ok(p.clone());
+        return Ok(vec![p.clone()]);
     }
 
     let name = query_name
@@ -440,7 +467,7 @@ fn resolve_pattern(
             reason: "either --query or --pattern is required".into(),
         })?;
 
-    lookup_prepared_query(name, lang_str)
+    lookup_prepared_queries(name, lang_str)
 }
 
 fn parse_language(lang_str: &str) -> Result<SupportLang> {
@@ -452,12 +479,14 @@ fn parse_language(lang_str: &str) -> Result<SupportLang> {
     })
 }
 
-fn lookup_prepared_query(name: &str, lang: &str) -> Result<String> {
+fn lookup_prepared_queries(name: &str, lang: &str) -> Result<Vec<String>> {
     match lang.to_lowercase().as_str() {
-        "rust" | "rs" => lookup_rust_query(name),
-        "python" | "py" => lookup_python_query(name),
-        "javascript" | "js" | "typescript" | "ts" | "tsx" | "jsx" => lookup_js_query(name),
-        "go" | "golang" => lookup_go_query(name),
+        "rust" | "rs" => lookup_rust_queries(name),
+        "python" | "py" => lookup_python_query(name).map(|s| vec![s]),
+        "javascript" | "js" | "typescript" | "ts" | "tsx" | "jsx" => {
+            lookup_js_query(name).map(|s| vec![s])
+        }
+        "go" | "golang" => lookup_go_query(name).map(|s| vec![s]),
         _ => Err(AtomwriteError::InvalidInput {
             reason: format!(
                 "no prepared queries for language: {lang}. \
@@ -468,52 +497,64 @@ fn lookup_prepared_query(name: &str, lang: &str) -> Result<String> {
     }
 }
 
-fn lookup_rust_query(name: &str) -> Result<String> {
-    let q = match name {
-        "comments" => "// $$BODY\\s*",
-        "strings" => "\"$$$BODY\"",
-        "fn" => "fn $NAME($$$ARGS) { $$$BODY }",
-        "pub-fn" => "pub fn $NAME($$$ARGS) { $$$BODY }",
-        "async-fn" => "async fn $NAME($$$ARGS) { $$$BODY }",
-        "unsafe-fn" => "unsafe fn $NAME($$$ARGS) { $$$BODY }",
-        "struct" => "struct $NAME { $$$FIELDS }",
-        "pub-struct" => "pub struct $NAME { $$$FIELDS }",
-        "enum" => "enum $NAME { $$$VARIANTS }",
-        "pub-enum" => "pub enum $NAME { $$$VARIANTS }",
-        "trait" => "trait $NAME { $$$BODY }",
-        "impl" => "impl $TYPE { $$$BODY }",
-        "mod" => "mod $NAME { $$$BODY }",
-        "closure" => "|$$$ARGS| $$$BODY",
-        "unsafe" => "unsafe { $$$BODY }",
-        "use" => "use $$$PATH;",
-        "test-fn" => "#[test] fn $NAME() { $$$BODY }",
-        "attribute" => "#[$$$ATTR]",
-        "return" => "return $$$EXPR",
-        "match" => "match $EXPR { $$$ARMS }",
-        "if-let" => "if let $PAT = $EXPR { $$$BODY }",
-        "while-let" => "while let $PAT = $EXPR { $$$BODY }",
-        "for" => "for $PAT in $ITER { $$$BODY }",
-        "loop" => "loop { $$$BODY }",
-        "const" => "const $NAME: $TYPE = $$$EXPR;",
-        "static" => "static $NAME: $TYPE = $$$EXPR;",
-        "type-alias" => "type $NAME = $$$TYPE;",
-        "macro-rules" => "macro_rules! $NAME { $$$BODY }",
-        "derive" => "#[derive($$$TRAITS)]",
-        "doc-comment" => "/// $$$BODY",
+fn lookup_rust_queries(name: &str) -> Result<Vec<String>> {
+    let qs: Vec<&str> = match name {
+        "comments" => vec!["// $$BODY\\s*", "/* $$$BODY */"],
+        "strings" => vec!["\"$$$BODY\""],
+        "fn" => vec!["fn $NAME($$$ARGS) { $$$BODY }"],
+        "pub-fn" => vec!["pub fn $NAME($$$ARGS) { $$$BODY }"],
+        "async-fn" => vec!["async fn $NAME($$$ARGS) { $$$BODY }"],
+        "unsafe-fn" => vec!["unsafe fn $NAME($$$ARGS) { $$$BODY }"],
+        "struct" => vec!["struct $NAME { $$$FIELDS }"],
+        "pub-struct" => vec!["pub struct $NAME { $$$FIELDS }"],
+        "enum" => vec!["enum $NAME { $$$VARIANTS }"],
+        "pub-enum" => vec!["pub enum $NAME { $$$VARIANTS }"],
+        "trait" => vec!["trait $NAME { $$$BODY }"],
+        "impl" => vec!["impl $TYPE { $$$BODY }"],
+        "mod" => vec!["mod $NAME { $$$BODY }"],
+        "closure" => vec!["|$$$ARGS| $$$BODY"],
+        "unsafe" => vec!["unsafe { $$$BODY }"],
+        "use" => vec!["use $$$PATH;"],
+        // GAP-134: test-fn pattern is multi-node (#[test] + fn) which
+        // ast-grep rejects. Disabled until ast-grep supports composite patterns.
+        "test-fn" => {
+            return Err(AtomwriteError::InvalidInput {
+                reason: "query 'test-fn' is currently unavailable: the pattern '#[test] fn ...' \
+                         spans two AST nodes (attribute + function_item) which ast-grep does not \
+                         support as a single pattern. Use 'atomwrite scope --pattern \"#[test]\"' \
+                         to match test attributes, or 'atomwrite query -Q \
+                         \"(function_item (attribute_item) @attr)\"' for tree-sitter queries."
+                    .into(),
+            }
+            .into());
+        }
+        "attribute" => vec!["#[$$$ATTR]"],
+        "return" => vec!["return $$$EXPR"],
+        "match" => vec!["match $EXPR { $$$ARMS }"],
+        "if-let" => vec!["if let $PAT = $EXPR { $$$BODY }"],
+        "while-let" => vec!["while let $PAT = $EXPR { $$$BODY }"],
+        "for" => vec!["for $PAT in $ITER { $$$BODY }"],
+        "loop" => vec!["loop { $$$BODY }"],
+        "const" => vec!["const $NAME: $TYPE = $$$EXPR;"],
+        "static" => vec!["static $NAME: $TYPE = $$$EXPR;"],
+        "type-alias" => vec!["type $NAME = $$$TYPE;"],
+        "macro-rules" => vec!["macro_rules! $NAME { $$$BODY }"],
+        "derive" => vec!["#[derive($$$TRAITS)]"],
+        "doc-comment" => vec!["/// $$$BODY"],
         _ => {
             return Err(AtomwriteError::InvalidInput {
                 reason: format!(
                     "unknown Rust query: {name}. Available: comments, strings, fn, pub-fn, \
                      async-fn, unsafe-fn, struct, pub-struct, enum, pub-enum, trait, impl, \
-                     mod, closure, unsafe, use, test-fn, attribute, return, match, if-let, \
+                     mod, closure, unsafe, use, attribute, return, match, if-let, \
                      while-let, for, loop, const, static, type-alias, macro-rules, derive, \
-                     doc-comment"
+                     doc-comment. Note: test-fn is disabled (ast-grep multi-node limitation)"
                 ),
             }
             .into());
         }
     };
-    Ok(q.to_owned())
+    Ok(qs.into_iter().map(String::from).collect())
 }
 
 fn lookup_python_query(name: &str) -> Result<String> {
@@ -623,15 +664,29 @@ mod tests {
     }
 
     #[test]
-    fn lookup_rust_query_known() {
-        let result = lookup_rust_query("fn");
+    fn lookup_rust_queries_known() {
+        let result = lookup_rust_queries("fn");
         assert!(result.is_ok());
-        assert!(result.unwrap().contains("fn $NAME"));
+        let qs = result.unwrap();
+        assert_eq!(qs.len(), 1);
+        assert!(qs[0].contains("fn $NAME"));
     }
 
     #[test]
-    fn lookup_rust_query_unknown() {
-        let result = lookup_rust_query("nonexistent");
+    fn lookup_rust_queries_comments_multi() {
+        let result = lookup_rust_queries("comments");
+        assert!(result.is_ok());
+        let qs = result.unwrap();
+        assert_eq!(
+            qs.len(),
+            2,
+            "comments should produce 2 patterns (line + block)"
+        );
+    }
+
+    #[test]
+    fn lookup_rust_queries_unknown() {
+        let result = lookup_rust_queries("nonexistent");
         assert!(result.is_err());
     }
 
@@ -648,15 +703,15 @@ mod tests {
     }
 
     #[test]
-    fn resolve_pattern_custom() {
-        let result = resolve_pattern(&None, &Some("custom_pattern".into()), "rust");
+    fn resolve_patterns_custom() {
+        let result = resolve_patterns(&None, &Some("custom_pattern".into()), "rust");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "custom_pattern");
+        assert_eq!(result.unwrap(), vec!["custom_pattern"]);
     }
 
     #[test]
-    fn resolve_pattern_requires_query_or_pattern() {
-        let result = resolve_pattern(&None, &None, "rust");
+    fn resolve_patterns_requires_query_or_pattern() {
+        let result = resolve_patterns(&None, &None, "rust");
         assert!(result.is_err());
     }
 

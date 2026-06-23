@@ -12,7 +12,8 @@ use serde::Deserialize;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
-use crate::cli::{EditArgs, FuzzyMode, GlobalArgs};
+pub use crate::cli::FuzzyMode;
+use crate::cli::{EditArgs, GlobalArgs};
 use crate::commands::resolve_backup;
 use crate::error::AtomwriteError;
 
@@ -22,11 +23,18 @@ fn find_str(haystack: &str, needle: &str) -> Option<usize> {
 use crate::ndjson_types::{EditOutput, PairResult};
 use crate::output::NdjsonWriter;
 
-struct FuzzyInfo {
-    fuzzy: bool,
-    strategy: String,
-    strategies_tried: u64,
-    similarity: Option<f64>,
+/// Diagnostic detail about which fuzzy-matching strategy resolved a pair.
+pub struct FuzzyInfo {
+    /// Whether a fuzzy (non-exact) strategy was used.
+    pub fuzzy: bool,
+    /// Name of the strategy that produced the match.
+    pub strategy: String,
+    /// Number of strategies attempted before finding a match.
+    pub strategies_tried: u64,
+    /// Similarity score of the match (0.0–1.0), if applicable.
+    pub similarity: Option<f64>,
+    /// Mini unified diff showing what matched vs what was expected.
+    pub diff_preview: Option<String>,
 }
 
 fn strip_file_trailing_newline(s: String) -> String {
@@ -107,6 +115,30 @@ pub fn cmd_edit(
         return Err(AtomwriteError::NotFound { path: path.clone() }.into());
     }
 
+    let mode_count = [
+        args.after_line.is_some(),
+        args.before_line.is_some(),
+        args.range.is_some(),
+        args.delete_range.is_some(),
+        !args.old.is_empty() || !args.old_file.is_empty(),
+        args.after_match.is_some(),
+        args.before_match.is_some(),
+        args.between.is_some(),
+        args.multi,
+    ]
+    .iter()
+    .filter(|&&b| b)
+    .count();
+    if mode_count > 1 {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "conflicting edit modes: specify only one of --old/--new, --after-line, \
+                     --before-line, --range, --delete-range, --after-match, --before-match, \
+                     --between, --multi"
+                .into(),
+        }
+        .into());
+    }
+
     let original = crate::file_io::read_file_string(&path, global.effective_max_filesize())?;
 
     let checksum_before = checksum::hash_bytes(original.as_bytes());
@@ -167,6 +199,7 @@ pub fn cmd_edit(
             &effective_new,
             args.fuzzy,
             args.partial,
+            args.fuzzy_threshold,
         )?;
         (e, m, Some(fi), report)
     } else if args.after_line.is_some()
@@ -226,14 +259,15 @@ pub fn cmd_edit(
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
     let lines_after = edited.lines().count() as u64;
 
-    let (fuzzy, strategy, strategies_tried, similarity) = match fuzzy_info {
+    let (fuzzy, strategy, strategies_tried, similarity, diff_preview) = match fuzzy_info {
         Some(fi) => (
             Some(fi.fuzzy),
             Some(fi.strategy),
             Some(fi.strategies_tried),
             fi.similarity,
+            fi.diff_preview,
         ),
-        None => (None, None, None, None),
+        None => (None, None, None, None, None),
     };
 
     let from_file = !args.old_file.is_empty();
@@ -269,6 +303,7 @@ pub fn cmd_edit(
         strategy,
         strategies_tried,
         similarity,
+        diff_preview,
         pairs_total,
         pair_results,
         mtime_preserved: Some(args.preserve_timestamps),
@@ -419,8 +454,10 @@ fn cmd_edit_multi(
 
     // Sort line-based ops by descending line to avoid index drift
     // Separate exact ops (they work on the accumulated string, not line indices)
-    let mut exact_ops: Vec<&MultiEdit> = ops.iter().filter(|o| o.effective_op() == "exact").collect();
-    let mut line_ops: Vec<&MultiEdit> = ops.iter().filter(|o| o.effective_op() != "exact").collect();
+    let mut exact_ops: Vec<&MultiEdit> =
+        ops.iter().filter(|o| o.effective_op() == "exact").collect();
+    let mut line_ops: Vec<&MultiEdit> =
+        ops.iter().filter(|o| o.effective_op() != "exact").collect();
     line_ops.sort_by(|a, b| {
         let la = a.line.or(a.start).unwrap_or(0);
         let lb = b.line.or(b.start).unwrap_or(0);
@@ -531,6 +568,7 @@ fn cmd_edit_multi(
         strategy: None,
         strategies_tried: None,
         similarity: None,
+        diff_preview: None,
         pairs_total: None,
         pair_results: None,
         mtime_preserved: Some(args.preserve_timestamps),
@@ -555,13 +593,14 @@ fn edit_old_new(
     new: &[String],
     fuzzy: FuzzyMode,
     partial: bool,
+    custom_threshold: Option<f64>,
 ) -> Result<(String, String, FuzzyInfo, Option<MultiReport>)> {
     if old.len() > 1 {
-        return edit_old_new_multi(original, old, new, fuzzy, partial);
+        return edit_old_new_multi(original, old, new, fuzzy, partial, custom_threshold);
     }
     let old_str = &old[0];
     let new_str = new.first().map(|s| s.as_str()).unwrap_or("");
-    match match_pair(original, old_str, new_str, fuzzy) {
+    match match_pair(original, old_str, new_str, fuzzy, custom_threshold) {
         Ok((edited, info)) => {
             let mode = if info.strategy == "exact" {
                 "exact".into()
@@ -581,11 +620,14 @@ fn edit_old_new(
 /// Shared by the single-pair and multi-pair `--old`/`--new` paths so both
 /// have identical fuzzy behavior (G117 fix: the multi path previously used
 /// exact matching only).
-fn match_pair(
+/// Resolve a single `old` → `new` replacement against `content`, running the
+/// 9-strategy fuzzy cascade. Exposed for property-based testing (GAP-086).
+pub fn match_pair(
     content: &str,
     old: &str,
     new: &str,
     fuzzy_mode: FuzzyMode,
+    custom_threshold: Option<f64>,
 ) -> std::result::Result<(String, FuzzyInfo), AtomwriteError> {
     // Strategy 1: exact match
     if let Some(pos) = find_str(content, old) {
@@ -597,6 +639,7 @@ fn match_pair(
                 strategy: "exact".into(),
                 strategies_tried: 1,
                 similarity: None,
+                diff_preview: None,
             },
         ));
     }
@@ -620,6 +663,7 @@ fn match_pair(
                 strategy: "line_trimmed".into(),
                 strategies_tried: 2,
                 similarity: Some(1.0),
+                diff_preview: None,
             },
         ));
     }
@@ -634,6 +678,7 @@ fn match_pair(
                 strategy: "whitespace_normalized".into(),
                 strategies_tried: 3,
                 similarity: Some(1.0),
+                diff_preview: None,
             },
         ));
     }
@@ -648,6 +693,7 @@ fn match_pair(
                 strategy: "punctuation_normalized".into(),
                 strategies_tried: 4,
                 similarity: Some(1.0),
+                diff_preview: None,
             },
         ));
     }
@@ -662,6 +708,7 @@ fn match_pair(
                 strategy: "indent_flexible".into(),
                 strategies_tried: 5,
                 similarity: Some(1.0),
+                diff_preview: None,
             },
         ));
     }
@@ -676,6 +723,7 @@ fn match_pair(
                 strategy: "escape_normalized".into(),
                 strategies_tried: 6,
                 similarity: Some(1.0),
+                diff_preview: None,
             },
         ));
     }
@@ -690,15 +738,16 @@ fn match_pair(
                 strategy: "trimmed_boundary".into(),
                 strategies_tried: 8,
                 similarity: Some(1.0),
+                diff_preview: None,
             },
         ));
     }
 
     // Strategy 8: block-anchor (only in auto/aggressive, requires >= 50% similarity in auto, >= 50% in aggressive)
-    let min_ratio = match fuzzy_mode {
+    let min_ratio = custom_threshold.unwrap_or(match fuzzy_mode {
         FuzzyMode::Aggressive => 0.50,
         _ => 0.70,
-    };
+    });
     if let Some((start, end, ratio)) = match_block_anchor(&content_lines, &old_lines, min_ratio) {
         let edited = apply_replacement(content, &content_lines, start, end, new);
         return Ok((
@@ -708,6 +757,7 @@ fn match_pair(
                 strategy: "block_anchor".into(),
                 strategies_tried: 8,
                 similarity: Some(ratio),
+                diff_preview: None,
             },
         ));
     }
@@ -718,8 +768,36 @@ fn match_pair(
     // block-anchor but catches edits where leading/trailing context is
     // also wrong (e.g. when an LLM adds comments near the match).
     if matches!(fuzzy_mode, FuzzyMode::Aggressive | FuzzyMode::Auto) {
+        let ctx_threshold = custom_threshold.unwrap_or(0.80);
+        // Strategy 9a: Jaro-Winkler for short single-line patterns (< 60 chars).
+        // JW weights prefix commonality — better for function names and identifiers.
+        if old_lines.len() == 1 && old.len() < 60 {
+            let jw_threshold = custom_threshold.unwrap_or(0.85);
+            let mut best_jw = (0usize, 0.0f64);
+            for (i, line) in content_lines.iter().enumerate() {
+                let score = strsim::jaro_winkler(line.trim(), old.trim());
+                if score > best_jw.1 {
+                    best_jw = (i, score);
+                }
+            }
+            if best_jw.1 >= jw_threshold {
+                let edited =
+                    apply_replacement(content, &content_lines, best_jw.0, best_jw.0 + 1, new);
+                return Ok((
+                    edited,
+                    FuzzyInfo {
+                        fuzzy: true,
+                        strategy: "context_aware_jw".into(),
+                        strategies_tried: 9,
+                        similarity: Some(best_jw.1),
+                        diff_preview: None,
+                    },
+                ));
+            }
+        }
+        // Strategy 9b: Levenshtein sliding window for multi-line patterns.
         if let Some((start, end, similarity)) =
-            match_context_aware(&content_lines, &old_lines, 0.80)
+            match_context_aware(&content_lines, &old_lines, ctx_threshold)
         {
             let edited = apply_replacement(content, &content_lines, start, end, new);
             return Ok((
@@ -729,6 +807,7 @@ fn match_pair(
                     strategy: "context_aware".into(),
                     strategies_tried: 9,
                     similarity: Some(similarity),
+                    diff_preview: None,
                 },
             ));
         }
@@ -763,6 +842,7 @@ fn edit_old_new_multi(
     new: &[String],
     fuzzy: FuzzyMode,
     partial: bool,
+    custom_threshold: Option<f64>,
 ) -> Result<(String, String, FuzzyInfo, Option<MultiReport>)> {
     let pairs_total = old.len() as u64;
     let mut content = original.to_string();
@@ -773,7 +853,7 @@ fn edit_old_new_multi(
 
     for (i, (old_str, new_str)) in old.iter().zip(new.iter()).enumerate() {
         let index = (i + 1) as u64;
-        match match_pair(&content, old_str, new_str, fuzzy) {
+        match match_pair(&content, old_str, new_str, fuzzy, custom_threshold) {
             Ok((edited, info)) => {
                 content = edited;
                 applied += 1;
@@ -838,6 +918,7 @@ fn edit_old_new_multi(
             strategy: strategy.into(),
             strategies_tried: max_strategies_tried,
             similarity: None,
+            diff_preview: None,
         },
         Some(MultiReport {
             pair_results,

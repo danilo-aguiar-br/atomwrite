@@ -37,6 +37,13 @@ pub fn cmd_search(
 ) -> Result<()> {
     let start = Instant::now();
 
+    if args.pcre2 {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: "PCRE2 not available; rebuild with --features pcre2".into(),
+        }
+        .into());
+    }
+
     let workspace = global.resolve_workspace()?;
     let canonical_paths =
         crate::commands::path_resolution::resolve_paths_against_workspace(&args.paths, &workspace)?;

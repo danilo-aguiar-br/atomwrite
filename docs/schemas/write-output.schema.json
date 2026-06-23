@@ -46,6 +46,24 @@
       "format": "uint64",
       "minimum": 0
     },
+    "stdin_bytes_read": {
+      "description": "Number of bytes read from stdin.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "wal_policy": {
+      "description": "WAL policy used for this write (auto, enabled, disabled).",
+      "type": "string"
+    },
+    "mtime_preserved": {
+      "description": "True when --preserve-timestamps was active and mtime was kept. Absent when not applicable.",
+      "type": "boolean"
+    },
+    "risk_assessment": {
+      "description": "Risk assessment telemetry when a write guard triggered.",
+      "type": ["object", "null"]
+    },
     "platform": {
       "description": "Platform-specific fsync methods used.",
       "$ref": "#/$defs/PlatformInfo"
@@ -58,6 +76,8 @@
     "bytes_written",
     "checksum",
     "elapsed_ms",
+    "stdin_bytes_read",
+    "wal_policy",
     "platform"
   ],
   "$defs": {

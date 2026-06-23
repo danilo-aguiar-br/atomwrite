@@ -68,7 +68,14 @@ pub fn cmd_get(
     };
 
     if !found {
-        return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: format!(
+                "key '{}' not found in {}",
+                args.key_path,
+                validated.display()
+            ),
+        }
+        .into());
     }
 
     let output = GetResult {

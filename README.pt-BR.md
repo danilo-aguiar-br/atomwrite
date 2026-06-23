@@ -13,10 +13,24 @@
 
 ## O Que É
 - Um único binário Rust que resolve toda operação de arquivo que um agente LLM precisa
-- **32 subcomandos**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions, edit-loop, prune-backups
+- **33 subcomandos**: read, write, edit, search, replace, hash, verify, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions, edit-loop, prune-backups
 - Toda escrita é atômica: tempfile, fsync, rename, fsync do diretório
 - Toda resposta é NDJSON: um objeto JSON por linha, legível por máquina
 - Todo arquivo recebe checksum BLAKE3: detecta drift, verifica integridade, habilita locking otimista
+
+
+## O Que Há De Novo Na v0.1.25 (2026-06-22)
+
+- 49 bugs corrigidos em 6 rodadas de auditoria e2e (GAP-071 a GAP-134)
+- Arquivo de configuração `.atomwrite.toml` com hierarquia: CLI > env > local > XDG global > defaults
+- Novo subcomando `verify` para verificação de checksum BLAKE3
+- Fuzzy matching Jaro-Winkler + `--fuzzy-threshold` configurável para edit
+- `copy --preserve` agora copia permissões E timestamps da origem
+- Todos os fluxos `--backup` agora retêm arquivos `.bak` em disco (copy, replace, write --require-backup)
+- `scope --query comments` captura block comments além de line comments
+- 3 correções críticas: backup_path fantasma, misroute TOML escalar, case no-op silencioso
+- Erros de I/O via anyhow agora emitem envelopes NDJSON adequados (7 subcomandos corrigidos)
+- 631 testes passando, ~505 cenários e2e em 6 rodadas de auditoria
 
 
 ## O Que Há De Novo Na v0.1.24 (2026-06-21)
@@ -39,7 +53,7 @@
 - GAP-2026-016 fechado — backup habilitado por padrão em 9 structs que mutam conteúdo (`write`, `edit`, `edit-loop`, `replace`, `transform`, `apply`, `set`, `del`, `case`); use `--no-backup` ou `ATOMWRITE_BACKUP=0` para opt-out
 - GAP-2026-017 fechado — guarda de shrink bloqueia writes que reduzem tamanho do arquivo em >50% quando `--expect-checksum` está ativo; passe `--allow-shrink` para override
 - GAP-2026-018 fechado — `edit --old-file <PATH> --new-file <PATH>` lê conteúdo de match/substituição de arquivos dentro do processo atomwrite, contornando shell expansion e limite ARG_MAX do kernel (~131 KB); validação de cross-mixing rejeita `--old` + `--new-file` (exit 65); strip de trailing newline garante paridade com argv
-- 621+ testes passando, 12 novos para v0.1.24
+- 631+ testes passando (veja v0.1.25 para contagem mais recente)
 - 4 novos ADRs: 0041 (allow-hyphen-values), 0042 (backup-by-default), 0043 (shrink-guard), 0044 (edit-old-file-new-file)
 
 

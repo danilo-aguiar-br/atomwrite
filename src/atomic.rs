@@ -411,11 +411,18 @@ pub fn atomic_write(
     // when the caller did not request retention. Idempotent: NotFound is
     // treated as success. Errors other than NotFound are logged at WARN
     // level but do NOT propagate — the user's write already succeeded.
-    if let Some(ref bp) = backup_path {
+    // GAP-101: clear backup_path when the file is deleted so NDJSON
+    // never reports a path that does not exist on disk.
+    let backup_path = if let Some(ref bp) = backup_path {
         if !opts.keep_backup {
             delete_backup_quietly(bp);
+            None
+        } else {
+            Some(bp.clone())
         }
-    }
+    } else {
+        None
+    };
 
     Ok(WriteResult {
         bytes_written: content.len() as u64,

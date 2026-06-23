@@ -24,6 +24,8 @@ pub mod cli;
 pub mod cli_args;
 /// Subcommand handler implementations.
 pub mod commands;
+/// Configuration file loading (`.atomwrite.toml`).
+pub mod config;
 /// Named constants for buffer sizes, thresholds, and identifiers.
 pub mod constants;
 /// Domain-specific error types.
@@ -68,12 +70,12 @@ fn emit_json_schema(command: &Commands, mut out: impl Write) -> Result<()> {
         Commands::Edit(_) => schemars::schema_for!(ndjson_types::EditOutput),
         Commands::Search(_) => schemars::schema_for!(ndjson_types::SearchMatch),
         Commands::Replace(_) => schemars::schema_for!(ndjson_types::ReplaceResult),
-        Commands::Hash(_) => schemars::schema_for!(ndjson_types::WriteOutput),
-        Commands::Delete(_) => schemars::schema_for!(ndjson_types::WriteOutput),
+        Commands::Hash(_) => schemars::schema_for!(ndjson_types::HashOutput),
+        Commands::Delete(_) => schemars::schema_for!(ndjson_types::DeleteOutput),
         Commands::Count(_) => schemars::schema_for!(ndjson_types::Summary),
         Commands::Diff(_) => schemars::schema_for!(ndjson_types::DryRunPlan),
-        Commands::Move(_) => schemars::schema_for!(ndjson_types::WriteOutput),
-        Commands::Copy(_) => schemars::schema_for!(ndjson_types::WriteOutput),
+        Commands::Move(_) => schemars::schema_for!(ndjson_types::MoveOutput),
+        Commands::Copy(_) => schemars::schema_for!(ndjson_types::CopyOutput),
         Commands::List(_) => schemars::schema_for!(ndjson_types::ListEntry),
         Commands::Extract(_) => schemars::schema_for!(ndjson_types::CalcOutput),
         Commands::Calc(_) => schemars::schema_for!(ndjson_types::CalcOutput),
@@ -94,6 +96,7 @@ fn emit_json_schema(command: &Commands, mut out: impl Write) -> Result<()> {
         Commands::WalHeal(_) => schemars::schema_for!(ndjson_types::AutoHealReport),
         Commands::PruneBackups(_) => schemars::schema_for!(ndjson_types::PruneBackupSummary),
         Commands::EditLoop(_) => schemars::schema_for!(ndjson_types::EditLoopSummary),
+        Commands::Verify(_) => schemars::schema_for!(ndjson_types::WriteOutput),
         Commands::Completions(_) => schemars::schema_for!(ndjson_types::CalcOutput),
     };
     serde_json::to_writer_pretty(&mut out, &schema)?;
@@ -116,12 +119,12 @@ pub fn emit_schema_by_name(name: &str, mut out: impl Write) -> Result<bool> {
         "edit" => schemars::schema_for!(ndjson_types::EditOutput),
         "search" => schemars::schema_for!(ndjson_types::SearchMatch),
         "replace" => schemars::schema_for!(ndjson_types::ReplaceResult),
-        "hash" => schemars::schema_for!(ndjson_types::WriteOutput),
-        "delete" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "hash" => schemars::schema_for!(ndjson_types::HashOutput),
+        "delete" => schemars::schema_for!(ndjson_types::DeleteOutput),
         "count" => schemars::schema_for!(ndjson_types::Summary),
         "diff" => schemars::schema_for!(ndjson_types::DryRunPlan),
-        "move" => schemars::schema_for!(ndjson_types::WriteOutput),
-        "copy" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "move" => schemars::schema_for!(ndjson_types::MoveOutput),
+        "copy" => schemars::schema_for!(ndjson_types::CopyOutput),
         "list" => schemars::schema_for!(ndjson_types::ListEntry),
         "extract" => schemars::schema_for!(ndjson_types::CalcOutput),
         "calc" => schemars::schema_for!(ndjson_types::CalcOutput),
@@ -287,6 +290,15 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
             // holds it (via `main.rs:106 stdin.lock()`) blocks forever.
             // See audit 2026-06-17.
             commands::edit_loop::cmd_edit_loop(args, &cli.global, stdin, &mut writer)
+        }
+        Commands::Verify(args) => {
+            let hash_args = cli_args::HashArgs {
+                paths: vec![args.path.clone()],
+                verify: Some(args.checksum.clone()),
+                stdin: false,
+                recursive: false,
+            };
+            commands::hash::cmd_hash(&hash_args, &cli.global, stdin, &mut writer)
         }
         Commands::Completions(_) => unreachable!("completions handled in prescan_json_schema"),
     };

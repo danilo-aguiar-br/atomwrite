@@ -79,9 +79,12 @@ pub fn cmd_move(
         return Ok(());
     }
 
-    if args.backup && target.exists() {
-        crate::atomic::create_backup(&target, args.retention)?;
-    }
+    let backup_path = if args.backup && target.exists() {
+        let bp = crate::atomic::create_backup(&target, args.retention)?;
+        Some(bp.display().to_string())
+    } else {
+        None
+    };
 
     if let Some(parent) = target.parent() {
         if !parent.exists() {
@@ -123,6 +126,7 @@ pub fn cmd_move(
                 checksum: hash,
                 cross_device: false,
                 atomic: true,
+                backup_path: backup_path.clone(),
                 elapsed_ms: start.elapsed().as_millis() as u64,
             })?;
         }
@@ -165,6 +169,7 @@ pub fn cmd_move(
                 checksum: hash,
                 cross_device: true,
                 atomic: false,
+                backup_path: backup_path.clone(),
                 elapsed_ms: start.elapsed().as_millis() as u64,
             })?;
         }

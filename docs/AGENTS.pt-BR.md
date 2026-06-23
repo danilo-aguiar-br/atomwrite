@@ -4,6 +4,43 @@
 [Read in English](AGENTS.md)
 
 
+## O Que Há de Novo na v0.1.25
+
+- 49 gaps resolvidos (GAP-071 a GAP-134) em 6 rodadas de auditoria e2e (~505 cenários)
+- NOVO SUBCOMANDO: `verify <PATH> --checksum <BLAKE3>` — verificação dedicada de checksum (33 subcomandos no total)
+- NOVO: arquivo de configuração `.atomwrite.toml` — hierarquia: CLI > env > `.atomwrite.toml` local > XDG `~/.config/atomwrite/config.toml` > defaults
+- NOVAS FLAGS: `delete --older-than <DURATION>` (s/m/h/d/w), `delete --confirm` (modo preview), `replace --preserve-case` (adaptação UPPER/lower/Title), `search --pcre2`, `edit --fuzzy-threshold <FLOAT>`, `scope --action symbols|normalize`
+- NOVAS FLAGS: `copy --no-reflink`, `copy --preserve-xattr`, `move --preserve-hardlinks`
+- FUZZY MATCHING: Jaro-Winkler (`context_aware_jw`) adicionado na cascata de 9 estratégias; campo `diff_preview` nas respostas quando fuzzy match utilizado
+- CORREÇÕES CRÍTICAS: `write --backup` não reporta mais `backup_path` fantasma (GAP-101), `set` não redireciona mais chave em scalar TOML (GAP-102), overflow de `size_delta_pct` corrigido (GAP-120)
+- CORREÇÕES ALTAS: `copy --preserve` agora preserva permissões E mtime (GAP-103/133), `copy --backup`/`replace --backup` agora retêm arquivos `.bak` (GAP-104/105), erros de I/O agora emitem envelope NDJSON (GAP-098)
+- CORREÇÕES MÉDIAS: campo `hash` renomeado `value` → `checksum` (GAP-107), `list --long` datas ISO 8601 (GAP-116), `outline --positions` emite byte offsets (GAP-109), `get`/`del` chave ausente retorna exit 65 INVALID_INPUT (GAP-111), `scope --query comments` captura block comments (GAP-123)
+- MUDANÇA DE COMPORTAMENTO: `case` sem `--subvert` retorna exit 65 com mensagem explicativa (GAP-127)
+- Validação de conflitos de flags: `append+prepend`, `fixed+regex`, `literal+regex` rejeitados no parse (GAP-093)
+- 631 testes passando (10 novos), 0 clippy warnings, 0 fmt diffs
+
+
+## O Que Há de Novo na v0.1.24
+
+- 52 bugs corrigidos (GAP-2026-019 a GAP-2026-070) em auditoria e2e abrangente
+- TODOS os erros agora emitem JSON estruturado no stdout com exit codes tipados
+- 20 chamadas `anyhow::bail!()` convertidas para variantes `AtomwriteError`
+- `delete --recursive` AGORA FUNCIONA (era no-op para diretórios)
+- `hash --recursive` AGORA FUNCIONA (era aceito mas nunca percorria diretórios)
+- `search --multiline` AGORA FUNCIONA (flag não era propagada)
+- `replace` REJEITA padrão vazio (antes destruía arquivos silenciosamente)
+- 621 testes passando (12 novos)
+
+
+## O Que Há de Novo na v0.1.23
+
+- GAP-2026-015: `allow_hyphen_values = true` em 15 campos CLI — valores com `-` aceitos como dados
+- GAP-2026-016: backup habilitado por padrão em 9 structs que mutam conteúdo
+- GAP-2026-017: guarda de shrink bloqueia writes >50% menores quando `--expect-checksum` ativo
+- GAP-2026-018: `--old-file`/`--new-file` no edit para contornar ARG_MAX
+- 609+ testes passando (31 novos)
+
+
 ## O Que Há de Novo na v0.1.22
 
 - **GAP-2026-012 Frente 3 fechado** — novo sub-comando `edit-loop [PATH]` aplica N pares `{old, new}` em 1 invocação via NDJSON no stdin. Reduz 5 chamadas `edit` sequenciais (5 spawns de subprocess, 5 recapturas de checksum) para uma única escrita atômica. Suporta `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`. Veja `tests/cli_v0121_edit_loop.rs` e ADR-0039.

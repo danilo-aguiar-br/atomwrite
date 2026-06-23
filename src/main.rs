@@ -5,6 +5,7 @@
 #![deny(unsafe_code)]
 
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -150,6 +151,17 @@ fn main() -> ExitCode {
                 };
                 let _ =
                     atomwrite::output::write_error_json_with_context(&mut out, aw_err, None, &ctx);
+                let _ = out.flush();
+                ExitCode::from(aw_err.exit_code())
+            } else if let Some(io_err) = find_io_error(&err) {
+                let aw_err = io_to_atomwrite_error(io_err, &err);
+                let mut out = io::stdout().lock();
+                let ctx = atomwrite::error::ErrorContext {
+                    workspace_provided: cli.global.workspace.is_some(),
+                    workspace: cli.global.workspace.clone(),
+                };
+                let _ =
+                    atomwrite::output::write_error_json_with_context(&mut out, &aw_err, None, &ctx);
                 let _ = out.flush();
                 ExitCode::from(aw_err.exit_code())
             } else {
@@ -315,6 +327,12 @@ fn prescan_json_schema() -> Option<String> {
         "completions",
         "prune-backups",
         "edit-loop",
+        "get",
+        "set",
+        "del",
+        "outline",
+        "query",
+        "case",
     ];
     for arg in &args[1..] {
         if SUBCOMMANDS.contains(&arg.as_str()) {
@@ -338,4 +356,42 @@ fn init_locale(lang_override: Option<&str>) {
     };
 
     rust_i18n::set_locale(resolved);
+}
+
+fn find_io_error(err: &anyhow::Error) -> Option<std::io::ErrorKind> {
+    for cause in err.chain() {
+        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+            return Some(io_err.kind());
+        }
+    }
+    None
+}
+
+fn io_to_atomwrite_error(
+    kind: std::io::ErrorKind,
+    err: &anyhow::Error,
+) -> atomwrite::error::AtomwriteError {
+    let msg = format!("{err:#}");
+    match kind {
+        std::io::ErrorKind::PermissionDenied => {
+            atomwrite::error::AtomwriteError::PermissionDenied {
+                path: extract_path_from_message(&msg),
+            }
+        }
+        std::io::ErrorKind::NotFound => atomwrite::error::AtomwriteError::NotFound {
+            path: extract_path_from_message(&msg),
+        },
+        _ => atomwrite::error::AtomwriteError::Io {
+            source: std::io::Error::new(kind, msg),
+        },
+    }
+}
+
+fn extract_path_from_message(msg: &str) -> PathBuf {
+    if let Some(start) = msg.find('/') {
+        let rest = &msg[start..];
+        let end = rest.find(':').unwrap_or(rest.len());
+        return PathBuf::from(&rest[..end]);
+    }
+    PathBuf::from("unknown")
 }

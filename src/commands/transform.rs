@@ -170,6 +170,7 @@ pub fn cmd_transform(
     let max_size = global.effective_max_filesize();
     let shutdown_flag = shutdown.flag();
     let backup_flag = effective_backup;
+    let verify_parse = args.verify_parse;
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
             let pattern = pattern.clone();
@@ -240,6 +241,20 @@ pub fn cmd_transform(
                 }
 
                 let checksum_after = checksum::hash_bytes(content.as_bytes());
+
+                if verify_parse {
+                    if let Ok(crate::syntax_check::SyntaxCheckResult::Errors { count, .. }) =
+                        crate::syntax_check::syntax_check(&path, content.as_bytes())
+                    {
+                        let _ = tx.send(TransformEvent::Error {
+                            path,
+                            message: format!(
+                                "verify-parse: rewritten content has {count} syntax error(s)"
+                            ),
+                        });
+                        return ignore::WalkState::Continue;
+                    }
+                }
 
                 if !dry_run {
                     let validated = match crate::path_safety::validate_path(&path, &ws) {
@@ -412,6 +427,7 @@ fn cmd_transform_multi(
             inline_rules: None,
             backup: effective_backup,
             no_backup: false,
+            verify_parse: args.verify_parse,
         };
 
         // Emit a "rule_begin" event so consumers can correlate subsequent

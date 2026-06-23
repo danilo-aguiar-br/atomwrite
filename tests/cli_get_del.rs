@@ -35,10 +35,7 @@ fn get_toml_top_level() {
     assert!(get_event.is_some(), "expected get event: {events:?}");
     let event = get_event.unwrap();
     assert_eq!(event.get("found").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(
-        event.get("value").and_then(|v| v.as_str()),
-        Some("0.1.0")
-    );
+    assert_eq!(event.get("value").and_then(|v| v.as_str()), Some("0.1.0"));
 }
 
 #[test]
@@ -59,10 +56,11 @@ fn get_toml_missing_key_returns_not_found() {
         .output()
         .expect("get");
 
+    // GAP-111: missing key returns INVALID_INPUT (exit 65), not FILE_NOT_FOUND (exit 4)
     assert_eq!(
         output.status.code(),
-        Some(4),
-        "get on missing key should return exit 4 (FILE_NOT_FOUND): {}",
+        Some(65),
+        "get on missing key should return exit 65 (INVALID_INPUT): {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -74,7 +72,7 @@ fn get_toml_missing_key_returns_not_found() {
     let err = err_event.unwrap();
     assert_eq!(
         err.get("code").and_then(|v| v.as_str()),
-        Some("FILE_NOT_FOUND")
+        Some("INVALID_INPUT")
     );
 }
 

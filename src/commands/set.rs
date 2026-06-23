@@ -109,6 +109,7 @@ pub fn cmd_set(
         stdin_bytes_read: new_content.len() as u64,
         wal_policy: "auto",
         platform: result.platform,
+        mtime_preserved: None,
         risk_assessment: None,
     };
     Ok(())
@@ -123,55 +124,58 @@ fn toml_set(
         .parse()
         .with_context(|| format!("invalid TOML in source: {original}"))?;
     let old_value = get_toml_value(&doc, key_path);
-    // toml_edit's `doc["a.b"]` adds a flat key; we need to navigate the
-    // dotted path manually and update the leaf, which preserves the
-    // existing formatting (comments, key order, table headers).
-    set_toml_path(&mut doc, key_path, value);
+    set_toml_path(&mut doc, key_path, value)?;
     let new_content = doc.to_string();
     Ok((new_content, old_value, "toml"))
 }
 
-fn set_toml_path(doc: &mut toml_edit::DocumentMut, key_path: &str, value: &str) {
+fn set_toml_path(doc: &mut toml_edit::DocumentMut, key_path: &str, value: &str) -> Result<()> {
     let segments: Vec<&str> = key_path.split('.').collect();
     if segments.is_empty() {
-        return;
+        return Ok(());
     }
     if segments.len() == 1 {
-        // Top-level scalar key.
         doc[segments[0]] = parse_toml_value(value);
-        return;
+        return Ok(());
     }
-    // Navigate to the deepest table. Create intermediate tables as needed.
     let mut current = doc.as_item_mut();
     for (i, seg) in segments.iter().enumerate() {
         let is_last = i == segments.len() - 1;
         if is_last {
-            // We are at the parent of the leaf. Navigate into the
-            // table to update the leaf.
             if let Some(table) = current.as_table_mut() {
                 table[seg] = parse_toml_value(value);
             } else {
-                // Fall back: store at the document root.
-                doc[*seg] = parse_toml_value(value);
+                // GAP-102: the parent is a scalar, not a table.
+                let parent_path = segments[..i].join(".");
+                return Err(crate::error::AtomwriteError::InvalidInput {
+                    reason: format!(
+                        "cannot set '{key_path}': '{}' is a scalar value, not a table",
+                        parent_path
+                    ),
+                }
+                .into());
             }
-            return;
+            return Ok(());
         }
-        // Need to descend into or create the table for `seg`.
-        // First, ensure the table exists.
-        let next_seg = segments[i + 1];
-        if current.as_table_mut().is_none() {
-            // Not a table (e.g. scalar at this path) — cannot descend.
-            return;
-        }
-        let table = current.as_table_mut().unwrap();
+        let table = match current.as_table_mut() {
+            Some(t) => t,
+            None => {
+                let traversed = segments[..=i].join(".");
+                return Err(crate::error::AtomwriteError::InvalidInput {
+                    reason: format!("cannot set '{key_path}': '{}' is not a table", traversed),
+                }
+                .into());
+            }
+        };
         if !table.contains_key(seg) {
-            // Insert a new (possibly inline) table.
             table.insert(seg, toml_edit::Item::Table(toml_edit::Table::new()));
         }
-        current = table.get_mut(seg).unwrap();
-        // Suppress unused warning for next_seg (kept for clarity).
-        let _ = next_seg;
+        current = match table.get_mut(seg) {
+            Some(item) => item,
+            None => return Ok(()),
+        };
     }
+    Ok(())
 }
 
 fn parse_toml_value(s: &str) -> toml_edit::Item {
@@ -255,7 +259,10 @@ fn apply_json_pointer(root: &mut serde_json::Value, pointer: &str, value: &str) 
                 if !map.contains_key(*seg) {
                     map.insert((*seg).to_owned(), Value::Object(serde_json::Map::new()));
                 }
-                current = map.get_mut(*seg).unwrap();
+                current = match map.get_mut(*seg) {
+                    Some(v) => v,
+                    None => return,
+                };
             }
             Value::Array(arr) => {
                 if let Ok(idx) = seg.parse::<usize>() {

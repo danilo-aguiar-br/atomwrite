@@ -1037,6 +1037,79 @@ atomwrite --workspace . prune-backups --max-age 0 --dry-run false . \
 ```
 
 
+## v0.1.25 — Receitas
+
+### Verificar Checksum de Arquivo
+
+```bash
+# Subcomando verify dedicado (delega para hash --verify)
+atomwrite --workspace . verify src/main.rs --checksum abc123def456
+# Exit 0 em match, exit 81 em mismatch
+```
+
+### Deletar Arquivos Antigos por Idade
+
+```bash
+# Deletar arquivos mais antigos que 7 dias (sufixos: s/m/h/d/w)
+atomwrite --workspace . delete --older-than 7d --dry-run logs/
+atomwrite --workspace . delete --older-than 7d --yes logs/
+
+# Visualizar plano de deleção com --confirm
+atomwrite --workspace . delete --confirm --older-than 1h tmp/
+```
+
+### Substituir com Preservação de Case
+
+```bash
+# Adapta case automaticamente: Hello→Goodbye, HELLO→GOODBYE, hello→goodbye
+atomwrite --workspace . replace --preserve-case 'hello' 'goodbye' src/
+```
+
+### Configurar Threshold do Fuzzy
+
+```bash
+# Estrito: aceitar apenas matches próximos (0.99)
+atomwrite --workspace . edit src/main.rs --old "texto_aproximado" --new "novo_texto" --fuzzy-threshold 0.99
+
+# Solto: aceitar matches distantes (0.5)
+atomwrite --workspace . edit src/main.rs --old "texto_aproximado" --new "novo_texto" --fuzzy-threshold 0.5 --fuzzy aggressive
+```
+
+### Scope Symbols e Normalize
+
+```bash
+# Converter operadores para símbolos Unicode: => → ⇒, -> → →, != → ≠
+atomwrite --workspace . scope src/ --lang rust --action symbols --dry-run
+
+# Aplicar normalização NFC Unicode
+atomwrite --workspace . scope src/ --lang rust --action normalize --dry-run
+```
+
+### Usar .atomwrite.toml
+
+```bash
+# Criar config de projeto (opcional, flags CLI têm precedência)
+cat > .atomwrite.toml << 'EOF'
+[defaults]
+backup = true
+
+[fuzzy]
+mode = "auto"
+threshold = 0.85
+EOF
+
+# atomwrite carrega .atomwrite.toml automaticamente da raiz do projeto
+atomwrite --workspace . edit src/main.rs --old "foo" --new "bar"
+```
+
+### Hash Usa Campo checksum
+
+```bash
+# v0.1.25: campo é "checksum" (era "value" na v0.1.24)
+atomwrite --workspace . hash src/main.rs | jaq -r '.checksum'
+```
+
+
 ## v0.1.24 — Receitas
 
 ### Tratamento de Erros Tipados em Pipelines de Agentes

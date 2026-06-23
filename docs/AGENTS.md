@@ -4,6 +4,25 @@
 [Leia em Português](AGENTS.pt-BR.md)
 
 
+## What's New in v0.1.25
+
+- 49 gaps resolved (GAP-071 through GAP-134) in 6 rounds of end-to-end audit (~505 scenarios)
+- NEW SUBCOMMAND: `verify <PATH> --checksum <BLAKE3>` — dedicated checksum verification (33 subcommands total)
+- NEW: `.atomwrite.toml` config file — hierarchy: CLI > env > local `.atomwrite.toml` > XDG `~/.config/atomwrite/config.toml` > defaults
+- NEW FLAGS: `delete --older-than <DURATION>` (s/m/h/d/w), `delete --confirm` (preview mode), `replace --preserve-case` (UPPER/lower/Title adaptation), `search --pcre2`, `edit --fuzzy-threshold <FLOAT>`, `scope --action symbols|normalize`
+- NEW FLAGS: `copy --no-reflink`, `copy --preserve-xattr`, `move --preserve-hardlinks`
+- FUZZY MATCHING: Jaro-Winkler (`context_aware_jw` strategy) added to the 9-strategy cascade; `diff_preview` field in responses when fuzzy match used
+- CRITICAL FIXES: `write --backup` no longer reports phantom `backup_path` (GAP-101), `set` no longer misroutes key into scalar TOML (GAP-102), `size_delta_pct` overflow fixed (GAP-120)
+- HIGH FIXES: `copy --preserve` now preserves permissions AND mtime (GAP-103/133), `copy --backup`/`replace --backup` now retain `.bak` files (GAP-104/105), `write --require-backup` enforces retention (GAP-106), I/O errors now emit NDJSON envelope (GAP-098)
+- MEDIUM FIXES: `hash` output field renamed `value` → `checksum` (GAP-107), `list --long` ISO 8601 dates (GAP-116), `outline --positions` now emits byte offsets (GAP-109), `list` on nonexistent dir returns exit 4 (GAP-110), `get`/`del` missing key returns exit 65 INVALID_INPUT (GAP-111), `batch move/copy` respects `--force` (GAP-108), `scope --query comments` captures block comments (GAP-123)
+- BEHAVIOR CHANGE: `case` without `--subvert` returns exit 65 with helpful message (GAP-127)
+- BEHAVIOR CHANGE: `scope --query test-fn` returns actionable error with alternatives (GAP-134)
+- Property-based tests for fuzzy matching via proptest (GAP-086)
+- Flag conflict validation: `append+prepend`, `fixed+regex`, `literal+regex` rejected at parse time (GAP-093)
+- 631 tests passing (10 new), 0 clippy warnings, 0 fmt diffs
+- 3 JSON schemas updated (del-result, write-output, read-output)
+
+
 ## What's New in v0.1.24
 
 - 52 bugs fixed (GAP-2026-019 through GAP-2026-070) in comprehensive end-to-end audit
@@ -171,7 +190,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 ```
 
 
-## 32 Subcommands
+## 33 Subcommands
 - `read` -- reads files with metadata, checksum, optional content; `--format raw` (alias `--raw`) emits raw bytes for Unix composability (G81); `--grep <REGEX>` filters returned lines
 - `write` -- creates or overwrites files atomically via stdin; `--syntax-check` valida com tree-sitter após escrita (G72, exit 88)
 - `edit` -- edits surgically by line number, text marker, or exact match; `--fuzzy auto|off|aggressive` for fuzzy matching; `--multi` for NDJSON multi-edit
@@ -204,6 +223,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `wal-heal` -- (v0.1.18) removes orphan terminal journals older than `--threshold-secs` (default 3600s); wall-clock budget via `--max-duration-ms` (default 100ms)
 - `edit-loop` -- (v0.1.22) applies N `{old, new}` pairs in 1 invocation via NDJSON on stdin; supports `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`
 - `prune-backups` -- (v0.1.22) manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` files (v0.1.20 and earlier); flags `--max-age <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` for safety); NDJSON output with `path`, `reason`, `action`, `total`
+- `verify` -- (v0.1.25) verify a file checksum against an expected BLAKE3 hash; delegates to `hash --verify`; exit 0 on match, exit 81 on mismatch
 
 
 ## REQUIRED -- Output Contract

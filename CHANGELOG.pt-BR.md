@@ -8,6 +8,74 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.25] - 2026-06-22
+
+### Novos Recursos
+- GAP-072: Arquivo de configuração `.atomwrite.toml` com hierarquia: CLI > env > local > XDG global > defaults
+- GAP-079: Subcomando `verify` (delega para `hash --verify` para verificação de checksum BLAKE3)
+- GAP-085: Fuzzy matching Jaro-Winkler (estratégia `context_aware_jw`) para strings curtas no edit
+- GAP-086: Testes property-based para fuzzy matching via proptest (5 propriedades)
+- GAP-087: `edit --fuzzy-threshold <FLOAT>` para sensibilidade configurável de match fuzzy
+- GAP-088: Highlighting de diff fuzzy via `similar::TextDiff` em `FuzzyInfo.diff_preview`
+- GAP-081: Ações `symbols` (ASCII→Unicode operadores) e `normalize` (normalização NFC) no `scope`
+
+### Correções Críticas
+- GAP-101: `write --backup` não reporta mais `backup_path` fantasma para backups auto-deletados
+- GAP-102: `set` não redireciona mais chave ao descer em valores escalares TOML (agora exit 65)
+- GAP-127: `case` sem `--subvert` agora retorna exit 65 com mensagem clara em vez de no-op silencioso
+
+### Correções Altas
+- GAP-073/098: Erros de I/O via `anyhow::Context` agora emitem envelope NDJSON em vez de texto cru no stderr
+- GAP-084: Removidos todos os `.unwrap()` de caminhos de produção (substituídos por erros tipados)
+- GAP-093: Validação de conflitos de flags via `conflicts_with` para append/prepend, fixed/regex, literal/regex
+- GAP-103: `copy --preserve` agora preserva permissões do arquivo fonte (Unix)
+- GAP-104: `copy --backup` agora retém arquivo `.bak` em disco (antes era auto-deletado)
+- GAP-105: `replace --backup` agora retém arquivo `.bak` em disco (antes era auto-deletado)
+- GAP-106: `write --require-backup` agora força retenção do backup em disco
+- GAP-120: `size_delta_pct` em risk_assessment alterado de u8 para u32 (corrige overflow para deltas >255%)
+
+### Correções Médias
+- GAP-075: `delete --older-than` com duração legível por humanos (s/m/h/d/w)
+- GAP-076: `delete --confirm` como modo preview (mesma lógica de `--dry-run`)
+- GAP-077: `replace --preserve-case` com `adapt_case()` (MAIÚSCULAS/minúsculas/Título)
+- GAP-078: Flag `search --pcre2` retorna exit 65 quando feature PCRE2 não está habilitada
+- GAP-080: `transform --verify-parse` re-parseia output com tree-sitter após rewrite
+- GAP-091: Texto de help do `edit --multi` atualizado para mencionar herança de modo `--fuzzy`
+- GAP-095: Regex de `replace --preserve-case` agora é case-insensitive (adicionado `(?i)` ao pattern)
+- GAP-096: `write --preserve-timestamps` agora emite campo `mtime_preserved` no NDJSON
+- GAP-097: 3 schemas JSON atualizados para casar com output real do binário (del-result, write-output, read-output)
+- GAP-107: Campo de output do `hash` renomeado de `value` para `checksum` (casa com schema)
+- GAP-108: `batch` move/copy agora exige `"force":true` para sobrescrever alvos existentes
+- GAP-109: `outline --positions` agora emite `start_byte`, `end_byte`, `start_column`, `end_column`
+- GAP-110: `list` em diretório inexistente agora retorna exit 4 (antes retornava exit 0 com summary vazio)
+- GAP-111: `get`/`del` em chave ausente retorna INVALID_INPUT (exit 65) em vez de FILE_NOT_FOUND (exit 4)
+- GAP-112: `move --backup` agora inclui `backup_path` no output NDJSON
+- GAP-116: Campo `modified` de `list --long` agora emite formato ISO 8601 em vez de epoch cru
+- GAP-117: Flags documentadas `--no-reflink`, `--preserve-xattr`, `--preserve-hardlinks` adicionadas à CLI
+- GAP-118: `copy --backup` não exige mais `--force` para sobrescrever (paridade com `move --backup`)
+- GAP-119: `write --auto-rotate` agora retém backup em disco
+- GAP-121: `--json-schema` para hash, delete, move, copy agora emite schemas tipados corretos
+- GAP-123: `scope --query comments` agora captura block comments (`/* */`) além de line comments
+- GAP-124: `prescan_json_schema()` agora reconhece subcomandos get, del, set, outline, query, case
+- GAP-128: `list --count-by-ext` agora filtra sufixos timestamp de backup (consistente com `count --by-extension`)
+- GAP-133: `copy --preserve` agora copia mtime/atime da origem via `filetime::set_file_times()`
+- GAP-134: `scope --query test-fn` retorna erro acionável em vez de erro críptico multi-nodo do ast-grep
+
+### Correções Baixas
+- GAP-099: Corrigidos 2 clippy warnings em arquivos de teste (collapsible_if, len_zero)
+- GAP-100: Corrigidas 27 divergências de rustfmt em arquivos fonte e de teste
+- GAP-113: Default de telemetria de risco alterado para 255 (desabilitado) — usuário deve optar via `--risk-threshold`
+- GAP-114: `extract` agora filtra eventos begin/end/summary do pipeline de search
+- GAP-115: `wal-stats --dry-run` agora emite evento NDJSON de plano (antes era silencioso)
+
+### Validação
+- `cargo test` — 631 testes passam (0 falhas, 3 ignorados)
+- `cargo clippy --all-targets -- -D warnings` — zero warnings
+- `cargo fmt --check` — zero diferenças
+- Auditoria e2e: ~505 cenários em 6 rodadas contra binário real
+- 64 gaps auditados no total: 49 resolvidos, 5 pré-existentes, 10 reclassificados, 0 pendentes
+
+
 ## [0.1.24] - 2026-06-21
 
 ### Correções Críticas

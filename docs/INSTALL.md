@@ -1,7 +1,7 @@
 # Installation Guide
 
 - Complete instructions for installing atomwrite on Linux, macOS, and Windows
-- Current target version: v0.1.24 (52 bugs fixed, typed error audit, 621 tests, ADRs 0045-0047)
+- Current target version: v0.1.25 (49 bugs fixed, e2e audit rounds 1-6, 631 tests, config file, verify subcommand)
 - Sections ordered by platform, with prerequisites and troubleshooting
 
 
@@ -50,7 +50,7 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 
 ### Test Coverage
 
-- 621 tests passing (609 in v0.1.23 + 12 in v0.1.24)
+- 631 tests passing (621 in v0.1.24 + 10 in v0.1.25)
 - 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/`
 - See [docs/decisions/README.md](README.md) for architectural decisions
@@ -64,8 +64,8 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Install atomwrite v0.1.24 from crates.io
-cargo install atomwrite --locked --version "^0.1.24"
+# Install atomwrite v0.1.25 from crates.io
+cargo install atomwrite --locked --version "^0.1.25"
 
 # Verify
 atomwrite --version
@@ -189,7 +189,7 @@ the file in the locking application and retry.
 cargo install atomwrite --locked
 
 # Specific version
-cargo install atomwrite --locked --version 0.1.12
+cargo install atomwrite --locked --version 0.1.25
 
 # Force reinstall
 cargo install atomwrite --locked --force
@@ -307,7 +307,7 @@ This release introduces a new safety layer called **intention guards** and renam
 
 ### Statistics
 
-- 621 tests passing (609 in v0.1.23 + 12 in v0.1.24)
+- 631 tests passing (621 in v0.1.24 + 10 in v0.1.25)
 - 11 GAP-2026 closed
 - 3 Windows cross-compile targets green
 - 19 ADRs in `docs/decisions/` (0019-0037)
@@ -347,7 +347,7 @@ This release adds 2 new subcommands for cleanup and N-edits-in-1-invocation patt
   - Flags: `--workspace`, `--expect-checksum`, `--partial`, `--fuzzy`, `--backup`, `--keep-backup`
   - NDJSON output with per-pair `pair_result` and summary
 - 575+ tests passing, 2 new ADRs (0039, 0040), 2 new NDJSON schemas
-- 32 subcommands total (up from 30 in v0.1.20)
+- 33 subcommands total (32 from v0.1.22 + `verify` from v0.1.25)
 
 ### Install v0.1.22
 

@@ -59,10 +59,10 @@ proptest! {
         let e1 = common::parse_ndjson(&out1.stdout);
         let e2 = common::parse_ndjson(&out2.stdout);
 
-        prop_assert!(e1[0]["value"].is_string());
+        prop_assert!(e1[0]["checksum"].is_string());
         prop_assert_eq!(
-            e1[0]["value"].as_str().unwrap(),
-            e2[0]["value"].as_str().unwrap()
+            e1[0]["checksum"].as_str().unwrap(),
+            e2[0]["checksum"].as_str().unwrap()
         );
     }
 }

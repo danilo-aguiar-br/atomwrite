@@ -51,6 +51,16 @@
       "description": "Whether the file was detected as binary.",
       "type": "boolean"
     },
+    "mode": {
+      "description": "Read mode discriminator: full, head, tail, line, lines, grep, stat.",
+      "type": "string"
+    },
+    "lines_total": {
+      "description": "Total lines in the original file (present when head/tail/lines filters active).",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
     "range": {
       "description": "Line range returned when a subset was requested.",
       "anyOf": [

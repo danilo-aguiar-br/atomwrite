@@ -226,5 +226,9 @@ fn replace_creates_backup_by_default() {
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_str().is_some_and(|n| n.contains(".bak.")))
         .count();
-    assert_eq!(bak_count, 0, "backup should be auto-deleted after replace");
+    // GAP-105: replace --backup now retains the backup on disk
+    assert!(
+        bak_count >= 1,
+        "backup should be retained after replace (GAP-105)"
+    );
 }

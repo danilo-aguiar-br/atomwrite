@@ -3,12 +3,13 @@
   "title": "atomwrite del subcommand output",
   "description": "Result of `atomwrite del` — removes a key (and its value) from a structured config file (TOML/JSON).",
   "type": "object",
-  "required": ["type", "path", "key_path", "found", "format", "elapsed_ms"],
+  "required": ["type", "path", "key_path", "existed", "format", "elapsed_ms"],
   "properties": {
     "type": { "const": "del" },
     "path": { "type": "string", "description": "Absolute path to the config file." },
     "key_path": { "type": "string", "description": "Dotted path that was removed." },
-    "found": { "type": "boolean", "description": "True if the key existed before removal." },
+    "removed_value": { "type": ["string", "null"], "description": "String representation of the removed value, or null if key did not exist." },
+    "existed": { "type": "boolean", "description": "True if the key existed before removal." },
     "format": { "enum": ["toml", "json"], "description": "Source config format detected from extension." },
     "elapsed_ms": { "type": "integer", "description": "Wall-clock time for the operation in milliseconds." }
   },

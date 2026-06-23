@@ -78,7 +78,14 @@ pub fn cmd_del(
         };
 
     if !existed && !args.force_missing {
-        return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: format!(
+                "key '{}' not found in {}",
+                args.key_path,
+                validated.display()
+            ),
+        }
+        .into());
     }
 
     if !existed && args.force_missing {
@@ -178,7 +185,10 @@ fn remove_toml_path(doc: &mut toml_edit::DocumentMut, key_path: &str) -> Option<
     if segments.is_empty() {
         return None;
     }
-    let last = *segments.last().unwrap();
+    let last = match segments.last() {
+        Some(s) => *s,
+        None => return None,
+    };
     let mut current: &mut toml_edit::Item = doc.as_item_mut();
     for seg in &segments[..segments.len() - 1] {
         match current.as_table_mut() {

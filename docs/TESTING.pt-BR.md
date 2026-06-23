@@ -40,7 +40,14 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 - Testes de snapshot via `insta`
 - Testes de sinal (SIGINT, SIGTERM, SIGPIPE)
 
-## O Que Há de Novo na v0.1.24 (Atual)
+## O Que Há de Novo na v0.1.25 (Atual)
+
+- 631 testes passando, 0 falhas, 3 ignorados (gate de cross-compile)
+- 49 gaps adicionais resolvidos em 6 rodadas de auditoria e2e (GAP-071 a GAP-134)
+- Testes property-based de fuzzy via proptest (5 propriedades em `tests/proptest_fuzzy.rs`)
+- ~505 cenários e2e executados contra binário real
+
+## O Que Há de Novo na v0.1.24
 
 - 621 testes passando, 0 falhas, 3 ignorados (gate de cross-compile)
 - 52 gaps resolvidos (GAP-2026-019 a GAP-2026-070)
@@ -62,7 +69,7 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 ## O Que Há de Novo na v0.1.23
 
 - 609 testes passando (575 baseline v0.1.22 + 12 GAP-2026-015 + 7 GAP-2026-016 + 4 GAP-2026-017 + 8 GAP-2026-018 + 3 de [Unreleased] CI Windows)
-- 32 subcomandos (inalterado desde v0.1.22)
+- 33 subcomandos (32 da v0.1.22 + `verify` da v0.1.25)
 - 26 ADRs em docs/decisions/ (0019-0044)
 - GAP-2026-015 (allow_hyphen_values) fechado; 15 campos CLI em 8 structs agora aceitam valores iniciando com `-`
 - GAP-2026-016 (backup-by-default) fechado; backup habilitado por padrão em 9 structs que mutam conteúdo
@@ -72,8 +79,8 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 
 ## O Que Há de Novo na v0.1.22
 
-- 575+ testes passando (542 baseline v0.1.18 + 16 testes GAP-2026-012 v0.1.21 + 12 testes GAP-2026-014 v2 backup-delete v0.1.21 + 5 testes GAP-2026-013 edit-backup v0.1.21)
-- 32 subcomandos (30 baseline v0.1.18 + `edit-loop` + `prune-backups` da v0.1.22)
+- 631+ testes passando (542 baseline v0.1.18 + 33 na v0.1.21-v0.1.22 + 46 na v0.1.23-v0.1.24 + 10 na v0.1.25)
+- 33 subcomandos (30 baseline v0.1.18 + `edit-loop` + `prune-backups` da v0.1.22 + `verify` da v0.1.25)
 - 22 ADRs em docs/decisions/ (0019-0040)
 - 2 novos schemas NDJSON: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
 
@@ -97,7 +104,7 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 ### Como Executar
 
 ```bash
-# Executar todos os 609+ testes
+# Executar todos os 631+ testes
 cargo test
 
 # Executar apenas a suíte de regressão v0.1.12
@@ -116,7 +123,7 @@ cargo test --test cross_compile_check -- --ignored
 
 - 20.19% cobertura de linhas via `cargo tarpaulin` (935/4631 linhas cobertas)
 - Menor que o ideal porque tarpaulin conta apenas testes unitários, não testes de integração CLI
-- A suíte de testes de integração é a métrica primária de cobertura (575+ testes em 47+ suítes)
+- A suíte de testes de integração é a métrica primária de cobertura (631+ testes em 63+ suítes)
 
 ### Dependências Adicionadas
 
@@ -140,7 +147,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ## Estatísticas Atuais
 - 70+ arquivos Rust em `src/` e `tests/`
-- **575+ testes no total em 47+ suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
+- **631+ testes no total em 63+ suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
 - **96 novos testes adicionados em v0.1.11+v0.1.12**:
   - 11 testes em `tests/cli_v012_regressions.rs` (fixes GAP 13, GAP 14, GAP 18)
   - 27 testes em `tests/cli_v012_audit_regressions.rs` (auditoria v0.1.12 G72/G114)

@@ -27,7 +27,7 @@ fn sequential_drift_without_flag() {
         .arg(&target)
         .output()
         .expect("hash");
-    let initial_checksum = common::parse_ndjson(&hash_out.stdout)[0]["value"]
+    let initial_checksum = common::parse_ndjson(&hash_out.stdout)[0]["checksum"]
         .as_str()
         .expect("value")
         .to_string();
@@ -108,7 +108,7 @@ fn sequential_drift_with_recapture() {
             .arg(&target)
             .output()
             .expect("hash");
-        let checksum = common::parse_ndjson(&hash_out.stdout)[0]["value"]
+        let checksum = common::parse_ndjson(&hash_out.stdout)[0]["checksum"]
             .as_str()
             .expect("value")
             .to_string();
@@ -164,7 +164,7 @@ fn sequential_drift_with_allow_flag() {
         .arg(&target)
         .output()
         .expect("hash");
-    let initial_checksum = common::parse_ndjson(&hash_out.stdout)[0]["value"]
+    let initial_checksum = common::parse_ndjson(&hash_out.stdout)[0]["checksum"]
         .as_str()
         .expect("value")
         .to_string();

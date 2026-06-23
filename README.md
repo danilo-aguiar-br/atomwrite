@@ -13,10 +13,24 @@
 
 ## What Is It
 - A single Rust binary that handles every file operation an LLM agent needs
-- **32 subcommands**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions, edit-loop, prune-backups
+- **33 subcommands**: read, write, edit, search, replace, hash, verify, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions, edit-loop, prune-backups
 - Every write is atomic: tempfile, fsync, rename, fsync directory
 - Every response is NDJSON: one JSON object per line, machine-readable by default
 - Every file gets a BLAKE3 checksum: detect drift, verify integrity, enable optimistic locking
+
+
+## What Is New In v0.1.25 (2026-06-22)
+
+- 49 bugs fixed across 6 rounds of e2e audit (GAP-071 through GAP-134)
+- `.atomwrite.toml` configuration file with hierarchy: CLI > env > local > XDG global > defaults
+- New `verify` subcommand for BLAKE3 checksum verification
+- Jaro-Winkler fuzzy matching + configurable `--fuzzy-threshold` for edit
+- `copy --preserve` now copies permissions AND timestamps from source
+- All `--backup` flows now retain `.bak` files on disk (copy, replace, write --require-backup)
+- `scope --query comments` captures block comments in addition to line comments
+- 3 critical fixes: phantom backup_path, TOML scalar misroute, case silent no-op
+- I/O errors via anyhow now emit proper NDJSON envelopes (7 subcommands fixed)
+- 631 tests passing, ~505 e2e scenarios across 6 audit rounds
 
 
 ## What Is New In v0.1.24 (2026-06-21)
@@ -39,7 +53,7 @@
 - GAP-2026-016 closed — backup enabled by default in 9 content-mutating structs (`write`, `edit`, `edit-loop`, `replace`, `transform`, `apply`, `set`, `del`, `case`); use `--no-backup` or `ATOMWRITE_BACKUP=0` to opt out
 - GAP-2026-017 closed — shrink guard blocks writes that reduce file size by >50% when `--expect-checksum` is active; pass `--allow-shrink` to override
 - GAP-2026-018 closed — `edit --old-file <PATH> --new-file <PATH>` reads match/replacement content from files inside the atomwrite process, bypassing shell expansion and kernel ARG_MAX (~131 KB limit); cross-mixing validation rejects `--old` + `--new-file` (exit 65); trailing newline stripping ensures argv parity
-- 621+ tests passing, 12 new for v0.1.24
+- 631+ tests passing (see v0.1.25 for latest count)
 - 4 new ADRs: 0041 (allow-hyphen-values), 0042 (backup-by-default), 0043 (shrink-guard), 0044 (edit-old-file-new-file)
 
 

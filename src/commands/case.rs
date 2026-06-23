@@ -52,14 +52,26 @@ pub fn cmd_case(
     let dry_run = args.dry_run;
     let effective_backup = resolve_backup(args.backup, args.no_backup);
 
-    // Apply each requested identifier rename.
+    if args.subvert.is_empty() {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason:
+                "--subvert OLD NEW is required; global identifier scanning is not yet implemented. \
+                     Use --subvert to specify each identifier to rename, e.g.: \
+                     atomwrite case --to snake --subvert myVar my_var src/"
+                    .into(),
+        }
+        .into());
+    }
+
     let mut total_identifiers = 0u64;
     let mut files_modified = 0u64;
 
     for pair in args.subvert.chunks(2) {
         if pair.len() != 2 {
             return Err(crate::error::AtomwriteError::InvalidInput {
-                reason: "--subvert expects an even number of identifiers (old new pairs); got odd count".into(),
+                reason:
+                    "--subvert expects an even number of identifiers (old new pairs); got odd count"
+                        .into(),
             }
             .into());
         }

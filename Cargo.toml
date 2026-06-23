@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "atomwrite"
-version = "0.1.24"
+version = "0.1.25"
 edition = "2024"
 rust-version = "1.88"
 description = "Atomic file operations CLI for LLM agents — read, write, edit, search, replace with NDJSON output"
@@ -73,6 +73,8 @@ content_inspector = "0.2"  # G41: accurate binary/text detection (UTF-16LE aware
 strsim = "0.11"        # G116: fuzzy match cascade strategy 9 (context-aware)
 heck = "0.5"           # v14 Tier 3: identifier case conversion (case subcommand)
 serde_yaml = "0.9"     # G44: multi-rule YAML for transform subcommand
+directories = "6"      # GAP-072: XDG config paths for .atomwrite.toml
+toml = "0.8"           # GAP-072: serde deserialize for .atomwrite.toml config
 indexmap = { version = "2", features = ["serde"] }  # v14 Tier 3: preserve JSON key order
 toml_edit = "0.22"     # v14 Tier 3: TOML editor preserving comments/formatting
 # v0.1.12 — tree-sitter-language-pack for G72 real syntax check + v14 query/outline.

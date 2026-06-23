@@ -1,7 +1,7 @@
 # Guia de Instalação
 
 - Instruções completas para instalar atomwrite em Linux, macOS e Windows
-- Versão alvo atual: v0.1.24 (52 bugs corrigidos, auditoria de erros tipados, 621 testes, ADRs 0045-0047)
+- Versão alvo atual: v0.1.25 (49 bugs corrigidos, auditoria e2e rodadas 1-6, 631 testes, arquivo de config, subcomando verify)
 - Seções ordenadas por plataforma, com pré-requisitos e solução de problemas
 
 
@@ -50,7 +50,7 @@ O fix do Windows 10/11 de v0.1.4 é preservado (cargo install agora funciona). v
 
 ### Cobertura de Testes
 
-- 621 testes passando (609 na v0.1.23 + 12 na v0.1.24)
+- 631 testes passando (621 na v0.1.24 + 10 na v0.1.25)
 - 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/`
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
@@ -64,8 +64,8 @@ O fix do Windows 10/11 de v0.1.4 é preservado (cargo install agora funciona). v
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Instalar atomwrite v0.1.24 do crates.io
-cargo install atomwrite --locked --version "^0.1.24"
+# Instalar atomwrite v0.1.25 do crates.io
+cargo install atomwrite --locked --version "^0.1.25"
 
 # Verificar
 atomwrite --version
@@ -190,7 +190,7 @@ Feche o arquivo na aplicação que o segura e tente novamente.
 cargo install atomwrite --locked
 
 # Versão específica
-cargo install atomwrite --locked --version 0.1.4
+cargo install atomwrite --locked --version 0.1.25
 
 # Forçar reinstalação
 cargo install atomwrite --locked --force
@@ -308,7 +308,7 @@ Esta release introduz uma nova camada de segurança chamada **intention guards**
 
 ### Estatísticas
 
-- 621 testes passando (609 na v0.1.23 + 12 na v0.1.24)
+- 631 testes passando (621 na v0.1.24 + 10 na v0.1.25)
 - 11 GAP-2026 fechados
 - 3 targets de cross-compile Windows verdes
 - 19 ADRs em `docs/decisions/` (0019-0037)

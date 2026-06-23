@@ -148,7 +148,7 @@ fn allow_sequential_drift_accepts_any_sequence() {
             .arg(&target)
             .output()
             .expect("hash");
-        let initial_cs = common::parse_ndjson(&hash_out.stdout)[0]["value"]
+        let initial_cs = common::parse_ndjson(&hash_out.stdout)[0]["checksum"]
             .as_str()
             .expect("value")
             .to_string();

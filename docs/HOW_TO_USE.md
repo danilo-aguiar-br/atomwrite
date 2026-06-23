@@ -548,8 +548,9 @@ atomwrite outline src/main.rs --positions
 
 
 ## Configuration
-- atomwrite requires no configuration files
-- All behavior is controlled via command-line flags
+- Since v0.1.25, atomwrite supports an optional `.atomwrite.toml` config file
+- Hierarchy: CLI flags > environment variables > local `.atomwrite.toml` > XDG `~/.config/atomwrite/config.toml` > built-in defaults
+- The config file is optional; atomwrite works without any configuration
 - Use `--workspace` to set the project root boundary
 - Use `--json-schema` to introspect output format at runtime
 - Generate shell completions with `atomwrite completions bash` or auto-install with `atomwrite completions bash --install` (writes to XDG data dir)
@@ -794,6 +795,70 @@ printf '%s
 - 2 new ADRs: 0039 (edit-loop helper), 0040 (prune-backups subcommand)
 - 2 new NDJSON schemas: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
 - 32 subcommands total (up from 30 in v0.1.20)
+
+
+## v0.1.25 — What Is New
+
+This release resolves 49 gaps (GAP-071 through GAP-134) discovered in 6 rounds of end-to-end audit with ~505 scenarios.
+
+### New Subcommand: verify
+
+```bash
+# Verify a file checksum against an expected BLAKE3 hash
+atomwrite --workspace . verify src/main.rs --checksum abc123def456
+# Exit 0 on match, exit 81 on mismatch
+```
+
+### Configuration File: .atomwrite.toml
+
+atomwrite now supports an optional configuration file. Hierarchy: CLI > env > local `.atomwrite.toml` > XDG `~/.config/atomwrite/config.toml` > defaults.
+
+```toml
+# .atomwrite.toml (project root)
+[defaults]
+backup = true
+workspace = "."
+
+[fuzzy]
+mode = "auto"
+threshold = 0.85
+
+[search]
+max_filesize = 10485760
+```
+
+### New Flags
+
+- `delete --older-than <DURATION>` — filter by age with suffixes s/m/h/d/w
+- `delete --confirm` — preview mode (emits `type: "plan"` NDJSON)
+- `replace --preserve-case` — adapts replacement case (UPPER/lower/Title)
+- `search --pcre2` — request PCRE2 backend (exit 65 when feature not compiled)
+- `edit --fuzzy-threshold <FLOAT>` — override the default fuzzy matching threshold
+- `scope --action symbols` — convert operators to Unicode symbols (=> → ⇒, -> → →)
+- `scope --action normalize` — apply NFC Unicode normalization
+- `copy --no-reflink`, `copy --preserve-xattr`, `move --preserve-hardlinks`
+
+### Fuzzy Matching Improvements
+
+- Jaro-Winkler added as `context_aware_jw` strategy for short strings (<60 chars)
+- `diff_preview` field in edit responses shows a mini-diff when fuzzy match is used
+- `--fuzzy-threshold` allows per-invocation threshold tuning (0.0 to 1.0)
+- Property-based tests via proptest validate 5 fuzzy invariants
+
+### Critical Bug Fixes
+
+- `write --backup` no longer reports phantom `backup_path` for auto-deleted backups
+- `set` no longer misroutes keys when descending into scalar TOML values
+- `size_delta_pct` overflow fixed (u8 → u32 for deltas >255%)
+- I/O errors now emit structured NDJSON envelope (previously text on stderr + exit 1)
+- `hash` output field renamed from `value` to `checksum` (schema alignment)
+
+### Statistics
+
+- 33 subcommands (verify added)
+- 631 tests passing, 0 failures, 3 ignored
+- 49 gaps resolved across 6 audit rounds
+- 3 JSON schemas updated
 
 
 ## v0.1.24 — What Is New

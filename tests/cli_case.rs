@@ -225,5 +225,8 @@ fn case_odd_subvert_count_fails() {
         .output()
         .expect("case");
 
-    assert!(!output.status.success(), "single subvert value should fail at parse");
+    assert!(
+        !output.status.success(),
+        "single subvert value should fail at parse"
+    );
 }
