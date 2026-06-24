@@ -4,9 +4,9 @@
 
 atomwrite is a Rust CLI that provides 33 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
-**Latest release: v0.1.26** (2026-06-23) — 9 bug fixes (GAP-135 to GAP-147): exit code consistency for replace/transform/scope zero-matches (exit 1), search --sort path deterministic ordering, read --verify-checksum exit 81, get missing key exit 4, scope dual AST patterns for Rust generics/return types, verify positional args, edit-loop JSON array input. 4 documentation clarifications (BY-DESIGN). 631+ tests, 33 subcommands. See `CHANGELOG.md` for full notes.
+**Latest release: v0.1.27** (2026-06-24) — 10 bug fixes across 3 audit rounds: CRITICAL symlink-directory jail escape (BUG-SEC-001), CRITICAL scope --delete code destruction (BUG-SCOPE-004), scope pub visibility for all Rust queries, Go var type-inferred declarations, edit-loop hardened (empty stdin, invalid JSON, pair_results fields). 3 known limitations documented (GAP-01/02/03). 631+ tests, 33 subcommands. See `CHANGELOG.md` for full notes.
 
-**Previous release: v0.1.25** (2026-06-22) — .atomwrite.toml config file, verify subcommand, Jaro-Winkler fuzzy matching, 49 bug fixes, 631 tests. See `CHANGELOG.md`.
+**Previous release: v0.1.26** (2026-06-23) — 9 bug fixes (GAP-135 to GAP-147): exit code consistency, scope dual AST patterns, 631 tests. See `CHANGELOG.md`.
 
 ## Installation
 

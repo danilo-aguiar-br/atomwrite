@@ -393,7 +393,22 @@ fn expand_to_full_line(content: &str, start: usize, end: usize) -> (usize, usize
         .iter()
         .position(|&b| b == b'\n')
         .map_or(content.len(), |pos| end + pos + 1);
-    (line_start, line_end)
+
+    let before_match = &content[line_start..start];
+
+    if before_match.trim().is_empty() {
+        (line_start, line_end)
+    } else {
+        let content_end = if line_end > 0 && bytes[line_end - 1] == b'\n' {
+            line_end - 1
+        } else {
+            line_end
+        };
+        let trim_start = content[line_start..start]
+            .rfind(|c: char| !c.is_whitespace())
+            .map_or(start, |pos| line_start + pos + 1);
+        (trim_start, content_end)
+    }
 }
 
 fn apply_scope_action<'a>(
@@ -493,7 +508,7 @@ fn lookup_prepared_queries(name: &str, lang: &str) -> Result<Vec<String>> {
         "javascript" | "js" | "typescript" | "ts" | "tsx" | "jsx" => {
             lookup_js_query(name).map(|s| vec![s])
         }
-        "go" | "golang" => lookup_go_query(name).map(|s| vec![s]),
+        "go" | "golang" => lookup_go_queries(name),
         _ => Err(AtomwriteError::InvalidInput {
             reason: format!(
                 "no prepared queries for language: {lang}. \
@@ -509,6 +524,8 @@ fn lookup_rust_queries(name: &str) -> Result<Vec<String>> {
         "comments" => vec!["// $$BODY\\s*", "/* $$$BODY */"],
         "strings" => vec!["\"$$$BODY\""],
         "fn" => vec![
+            "pub fn $NAME($$$ARGS) -> $RET { $$$BODY }",
+            "pub fn $NAME($$$ARGS) { $$$BODY }",
             "fn $NAME($$$ARGS) -> $RET { $$$BODY }",
             "fn $NAME($$$ARGS) { $$$BODY }",
         ],
@@ -517,14 +534,20 @@ fn lookup_rust_queries(name: &str) -> Result<Vec<String>> {
             "pub fn $NAME($$$ARGS) { $$$BODY }",
         ],
         "async-fn" => vec![
+            "pub async fn $NAME($$$ARGS) -> $RET { $$$BODY }",
+            "pub async fn $NAME($$$ARGS) { $$$BODY }",
             "async fn $NAME($$$ARGS) -> $RET { $$$BODY }",
             "async fn $NAME($$$ARGS) { $$$BODY }",
         ],
         "unsafe-fn" => vec![
+            "pub unsafe fn $NAME($$$ARGS) -> $RET { $$$BODY }",
+            "pub unsafe fn $NAME($$$ARGS) { $$$BODY }",
             "unsafe fn $NAME($$$ARGS) -> $RET { $$$BODY }",
             "unsafe fn $NAME($$$ARGS) { $$$BODY }",
         ],
         "struct" => vec![
+            "pub struct $NAME<$$$GEN> { $$$FIELDS }",
+            "pub struct $NAME { $$$FIELDS }",
             "struct $NAME<$$$GEN> { $$$FIELDS }",
             "struct $NAME { $$$FIELDS }",
         ],
@@ -533,6 +556,8 @@ fn lookup_rust_queries(name: &str) -> Result<Vec<String>> {
             "pub struct $NAME { $$$FIELDS }",
         ],
         "enum" => vec![
+            "pub enum $NAME<$$$GEN> { $$$VARIANTS }",
+            "pub enum $NAME { $$$VARIANTS }",
             "enum $NAME<$$$GEN> { $$$VARIANTS }",
             "enum $NAME { $$$VARIANTS }",
         ],
@@ -540,15 +565,20 @@ fn lookup_rust_queries(name: &str) -> Result<Vec<String>> {
             "pub enum $NAME<$$$GEN> { $$$VARIANTS }",
             "pub enum $NAME { $$$VARIANTS }",
         ],
-        "trait" => vec!["trait $NAME<$$$GEN> { $$$BODY }", "trait $NAME { $$$BODY }"],
+        "trait" => vec![
+            "pub trait $NAME<$$$GEN> { $$$BODY }",
+            "pub trait $NAME { $$$BODY }",
+            "trait $NAME<$$$GEN> { $$$BODY }",
+            "trait $NAME { $$$BODY }",
+        ],
         "impl" => vec![
             "impl $TRAIT for $TYPE { $$$BODY }",
             "impl $TYPE { $$$BODY }",
         ],
-        "mod" => vec!["mod $NAME { $$$BODY }"],
+        "mod" => vec!["pub mod $NAME { $$$BODY }", "mod $NAME { $$$BODY }"],
         "closure" => vec!["|$$$ARGS| $$$BODY"],
         "unsafe" => vec!["unsafe { $$$BODY }"],
-        "use" => vec!["use $$$PATH;"],
+        "use" => vec!["pub use $$$PATH;", "use $$$PATH;"],
         // GAP-134: test-fn pattern is multi-node (#[test] + fn) which
         // ast-grep rejects. Disabled until ast-grep supports composite patterns.
         "test-fn" => {
@@ -569,12 +599,31 @@ fn lookup_rust_queries(name: &str) -> Result<Vec<String>> {
         "while-let" => vec!["while let $PAT = $EXPR { $$$BODY }"],
         "for" => vec!["for $PAT in $ITER { $$$BODY }"],
         "loop" => vec!["loop { $$$BODY }"],
-        "const" => vec!["const $NAME: $TYPE = $$$EXPR;"],
-        "static" => vec!["static $NAME: $TYPE = $$$EXPR;"],
-        "type-alias" => vec!["type $NAME = $$$TYPE;"],
+        "const" => vec![
+            "pub const $NAME: $TYPE = $$$EXPR;",
+            "const $NAME: $TYPE = $$$EXPR;",
+        ],
+        "static" => vec![
+            "pub static $NAME: $TYPE = $$$EXPR;",
+            "static $NAME: $TYPE = $$$EXPR;",
+        ],
+        "type-alias" => vec![
+            "pub type $NAME = $$$TYPE;",
+            "type $NAME = $$$TYPE;",
+        ],
         "macro-rules" => vec!["macro_rules! $NAME { $$$BODY }"],
         "derive" => vec!["#[derive($$$TRAITS)]"],
-        "doc-comment" => vec!["/// $$$BODY"],
+        "doc-comment" => {
+            return Err(AtomwriteError::InvalidInput {
+                reason: "query 'doc-comment' is currently unavailable: tree-sitter parses \
+                         '///' as a plain line_comment node (same as '//'), so ast-grep \
+                         cannot distinguish doc-comments structurally. Use 'atomwrite scope \
+                         --query comments' to match all comments, or 'rg \"///\"' for text \
+                         matching."
+                    .into(),
+            }
+            .into());
+        }
         _ => {
             return Err(AtomwriteError::InvalidInput {
                 reason: format!(
@@ -646,16 +695,19 @@ fn lookup_js_query(name: &str) -> Result<String> {
     Ok(q.to_owned())
 }
 
-fn lookup_go_query(name: &str) -> Result<String> {
-    let q = match name {
-        "fn" => "func $NAME($$$ARGS) $$$RET { $$$BODY }",
-        "struct" => "type $NAME struct { $$$FIELDS }",
-        "interface" => "type $NAME interface { $$$METHODS }",
-        "goroutine" => "go $$$EXPR",
-        "defer" => "defer $$$EXPR",
-        "import" => "import $$$IMPORTS",
-        "const" => "const $NAME = $$$EXPR",
-        "var" => "var $NAME $TYPE = $$$EXPR",
+fn lookup_go_queries(name: &str) -> Result<Vec<String>> {
+    let qs: Vec<&str> = match name {
+        "fn" => vec!["func $NAME($$$ARGS) $$$RET { $$$BODY }"],
+        "struct" => vec!["type $NAME struct { $$$FIELDS }"],
+        "interface" => vec!["type $NAME interface { $$$METHODS }"],
+        "goroutine" => vec!["go $$$EXPR"],
+        "defer" => vec!["defer $$$EXPR"],
+        "import" => vec!["import $$$IMPORTS"],
+        "const" => vec!["const $NAME = $$$EXPR"],
+        "var" => vec![
+            "var $NAME $TYPE = $$$EXPR",
+            "var $NAME = $$$EXPR",
+        ],
         _ => {
             return Err(AtomwriteError::InvalidInput {
                 reason: format!(
@@ -666,7 +718,7 @@ fn lookup_go_query(name: &str) -> Result<String> {
             .into());
         }
     };
-    Ok(q.to_owned())
+    Ok(qs.into_iter().map(String::from).collect())
 }
 
 enum ScopeEvent {
@@ -704,8 +756,8 @@ mod tests {
         let qs = result.unwrap();
         assert_eq!(
             qs.len(),
-            2,
-            "fn should produce 2 patterns (with and without return type)"
+            4,
+            "fn should produce 4 patterns (pub/non-pub × with/without return type)"
         );
         assert!(qs.iter().all(|q| q.contains("fn $NAME")));
     }
@@ -735,9 +787,13 @@ mod tests {
     }
 
     #[test]
-    fn lookup_go_query_known() {
-        let result = lookup_go_query("struct");
+    fn lookup_go_queries_known() {
+        let result = lookup_go_queries("struct");
         assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 1);
+        let var_result = lookup_go_queries("var");
+        assert!(var_result.is_ok());
+        assert_eq!(var_result.unwrap().len(), 2, "var should have typed + inferred patterns");
     }
 
     #[test]

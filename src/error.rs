@@ -602,7 +602,7 @@ fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
         )),
         AtomwriteError::SyntaxError { path, count } => Some(format!(
             "post-write syntax check found {count} syntax error(s) in {}; \
-             inspect the content (or disable with --syntax-check=false) and retry",
+             inspect the content (or remove --syntax-check) and retry",
             path.display()
         )),
         AtomwriteError::ExdevFallbackDisabled { path } => Some(format!(

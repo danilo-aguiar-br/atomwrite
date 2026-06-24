@@ -469,7 +469,7 @@ atomwrite get package.json scripts.build
 - If the key is missing, returns `{"found": false, "value": null}`
 - TOML dotted path: `dependencies.serde.features[0]`
 - JSON pointer (RFC 6901): `/dependencies/serde/features/0`
-- Exit 4 when key is missing (v0.1.26 GAP-137; was exit 0 in v0.1.24, exit 65 in v0.1.25)
+- Exit 65 when key is missing (v0.1.27 BUG-GET; was exit 4 in v0.1.26, exit 65 in v0.1.25, exit 0 in v0.1.24)
 
 ### del
 - Remove a key at a dotted path in a TOML or JSON file

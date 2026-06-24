@@ -19,6 +19,19 @@
 - Todo arquivo recebe checksum BLAKE3: detecta drift, verifica integridade, habilita locking otimista
 
 
+## Novidades na v0.1.27 (2026-06-24)
+
+- 10 bugs corrigidos em 3 rodadas de auditoria de segurança e scope
+- **Correção CRITICA de segurança**: escape de symlink-directory do jail do workspace (BUG-SEC-001) — todos os caminhos de escrita/leitura agora resolvem symlinks via `canonicalize_existing_prefix` antes da verificação de jail
+- **Correção CRITICA de scope**: `scope --query comments --delete` não destrói mais código em linhas com comentários inline (BUG-SCOPE-004)
+- Queries Rust do `scope` agora casam itens `pub` para todos os tipos de query (fn, struct, enum, trait, const, static, type-alias, mod, use)
+- `scope --query var` em Go agora lida com declarações com tipo inferido (`var x = 0`)
+- `edit-loop` endurecido: stdin vazio e JSON inválido agora retornam envelopes de erro NDJSON corretos
+- `pair_results` de `edit-loop` agora inclui campos `old` e `new` para rastreabilidade
+- 3 limitações conhecidas documentadas: GAP-01 (test-fn), GAP-02 (doc-comment), GAP-03 (JS export)
+- 631+ testes passando, zero warnings clippy, zero diferenças fmt
+
+
 ## O Que Há De Novo Na v0.1.25 (2026-06-22)
 
 - 49 bugs corrigidos em 6 rodadas de auditoria e2e (GAP-071 a GAP-134)

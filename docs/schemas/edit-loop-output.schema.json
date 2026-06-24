@@ -36,6 +36,14 @@
           },
           "matched": {
             "type": "boolean"
+          },
+          "old": {
+            "type": "string",
+            "description": "The old text that was searched for in this pair."
+          },
+          "new": {
+            "type": "string",
+            "description": "The new text that would replace the old text."
           }
         },
         "additionalProperties": false

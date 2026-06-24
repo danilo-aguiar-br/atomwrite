@@ -474,7 +474,7 @@ atomwrite get package.json scripts.build
 - Se a chave estiver ausente, retorna exit 4 (`FILE_NOT_FOUND`) com envelope de erro NDJSON
 - Caminho dotted TOML: `dependencies.serde.features[0]`
 - Pointer JSON (RFC 6901): `/dependencies/serde/features/0`
-- Exit 4 quando a chave está ausente (v0.1.26 GAP-137; era exit 0 na v0.1.24, exit 65 na v0.1.25)
+- Exit 65 quando a chave está ausente (v0.1.27 BUG-GET; era exit 4 na v0.1.26, exit 65 na v0.1.25, exit 0 na v0.1.24)
 
 ### del
 - Remove uma chave em um caminho dotted em um arquivo TOML ou JSON

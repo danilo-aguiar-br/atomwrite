@@ -1,7 +1,7 @@
 ---
 name: atomwrite
 description: >-
-  This skill teaches how to use atomwrite, a Rust CLI for atomic file operations with 33 subcommands (read, write, edit, search, replace, hash, verify, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, backup, rollback, apply, batch, completions, set, get, del, case, query, outline, wal-stats, wal-heal, edit-loop, prune-backups). MUST be activated when the LLM needs to write, read, edit, search, replace, AST refactor, generate regex, calculate, verify BLAKE3, transactional batches, Jaro-Winkler fuzzy editing, grammatical scoping, backup or rollback. Output ALWAYS NDJSON. Atomic pipeline tempfile-fsync-rename
+  This skill MUST activate when the LLM needs atomic file writing, reading, editing, searching, replacing, AST refactoring, grammatical scoping, BLAKE3 hashing, transactional batches, Jaro-Winkler fuzzy editing, calculation, regex generation, backup or rollback. Covers all 33 subcommands of the atomwrite Rust CLI (read, write, edit, search, replace, hash, verify, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-stats, wal-heal, edit-loop, prune-backups, completions). Output ALWAYS NDJSON. Atomic pipeline tempfile-fsync-rename. Triggers — atomwrite, atomic write, surgical edit, BLAKE3, checksum, optimistic locking, WAL journal, tree-sitter, ast-grep, grammatical scoping
 ---
 
 
@@ -32,6 +32,7 @@ description: >-
 - USE `--expect-checksum <BLAKE3>` for optimistic locking
 - USE `--allow-shrink` to permit truncation when `--expect-checksum` is active (shrink-guard blocks reduction greater than 50%)
 - USE `--allow-empty-stdin` when stdin is empty (intentional guard)
+- USE `--no-checksum-when-empty` to skip `--expect-checksum` when stdin is empty
 - USE `--dry-run` before destructive writes
 - USE `--append` to append to end
 - USE `--prepend` to insert at beginning
@@ -55,7 +56,7 @@ description: >-
 - USE `read` for content with metadata (checksum, size, lines, mode)
 - USE `--stat` for metadata only (no body)
 - USE `--lines 1:50` for line range
-- USE `--line N` with `--context N` for single line with context
+- USE `--line N` with `-C/--context N` for single line with context
 - USE `--head N` for first N lines
 - USE `--tail N` for last N lines
 - USE `--format raw` for raw content without JSON envelope
@@ -69,7 +70,7 @@ description: >-
 ## Edit Operations (edit)
 - USE `--old "text" --new "text"` for exact replacement (repeatable for multiple pairs)
 - Multi-pair runs 9-strategy fuzzy cascade per pair including Jaro-Winkler (context_aware_jw)
-- Response includes pairs_total and pair_results (index, matched, strategy, similarity, diff_preview)
+- Response includes pairs_total and pair_results (index, matched, strategy, similarity, diff_preview, old, new)
 - Failed pair aborts entire batch by default (all-or-nothing)
 - USE `--partial` to apply matching pairs and report the rest
 - USE `--fuzzy auto|off|aggressive` to control approximate matching
@@ -100,22 +101,22 @@ description: >-
 
 ## Search Operations (search)
 - Exit code 1 means zero matches (NOT an error)
-- USE `--include '*.rs'` and `--exclude '*.log'` to filter
-- USE `--context N` for surrounding lines
-- USE `--fixed` (`-F`) for literal search
-- USE `--regex` (`-e`) to force regex mode
-- USE `--word` (`-w`) for word boundary
-- USE `--case-insensitive` (`-i`), `--smart-case` (`-S`)
-- USE `--count` (`-c`) for per-file count
-- USE `--files` (`-l`) for file names only
-- USE `--max-count N` (`-m`) to limit matches per file
-- USE `--multiline` (`-U`) for multiline matching
+- USE `-g/--include '*.rs'` and `--exclude '*.log'` to filter
+- USE `-C/--context N` for surrounding lines
+- USE `-F/--fixed` for literal search
+- USE `-e/--regex` to force regex mode
+- USE `-w/--word` for word boundary
+- USE `-i/--case-insensitive`, `-S/--smart-case`
+- USE `-c/--count` for per-file count
+- USE `-l/--files` for file names only
+- USE `-m/--max-count N` to limit matches per file
+- USE `-U/--multiline` for multiline matching
+- USE `-P/--pcre2` for PCRE2 engine (exit 65 if feature not compiled)
 - USE `--invert` for non-matching lines
 - USE `--sort path|modified|created|none` to sort (path guarantees deterministic global ordering)
 - USE `--max-filesize <BYTES>` to skip large files
 - USE `--max-columns <N>` to truncate wide lines
 - USE `--no-begin-end` to suppress begin/end events on files without matches
-- USE `--pcre2` for PCRE2 engine (exit 65 if feature not compiled)
 - USE `--include-fifo` for FIFO/named pipes (NEVER on untrusted directories)
 - FORMULA search `atomwrite --workspace . search 'TODO|FIXME' src/ --include '*.rs'`
 - FORMULA count `atomwrite --workspace . search 'unwrap' src/ --count --sort path`
@@ -124,10 +125,10 @@ description: >-
 ## Replace Operations (replace)
 - Exit code 1 for zero matches
 - ALWAYS use `--dry-run` first
-- USE `--regex`, `--word`, `--literal` (`-F`)
-- USE `--include`, `--exclude` to filter
+- USE `--regex`, `-w/--word`, `-F/--literal`
+- USE `-g/--include`, `--exclude` to filter
 - USE `--preview` for diff without writing
-- USE `--max-replacements N` (`-n`) to limit per file
+- USE `-n/--max-replacements N` to limit per file
 - USE `--expect-checksum <BLAKE3>` for locking
 - USE `--backup`, `--no-backup`, `--keep-backup`
 - USE `--preserve-timestamps` to keep mtime
@@ -138,10 +139,10 @@ description: >-
 
 ## Transform Operations AST (transform)
 - Exit code 1 for zero matches
-- ALWAYS specify `--lang` (`-l`) for target language
+- ALWAYS specify `-l/--lang` for target language
 - USE `$NAME` for single node capture and `$$$ARGS` for multiple
 - 306 languages supported via ast-grep
-- USE `--pattern` and `--rewrite` (BOTH required in single-rule mode)
+- USE `-p/--pattern` and `-r/--rewrite` (BOTH required in single-rule mode)
 - USE `--dry-run`, `--backup`, `--no-backup`
 - USE `--include`, `--exclude` to filter
 - USE `--rules <PATH>` for YAML/JSON rule files
@@ -152,19 +153,20 @@ description: >-
 
 ## Grammatical Scoping Operations (scope)
 - Exit code 1 for zero matches
-- ALWAYS specify `--lang` for target language
-- USE `--query` for prepared queries (supports return types, generics and trait impls)
+- ALWAYS specify `-l/--language` for target language (accepts `--lang` as alias)
+- USE `--query` for prepared queries
 - USE `--pattern` for custom AST patterns
 - USE `--delete` to remove matched content
 - USE `--action upper|lower|titlecase|squeeze|symbols|normalize`
 - `--action symbols` converts ASCII operators to Unicode
 - `--action normalize` normalizes text to NFC
 - USE `--replace-with "text"` for custom replacement
-- USE `--include`, `--exclude`, `--backup`, `--dry-run`
-- Rust queries: comments, doc-comment, strings, fn, pub-fn, async-fn, unsafe-fn, test-fn, struct, pub-struct, enum, pub-enum, trait, impl, mod, use, closure, unsafe, attribute, derive, return, match, if-let, while-let, for, loop, const, static, type-alias, macro-rules
+- USE `-g/--include`, `--exclude`, `--backup`, `--dry-run`
+- Rust queries: comments, strings, fn, pub-fn, async-fn, unsafe-fn, struct, pub-struct, enum, pub-enum, trait, impl, mod, use, closure, unsafe, attribute, derive, return, match, if-let, while-let, for, loop, const, static, type-alias, macro-rules
 - Python queries: comments, strings, class, def, async-def, lambda, import, from-import, with, for, while, decorator, try-except
 - JS/TS queries: comments, strings, fn, arrow-fn, async-fn, class, import, export, try-catch, const, let
 - Go queries: fn, struct, interface, goroutine, defer, import, const, var
+- Known limitations: `test-fn` and `doc-comment` are DISABLED (return InvalidInput)
 - FORMULA `atomwrite --workspace . scope src/ --lang rust --query comments --delete --dry-run`
 
 
@@ -202,7 +204,7 @@ description: >-
 ## Diff Operations (diff)
 - USE `--unified` for unified format
 - USE `--stat` for summary statistics
-- USE `--context N` (`-C`) for context lines (default 3)
+- USE `-C/--context N` for context lines (default 3)
 - USE `--algorithm myers|patience|lcs` (default patience)
 - FORMULA `atomwrite --workspace . diff src/old.rs src/new.rs --unified`
 
@@ -217,7 +219,7 @@ description: >-
 
 
 ## List, Count and Extract Operations (list, count, extract)
-- list: `--include`, `--exclude`, `--long`, `--depth N`, `--count-by-ext`, `--all`
+- list: `-g/--include`, `--exclude`, `--long`, `--depth N`, `--count-by-ext`, `--all`
 - count: `--by-extension`, `--by-size` with `--top N`, `--include`, `--exclude`
 - extract: positional fields (path, line_number), `--delimiter <SEP>`, `--stdin`
 - FORMULA list `atomwrite --workspace . list --long --depth 2 src/`
@@ -228,8 +230,8 @@ description: >-
 ## Calc and Regex Operations (calc, regex)
 - calc: expression in quotes, `--stdin` to read from stdin (stateless, no --workspace)
 - regex: generates regex from examples (3+ for accuracy)
-- regex: `--digits` (`-d`), `--words` (`-w`), `--spaces` (`-s`), `--repetitions` (`-r`)
-- regex: `--case-insensitive` (`-i`), `--no-anchors`, `--stdin`
+- regex: `-d/--digits`, `-w/--words`, `-s/--spaces`, `-r/--repetitions`
+- regex: `-i/--case-insensitive`, `--no-anchors`, `--stdin`
 - FORMULA calc `atomwrite calc "2 hours + 30 minutes to seconds"`
 - FORMULA regex `atomwrite regex "v1.0.0" "v2.1.3" "v10.0.1" --digits`
 
@@ -264,13 +266,13 @@ description: >-
 
 ## Case, Query and Outline Operations (case, query, outline)
 - case: converts identifier case (snake, camel, pascal, kebab, screaming-snake)
-- case: `--subvert OLD NEW` is MANDATORY (without it returns exit 65)
+- case: `--subvert OLD NEW` is REQUIRED (without it returns exit 65)
 - case: `--to <STYLE>`, `--backup`, `--no-backup`, `--preserve-timestamps`, `--dry-run`
 - NEVER run case without --dry-run on a large codebase
 - query: inspects AST via tree-sitter (24 languages)
 - query: `--kinds` lists node kinds (response is NDJSON stream, one object per kind)
 - query: `--tree` for full tree
-- query: `--query <PATTERN>` (`-Q`) for S-expression
+- query: `-Q/--query <PATTERN>` for S-expression
 - query: `--positions`, `--language <LANG>`
 - outline: extracts high-level structure (functions, structs, enums)
 - outline: `--kind <KIND>` (repeatable), `--positions`, `--language <LANG>`
@@ -284,7 +286,8 @@ description: >-
 - wal-heal: removes terminal orphan journals older than threshold
 - wal-heal: `--threshold-secs <N>` (default 3600), `--max-duration-ms <N>` (default 100)
 - edit-loop: applies N {old, new} pairs in 1 invocation (accepts JSON array AND NDJSON)
-- edit-loop: `--backup`, `--no-backup`, `--keep-backup`, `--retention N`, `--line-ending`, `--syntax-check`, `--allow-sequential-drift`
+- edit-loop: response includes pair_results with old and new fields for each processed pair
+- edit-loop: `--backup`, `--no-backup`, `--keep-backup`, `--retention N`, `--line-ending`, `--syntax-check <LANG>`, `--allow-sequential-drift`
 - prune-backups: cleans up legacy backups by age or count
 - prune-backups: `--max-age-secs <N>` (NOT --max-age), `--max-count <N>`, `--dry-run`
 - completions: generates completions for bash, zsh, fish, elvish, powershell
@@ -338,12 +341,16 @@ description: >-
 ## Global Flags
 - `--workspace <DIR>` jail root (REQUIRED for file operations)
 - `--max-filesize <BYTES>` max accepted size (default 1 GiB)
-- `--threads <N>` / `-j` parallel threads (0 = all cores)
-- `--timeout <SECONDS>` global timeout (default 0 = no timeout)
+- `-j/--threads <N>` parallel threads (0 = all cores)
+- `--timeout-secs <SECONDS>` global timeout (default 0 = no timeout)
 - `--color auto|always|never`
+- `--no-color` disable colored output
 - `--no-gitignore` ignore .gitignore
 - `--hidden` include hidden files
 - `--follow-symlinks` follow symbolic links
+- `--locale <LANG>` override message locale (pt-BR, en)
+- `--json-schema` emit JSON Schema for subcommand output and exit
+- `--no-auto-heal` skip automatic WAL heal on startup
 - `-v` info, `-vv` debug, `-vvv` trace
 - `-q` error, `-qq` off
 
@@ -359,3 +366,5 @@ description: >-
 - AST refactor: `atomwrite --workspace . transform --dry-run -p '$E.unwrap()' -r '$E?' -l rust src/`
 - Bulk replace: `atomwrite --workspace . replace --dry-run 'old' 'new' src/`
 - Backup and rollback: `atomwrite --workspace . backup src/config.toml && atomwrite --workspace . rollback src/config.toml --verify`
+- Integrity verify: `atomwrite --workspace . verify src/main.rs $(atomwrite --workspace . hash src/main.rs | jaq -r '.checksum')`
+- Grammatical scope: `atomwrite --workspace . scope src/ --lang rust --query pub-fn --dry-run`

@@ -78,9 +78,51 @@ Todas aditivas. Nenhuma dependência existente removida.
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 
 ## Versão Atual
-- atomwrite está na v0.1.26
-- Este documento cobre migração de v0.1.0 a v0.1.26
+- atomwrite está na v0.1.27
+- Este documento cobre migração de v0.1.0 a v0.1.27
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
+
+
+## v0.1.26 para v0.1.27 (2026-06-24)
+
+### Correções de Segurança (CRÍTICAS)
+
+- **BUG-SEC-001**: escape do jail do workspace via symlink-directory — `ln -s /tmp $WS/link && atomwrite write link/file.txt` conseguia escrever FORA do workspace. Corrigido com `canonicalize_existing_prefix` em `path_safety.rs`. Afeta: write, read, edit, edit-loop, apply, set, del, copy, move. Exit 126 na detecção.
+
+### Correções de Bugs (CRÍTICAS)
+
+- **BUG-SCOPE-004**: `scope --query comments --delete` em linhas com comentários inline (ex: `fn foo() {} // comment`) destruía a linha INTEIRA incluindo código válido. Corrigido: `expand_to_full_line` agora preserva código antes de comentários inline.
+
+### Correções de Bugs (Médias)
+
+- **BUG-GET**: `get` para chave ausente agora retorna exit 65 (`INVALID_INPUT`) com mensagem "key 'X' not found in Y" — reverte o revert da v0.1.26 para exit 4
+- **BUG-001**: `edit-loop` com stdin vazio agora retorna exit 65 (`INVALID_INPUT`) em vez de exit 0 silencioso
+- **BUG-002**: `edit-loop` com JSON inválido agora emite envelope de erro NDJSON no stdout em vez de texto não estruturado no stderr
+- **BUG-005**: sugestão do `write --syntax-check` mudou de "--syntax-check=false" para "remove --syntax-check"
+- **BUG-008**: `pair_results` do `edit-loop` agora inclui campos `old` e `new` para cada par
+- **BUG-SCOPE-002**: queries `fn`, `struct`, `enum`, `trait`, `async-fn`, `unsafe-fn` do `scope` agora incluem variantes `pub`
+- **BUG-SCOPE-003**: queries `const`, `static`, `type-alias`, `mod`, `use` do `scope` agora incluem variantes `pub`
+- **BUG-SCOPE-005**: `scope --query var` em Go agora casa declarações sem tipo explícito (`var x = 0`)
+
+### Limitações Conhecidas
+
+- **GAP-01**: `scope --query test-fn` indisponível — ast-grep não consegue casar `#[test] fn` através de 2 nós AST
+- **GAP-02**: `scope --query doc-comment` indisponível — tree-sitter parseia `///` como `line_comment` (sem distinção estrutural)
+- **GAP-03**: `scope --query export` em JS/TS indisponível — padrão cruza múltiplos nós AST
+
+### Ação de Migração
+
+- Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.27"`
+- **CRÍTICO**: Se você usa symlinks dentro de diretórios workspace, teste que eles resolvem dentro do jail. Symlinks apontando para fora do workspace agora corretamente retornam exit 126.
+- Se parseia exit codes de `get` para chave ausente: exit agora é 65 (`INVALID_INPUT`) novamente (era 4 na v0.1.26, 65 na v0.1.25)
+- Se parseia `pair_results` do `edit-loop`: novos campos `old` e `new` presentes
+- Se depende de queries do `scope` casando apenas items não-pub: `fn`, `struct`, `enum`, `trait`, `const`, `static`, `type-alias`, `mod`, `use` agora capturam pub e não-pub
+- MSRV inalterado em Rust 1.88
+
+### Cobertura de Testes
+
+- 631+ testes passando, 0 falhas
+- 33 subcomandos, 29 ADRs em `docs/decisions/`
 
 
 ## v0.1.25 para v0.1.26 (2026-06-23)

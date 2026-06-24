@@ -53,7 +53,7 @@
 - `src/reflink.rs` — reflink (copy-on-write) helper via `reflink-copy`
 
 ### Subcommand Handlers
-- `src/commands/` — 30 subcommand implementations, each in its own module
+- `src/commands/` — 33 subcommand implementations, each in its own module
 - Each handler receives parsed args, global config, an NDJSON writer, and shutdown signal
 - All handlers follow the same signature: `fn cmd_*(args, global, writer, shutdown) -> Result<()>`
 - **v0.1.11 baseline (22)**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, completions

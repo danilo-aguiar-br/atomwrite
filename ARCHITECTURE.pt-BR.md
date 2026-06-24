@@ -51,7 +51,7 @@
 - `src/reflink.rs` — helper de reflink (copy-on-write) via `reflink-copy`
 
 ### Handlers de Subcomando
-- `src/commands/` — 28 implementações de subcomando, cada uma em seu próprio módulo
+- `src/commands/` — 33 implementações de subcomando, cada uma em seu próprio módulo
 - Cada handler recebe args parseados, config global, escritor NDJSON e sinal de shutdown
 - Todos os handlers seguem a mesma assinatura: `fn cmd_*(args, global, writer, shutdown) -> Result<()>`
 - **Baseline v0.1.11 (22)**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, completions

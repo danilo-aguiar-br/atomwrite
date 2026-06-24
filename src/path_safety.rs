@@ -63,8 +63,23 @@ pub fn validate_path_with_symlink(
         .into());
     }
 
-    if !follow_symlinks && resolved.exists() {
-        check_symlink(&resolved)?;
+    if !follow_symlinks {
+        let real_resolved = canonicalize_existing_prefix(&resolved);
+        let real_workspace = workspace
+            .canonicalize()
+            .unwrap_or_else(|_| workspace_resolved.clone());
+        let real_workspace = normalize_path_nfc(&real_workspace);
+        if !real_resolved.starts_with(&real_workspace) {
+            return Err(AtomwriteError::WorkspaceJail {
+                path: real_resolved,
+                workspace: real_workspace,
+            }
+            .into());
+        }
+
+        if resolved.exists() {
+            check_symlink(&resolved)?;
+        }
     }
 
     #[cfg(unix)]
@@ -98,6 +113,39 @@ fn normalize_path_nfc(path: &Path) -> PathBuf {
     let s = path.to_string_lossy();
     let normalized: String = s.nfc().collect();
     PathBuf::from(normalized)
+}
+
+/// Canonicalize the longest existing prefix of a path, resolving symlinks.
+///
+/// Walks from the full path upward until an existing ancestor is found,
+/// canonicalizes it (resolving all symlinks), then re-appends the
+/// non-existent tail. This catches symlink-directory escapes where an
+/// intermediate component is a symlink pointing outside the workspace.
+fn canonicalize_existing_prefix(path: &Path) -> PathBuf {
+    let mut existing = path.to_path_buf();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+
+    loop {
+        if existing.exists() {
+            match existing.canonicalize() {
+                Ok(canon) => {
+                    let mut result = canon;
+                    for component in tail.into_iter().rev() {
+                        result.push(component);
+                    }
+                    return normalize_path_nfc(&result);
+                }
+                Err(_) => return normalize_path_nfc(path),
+            }
+        }
+        match existing.file_name() {
+            Some(name) => {
+                tail.push(name.to_owned());
+                existing.pop();
+            }
+            None => return normalize_path_nfc(path),
+        }
+    }
 }
 
 /// Resolve `.` and `..` components without touching the filesystem.

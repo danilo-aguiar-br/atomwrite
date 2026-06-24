@@ -11,7 +11,19 @@
 
 | Versão  | Suportada          |
 |---------|--------------------|
-| 0.1.15  | Sim                |
+| 0.1.27  | Sim                |
+| 0.1.26  | Best-effort        |
+| 0.1.25  | Best-effort        |
+| 0.1.24  | Best-effort        |
+| 0.1.23  | Best-effort        |
+| 0.1.22  | Best-effort        |
+| 0.1.21  | Best-effort        |
+| 0.1.20  | Best-effort        |
+| 0.1.19  | Best-effort        |
+| 0.1.18  | Best-effort        |
+| 0.1.17  | Best-effort        |
+| 0.1.16  | Best-effort        |
+| 0.1.15  | Best-effort        |
 | 0.1.14  | Best-effort        |
 | 0.1.13  | Best-effort        |
 | 0.1.12  | Best-effort        |
@@ -72,13 +84,25 @@
 - **Ação tomada**: MSRV bumped de 1.85 para 1.88 em v0.1.7. A entrada `ignore` no `deny.toml` e a flag `cargo audit --ignore` foram ambas removidas. A advisory não se aplica mais
 - **Referência**: Entrada v0.1.7 no `CHANGELOG.pt-BR.md`
 
-### Sem advisories ativas em v0.1.15
-- `cargo audit` reporta 0 vulnerabilidades em 379 crates
+### BUG-SEC-001 — Escape de symlink-directory do jail do workspace (Corrigido em v0.1.27)
+- **Severidade**: Crítica
+- **Versões afetadas**: v0.1.0 a v0.1.26
+- **Corrigido em**: v0.1.27
+- **Vetor de ataque**: Criar um symlink para diretório fora do workspace (`ln -s /tmp $WS/link`), depois usar atomwrite para escrever/ler pelo symlink (`atomwrite write link/escape.txt`)
+- **Causa raiz**: `validate_path` em `path_safety.rs` usava `soft_canonicalize` que resolvia `.` e `..` mas NÃO symlinks em componentes intermediários do caminho
+- **Impacto**: Escrita e leitura arbitrária de arquivos fora do jail do workspace (exfiltração de dados, criação arbitrária de arquivos)
+- **Subcomandos afetados**: write, read, edit, edit-loop, apply, set, del, copy, move
+- **NÃO afetados**: search, replace (usam WalkBuilder do crate `ignore` com verificação própria de symlinks)
+- **Correção**: Adicionada `canonicalize_existing_prefix` que resolve symlinks via `std::fs::canonicalize` na porção existente do caminho antes da verificação de jail
+- **Mitigação**: Atualize para v0.1.27; não crie symlinks dentro do workspace apontando para fora
+
+### Sem advisories ativas em v0.1.27
+- `cargo audit` reporta 0 vulnerabilidades
 - `cargo deny check` reporta 4/4 OK (advisories, bans, licenses, sources)
 - Todas as dependências transitivas com notas de segurança foram atualizadas ou substituídas
 
 
-## Postura de Segurança de Dependências (v0.1.15)
+## Postura de Segurança de Dependências (v0.1.27)
 - **Segurança de memória**: 0 blocos de código unsafe em `src/` (negado via `#![deny(unsafe_code)]` na raiz da lib)
 - **BLAKE3**: Usado apenas para checksums, não para segurança criptográfica
 - **tree-sitter-language-pack**: Parsers são baixados no primeiro uso a partir das releases oficiais do `tree-sitter` no GitHub via a feature `download`. Os parsers baixados são carregados dinamicamente mas não executados como código

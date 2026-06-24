@@ -19,7 +19,20 @@
 - Every file gets a BLAKE3 checksum: detect drift, verify integrity, enable optimistic locking
 
 
-## What Is New In v0.1.25 (2026-06-22)
+## What Is New In v0.1.27 (2026-06-24)
+
+- 10 bugs fixed across 3 rounds of security and scope audit
+- **CRITICAL security fix**: symlink-directory escape from workspace jail (BUG-SEC-001) — all write/read paths now resolve symlinks via `canonicalize_existing_prefix` before jail check
+- **CRITICAL scope fix**: `scope --query comments --delete` no longer destroys code on lines with inline comments (BUG-SCOPE-004)
+- `scope` Rust queries now match `pub` items for all query types (fn, struct, enum, trait, const, static, type-alias, mod, use)
+- Go `scope --query var` now handles type-inferred declarations (`var x = 0`)
+- `edit-loop` hardened: empty stdin and invalid JSON now return proper NDJSON error envelopes
+- `edit-loop` `pair_results` now includes `old` and `new` fields for traceability
+- 3 known limitations documented: GAP-01 (test-fn), GAP-02 (doc-comment), GAP-03 (JS export)
+- 631+ tests passing, zero clippy warnings, zero fmt diffs
+
+
+## What Was New In v0.1.25 (2026-06-22)
 
 - 49 bugs fixed across 6 rounds of e2e audit (GAP-071 through GAP-134)
 - `.atomwrite.toml` configuration file with hierarchy: CLI > env > local > XDG global > defaults
@@ -33,7 +46,7 @@
 - 631 tests passing, ~505 e2e scenarios across 6 audit rounds
 
 
-## What Is New In v0.1.24 (2026-06-21)
+## What Was New In v0.1.24 (2026-06-21)
 
 - 52 bugs fixed in comprehensive end-to-end audit (GAP-019 through GAP-070)
 - ALL user-facing errors now emit typed JSON on stdout (20 bail! converted to AtomwriteError)
@@ -47,7 +60,7 @@
 - 621 tests passing, 12 new for v0.1.24
 
 
-## What Is New In v0.1.23 (2026-06-19)
+## What Was New In v0.1.23 (2026-06-19)
 
 - GAP-2026-015 closed — `allow_hyphen_values` added to 15 CLI text-accepting fields across 8 structs; values starting with `-` (Markdown bullets, negative numbers, YAML, diffs) no longer cause exit 2
 - GAP-2026-016 closed — backup enabled by default in 9 content-mutating structs (`write`, `edit`, `edit-loop`, `replace`, `transform`, `apply`, `set`, `del`, `case`); use `--no-backup` or `ATOMWRITE_BACKUP=0` to opt out
@@ -57,7 +70,7 @@
 - 4 new ADRs: 0041 (allow-hyphen-values), 0042 (backup-by-default), 0043 (shrink-guard), 0044 (edit-old-file-new-file)
 
 
-## What Is New In v0.1.22 (2026-06-17)
+## What Was New In v0.1.22 (2026-06-17)
 - **2 new subcommands**: `edit-loop` and `prune-backups`
 - **`edit-loop <PATH>`** — apply N `{old, new}` substitution pairs via NDJSON on stdin in 1 invocation (reduces 5x subprocess overhead for batch edits). ADR-0039
 - **`prune-backups [PATHS]...`** — manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` siblings with `--max-age`, `--max-count`, `--dry-run` (default true for safety). ADR-0040
@@ -65,7 +78,7 @@
 - **575+ tests passing** in 56+ integration suites, 0 failures, 0 clippy warnings
 
 
-## What Is New In v0.1.21 (2026-06-17)
+## What Was New In v0.1.21 (2026-06-17)
 - **3 GAP-2026 closed** in v0.1.21
 - **`--allow-sequential-drift`** on `edit` — opt-in flag for sequential edit pipelines. ADR-0038
 - **`--backup` parity 4/4** — `edit` and `rollback` now accept `--backup` (were hardcoded `false`)
@@ -74,7 +87,7 @@
 - **555+ tests passing**, 1 new ADR (0038), 3 Windows cross-compile targets green
 
 
-## What Is New In v0.1.20 (2026-06-15)
+## What Was New In v0.1.20 (2026-06-15)
 - **542 tests passing** in 47 test suites (502 in v0.1.18 + 21 v0.1.19 + 19 v0.1.20), 0 failures, 0 clippy warnings
 - **11 GAP-2026 closed** in v0.1.20
 - **Intention guards** — a new OPT-IN safety layer of 5 flags: `--require-backup N`, `--confirm`, `--auto-rotate N`, `--risk-threshold LOW|MEDIUM|HIGH`, and `--locale en|pt-BR`. They intercept destructive mutations before they touch disk. ADR-0032

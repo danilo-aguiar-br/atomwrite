@@ -979,6 +979,10 @@ pub struct EditLoopPairResult {
     pub index: usize,
     /// Whether the pair matched and was applied.
     pub matched: bool,
+    /// The search text for this pair.
+    pub old: String,
+    /// The replacement text for this pair.
+    pub new: String,
 }
 
 /// NDJSON final summary for `edit-loop`.

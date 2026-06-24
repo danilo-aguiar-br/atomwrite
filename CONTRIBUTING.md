@@ -77,7 +77,7 @@ cargo fmt -- --check
 - Use `insta` for snapshot testing of NDJSON output
 - Use `proptest` for property-based testing where applicable
 - Target at least 80% coverage for new code
-- Run the full suite before submitting: `cargo test` (631 tests in v0.1.25)
+- Run the full suite before submitting: `cargo test` (631+ tests in v0.1.27)
 
 
 ## Documentation
@@ -92,7 +92,7 @@ cargo fmt -- --check
 
 ## Architecture Decision Records (ADRs)
 - atomwrite uses ADRs in `docs/decisions/` to document non-trivial design choices
-- 12 ADRs have been added since v0.1.12 (0019-0030), all following the Michael Nygard format
+- 29 ADRs have been added since v0.1.12 (0019-0047), all following the Michael Nygard format
 - Each new architecture decision should add a new ADR file and update `docs/decisions/README.md`
 - ADRs are NOT updated once written — instead, supersede with a new ADR
 
@@ -107,7 +107,7 @@ cargo fmt -- --check
 - Add the subcommand to the README and llms.txt inventories
 - Write at least 3 integration tests in `tests/cli_your_subcommand.rs`
 - Update llms-full.txt to reference the new subcommand in the right category
-- v0.1.18 has 30 subcommands; the count must stay in sync across all docs
+- v0.1.27 has 33 subcommands; the count must stay in sync across all docs
 
 
 ## Report Bugs
@@ -141,7 +141,7 @@ cargo fmt -- --check
 ## Quality Gates
 - Run `cargo fmt --check` before committing
 - Run `cargo clippy --all-targets -- -D warnings` for lint checks
-- Run `cargo test` for the full test suite (631 tests in v0.1.25)
+- Run `cargo test` for the full test suite (631+ tests in v0.1.27)
 - Run `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` for documentation checks
 - Run `cargo audit` for security advisories
 - Run `cargo deny check` for license and dependency policy (see `deny.toml`)
@@ -169,7 +169,7 @@ When you add or modify a destructive mutation path, consider whether intention g
 ## v0.1.12 Specific Gates
 - If you add a new subcommand, update the subcommand count in ALL of: `README.md`, `README.pt-BR.md`, `llms.txt`, `llms.pt-BR.txt`, `llms-full.txt`, `docs/AGENTS.md`, `docs/AGENTS.pt-BR.md`, `docs/MIGRATION.md`, `docs/MIGRATION.pt-BR.md`, `CHANGELOG.md`, `CHANGELOG.pt-BR.md`, `skill/atomwrite-en/SKILL.md`, `skill/atomwrite-pt/SKILL.md`
 - If you add a new error variant, update the exit codes in: `README.md`, `README.pt-BR.md`, `llms-full.txt`, `docs/AGENTS.md`, `docs/AGENTS.pt-BR.md`, `skill/atomwrite-en/SKILL.md`, `skill/atomwrite-pt/SKILL.md`, `locales/en.toml`, `locales/pt-BR.toml`
-- The single source of truth for the subcommand count is the binary: `atomwrite --help | rg "^  [a-z]" | wc -l` (currently 29 in v0.1.12 = 28 user-facing + `help`)
+- The single source of truth for the subcommand count is the binary: `atomwrite --help | rg "^  [a-z]" | wc -l` (currently 34 in v0.1.27 = 33 user-facing + `help`)
 
 
 ## Questions

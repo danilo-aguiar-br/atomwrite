@@ -8,6 +8,36 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.27] - 2026-06-24
+
+### Correções Críticas — Segurança
+- BUG-SEC-001: Escape de symlink-directory do jail do workspace — `ln -s /tmp $WS/link && atomwrite write link/file` podia criar arquivos FORA do jail. Corrigido com `canonicalize_existing_prefix` em `path_safety.rs` que resolve symlinks antes da verificação de jail. Afeta: write, read, edit, edit-loop, apply, set, del, copy, move. NÃO afeta: search, replace (verificação própria de symlinks via WalkBuilder)
+- BUG-SCOPE-004: `scope --query comments --delete` destruía código em linhas com comentários inline — `fn foo() {} // comment` deletava a linha INTEIRA incluindo `fn foo() {}`. Corrigido `expand_to_full_line` para detectar código antes do match e preservá-lo
+
+### Correções Médias
+- BUG-001: `edit-loop` aceitava stdin vazio retornando exit 0 — agora retorna exit 65 INVALID_INPUT
+- BUG-002: `edit-loop` com JSON inválido emitia texto puro no stderr em vez de envelope NDJSON — corrigido com `map_err` para `AtomwriteError::InvalidInput`
+- BUG-005: Suggestion de erro de `--syntax-check` dizia `--syntax-check=false` (sintaxe clap inválida) — corrigido para "remove --syntax-check"
+- BUG-GET: `get` com chave ausente retornava exit 4 (FILE_NOT_FOUND) — agora retorna exit 65 (INVALID_INPUT) com mensagem "key 'X' not found in Y"
+- BUG-008: `pair_results` de `edit-loop` tinha apenas `[index, matched]` — agora inclui campos `old` e `new` para rastreabilidade
+- BUG-SCOPE-002: Queries `fn`, `struct`, `enum`, `trait`, `async-fn`, `unsafe-fn` do `scope` ignoravam itens `pub` — ast-grep trata `pub` como modificador AST estrutural; adicionados padrões com variante `pub`
+- BUG-SCOPE-003: Queries `const`, `static`, `type-alias`, `mod`, `use` do `scope` ignoravam itens `pub` — mesma causa raiz do BUG-SCOPE-002; adicionados padrões com variante `pub`
+
+### Correções Baixas
+- BUG-SCOPE-005: `scope --query var` em Go ignorava declarações com tipo inferido (`var x = 0`) — adicionado padrão `var $NAME = $$$EXPR`; refatorado `lookup_go_query` para `lookup_go_queries` retornando `Vec<String>`
+
+### Limitações Conhecidas
+- GAP-01: `scope --query test-fn` indisponível — ast-grep não consegue casar padrões que cruzam múltiplos nós AST (`#[test]` + `fn`). Workaround: `--pattern "#[test]"` ou `query -Q "(function_item (attribute_item) @attr)"`
+- GAP-02: `scope --query doc-comment` indisponível — tree-sitter parseia `///` como `line_comment` idêntico a `//`; sem distinção estrutural. Workaround: `--query comments` para todos os comentários, ou `rg "///"`
+- GAP-03: `scope --query export` em JS/TS indisponível — padrão `export $$$DECL` cruza múltiplos nós AST. Mesma limitação do ast-grep do GAP-01
+
+### Validação
+- `cargo test` — 631+ testes passam (0 falhas, 3 ignorados)
+- `cargo clippy --all-targets -- -D warnings` — zero warnings
+- `cargo fmt --check` — zero diferenças
+- Auditoria e2e: 3 rodadas, ~180 cenários adicionais, 10 bugs corrigidos, 3 limitações conhecidas documentadas
+
+
 ## [0.1.26] - 2026-06-23
 
 ### Correções Altas — Consistência de Exit Codes

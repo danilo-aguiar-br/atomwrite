@@ -40,7 +40,18 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 - Testes de snapshot via `insta`
 - Testes de sinal (SIGINT, SIGTERM, SIGPIPE)
 
-## O Que Há de Novo na v0.1.25 (Atual)
+## O Que Há de Novo na v0.1.27 (Atual)
+
+- 631+ testes passando, 0 falhas, 3 ignorados (gate de cross-compile)
+- 10 bugs corrigidos: BUG-SEC-001 (CRÍTICO escape via symlink-dir), BUG-SCOPE-004 (CRÍTICO scope --delete destrói código), BUG-GET, BUG-001, BUG-002, BUG-005, BUG-008, BUG-SCOPE-002, BUG-SCOPE-003, BUG-SCOPE-005
+- 3 limitações conhecidas documentadas: GAP-01 (test-fn), GAP-02 (doc-comment), GAP-03 (JS export)
+- `tests/cli_get_del.rs` atualizado: `get` chave ausente espera exit 65 INVALID_INPUT (era exit 4)
+- Teste unitário `lookup_rust_queries_known` do `scope.rs` atualizado para padrões com pub
+- Teste unitário `lookup_go_queries_known` do `scope.rs` atualizado para var sem tipo
+- 33 subcomandos, 29 ADRs (0019-0047)
+
+
+## O Que Há de Novo na v0.1.25
 
 - 631 testes passando, 0 falhas, 3 ignorados (gate de cross-compile)
 - 49 gaps adicionais resolvidos em 6 rodadas de auditoria e2e (GAP-071 a GAP-134)
@@ -132,7 +143,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ### ADRs e Schemas
 
-- 22 novos ADRs em `docs/decisions/` (0019-0040) explicam as decisões arquiteturais por trás das features v0.1.12 a v0.1.22
+- 29 ADRs em `docs/decisions/` (0019-0047) explicam as decisões arquiteturais por trás das features v0.1.12 a v0.1.27
 - 29 schemas JSON em `docs/schemas/` (índice completo em `docs/schemas/README.md`); v0.1.22 adicionou `edit-loop-output` e `prune-backups-output`
 - Veja [docs/decisions/README.md](README.md) para a lista completa de ADRs
 

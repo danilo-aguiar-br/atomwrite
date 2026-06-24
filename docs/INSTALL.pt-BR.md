@@ -1,7 +1,7 @@
 # Guia de Instalação
 
 - Instruções completas para instalar atomwrite em Linux, macOS e Windows
-- Versão alvo atual: v0.1.25 (49 bugs corrigidos, auditoria e2e rodadas 1-6, 631 testes, arquivo de config, subcomando verify)
+- Versão alvo atual: v0.1.27 (correção de segurança, 10 bugs corrigidos, 631+ testes, 33 subcomandos)
 - Seções ordenadas por plataforma, com pré-requisitos e solução de problemas
 
 
@@ -64,7 +64,7 @@ O fix do Windows 10/11 de v0.1.4 é preservado (cargo install agora funciona). v
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Instalar atomwrite v0.1.25 do crates.io
+# Instalar atomwrite v0.1.27 do crates.io
 cargo install atomwrite --locked --version "^0.1.25"
 
 # Verificar

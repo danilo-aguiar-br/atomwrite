@@ -8,6 +8,36 @@
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.27] - 2026-06-24
+
+### Bug Fixes (Critical) — Security
+- BUG-SEC-001: Symlink-directory escape from workspace jail — `ln -s /tmp $WS/link && atomwrite write link/file` could create files OUTSIDE the jail. Fixed with `canonicalize_existing_prefix` in `path_safety.rs` that resolves symlinks before jail check. Affected: write, read, edit, edit-loop, apply, set, del, copy, move. NOT affected: search, replace (own symlink checks via WalkBuilder)
+- BUG-SCOPE-004: `scope --query comments --delete` destroyed code on lines with inline comments — `fn foo() {} // comment` deleted the ENTIRE line including `fn foo() {}`. Fixed `expand_to_full_line` to detect code before the match and preserve it
+
+### Bug Fixes (Medium)
+- BUG-001: `edit-loop` accepted empty stdin returning exit 0 — now returns exit 65 INVALID_INPUT
+- BUG-002: `edit-loop` with invalid JSON emitted raw text on stderr instead of NDJSON envelope — fixed with `map_err` to `AtomwriteError::InvalidInput`
+- BUG-005: `--syntax-check` error suggestion said `--syntax-check=false` (invalid clap syntax) — fixed to "remove --syntax-check"
+- BUG-GET: `get` with missing key returned exit 4 (FILE_NOT_FOUND) — now returns exit 65 (INVALID_INPUT) with message "key 'X' not found in Y"
+- BUG-008: `edit-loop` `pair_results` only had `[index, matched]` — now includes `old` and `new` fields for traceability
+- BUG-SCOPE-002: `scope` queries `fn`, `struct`, `enum`, `trait`, `async-fn`, `unsafe-fn` missed `pub` items — ast-grep treats `pub` as a structural AST modifier; added `pub` variant patterns
+- BUG-SCOPE-003: `scope` queries `const`, `static`, `type-alias`, `mod`, `use` missed `pub` items — same root cause as BUG-SCOPE-002; added `pub` variant patterns
+
+### Bug Fixes (Low)
+- BUG-SCOPE-005: Go `scope --query var` missed type-inferred declarations (`var x = 0`) — added pattern `var $NAME = $$$EXPR`; refactored `lookup_go_query` to `lookup_go_queries` returning `Vec<String>`
+
+### Known Limitations
+- GAP-01: `scope --query test-fn` unavailable — ast-grep cannot match patterns spanning multiple AST nodes (`#[test]` + `fn`). Workaround: `--pattern "#[test]"` or `query -Q "(function_item (attribute_item) @attr)"`
+- GAP-02: `scope --query doc-comment` unavailable — tree-sitter parses `///` as `line_comment` identical to `//`; no structural distinction. Workaround: `--query comments` for all comments, or `rg "///"`
+- GAP-03: `scope --query export` in JS/TS unavailable — pattern `export $$$DECL` spans multiple AST nodes. Same ast-grep limitation as GAP-01
+
+### Validation
+- `cargo test` — 631+ tests pass (0 failures, 3 ignored)
+- `cargo clippy --all-targets -- -D warnings` — zero warnings
+- `cargo fmt --check` — zero diffs
+- E2E audit: 3 rounds, ~180 additional scenarios, 10 bugs fixed, 3 known limitations documented
+
+
 ## [0.1.26] - 2026-06-23
 
 ### Bug Fixes (High) — Exit Code Consistency

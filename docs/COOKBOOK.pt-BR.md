@@ -58,7 +58,7 @@ Esta seção resume as mudanças relevantes para receitas em v0.1.12. A release 
 
 ### Cobertura de Testes
 
-- 542 testes passando (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 incrementos cross-platform/WAL/auditoria v0.1.16-v0.1.18)
+- 631+ testes passando (v0.1.27)
 - 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/`
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais

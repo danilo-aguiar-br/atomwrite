@@ -77,7 +77,7 @@ cargo fmt -- --check
 - Use `insta` para testes de snapshot de saída NDJSON
 - Use `proptest` para testes property-based onde aplicável
 - Mire em pelo menos 80% de cobertura para código novo
-- Rode a suite completa antes de submeter: `cargo test` (461 testes em v0.1.15)
+- Rode a suite completa antes de submeter: `cargo test` (631+ testes em v0.1.27)
 
 
 ## Documentação
@@ -92,7 +92,7 @@ cargo fmt -- --check
 
 ## Architecture Decision Records (ADRs)
 - atomwrite usa ADRs em `docs/decisions/` para documentar escolhas de design não-triviais
-- 7 ADRs foram adicionados em v0.1.12 (0019-0025), todos seguindo o formato Michael Nygard
+- 29 ADRs foram adicionados desde v0.1.12 (0019-0047), todos seguindo o formato Michael Nygard
 - Cada nova decisão arquitetural deve adicionar um novo arquivo ADR e atualizar `docs/decisions/README.md`
 - ADRs NÃO são atualizados uma vez escritos — ao invés disso, sobrescreva com um novo ADR
 
@@ -107,7 +107,7 @@ cargo fmt -- --check
 - Adicione o subcomando aos inventários de README e llms.txt
 - Escreva pelo menos 3 testes de integração em `tests/cli_seu_subcomando.rs`
 - Atualize llms-full.txt para referenciar o novo subcomando na categoria correta
-- v0.1.12 tem 28 subcomandos; a contagem deve ficar em sincronia entre todos os docs
+- v0.1.27 tem 33 subcomandos; a contagem deve ficar em sincronia entre todos os docs
 
 
 ## Reportar Bugs
@@ -141,7 +141,7 @@ cargo fmt -- --check
 ## Quality Gates
 - Rode `cargo fmt --check` antes de commitar
 - Rode `cargo clippy --all-targets -- -D warnings` para checagens de lint
-- Rode `cargo test` para a suite completa (461 testes em v0.1.15)
+- Rode `cargo test` para a suite completa (631+ testes em v0.1.27)
 - Rode `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` para checagens de documentação
 - Rode `cargo audit` para advisories de segurança
 - Rode `cargo deny check` para política de licenças e dependências (veja `deny.toml`)
@@ -158,7 +158,7 @@ cargo fmt -- --check
 ## Gates Específicos da v0.1.12
 - Se você adicionar um novo subcomando, atualize a contagem em TODOS os: `README.md`, `README.pt-BR.md`, `llms.txt`, `llms.pt-BR.txt`, `llms-full.txt`, `docs/AGENTS.md`, `docs/AGENTS.pt-BR.md`, `docs/MIGRATION.md`, `docs/MIGRATION.pt-BR.md`, `CHANGELOG.md`, `CHANGELOG.pt-BR.md`, `skill/atomwrite-en/SKILL.md`, `skill/atomwrite-pt/SKILL.md`
 - Se você adicionar uma nova variante de erro, atualize os códigos de saída em: `README.md`, `README.pt-BR.md`, `llms-full.txt`, `docs/AGENTS.md`, `docs/AGENTS.pt-BR.md`, `skill/atomwrite-en/SKILL.md`, `skill/atomwrite-pt/SKILL.md`, `locales/en.toml`, `locales/pt-BR.toml`
-- A fonte única de verdade para a contagem de subcomandos é o binário: `atomwrite --help | rg "^  [a-z]" | wc -l` (atualmente 29 em v0.1.12 = 28 user-facing + `help`)
+- A fonte única de verdade para a contagem de subcomandos é o binário: `atomwrite --help | rg "^  [a-z]" | wc -l` (atualmente 34 em v0.1.27 = 33 user-facing + `help`)
 
 
 ## Perguntas

@@ -4,6 +4,19 @@
 [Leia em Português](AGENTS.pt-BR.md)
 
 
+## What's New in v0.1.27
+
+- SECURITY FIX (BUG-SEC-001): symlink-directory escape from workspace jail fixed — `canonicalize_existing_prefix` now resolves symlinks in path components before jail check. Affects: write, read, edit, edit-loop, apply, set, del, copy, move. Exit 126 on violation.
+- CRITICAL FIX (BUG-SCOPE-004): `scope --query comments --delete` no longer destroys code on lines with inline comments — `expand_to_full_line` now preserves code before the comment
+- `get` for missing key returns exit 65 (`INVALID_INPUT`) — reverses v0.1.26 revert to exit 4 (BUG-GET)
+- `edit-loop` hardened: empty stdin returns exit 65 (BUG-001), invalid JSON emits NDJSON error (BUG-002), `pair_results` includes `old`/`new` fields (BUG-008)
+- `scope` queries `fn`, `struct`, `enum`, `trait`, `const`, `static`, `type-alias`, `mod`, `use`, `async-fn`, `unsafe-fn` now capture `pub` variants (BUG-SCOPE-002/003)
+- Go `scope --query var` matches declarations without explicit type (BUG-SCOPE-005)
+- `write --syntax-check` suggestion corrected to "remove --syntax-check" (BUG-005)
+- Known limitations: `test-fn` (GAP-01), `doc-comment` (GAP-02), JS `export` (GAP-03) — ast-grep multi-node patterns
+- 631+ tests passing, 33 subcommands, 29 ADRs
+
+
 ## What's New in v0.1.25
 
 - 49 gaps resolved (GAP-071 through GAP-134) in 6 rounds of end-to-end audit (~505 scenarios)

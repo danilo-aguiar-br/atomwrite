@@ -11,7 +11,19 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 0.1.15  | Yes                |
+| 0.1.27  | Yes                |
+| 0.1.26  | Best-effort        |
+| 0.1.25  | Best-effort        |
+| 0.1.24  | Best-effort        |
+| 0.1.23  | Best-effort        |
+| 0.1.22  | Best-effort        |
+| 0.1.21  | Best-effort        |
+| 0.1.20  | Best-effort        |
+| 0.1.19  | Best-effort        |
+| 0.1.18  | Best-effort        |
+| 0.1.17  | Best-effort        |
+| 0.1.16  | Best-effort        |
+| 0.1.15  | Best-effort        |
 | 0.1.14  | Best-effort        |
 | 0.1.13  | Best-effort        |
 | 0.1.12  | Best-effort        |
@@ -72,13 +84,25 @@
 - **Action taken**: MSRV bumped from 1.85 to 1.88 in v0.1.7. The `ignore` entry in `deny.toml` and the `cargo audit --ignore` flag were both removed. Advisory no longer applies
 - **Reference**: `CHANGELOG.md` v0.1.7 entry
 
-### No active advisories in v0.1.18
-- `cargo audit` reports 0 vulnerabilities across 640 crates
+### BUG-SEC-001 — Symlink-directory escape from workspace jail (Fixed in v0.1.27)
+- **Severity**: Critical
+- **Affected versions**: v0.1.0 through v0.1.26
+- **Fixed in**: v0.1.27
+- **Attack vector**: Create a symlink to a directory outside the workspace (`ln -s /tmp $WS/link`), then use atomwrite to write/read through the symlink (`atomwrite write link/escape.txt`)
+- **Root cause**: `validate_path` in `path_safety.rs` used `soft_canonicalize` which resolved `.` and `..` but NOT symlinks in intermediate path components
+- **Impact**: Arbitrary file write and read outside the workspace jail (data exfiltration, arbitrary file creation)
+- **Affected subcommands**: write, read, edit, edit-loop, apply, set, del, copy, move
+- **NOT affected**: search, replace (use WalkBuilder from `ignore` crate with own symlink verification)
+- **Fix**: Added `canonicalize_existing_prefix` that resolves symlinks via `std::fs::canonicalize` on the existing portion of the path before jail verification
+- **Mitigation**: Upgrade to v0.1.27; do not create symlinks inside the workspace pointing outside
+
+### No active advisories in v0.1.27
+- `cargo audit` reports 0 vulnerabilities
 - `cargo deny check` reports 4/4 OK (advisories, bans, licenses, sources)
 - All transitive dependencies with security notes have been either upgraded or replaced
 
 
-## Dependency Security Posture (v0.1.18)
+## Dependency Security Posture (v0.1.27)
 - **Memory safety**: 0 unsafe code blocks in `src/` (denied via `#![deny(unsafe_code)]` in lib root)
 - **BLAKE3**: Used for checksums only, not for cryptographic security
 - **tree-sitter-language-pack**: Parsers are downloaded on first use from the official `tree-sitter` GitHub releases via the `download` feature. The downloaded parsers are dynamically loaded but not executed as code

@@ -78,9 +78,51 @@ All additive. No existing dependency removed.
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
 ## Current Version
-- atomwrite is at v0.1.26
-- This document covers migration from v0.1.0 through v0.1.26
+- atomwrite is at v0.1.27
+- This document covers migration from v0.1.0 through v0.1.27
 - See the sections below for additive changes and breaking changes in each version
+
+
+## v0.1.26 to v0.1.27 (2026-06-24)
+
+### Security Fixes (CRITICAL)
+
+- **BUG-SEC-001**: symlink-directory escape from workspace jail — `ln -s /tmp $WS/link && atomwrite write link/file.txt` could write OUTSIDE the workspace. Fixed with `canonicalize_existing_prefix` in `path_safety.rs`. Affects: write, read, edit, edit-loop, apply, set, del, copy, move. Exit 126 on detection.
+
+### Bug Fixes (CRITICAL)
+
+- **BUG-SCOPE-004**: `scope --query comments --delete` on lines with inline comments (e.g., `fn foo() {} // comment`) destroyed the entire line including valid code. Fixed: `expand_to_full_line` now preserves code before inline comments.
+
+### Bug Fixes (Medium)
+
+- **BUG-GET**: `get` for missing key now returns exit 65 (`INVALID_INPUT`) with message "key 'X' not found in Y" — reverses v0.1.26 revert to exit 4
+- **BUG-001**: `edit-loop` with empty stdin now returns exit 65 (`INVALID_INPUT`) instead of silent exit 0
+- **BUG-002**: `edit-loop` with invalid JSON now emits NDJSON error envelope on stdout instead of unstructured text on stderr
+- **BUG-005**: `write --syntax-check` suggestion changed from "--syntax-check=false" to "remove --syntax-check"
+- **BUG-008**: `edit-loop` `pair_results` now includes `old` and `new` fields for each pair
+- **BUG-SCOPE-002**: `scope` queries `fn`, `struct`, `enum`, `trait`, `async-fn`, `unsafe-fn` now include `pub` variants
+- **BUG-SCOPE-003**: `scope` queries `const`, `static`, `type-alias`, `mod`, `use` now include `pub` variants
+- **BUG-SCOPE-005**: Go `scope --query var` now matches declarations without explicit type (`var x = 0`)
+
+### Known Limitations
+
+- **GAP-01**: `scope --query test-fn` unavailable — ast-grep cannot match `#[test] fn` across 2 AST nodes
+- **GAP-02**: `scope --query doc-comment` unavailable — tree-sitter parses `///` as `line_comment` (no structural distinction)
+- **GAP-03**: `scope --query export` in JS/TS unavailable — pattern crosses multiple AST nodes
+
+### Migration Action
+
+- Update version pin: `cargo install atomwrite --locked --version "^0.1.27"`
+- **CRITICAL**: If you use symlinks inside workspace directories, test that they resolve within the jail. Symlinks pointing outside the workspace now correctly return exit 126.
+- If you parse `get` exit codes for missing keys: exit is now 65 (`INVALID_INPUT`) again (was 4 in v0.1.26, 65 in v0.1.25)
+- If you parse `edit-loop` `pair_results`: new `old` and `new` fields are present
+- If you rely on `scope` queries matching only non-pub items: `fn`, `struct`, `enum`, `trait`, `const`, `static`, `type-alias`, `mod`, `use` now capture both pub and non-pub
+- MSRV unchanged at Rust 1.88
+
+### Test Coverage
+
+- 631+ tests passing, 0 failures
+- 33 subcommands, 29 ADRs in `docs/decisions/`
 
 
 ## v0.1.25 to v0.1.26 (2026-06-23)

@@ -12,7 +12,7 @@
 use std::io::{Read, Write};
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Deserialize;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
@@ -72,18 +72,30 @@ pub fn cmd_edit_loop(
     // as a JSON array; otherwise parse as NDJSON lines.
     let mut buf = String::new();
     stdin.take(max_size).read_to_string(&mut buf)?;
+    if buf.trim().is_empty() {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: "stdin is empty; expected JSON array or NDJSON pairs".to_string(),
+        }
+        .into());
+    }
     let trimmed = buf.trim_start();
     let pairs: Vec<EditPair> = if trimmed.starts_with('[') {
-        serde_json::from_str::<Vec<EditPair>>(trimmed)
-            .with_context(|| "failed to parse JSON array of edit pairs")?
+        serde_json::from_str::<Vec<EditPair>>(trimmed).map_err(|e| {
+            crate::error::AtomwriteError::InvalidInput {
+                reason: format!("failed to parse JSON array of edit pairs: {e}"),
+            }
+        })?
     } else {
         buf.lines()
             .filter(|l| !l.trim().is_empty())
             .map(|l| {
-                serde_json::from_str::<EditPair>(l)
-                    .with_context(|| format!("failed to parse NDJSON pair: {l}"))
+                serde_json::from_str::<EditPair>(l).map_err(|e| {
+                    crate::error::AtomwriteError::InvalidInput {
+                        reason: format!("failed to parse NDJSON pair: {l}: {e}"),
+                    }
+                })
             })
-            .collect::<Result<Vec<_>>>()?
+            .collect::<std::result::Result<Vec<_>, _>>()?
     };
 
     // Apply each pair in order. `replacen(.., 1)` matches the single-pair
@@ -98,12 +110,16 @@ pub fn cmd_edit_loop(
             pair_results.push(EditLoopPairResult {
                 index: i + 1,
                 matched: true,
+                old: pair.old.clone(),
+                new: pair.new.clone(),
             });
         } else {
             unmatched += 1;
             pair_results.push(EditLoopPairResult {
                 index: i + 1,
                 matched: false,
+                old: pair.old.clone(),
+                new: pair.new.clone(),
             });
         }
     }

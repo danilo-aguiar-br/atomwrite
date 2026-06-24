@@ -40,7 +40,18 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 - Snapshot tests via `insta`
 - Signal tests (SIGINT, SIGTERM, SIGPIPE)
 
-## What's New in v0.1.25 (Current)
+## What's New in v0.1.27 (Current)
+
+- 631+ tests passing, 0 failures, 3 ignored (cross-compile gate)
+- 10 bugs fixed: BUG-SEC-001 (CRITICAL symlink-dir escape), BUG-SCOPE-004 (CRITICAL scope --delete code destruction), BUG-GET, BUG-001, BUG-002, BUG-005, BUG-008, BUG-SCOPE-002, BUG-SCOPE-003, BUG-SCOPE-005
+- 3 known limitations documented: GAP-01 (test-fn), GAP-02 (doc-comment), GAP-03 (JS export)
+- `tests/cli_get_del.rs` updated: `get` missing key expects exit 65 INVALID_INPUT (was exit 4)
+- `scope.rs` unit test `lookup_rust_queries_known` updated for pub-variant patterns
+- `scope.rs` unit test `lookup_go_queries_known` updated for var-without-type pattern
+- 33 subcommands, 29 ADRs (0019-0047)
+
+
+## What's New in v0.1.25
 
 - 631 tests passing, 0 failures, 3 ignored (cross-compile gate)
 - 49 additional gaps resolved in 6 e2e audit rounds (GAP-071 through GAP-134)
@@ -132,7 +143,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ### ADRs and Schemas
 
-- 22 new ADRs in `docs/decisions/` (0019-0040) explain the architectural decisions behind the v0.1.12 to v0.1.22 features
+- 29 ADRs in `docs/decisions/` (0019-0047) explain the architectural decisions behind the v0.1.12 to v0.1.27 features
 - 29 JSON schemas in `docs/schemas/` (full index in `docs/schemas/README.md`); v0.1.22 added `edit-loop-output` and `prune-backups-output`
 - See [docs/decisions/README.md](README.md) for the full list of ADRs
 
