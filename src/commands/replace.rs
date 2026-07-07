@@ -34,6 +34,7 @@ pub fn cmd_replace(
     global: &GlobalArgs,
     writer: &mut NdjsonWriter<impl Write>,
     shutdown: &ShutdownSignal,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
@@ -65,8 +66,10 @@ pub fn cmd_replace(
     let max_replacements = args.max_replacements;
     let dry_run = args.dry_run;
     let preview = args.preview;
-    let backup = resolve_backup(args.backup, args.no_backup);
-    let keep_backup = args.keep_backup;
+    let resolved = resolve_backup(&args.backup_opts, defaults);
+    let backup = resolved.backup;
+    let keep_backup = resolved.keep;
+    let retention = resolved.retention;
     let ws: Arc<std::path::Path> = Arc::from(workspace.as_path());
     let expect_ck: Option<Arc<str>> = args.expect_checksum.clone().map(Into::into);
 
@@ -178,7 +181,7 @@ pub fn cmd_replace(
 
                 let opts = AtomicWriteOptions {
                     backup,
-                    retention: 5,
+                    retention,
                     preserve_timestamps,
                     backup_output_dir: None,
                     strategy: None,

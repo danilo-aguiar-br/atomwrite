@@ -40,7 +40,19 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 - Snapshot tests via `insta`
 - Signal tests (SIGINT, SIGTERM, SIGPIPE)
 
-## What's New in v0.1.27 (Current)
+## What's New in v0.1.28 (Current)
+
+- 661 tests passing, 0 failures, 3 ignored (cross-compile gate)
+- BREAKING: `delete` now creates a backup by default (was opt-in) — pass `--no-backup` to disable
+- BREAKING: `move`/`copy` overwriting an existing destination now require `--force` OR an explicit `--backup`
+- GAP-CLI-SURFACE-DRIFT resolved: single `BackupOpts` struct flattened via `#[command(flatten)]` into 15 mutating subcommands, replacing 15 hand-declared divergent flag sets
+- GAP-CONFIG-DEFAULTS-DEAD resolved: `.atomwrite.toml` `[defaults]` `backup`/`retention` keys are now effective end-to-end via a single `resolve_backup()` call fed by `load_config()` in `lib.rs::run()`
+- New shared `edit` stdin-tty guard: 7 stdin-consuming modes fail fast with exit 65 `INVALID_INPUT` instead of blocking indefinitely when stdin is a terminal
+- New test files: `cli_v0128_backup_matrix.rs` (12 tests), `cli_v0128_config_defaults.rs` (6 tests), `cli_v0128_edit_stdin_guard.rs` (3 tests), `cli_v0128_batch_backup.rs` (6 tests)
+- 33 subcommands, 32 ADRs (0019-0050)
+
+
+## What's New in v0.1.27
 
 - 631+ tests passing, 0 failures, 3 ignored (cross-compile gate)
 - 10 bugs fixed: BUG-SEC-001 (CRITICAL symlink-dir escape), BUG-SCOPE-004 (CRITICAL scope --delete code destruction), BUG-GET, BUG-001, BUG-002, BUG-005, BUG-008, BUG-SCOPE-002, BUG-SCOPE-003, BUG-SCOPE-005
@@ -158,7 +170,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ## Current Stats
 - 70+ Rust files across `src/` and `tests/`
-- **631+ tests total across 63+ test suites** (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency)
+- **661 tests total across 63+ test suites** (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency)
 - **96 new tests added in v0.1.11+v0.1.12**:
   - 11 tests in `tests/cli_v012_regressions.rs` (GAP 13, GAP 14, GAP 18 fixes)
   - 27 tests in `tests/cli_v012_audit_regressions.rs` (v0.1.12 G72/G114 audit)

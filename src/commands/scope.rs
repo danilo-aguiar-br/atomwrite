@@ -17,6 +17,8 @@ use unicode_normalization::UnicodeNormalization;
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 use crate::cli::GlobalArgs;
+use crate::cli_args::BackupOpts;
+use crate::commands::resolve_backup;
 use crate::error::AtomwriteError;
 use crate::ndjson_types::{ScopeResult, Summary};
 use crate::output::NdjsonWriter;
@@ -83,9 +85,9 @@ pub struct ScopeArgs {
     #[arg(long, help = "Show what would be done without writing")]
     pub dry_run: bool,
 
-    /// Create backup before modifying.
-    #[arg(long, help = "Create backup before modifying")]
-    pub backup: bool,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
 }
 
 /// Available actions for the scope subcommand.
@@ -116,8 +118,10 @@ pub fn cmd_scope(
     global: &GlobalArgs,
     writer: &mut NdjsonWriter<impl Write>,
     shutdown: &ShutdownSignal,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     let start = Instant::now();
+    let resolved = resolve_backup(&args.backup_opts, defaults);
 
     let lang = parse_language(&args.language)?;
     let pattern_strs = resolve_patterns(&args.query, &args.pattern, &args.language)?;
@@ -182,7 +186,7 @@ pub fn cmd_scope(
     let action = args.action;
     let replace_with: Option<Arc<str>> = args.replace_with.clone().map(Into::into);
     let dry_run = args.dry_run;
-    let backup = args.backup;
+    let backup = resolved.backup;
     let ws: Arc<std::path::Path> = Arc::from(workspace.as_path());
     let qn: Arc<str> = query_name.into();
     let lang_name: Arc<str> = args.language.clone().into();
@@ -607,10 +611,7 @@ fn lookup_rust_queries(name: &str) -> Result<Vec<String>> {
             "pub static $NAME: $TYPE = $$$EXPR;",
             "static $NAME: $TYPE = $$$EXPR;",
         ],
-        "type-alias" => vec![
-            "pub type $NAME = $$$TYPE;",
-            "type $NAME = $$$TYPE;",
-        ],
+        "type-alias" => vec!["pub type $NAME = $$$TYPE;", "type $NAME = $$$TYPE;"],
         "macro-rules" => vec!["macro_rules! $NAME { $$$BODY }"],
         "derive" => vec!["#[derive($$$TRAITS)]"],
         "doc-comment" => {
@@ -704,10 +705,7 @@ fn lookup_go_queries(name: &str) -> Result<Vec<String>> {
         "defer" => vec!["defer $$$EXPR"],
         "import" => vec!["import $$$IMPORTS"],
         "const" => vec!["const $NAME = $$$EXPR"],
-        "var" => vec![
-            "var $NAME $TYPE = $$$EXPR",
-            "var $NAME = $$$EXPR",
-        ],
+        "var" => vec!["var $NAME $TYPE = $$$EXPR", "var $NAME = $$$EXPR"],
         _ => {
             return Err(AtomwriteError::InvalidInput {
                 reason: format!(
@@ -793,7 +791,11 @@ mod tests {
         assert_eq!(result.unwrap().len(), 1);
         let var_result = lookup_go_queries("var");
         assert!(var_result.is_ok());
-        assert_eq!(var_result.unwrap().len(), 2, "var should have typed + inferred patterns");
+        assert_eq!(
+            var_result.unwrap().len(),
+            2,
+            "var should have typed + inferred patterns"
+        );
     }
 
     #[test]

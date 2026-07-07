@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 use crate::cli::{GlobalArgs, RollbackArgs};
+use crate::commands::resolve_backup;
 use crate::error::AtomwriteError;
 use crate::ndjson_types::{RollbackPlan, RollbackResult};
 use crate::output::NdjsonWriter;
@@ -28,9 +29,11 @@ pub fn cmd_rollback(
     args: &RollbackArgs,
     global: &GlobalArgs,
     writer: &mut NdjsonWriter<impl Write>,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
+    let resolved = resolve_backup(&args.backup_opts, defaults);
     let target = crate::path_safety::validate_path(&args.path, &workspace)?;
 
     let parent = target.parent().unwrap_or(std::path::Path::new("."));
@@ -104,16 +107,20 @@ pub fn cmd_rollback(
     };
 
     let content = crate::file_io::read_file_bytes(&backup, max_size)?;
+    // v0.1.28 GAP-CLI-SURFACE-DRIFT: the pre-rollback snapshot stays
+    // opt-in (default false) even though `resolve_backup` now defaults
+    // to true elsewhere -- rollback already reads from an existing
+    // backup, so an unconditional extra snapshot would be surprising.
     let opts = AtomicWriteOptions {
-        backup: args.backup,
+        backup: args.backup_opts.backup.unwrap_or(false),
         syntax_check: false,
-        retention: args.retention,
+        retention: resolved.retention,
         preserve_timestamps: false,
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
-        keep_backup: args.keep_backup,
+        keep_backup: resolved.keep,
     };
     atomic_write(&target, &content, &opts, &workspace)?;
 

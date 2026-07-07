@@ -4,6 +4,23 @@
 [Leia em Português](AGENTS.pt-BR.md)
 
 
+## What's New in v0.1.28
+
+- BREAKING: `delete` now creates a backup by default (was opt-in) — pass `--no-backup` to disable; `--keep-backup` on `delete` is redundant (deletion backups are always preserved and never auto-removed) and now surfaces a `warnings` field in the NDJSON envelope instead of a silent no-op
+- BREAKING: `move`/`copy` overwriting an existing destination now require `--force` OR an explicit `--backup`
+- Unified `BackupOpts` struct (`--backup`, `--no-backup`, `--keep-backup`, `--retention <N>`) flattened via `#[command(flatten)]` into all 15 mutating subcommands: `write`, `edit`, `edit-loop`, `replace`, `transform`, `scope`, `apply`, `set`, `del`, `case`, `batch`, `delete`, `move`, `copy`, `rollback` (GAP-CLI-SURFACE-DRIFT, ADR-0048)
+- `replace --retention` and `delete --no-backup` now parse successfully — previously returned exit 2 `ARGUMENT_PARSE_ERROR` from divergent per-struct flag declarations
+- `--backup`/`--no-backup` are now mutually exclusive via `conflicts_with` (exit 2) instead of the last flag silently winning
+- `rollback` keeps its pre-rollback safety snapshot opt-in via explicit `--backup` — documented exception to the unified default-true contract
+- Zero hardcoded `retention: 5` literals remain; `Default` impls in `config.rs`/`atomic.rs` read `constants::DEFAULT_BACKUP_RETENTION`
+- `.atomwrite.toml` `[defaults]` `backup`/`retention` keys are now effective end-to-end across every mutating subcommand (GAP-CONFIG-DEFAULTS-DEAD, ADR-0049) — precedence `ATOMWRITE_BACKUP` env var > CLI flags (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > built-in default (`true`/`5`)
+- `batch --retention <N>` and `batch --backup` are now effective end-to-end, including the transactional pre-backup step and the `delete` operation inside a batch
+- New stdin-tty guard on `edit`'s stdin-consuming modes (`--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`, `--multi`): fails fast with exit 65 (`INVALID_INPUT`) and an actionable `suggestion` when stdin is a terminal, instead of blocking indefinitely (ADR-0050)
+- `edit`'s stdin-consuming modes now reject `--old`/`--new`/`--old-file`/`--new-file` at parse time via `conflicts_with_all` (exit 2) instead of silently dispatching into `edit_by_marker`
+- 3 new ADRs: 0048 (unified BackupOpts), 0049 (live config plumbing), 0050 (stdin-tty guard)
+- 661 tests passing (0 failures, 3 ignored); new test files: `cli_v0128_backup_matrix.rs` (12), `cli_v0128_config_defaults.rs` (6), `cli_v0128_edit_stdin_guard.rs` (3), `cli_v0128_batch_backup.rs` (6)
+
+
 ## What's New in v0.1.27
 
 - SECURITY FIX (BUG-SEC-001): symlink-directory escape from workspace jail fixed — `canonicalize_existing_prefix` now resolves symlinks in path components before jail check. Affects: write, read, edit, edit-loop, apply, set, del, copy, move. Exit 126 on violation.

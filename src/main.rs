@@ -4,7 +4,7 @@
 
 #![deny(unsafe_code)]
 
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -103,8 +103,9 @@ fn main() -> ExitCode {
 
     let stdin = io::stdin();
     let stdout = io::stdout();
+    let stdin_is_tty = stdin.is_terminal();
 
-    let exit = match atomwrite::run(&cli, stdin.lock(), stdout.lock()) {
+    let exit = match atomwrite::run(&cli, stdin.lock(), stdout.lock(), stdin_is_tty) {
         Ok(()) => {
             if let Some(ref sig) = shutdown {
                 if sig.is_shutdown() {

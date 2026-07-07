@@ -44,10 +44,11 @@ pub fn cmd_set(
     args: &SetArgs,
     global: &GlobalArgs,
     writer: &mut NdjsonWriter<impl Write>,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
-    let effective_backup = resolve_backup(args.backup, args.no_backup);
+    let resolved = resolve_backup(&args.backup_opts, defaults);
 
     let validated = crate::path_safety::validate_path(&args.path, &workspace)?;
     if !validated.exists() {
@@ -71,15 +72,15 @@ pub fn cmd_set(
     };
 
     let opts = AtomicWriteOptions {
-        backup: effective_backup,
+        backup: resolved.backup,
         syntax_check: false,
-        retention: 5,
+        retention: resolved.retention,
         preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
-        keep_backup: false,
+        keep_backup: resolved.keep,
     };
 
     let result = atomic_write(&validated, new_content.as_bytes(), &opts, &workspace)?;

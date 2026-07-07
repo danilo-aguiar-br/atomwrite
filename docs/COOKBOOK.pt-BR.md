@@ -58,7 +58,7 @@ Esta seção resume as mudanças relevantes para receitas em v0.1.12. A release 
 
 ### Cobertura de Testes
 
-- 631+ testes passando (v0.1.27)
+- 661+ testes passando (v0.1.28)
 - 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/`
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais

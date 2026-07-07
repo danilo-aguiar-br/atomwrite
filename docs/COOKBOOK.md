@@ -58,7 +58,7 @@ This section summarizes recipe-relevant changes in v0.1.12. The v0.1.12 release 
 
 ### Test Coverage
 
-- 631+ tests passing (v0.1.27)
+- 661+ tests passing (v0.1.28)
 - 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/`
 - See [README.md](README.md) for architectural decisions

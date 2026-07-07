@@ -14,7 +14,7 @@ use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 pub use crate::cli::FuzzyMode;
 use crate::cli::{EditArgs, GlobalArgs};
-use crate::commands::resolve_backup;
+use crate::commands::{read_stdin_text_guarded, resolve_backup};
 use crate::error::AtomwriteError;
 
 fn find_str(haystack: &str, needle: &str) -> Option<usize> {
@@ -106,10 +106,12 @@ pub fn cmd_edit(
     stdin: impl Read,
     writer: &mut NdjsonWriter<impl Write>,
     workspace: &Path,
+    defaults: &crate::config::DefaultsSection,
+    stdin_is_tty: bool,
 ) -> Result<()> {
     let start = Instant::now();
     let path = crate::path_safety::validate_path(&args.path, workspace)?;
-    let effective_backup = resolve_backup(args.backup, args.no_backup);
+    let resolved_backup = resolve_backup(&args.backup_opts, defaults);
 
     if !path.exists() {
         return Err(AtomwriteError::NotFound { path: path.clone() }.into());
@@ -176,6 +178,8 @@ pub fn cmd_edit(
             writer,
             workspace,
             start,
+            defaults,
+            stdin_is_tty,
         );
     }
 
@@ -208,11 +212,11 @@ pub fn cmd_edit(
         || args.delete_range.is_some()
     {
         let max_size = global.effective_max_filesize();
-        let (e, m) = edit_by_line(&lines, args, stdin, max_size)?;
+        let (e, m) = edit_by_line(&lines, args, stdin, max_size, stdin_is_tty)?;
         (e, m, None, None)
     } else if args.after_match.is_some() || args.before_match.is_some() || args.between.is_some() {
         let max_size = global.effective_max_filesize();
-        let (e, m) = edit_by_marker(&original, &lines, args, stdin, max_size)?;
+        let (e, m) = edit_by_marker(&original, &lines, args, stdin, max_size, stdin_is_tty)?;
         (e, m, None, None)
     } else {
         return Err(crate::error::AtomwriteError::InvalidInput {
@@ -245,15 +249,15 @@ pub fn cmd_edit(
     };
 
     let opts = AtomicWriteOptions {
-        backup: effective_backup,
+        backup: resolved_backup.backup,
         syntax_check: false,
-        retention: args.retention,
+        retention: resolved_backup.retention,
         preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
         wal_policy: args.wal_policy,
-        keep_backup: args.keep_backup,
+        keep_backup: resolved_backup.keep,
     };
 
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
@@ -357,8 +361,18 @@ fn cmd_edit_multi(
     writer: &mut NdjsonWriter<impl Write>,
     workspace: &Path,
     start: Instant,
+    defaults: &crate::config::DefaultsSection,
+    stdin_is_tty: bool,
 ) -> Result<()> {
-    let effective_backup = resolve_backup(args.backup, args.no_backup);
+    if stdin_is_tty {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "--multi reads content from stdin but stdin is a terminal; \
+                     pipe content (cat ops.ndjson | atomwrite edit --multi ...)"
+                .into(),
+        }
+        .into());
+    }
+    let resolved_backup = resolve_backup(&args.backup_opts, defaults);
     let mut reader = BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
     let mut ops: Vec<MultiEdit> = Vec::with_capacity(8);
     let mut line_buf = String::new();
@@ -539,15 +553,15 @@ fn cmd_edit_multi(
     }
 
     let opts = AtomicWriteOptions {
-        backup: effective_backup,
+        backup: resolved_backup.backup,
         syntax_check: false,
-        retention: args.retention,
+        retention: resolved_backup.retention,
         preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
         wal_policy: args.wal_policy,
-        keep_backup: args.keep_backup,
+        keep_backup: resolved_backup.keep,
     };
 
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
@@ -1158,25 +1172,17 @@ fn apply_replacement(
 
 // ─── line-based and marker-based edits (unchanged) ───────────────────────────
 
-fn read_stdin_text(stdin: impl Read, max_size: u64) -> Result<String> {
-    let mut buf = String::new();
-    stdin
-        .take(max_size)
-        .read_to_string(&mut buf)
-        .context("failed to read stdin for edit")?;
-    Ok(buf)
-}
-
 fn edit_by_line(
     lines: &[&str],
     args: &EditArgs,
     stdin: impl Read,
     max_size: u64,
+    stdin_is_tty: bool,
 ) -> Result<(String, String)> {
     let mut result_lines = lines_to_owned(lines);
 
     if let Some(n) = args.after_line {
-        let content = read_stdin_text(stdin, max_size)?;
+        let content = read_stdin_text_guarded(stdin, max_size, stdin_is_tty, "after-line")?;
         let idx = validate_line_num(n, lines.len())?;
         let new_lines = lines_from_str(&content);
         for (i, line) in new_lines.into_iter().enumerate() {
@@ -1186,7 +1192,7 @@ fn edit_by_line(
     }
 
     if let Some(n) = args.before_line {
-        let content = read_stdin_text(stdin, max_size)?;
+        let content = read_stdin_text_guarded(stdin, max_size, stdin_is_tty, "before-line")?;
         let idx = validate_line_num(n, lines.len())?;
         let insert_at = if idx == 0 { 0 } else { idx };
         let new_lines = lines_from_str(&content);
@@ -1197,7 +1203,7 @@ fn edit_by_line(
     }
 
     if let Some(ref range_str) = args.range {
-        let content = read_stdin_text(stdin, max_size)?;
+        let content = read_stdin_text_guarded(stdin, max_size, stdin_is_tty, "range")?;
         let (start, end) = parse_range(range_str, lines.len())?;
         let new_lines = lines_from_str(&content);
         result_lines.splice(start..end, new_lines);
@@ -1222,9 +1228,10 @@ fn edit_by_marker(
     args: &EditArgs,
     stdin: impl Read,
     max_size: u64,
+    stdin_is_tty: bool,
 ) -> Result<(String, String)> {
     if let Some(ref marker) = args.after_match {
-        let content = read_stdin_text(stdin, max_size)?;
+        let content = read_stdin_text_guarded(stdin, max_size, stdin_is_tty, "after-match")?;
         let idx = find_line_with(lines, marker)?;
         let mut result = lines_to_owned(lines);
         let new_lines = lines_from_str(&content);
@@ -1235,7 +1242,7 @@ fn edit_by_marker(
     }
 
     if let Some(ref marker) = args.before_match {
-        let content = read_stdin_text(stdin, max_size)?;
+        let content = read_stdin_text_guarded(stdin, max_size, stdin_is_tty, "before-match")?;
         let idx = find_line_with(lines, marker)?;
         let mut result = lines_to_owned(lines);
         let new_lines = lines_from_str(&content);
@@ -1252,7 +1259,7 @@ fn edit_by_marker(
             }
             .into());
         }
-        let content = read_stdin_text(stdin, max_size)?;
+        let content = read_stdin_text_guarded(stdin, max_size, stdin_is_tty, "between")?;
         let start_idx = find_line_with(lines, &markers[0])?;
         let end_idx = find_line_with_after(lines, &markers[1], start_idx + 1)?;
 

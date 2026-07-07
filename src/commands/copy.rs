@@ -11,6 +11,7 @@ use anyhow::Result;
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 use crate::cli::{CopyArgs, GlobalArgs};
+use crate::commands::{ResolvedBackup, resolve_backup};
 use crate::error::AtomwriteError;
 use crate::ndjson_types::{CopyOutput, TransferPlan};
 use crate::output::NdjsonWriter;
@@ -28,9 +29,11 @@ pub fn cmd_copy(
     args: &CopyArgs,
     global: &GlobalArgs,
     writer: &mut NdjsonWriter<impl Write>,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
+    let resolved = resolve_backup(&args.backup_opts, defaults);
 
     let source = crate::path_safety::validate_path(&args.source, &workspace)?;
     let target = crate::path_safety::validate_path(&args.target, &workspace)?;
@@ -58,7 +61,14 @@ pub fn cmd_copy(
         }
     }
 
-    if target.exists() && !args.force && !args.backup {
+    // v0.1.28 GAP-CLI-SURFACE-DRIFT: overwrite requires an EXPLICIT authorization
+    // (--force, --backup, or ATOMWRITE_BACKUP enabled) now that backup defaults to true.
+    let env_backup_enabled = std::env::var("ATOMWRITE_BACKUP")
+        .map(|v| v != "0")
+        .unwrap_or(false);
+    let overwrite_authorized =
+        args.force || args.backup_opts.backup == Some(true) || env_backup_enabled;
+    if target.exists() && !overwrite_authorized {
         return Err(AtomwriteError::InvalidInput {
             reason: format!(
                 "target {} already exists, use --force to overwrite",
@@ -81,7 +91,9 @@ pub fn cmd_copy(
 
     let max_size = global.effective_max_filesize();
     if source.is_file() {
-        copy_file_atomic(&source, &target, args, &workspace, writer, start, max_size)?;
+        copy_file_atomic(
+            &source, &target, args, &workspace, writer, start, max_size, resolved,
+        )?;
     } else if source.is_dir() && args.recursive {
         for entry in ignore::WalkBuilder::new(&source)
             .hidden(true)
@@ -108,6 +120,7 @@ pub fn cmd_copy(
                 writer,
                 start,
                 max_size,
+                resolved,
             )?;
         }
     } else {
@@ -120,6 +133,7 @@ pub fn cmd_copy(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn copy_file_atomic(
     source: &std::path::Path,
     target: &std::path::Path,
@@ -128,21 +142,22 @@ fn copy_file_atomic(
     writer: &mut NdjsonWriter<impl Write>,
     start: Instant,
     max_size: u64,
+    resolved: ResolvedBackup,
 ) -> Result<()> {
     let content = crate::file_io::read_file_bytes(source, max_size)?;
     let source_hash = checksum::hash_bytes(&content);
 
     let opts = AtomicWriteOptions {
-        backup: args.backup,
+        backup: resolved.backup,
         syntax_check: false,
-        retention: 5,
+        retention: resolved.retention,
         preserve_timestamps: args.preserve,
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
-        // GAP-104: retain backup on disk when --backup is active
-        keep_backup: args.backup,
+        // GAP-104: retain backup on disk when a backup was actually created
+        keep_backup: resolved.keep || resolved.backup,
     };
 
     let result = atomic_write(target, &content, &opts, workspace)?;

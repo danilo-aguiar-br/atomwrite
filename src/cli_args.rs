@@ -6,6 +6,25 @@ use std::path::PathBuf;
 
 use clap::{Args, ValueEnum};
 
+/// Shared backup flags for mutating subcommands (v0.1.28, GAP-CLI-SURFACE-DRIFT).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct BackupOpts {
+    /// Create a transactional backup before writing
+    /// [default: enabled via `.atomwrite.toml` `[defaults]` or built-in true]
+    #[arg(long, action = clap::ArgAction::SetTrue, conflicts_with = "no_backup")]
+    pub backup: Option<bool>,
+    /// Disable backup creation
+    #[arg(long)]
+    pub no_backup: bool,
+    /// Keep the backup file after success (default: auto-remove on success)
+    #[arg(long)]
+    pub keep_backup: bool,
+    /// Number of backups to retain
+    /// [default: `.atomwrite.toml` `[defaults]` retention or built-in 5]
+    #[arg(long)]
+    pub retention: Option<u8>,
+}
+
 /// Arguments for shell completion script generation.
 #[derive(Args, Debug)]
 pub struct CompletionsArgs {
@@ -74,13 +93,9 @@ pub struct DeleteArgs {
     #[arg(required = true)]
     pub paths: Vec<PathBuf>,
 
-    /// Create backup before deleting.
-    #[arg(long, help = "Create backup before deleting")]
-    pub backup: bool,
-
-    /// Number of backups to retain.
-    #[arg(long, default_value_t = 5, help = "Number of backups to retain")]
-    pub retention: u8,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
 
     /// Recurse into directories.
     #[arg(short, long, help = "Recurse into directories")]
@@ -195,13 +210,9 @@ pub struct MoveArgs {
     /// Destination file path.
     pub target: PathBuf,
 
-    /// Create backup of destination if it exists.
-    #[arg(long, help = "Create backup of destination if it exists")]
-    pub backup: bool,
-
-    /// Number of backups to retain.
-    #[arg(long, default_value_t = 5, help = "Number of backups to retain")]
-    pub retention: u8,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
 
     /// Overwrite destination if it exists.
     #[arg(short, long, help = "Overwrite destination if it exists")]
@@ -224,9 +235,9 @@ pub struct CopyArgs {
     /// Destination file path.
     pub target: PathBuf,
 
-    /// Create backup of destination if it exists.
-    #[arg(long, help = "Create backup of destination if it exists")]
-    pub backup: bool,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
 
     /// Overwrite destination if it exists.
     #[arg(short, long, help = "Overwrite destination if it exists")]
@@ -320,21 +331,9 @@ pub struct WriteArgs {
     /// Target file path.
     pub target: PathBuf,
 
-    /// Create backup before mutating (default: true).
-    #[arg(
-        long,
-        default_value_t = true,
-        help = "Create backup before mutating (default: true; use --no-backup to disable)"
-    )]
-    pub backup: bool,
-
-    /// Disable automatic pre-write backup.
-    #[arg(long, help = "Disable automatic pre-write backup")]
-    pub no_backup: bool,
-
-    /// Number of backups to retain.
-    #[arg(long, default_value_t = 5, help = "Number of backups to retain")]
-    pub retention: u8,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
 
     /// Maximum input size in bytes.
     #[arg(long, help = "Maximum input size in bytes")]
@@ -475,16 +474,6 @@ pub struct WriteArgs {
     /// Preview without writing.
     #[arg(long, help = "Show what would be done without writing")]
     pub dry_run: bool,
-
-    /// v0.1.21 GAP-014 v2: keep the backup after a successful write.
-    /// By default the backup is deleted quietly (cleanup is idempotent).
-    /// Use this flag to retain the backup for audit or version control.
-    /// On failure the backup is ALWAYS preserved regardless of this flag.
-    #[arg(
-        long,
-        help = "Keep backup after success (default: delete quietly). On failure backup is always preserved."
-    )]
-    pub keep_backup: bool,
 }
 
 /// Fuzzy matching behavior for --old/--new edit mode.
@@ -505,15 +494,27 @@ pub struct EditArgs {
     pub path: PathBuf,
 
     /// Insert stdin content after line N.
-    #[arg(long, help = "Insert content from stdin after line N")]
+    #[arg(
+        long,
+        conflicts_with_all = ["old", "new", "old_file", "new_file"],
+        help = "Insert content from stdin after line N"
+    )]
     pub after_line: Option<usize>,
 
     /// Insert stdin content before line N.
-    #[arg(long, help = "Insert content from stdin before line N")]
+    #[arg(
+        long,
+        conflicts_with_all = ["old", "new", "old_file", "new_file"],
+        help = "Insert content from stdin before line N"
+    )]
     pub before_line: Option<usize>,
 
     /// Replace line range N:M with stdin content.
-    #[arg(long, help = "Replace line range N:M with stdin content")]
+    #[arg(
+        long,
+        conflicts_with_all = ["old", "new", "old_file", "new_file"],
+        help = "Replace line range N:M with stdin content"
+    )]
     pub range: Option<String>,
 
     /// Delete line range N:M.
@@ -524,6 +525,7 @@ pub struct EditArgs {
     #[arg(
         long,
         allow_hyphen_values = true,
+        conflicts_with_all = ["old", "new", "old_file", "new_file"],
         help = "Insert stdin content after first match of text"
     )]
     pub after_match: Option<String>,
@@ -532,6 +534,7 @@ pub struct EditArgs {
     #[arg(
         long,
         allow_hyphen_values = true,
+        conflicts_with_all = ["old", "new", "old_file", "new_file"],
         help = "Insert stdin content before first match of text"
     )]
     pub before_match: Option<String>,
@@ -541,6 +544,7 @@ pub struct EditArgs {
         long,
         num_args = 2,
         allow_hyphen_values = true,
+        conflicts_with_all = ["old", "new", "old_file", "new_file"],
         help = "Replace content between two markers with stdin"
     )]
     pub between: Option<Vec<String>>,
@@ -575,6 +579,7 @@ pub struct EditArgs {
     /// Read multiple edit operations as NDJSON from stdin (inherits --fuzzy mode).
     #[arg(
         long,
+        conflicts_with_all = ["old", "new", "old_file", "new_file"],
         help = "Read multiple edit operations as NDJSON from stdin (inherits --fuzzy mode)"
     )]
     pub multi: bool,
@@ -632,36 +637,9 @@ pub struct EditArgs {
     )]
     pub wal_policy: crate::wal::WalPolicy,
 
-    /// v0.1.21 GAP-013 C: create a `.bak` file before editing. Default is
-    /// Create backup before mutating (default: true).
-    #[arg(
-        long,
-        default_value_t = true,
-        help = "Create backup before mutating (default: true; use --no-backup to disable)"
-    )]
-    pub backup: bool,
-
-    /// Disable automatic pre-write backup.
-    #[arg(long, help = "Disable automatic pre-write backup")]
-    pub no_backup: bool,
-
-    /// v0.1.21 GAP-013 C: number of backups to retain when --backup is active.
-    /// Mirrors `write --retention`. Default: 5.
-    #[arg(
-        long,
-        default_value_t = 5,
-        help = "Maximum number of backups to retain when --backup is active (default: 5)"
-    )]
-    pub retention: u8,
-
-    /// v0.1.21 GAP-014 v2: keep the backup after a successful edit.
-    /// By default the backup is deleted quietly. On failure the backup
-    /// is ALWAYS preserved regardless of this flag.
-    #[arg(
-        long,
-        help = "Keep backup after success (default: delete quietly). On failure backup is always preserved."
-    )]
-    pub keep_backup: bool,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
 
     /// v0.1.21 GAP-012: accept `STATE_DRIFT` between sequential edits by
     /// the same agent. Use this when chaining multiple `edit` calls
@@ -690,33 +668,9 @@ pub struct EditLoopArgs {
     )]
     pub allow_sequential_drift: bool,
 
-    /// Create backup before mutating (default: true).
-    #[arg(
-        long,
-        default_value_t = true,
-        help = "Create backup before mutating (default: true; use --no-backup to disable)"
-    )]
-    pub backup: bool,
-
-    /// Disable automatic pre-write backup.
-    #[arg(long, help = "Disable automatic pre-write backup")]
-    pub no_backup: bool,
-
-    /// Number of backups to retain when `--backup` is active.
-    #[arg(
-        long,
-        default_value_t = 5,
-        value_name = "N",
-        help = "Maximum number of backups to retain when --backup is active (default: 5)"
-    )]
-    pub retention: u8,
-
-    /// Keep the backup after a successful write (default: delete quietly).
-    #[arg(
-        long,
-        help = "Keep backup after success (default: delete quietly). On failure backup is always preserved."
-    )]
-    pub keep_backup: bool,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
 
     /// Validate syntax after writing (G72). Pass a language name
     /// (`rust`, `python`, `js`, etc.). When the file is invalid, the
@@ -925,17 +879,9 @@ pub struct ReplaceArgs {
     )]
     pub literal: bool,
 
-    /// Create backup before mutating (default: true).
-    #[arg(
-        long,
-        default_value_t = true,
-        help = "Create backup before mutating (default: true; use --no-backup to disable)"
-    )]
-    pub backup: bool,
-
-    /// Disable automatic pre-write backup.
-    #[arg(long, help = "Disable automatic pre-write backup")]
-    pub no_backup: bool,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
 
     /// Glob patterns for file inclusion.
     #[arg(short = 'g', long, action = clap::ArgAction::Append, help = "Include files matching glob")]
@@ -979,15 +925,6 @@ pub struct ReplaceArgs {
     /// detect source changes (cargo, make, cmake, gradle).
     #[arg(long, help = "Preserve original mtime (default: update mtime to now)")]
     pub preserve_timestamps: bool,
-
-    /// v0.1.21 GAP-014 v2: keep backups after a successful replace.
-    /// Default is to delete them quietly. On failure the backup is
-    /// always preserved regardless of this flag.
-    #[arg(
-        long,
-        help = "Keep backup after success (default: delete quietly). On failure backup is always preserved."
-    )]
-    pub keep_backup: bool,
 }
 
 /// Arguments for the list subcommand.
@@ -1147,17 +1084,9 @@ pub struct TransformArgs {
     )]
     pub inline_rules: Option<String>,
 
-    /// Create backup before mutating (default: true).
-    #[arg(
-        long,
-        default_value_t = true,
-        help = "Create backup before mutating (default: true; use --no-backup to disable)"
-    )]
-    pub backup: bool,
-
-    /// Disable automatic pre-write backup.
-    #[arg(long, help = "Disable automatic pre-write backup")]
-    pub no_backup: bool,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
 
     /// Re-parse output with tree-sitter to detect syntax errors introduced by the rewrite.
     #[arg(
@@ -1202,14 +1131,9 @@ pub struct BatchArgs {
     )]
     pub batch_size: usize,
 
-    /// v0.1.21 GAP-014 v2: keep per-op backups after success. Applies to
-    /// every operation in the batch that creates a backup. Default is
-    /// to delete each backup quietly once its op completes.
-    #[arg(
-        long,
-        help = "Keep per-op backups after success (default: delete quietly). On failure backups are always preserved."
-    )]
-    pub keep_backup: bool,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
 }
 
 /// Arguments for the backup subcommand.
@@ -1278,30 +1202,9 @@ pub struct RollbackArgs {
     #[arg(long, help = "Verify checksum after restoring")]
     pub verify: bool,
 
-    /// v0.1.21 GAP-013 C: create a `.bak` snapshot of the current target
-    /// before restoring the chosen backup. Default `false` to keep the
-    /// rollback lean. Pass `--backup` when you want an extra safety net.
-    #[arg(
-        long,
-        help = "Create .bak of the current target before restoring (default: false; paridade com edit)"
-    )]
-    pub backup: bool,
-
-    /// v0.1.21 GAP-014 v2: keep the pre-rollback snapshot after success.
-    /// Default is to delete it quietly. On failure it is always preserved.
-    #[arg(
-        long,
-        help = "Keep pre-rollback snapshot after success (default: delete quietly)"
-    )]
-    pub keep_backup: bool,
-
-    /// v0.1.21: number of backups to retain when --keep-backup is active.
-    #[arg(
-        long,
-        default_value_t = 5,
-        help = "Number of backups to retain when --keep-backup is active (default: 5)"
-    )]
-    pub retention: u8,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
 
     /// Preview without restoring.
     #[arg(long, help = "Show what would be done without writing")]
@@ -1334,34 +1237,9 @@ pub struct ApplyArgs {
     #[arg(long, value_enum, default_value_t = PatchFormat::Auto, help = "Patch format: auto, unified, search-replace, full, markdown")]
     pub format: PatchFormat,
 
-    /// Create backup before mutating (default: true).
-    #[arg(
-        long,
-        default_value_t = true,
-        help = "Create backup before mutating (default: true; use --no-backup to disable)"
-    )]
-    pub backup: bool,
-
-    /// Disable automatic pre-write backup.
-    #[arg(long, help = "Disable automatic pre-write backup")]
-    pub no_backup: bool,
-
-    /// v0.1.21 GAP-014 v2: keep the backup after a successful apply.
-    /// Default is to delete it quietly. On failure the backup is always
-    /// preserved regardless of this flag.
-    #[arg(
-        long,
-        help = "Keep backup after success (default: delete quietly). On failure backup is always preserved."
-    )]
-    pub keep_backup: bool,
-
-    /// v0.1.21: number of backups to retain when --keep-backup is active.
-    #[arg(
-        long,
-        default_value_t = 5,
-        help = "Number of backups to retain when --keep-backup is active (default: 5)"
-    )]
-    pub retention: u8,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
 
     /// Preview without writing.
     #[arg(long, help = "Show what would be done without writing")]
@@ -1381,16 +1259,9 @@ pub struct SetArgs {
     pub key_path: String,
     /// New value (auto-coerced to bool/int/float/string).
     pub value: String,
-    /// Create backup before mutating (default: true).
-    #[arg(
-        long,
-        default_value_t = true,
-        help = "Create backup before mutating (default: true; use --no-backup to disable)"
-    )]
-    pub backup: bool,
-    /// Disable automatic pre-write backup.
-    #[arg(long, help = "Disable automatic pre-write backup")]
-    pub no_backup: bool,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
     /// Preserve original file timestamps.
     #[arg(long, help = "Preserve original mtime/atime")]
     pub preserve_timestamps: bool,
@@ -1412,16 +1283,9 @@ pub struct DelArgs {
     pub path: PathBuf,
     /// Dotted path to the key (e.g. `dependencies.serde`).
     pub key_path: String,
-    /// Create backup before mutating (default: true).
-    #[arg(
-        long,
-        default_value_t = true,
-        help = "Create backup before mutating (default: true; use --no-backup to disable)"
-    )]
-    pub backup: bool,
-    /// Disable automatic pre-write backup.
-    #[arg(long, help = "Disable automatic pre-write backup")]
-    pub no_backup: bool,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
     /// Preserve original file timestamps.
     #[arg(long, help = "Preserve original mtime/atime")]
     pub preserve_timestamps: bool,
@@ -1461,16 +1325,9 @@ pub struct CaseArgs {
     /// Target case style for the new identifier.
     #[arg(long, value_enum, default_value_t = IdentifierCase::Snake, help = "Target case style")]
     pub to: IdentifierCase,
-    /// Create backup before mutating (default: true).
-    #[arg(
-        long,
-        default_value_t = true,
-        help = "Create backup before mutating (default: true; use --no-backup to disable)"
-    )]
-    pub backup: bool,
-    /// Disable automatic pre-write backup.
-    #[arg(long, help = "Disable automatic pre-write backup")]
-    pub no_backup: bool,
+    /// Shared backup flags.
+    #[command(flatten)]
+    pub backup_opts: BackupOpts,
     /// Preserve original file timestamps.
     #[arg(long, help = "Preserve original mtime/atime")]
     pub preserve_timestamps: bool,

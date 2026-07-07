@@ -30,11 +30,12 @@ pub fn cmd_apply(
     global: &GlobalArgs,
     stdin: impl Read,
     writer: &mut NdjsonWriter<impl Write>,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
     let target = crate::path_safety::validate_path(&args.file, &workspace)?;
-    let effective_backup = resolve_backup(args.backup, args.no_backup);
+    let resolved_backup = resolve_backup(&args.backup_opts, defaults);
 
     let max_stdin = global.effective_max_filesize();
     let mut patch = String::new();
@@ -93,15 +94,15 @@ pub fn cmd_apply(
     }
 
     let opts = AtomicWriteOptions {
-        backup: effective_backup,
+        backup: resolved_backup.backup,
         syntax_check: false,
-        retention: args.retention,
+        retention: resolved_backup.retention,
         preserve_timestamps: false,
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
-        keep_backup: args.keep_backup,
+        keep_backup: resolved_backup.keep,
     };
     atomic_write(&target, result_content.as_bytes(), &opts, &workspace)?;
 

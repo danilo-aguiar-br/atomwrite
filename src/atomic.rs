@@ -96,7 +96,7 @@ impl Default for AtomicWriteOptions {
     fn default() -> Self {
         Self {
             backup: true,
-            retention: 5,
+            retention: crate::constants::DEFAULT_BACKUP_RETENTION,
             preserve_timestamps: false,
             backup_output_dir: None,
             strategy: None,

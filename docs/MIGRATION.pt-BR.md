@@ -78,9 +78,50 @@ Todas aditivas. Nenhuma dependência existente removida.
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 
 ## Versão Atual
-- atomwrite está na v0.1.27
-- Este documento cobre migração de v0.1.0 a v0.1.27
+- atomwrite está na v0.1.28
+- Este documento cobre migração de v0.1.0 a v0.1.28
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
+
+
+## v0.1.27 para v0.1.28 (2026-07-06)
+
+### Breaking Changes
+
+- `delete` agora cria backup por padrão (era opt-in) — passe `--no-backup` para desabilitar; `--keep-backup` em `delete` é redundante (backups de deleção sempre são preservados e nunca auto-removidos) e agora expõe um campo `warnings` no envelope NDJSON em vez de um no-op silencioso
+- `move`/`copy` sobrescrevendo um destino existente agora exigem `--force` OU um `--backup` explícito — antes os dois subcomandos aplicavam essa regra de forma inconsistente
+
+### Correções de Bugs (Críticas) — GAP-CLI-SURFACE-DRIFT
+
+- Extraída uma única struct `BackupOpts` (`--backup`, `--no-backup`, `--keep-backup`, `--retention <N>`) achatada via `#[command(flatten)]` em 15 subcomandos mutantes: `write`, `edit`, `edit-loop`, `replace`, `transform`, `scope`, `apply`, `set`, `del`, `case`, `batch`, `delete`, `move`, `copy`, `rollback`
+- `replace --retention` e `delete --no-backup` agora parseiam com sucesso — antes ambos retornavam exit 2 `ARGUMENT_PARSE_ERROR` porque cada struct redeclarava as flags de backup manualmente com presença e defaults divergentes
+- `--backup` e `--no-backup` agora são mutuamente exclusivos via `conflicts_with` (exit 2) em vez da última flag silenciosamente vencer
+- `rollback` mantém seu snapshot de segurança pré-rollback como opt-in via `--backup` explícito, documentado como exceção intencional ao contrato unificado default-true
+- Adicionado um guard compartilhado de stdin-tty no `edit`: `--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`, e `--multi` agora falham rápido com exit 65 `INVALID_INPUT` e uma `suggestion` acionável quando stdin é um terminal, em vez de bloquear indefinidamente (antes exigia um `timeout` externo e saía com 143)
+- Os modos consumidores de stdin do `edit` agora rejeitam `--old`/`--new`/`--old-file`/`--new-file` em tempo de parse via `conflicts_with_all` (exit 2) em vez de silenciosamente despachar para `edit_by_marker`
+- Removido `retention: 5` hardcoded de 9 pontos de chamada; retention agora flui de ponta a ponta de `BackupOpts` através de um único `resolve_backup()`
+- `batch --retention <N>` era aceito mas silenciosamente ignorado — agora efetivo de ponta a ponta com precedência CLI `--retention` > `.atomwrite.toml` `[defaults].retention` > default embutido (`5`), incluindo o passo de pre-backup transacional do batch
+- `batch --backup` passado explicitamente agora força backup para toda operação no batch, simétrico a `--no-backup`
+
+### Correções de Bugs (Altas) — GAP-CONFIG-DEFAULTS-DEAD
+
+- As chaves `backup`/`retention` de `[defaults]` do `.atomwrite.toml` agora são efetivas em todo subcomando mutante — `resolve_backup()` antes recebia apenas `(backup: bool, no_backup: bool)` e nunca consultava a config parseada
+- A precedência agora é variável de ambiente `ATOMWRITE_BACKUP` > flags CLI (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > default embutido (`true` / `5`)
+
+### Ação de Migração
+
+- Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.28"`
+- **BREAKING**: se você depende de `delete` nunca criar backup por padrão, passe `--no-backup` explicitamente — o default inverteu de opt-in para opt-out
+- **BREAKING**: se você script `move`/`copy` para sobrescrever um destino existente, passe `--force` ou `--backup` — os dois subcomandos agora aplicam essa regra de forma consistente
+- Se você contornava `replace --retention` ou `delete --no-backup` retornando exit 2: ambos agora parseiam com sucesso
+- Se você passa `--backup` e `--no-backup` juntos: isso agora falha rápido com exit 2 em vez da última flag silenciosamente vencer
+- Se seu `.atomwrite.toml` define `[defaults]` `backup`/`retention`: agora são respeitados em todo subcomando mutante — verifique se a config do seu projeto reflete o comportamento pretendido
+- Se você invoca os modos consumidores de stdin do `edit` (`--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`, `--multi`) interativamente sem pipe de stdin: isso agora falha rápido com exit 65 `INVALID_INPUT` em vez de bloquear indefinidamente
+- MSRV inalterado em Rust 1.88
+
+### Cobertura de Testes
+
+- 661 testes passando, 0 falhas, 3 ignorados
+- 33 subcomandos, 32 ADRs em `docs/decisions/`
 
 
 ## v0.1.26 para v0.1.27 (2026-06-24)

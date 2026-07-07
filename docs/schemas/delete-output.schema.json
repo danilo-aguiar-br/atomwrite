@@ -27,6 +27,13 @@
     "type": {
       "description": "Event type discriminator.",
       "type": "string"
+    },
+    "warnings": {
+      "description": "Non-fatal warnings about backup flag combinations that had no effect (v0.1.28 GAP-CLI-SURFACE-DRIFT), e.g. --keep-backup is redundant for delete because deletion backups are always preserved. Field is omitted entirely when there is nothing to warn about (skip_serializing_if empty), so it is intentionally absent from required.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [

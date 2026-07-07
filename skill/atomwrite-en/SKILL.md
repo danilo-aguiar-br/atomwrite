@@ -19,9 +19,13 @@ description: >-
 - NEVER parse stderr as structured data
 - NEVER assume exit 1 is an error (search, replace, transform, scope use exit 1 for zero matches)
 - NEVER write files outside the workspace jail
-- `--backup` is `true` by default in 9 structs (write, edit, replace, apply, batch, set, del, case, transform)
+- `--backup` is `true` by default via the shared `BackupOpts` contract (`--backup`, `--no-backup`, `--keep-backup`, `--retention <N>`) flattened into 15 mutating subcommands: write, edit, edit-loop, replace, transform, scope, apply, set, del, case, batch, delete, move, copy, rollback
+- `--backup` and `--no-backup` are mutually exclusive (`conflicts_with`, exit 2) — NEVER pass both
+- EXCEPTIONS: `rollback` keeps its pre-rollback snapshot opt-in via explicit `--backup` (NOT default-true); `move`/`copy` require `--force` OR explicit `--backup` to overwrite an existing destination; `delete`/`replace` retain the `.bak` on success (do not auto-remove) and `--keep-backup` on `delete` is redundant, surfacing a `warnings` field instead of a silent no-op
 - USE `--no-backup` to disable backup when performance is priority
-- `.atomwrite.toml` config file sets per-project defaults with hierarchy CLI > env > local > XDG > defaults
+- `edit` stdin-consuming modes (`--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`, `--multi`) reject `--old`/`--new`/`--old-file`/`--new-file` at parse time (`conflicts_with_all`, exit 2) and fail fast with exit 65 `INVALID_INPUT` when stdin is a terminal instead of hanging
+- `.atomwrite.toml` config file sets per-project defaults with hierarchy CLI > env > local > XDG > defaults (file discovery)
+- The resolved backup VALUE follows a separate precedence: `ATOMWRITE_BACKUP` env (exact `0` disables) > CLI flags > `.atomwrite.toml` `[defaults]` backup/retention > built-in default (`true`/`5`)
 
 
 ## Write Operations (write)
@@ -83,11 +87,13 @@ description: >-
 - USE `--before-match "text"` to insert before match
 - USE `--between "start" "end"` to replace between markers
 - USE `--multi` for multiple edits via NDJSON on stdin
+- `--after-line`/`--before-line`/`--range`/`--delete-range`/`--after-match`/`--before-match`/`--between`/`--multi` read content from stdin and reject `--old`/`--new`/`--old-file`/`--new-file` at parse time (exit 2); a terminal stdin fails fast with exit 65 instead of hanging
 - USE `--expect-checksum <BLAKE3>` for optimistic locking
 - USE `--allow-sequential-drift` for sequential pipeline without checksum recapture
 - USE `--line-ending lf|crlf|cr|auto` to normalize endings
 - USE `--preserve-timestamps` to keep mtime
 - USE `--backup`, `--no-backup`, `--keep-backup`, `--retention N`
+- USE `--dry-run` to preview the edit without writing
 - USE `--old-file <PATH>` and `--new-file <PATH>` for large content (avoids ARG_MAX)
 - `--old-file` and `--old` are mutually exclusive (clap emits exit 2)
 - Cross-mixing (`--old` + `--new-file`) returns exit 65
@@ -118,6 +124,8 @@ description: >-
 - USE `--max-columns <N>` to truncate wide lines
 - USE `--no-begin-end` to suppress begin/end events on files without matches
 - USE `--include-fifo` for FIFO/named pipes (NEVER on untrusted directories)
+- `--max-filesize` in search defaults to 10 MiB (DIFFERENT from the 1 GiB global default) — ALWAYS override it explicitly when scanning large files
+- `--max-columns` defaults to 500 — ALWAYS raise it when matches span wide lines
 - FORMULA search `atomwrite --workspace . search 'TODO|FIXME' src/ --include '*.rs'`
 - FORMULA count `atomwrite --workspace . search 'unwrap' src/ --count --sort path`
 
@@ -139,7 +147,7 @@ description: >-
 
 ## Transform Operations AST (transform)
 - Exit code 1 for zero matches
-- ALWAYS specify `-l/--lang` for target language
+- ALWAYS specify `-l/--language` for target language
 - USE `$NAME` for single node capture and `$$$ARGS` for multiple
 - 306 languages supported via ast-grep
 - USE `-p/--pattern` and `-r/--rewrite` (BOTH required in single-rule mode)
@@ -175,7 +183,9 @@ description: >-
 - move/copy require `"force":true` to overwrite
 - USE `--file <PATH>` to read manifest from file
 - USE `--transaction` for all-or-nothing with automatic rollback
-- USE `--dry-run`, `--keep-backup`, `--batch-size <N>`, `--input-schema`
+- USE `--dry-run`, `--keep-backup`, `--batch-size <N>` (default 100), `--input-schema`
+- `--retention <N>` governs the whole batch, including the transactional pre-backup step, with precedence CLI > `.atomwrite.toml` `[defaults].retention` > `5`
+- `--backup` passed explicitly forces a backup for every operation in the batch, symmetric to `--no-backup`
 - FORMULA `echo '{"op":"write","target":"a.txt","content":"hello"}' | atomwrite --workspace . batch --transaction`
 
 
@@ -192,7 +202,8 @@ description: >-
 
 
 ## Delete Operations (delete)
-- USE `--backup --retention N` to keep backups
+- Backup is ON by default; USE `--no-backup` to opt out, `--retention N` to tune count
+- `--keep-backup` is redundant here (deletion backups are always preserved) and surfaces a `warnings` field instead of a silent no-op
 - USE `--recursive` (`-r`) for directories (traverses via WalkBuilder, removes empty subdirectories)
 - USE `--include`, `--exclude` to filter
 - USE `--yes` (`-y`) to skip confirmation
@@ -210,7 +221,8 @@ description: >-
 
 
 ## Move and Copy Operations (move, copy)
-- USE `--force` to overwrite destination
+- USE `--force` OR the explicit `--backup` flag OR `ATOMWRITE_BACKUP` env to overwrite an existing destination (identical rule for both subcommands)
+- NOTE: `.atomwrite.toml` `[defaults] backup = true` alone does NOT authorize overwrite — only an explicit `--backup` flag, `--force`, or `ATOMWRITE_BACKUP` env satisfy the check
 - USE `--dry-run`, `--backup`
 - copy accepts `--recursive`, `--preserve`, `--no-reflink`, `--preserve-xattr`
 - move accepts `--preserve-hardlinks`, `--retention N`
@@ -267,7 +279,7 @@ description: >-
 ## Case, Query and Outline Operations (case, query, outline)
 - case: converts identifier case (snake, camel, pascal, kebab, screaming-snake)
 - case: `--subvert OLD NEW` is REQUIRED (without it returns exit 65)
-- case: `--to <STYLE>`, `--backup`, `--no-backup`, `--preserve-timestamps`, `--dry-run`
+- case: `--to <STYLE>` (default snake), `--backup`, `--no-backup`, `--preserve-timestamps`, `--dry-run`
 - NEVER run case without --dry-run on a large codebase
 - query: inspects AST via tree-sitter (24 languages)
 - query: `--kinds` lists node kinds (response is NDJSON stream, one object per kind)

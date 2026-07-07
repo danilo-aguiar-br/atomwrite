@@ -212,7 +212,7 @@ v0.1.18 additions (G118 universal resolve-first):
 
 ## Architectural Decision Records (ADRs)
 - See `docs/decisions/README.md` for the full ADR index
-- 19 ADRs have been added since v0.1.12 (0019-0037), all following the Michael Nygard format (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
+- 32 ADRs have been added since v0.1.12 (0019-0050), all following the Michael Nygard format (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
 - 0019 — tree-sitter-language-pack choice
 - 0020 — WAL sidecar path and JSONL shape
 - 0021 — v14 query/outline accepts only kind names, not S-expressions
@@ -244,6 +244,9 @@ v0.1.18 additions (G118 universal resolve-first):
 - 0045 — actionable suggestion for clap parse errors (v0.1.24)
 - 0046 — diff resolve-first retrofit (v0.1.24)
 - 0047 — scope read-only mode fix (v0.1.24)
+- 0048 — unified BackupOpts: single struct flattened via `#[command(flatten)]` into 15 mutating subcommands, resolved by a single `resolve_backup()` with precedence `ATOMWRITE_BACKUP` env > CLI flags > `.atomwrite.toml` `[defaults]` > built-in default (v0.1.28)
+- 0049 — live config plumbing: `load_config` called once in `lib.rs::run()`, `DefaultsSection` propagated to every mutating handler (v0.1.28)
+- 0050 — stdin-tty guard: `main.rs` computes `stdin.is_terminal()` (std `IsTerminal`, Rust >= 1.70) and propagates `stdin_is_tty` down to `cmd_edit`; stdin-consuming modes fail fast with exit 65 instead of blocking indefinitely (v0.1.28)
 
 
 ## Test Architecture

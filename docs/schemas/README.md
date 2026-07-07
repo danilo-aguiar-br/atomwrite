@@ -1,6 +1,6 @@
 # atomwrite JSON Schemas
 
-_Last updated: 2026-06-24 (v0.1.27) — 34 schemas in index_
+_Last updated: 2026-07-06 (v0.1.28) — 34 schemas in index_
 
 ## English
 ### Purpose
@@ -14,7 +14,7 @@ _Last updated: 2026-06-24 (v0.1.27) — 34 schemas in index_
 - `edit-output.schema.json` -- output of `atomwrite edit` (v0.1.15: adds `pairs_total` and `pair_results` -- G117) (v0.1.23: adds `source` field in `pair_results` -- GAP-2026-018)
 - `search-match.schema.json` -- output of `atomwrite search` (per-match event)
 - `replace-result.schema.json` -- output of `atomwrite replace` (per-file event)
-- `delete-output.schema.json` -- output of `atomwrite delete`
+- `delete-output.schema.json` -- output of `atomwrite delete` (v0.1.28: adds `warnings`)
 - `get-result.schema.json` -- output of `atomwrite get` (v0.1.12, v14 Tier 3: single key read; `value` auto-parsed)
 - `hash-output.schema.json` -- output of `atomwrite hash`
 - `count-summary.schema.json` -- output of `atomwrite count`
@@ -46,7 +46,7 @@ _Last updated: 2026-06-24 (v0.1.27) — 34 schemas in index_
 
 
 ## Português
-### Última atualização: 2026-06-24 (v0.1.27) — 34 schemas no índice
+### Última atualização: 2026-07-06 (v0.1.28) — 34 schemas no índice
 
 ### Objetivo
 - Cada schema descreve a saída NDJSON de um subcomando do atomwrite
@@ -59,7 +59,7 @@ _Last updated: 2026-06-24 (v0.1.27) — 34 schemas in index_
 - `edit-output.schema.json` -- saída do `atomwrite edit` (v0.1.15: adiciona `pairs_total` e `pair_results` -- G117) (v0.1.23: adiciona campo `source` em `pair_results` -- GAP-2026-018)
 - `search-match.schema.json` -- saída do `atomwrite search` (evento por match)
 - `replace-result.schema.json` -- saída do `atomwrite replace` (evento por arquivo)
-- `delete-output.schema.json` -- saída do `atomwrite delete`
+- `delete-output.schema.json` -- saída do `atomwrite delete` (v0.1.28: adiciona `warnings`)
 - `get-result.schema.json` -- saída do `atomwrite get` (v0.1.12, v14 Tier 3: leitura de chave única; `value` auto-parseado)
 - `hash-output.schema.json` -- saída do `atomwrite hash`
 - `count-summary.schema.json` -- saída do `atomwrite count`

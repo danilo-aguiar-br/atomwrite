@@ -8,6 +8,36 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.28] - 2026-07-06
+
+### Mudanças BREAKING
+- `delete` agora cria backup por padrão (antes era opt-in) — use `--no-backup` para desligar; `--keep-backup` em `delete` é redundante (backups de deleção são sempre preservados e nunca auto-removidos) e agora emite um campo `warnings` no envelope NDJSON em vez de no-op silencioso
+- `move`/`copy` sobrescrevendo um destino existente agora exigem `--force` OU `--backup` explícito — antes os dois subcomandos aplicavam essa regra de forma inconsistente
+
+### Correções Críticas — GAP-CLI-SURFACE-DRIFT
+- Extraída struct única `BackupOpts` (`--backup`, `--no-backup`, `--keep-backup`, `--retention <N>`) via `#[command(flatten)]` em 15 subcomandos mutantes: `write`, `edit`, `edit-loop`, `replace`, `transform`, `scope`, `apply`, `set`, `del`, `case`, `batch`, `delete`, `move`, `copy`, `rollback`
+- `replace --retention` e `delete --no-backup` agora parseiam com sucesso — antes ambos retornavam exit 2 `ARGUMENT_PARSE_ERROR` porque cada struct redeclarava as flags de backup manualmente com presença e defaults divergentes
+- `--backup` e `--no-backup` agora são mutuamente exclusivos via `conflicts_with` (exit 2) em vez da última flag vencer em silêncio
+- `rollback` mantém seu snapshot de segurança pré-rollback opt-in via `--backup` explícito, documentado como exceção intencional ao contrato unificado default-true
+- Adicionado guard compartilhado de stdin-tty no `edit`: `--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between` e `--multi` agora falham rápido com exit 65 `INVALID_INPUT` e `suggestion` acionável quando stdin é um terminal, em vez de bloquear indefinidamente (antes exigia timeout externo e terminava em exit 143)
+- Os modos de stdin do `edit` agora rejeitam `--old`/`--new`/`--old-file`/`--new-file` no parse via `conflicts_with_all` (exit 2) em vez de despachar silenciosamente para `edit_by_marker`
+- Removido hardcode `retention: 5` de 9 pontos; retention agora flui de ponta a ponta a partir de `BackupOpts` através de um único `resolve_backup()`
+- `batch --retention <N>` era aceito e silenciosamente ignorado — agora efetivo de ponta a ponta com precedência CLI `--retention` > `.atomwrite.toml` `[defaults].retention` > default embutido (`5`), incluindo o pre-backup transacional do batch
+- `batch --backup` explícito agora força backup para cada operação do lote, simétrico a `--no-backup`
+- Removidos os últimos pontos com hardcode `retention: 5` em `batch.rs` (pre-backup transacional e a operação `delete`) — ambos agora honram o retention resolvido
+- Os impls `Default` de `config.rs` e `atomic.rs` agora leem `constants::DEFAULT_BACKUP_RETENTION` em vez de um literal duplicado
+
+### Correções Altas — GAP-CONFIG-DEFAULTS-DEAD
+- As chaves `[defaults]` `backup`/`retention` do `.atomwrite.toml` agora são efetivas em todo subcomando mutante — `resolve_backup()` antes recebia apenas `(backup: bool, no_backup: bool)` e nunca consultava a config parseada
+- Precedência agora é `ATOMWRITE_BACKUP` (env) > flags CLI (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > default embutido (`true` / `5`)
+
+### Validação
+- `cargo test` — 661 testes passam (0 falhas, 3 ignorados)
+- `cargo clippy --all-targets -- -D warnings` — zero warnings
+- `cargo fmt --check` — zero diferenças
+- Novos arquivos de teste: `cli_v0128_backup_matrix.rs` (12 testes), `cli_v0128_config_defaults.rs` (6 testes), `cli_v0128_edit_stdin_guard.rs` (3 testes), `cli_v0128_batch_backup.rs` (6 testes)
+
+
 ## [0.1.27] - 2026-06-24
 
 ### Correções Críticas — Segurança

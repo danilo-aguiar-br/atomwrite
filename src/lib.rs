@@ -157,7 +157,7 @@ pub fn emit_schema_by_name(name: &str, mut out: impl Write) -> Result<bool> {
 /// # Errors
 ///
 /// Returns the error from whichever subcommand handler fails.
-pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
+pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) -> Result<()> {
     if cli.global.json_schema {
         return emit_json_schema(&cli.command, stdout);
     }
@@ -182,6 +182,8 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
     let mut writer = NdjsonWriter::new(stdout);
     let shutdown = signal::get_or_install_handlers()?;
     let workspace = cli.global.resolve_workspace()?;
+    let config = crate::config::load_config(&workspace, None);
+    let defaults = &config.defaults;
 
     // G119 L3 — autonomous startup `wal-heal` pass. Walks the workspace
     // once, removes every `Committed`/`Aborted` sidecar older than
@@ -220,29 +222,39 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
     let result = match &cli.command {
         Commands::Read(args) => commands::read::cmd_read(args, &cli.global, &mut writer),
         Commands::Write(args) => {
-            commands::write::cmd_write(args, &cli.global, stdin, &mut writer, &shutdown)
+            commands::write::cmd_write(args, &cli.global, stdin, &mut writer, &shutdown, defaults)
         }
-        Commands::Edit(args) => {
-            commands::edit::cmd_edit(args, &cli.global, stdin, &mut writer, &workspace)
-        }
+        Commands::Edit(args) => commands::edit::cmd_edit(
+            args,
+            &cli.global,
+            stdin,
+            &mut writer,
+            &workspace,
+            defaults,
+            stdin_is_tty,
+        ),
         Commands::Search(args) => {
             commands::search::cmd_search(args, &cli.global, &mut writer, &shutdown)
         }
         Commands::Replace(args) => {
-            commands::replace::cmd_replace(args, &cli.global, &mut writer, &shutdown)
+            commands::replace::cmd_replace(args, &cli.global, &mut writer, &shutdown, defaults)
         }
         Commands::Hash(args) => commands::hash::cmd_hash(args, &cli.global, stdin, &mut writer),
-        Commands::Delete(args) => commands::delete::cmd_delete(args, &cli.global, &mut writer),
+        Commands::Delete(args) => {
+            commands::delete::cmd_delete(args, &cli.global, &mut writer, defaults)
+        }
         Commands::Count(args) => commands::count::cmd_count(args, &cli.global, &mut writer),
         Commands::Diff(args) => commands::diff::cmd_diff(args, &cli.global, &mut writer),
-        Commands::Move(args) => commands::r#move::cmd_move(args, &cli.global, &mut writer),
-        Commands::Copy(args) => commands::copy::cmd_copy(args, &cli.global, &mut writer),
+        Commands::Move(args) => {
+            commands::r#move::cmd_move(args, &cli.global, &mut writer, defaults)
+        }
+        Commands::Copy(args) => commands::copy::cmd_copy(args, &cli.global, &mut writer, defaults),
         Commands::List(args) => commands::list::cmd_list(args, &cli.global, &mut writer),
         Commands::Extract(args) => commands::extract::cmd_extract(args, stdin, &mut writer),
         Commands::Calc(args) => commands::calc::cmd_calc(args, stdin, &mut writer),
         Commands::Regex(args) => commands::regex_gen::cmd_regex(args, stdin, &mut writer),
         Commands::Transform(args) => {
-            commands::transform::cmd_transform(args, &cli.global, &mut writer, &shutdown)
+            commands::transform::cmd_transform(args, &cli.global, &mut writer, &shutdown, defaults)
         }
         Commands::Batch(args) => {
             if args.input_schema {
@@ -256,21 +268,24 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
                 args.transaction,
                 args.file.as_deref(),
                 &shutdown,
-                args.keep_backup,
+                &args.backup_opts,
+                defaults,
             )
         }
         Commands::Scope(args) => {
-            commands::scope::cmd_scope(args, &cli.global, &mut writer, &shutdown)
+            commands::scope::cmd_scope(args, &cli.global, &mut writer, &shutdown, defaults)
         }
         Commands::Backup(args) => commands::backup::cmd_backup(args, &cli.global, &mut writer),
         Commands::Rollback(args) => {
-            commands::rollback::cmd_rollback(args, &cli.global, &mut writer)
+            commands::rollback::cmd_rollback(args, &cli.global, &mut writer, defaults)
         }
-        Commands::Apply(args) => commands::apply::cmd_apply(args, &cli.global, stdin, &mut writer),
-        Commands::Set(args) => commands::set::cmd_set(args, &cli.global, &mut writer),
+        Commands::Apply(args) => {
+            commands::apply::cmd_apply(args, &cli.global, stdin, &mut writer, defaults)
+        }
+        Commands::Set(args) => commands::set::cmd_set(args, &cli.global, &mut writer, defaults),
         Commands::Get(args) => commands::get::cmd_get(args, &cli.global, &mut writer),
-        Commands::Del(args) => commands::del::cmd_del(args, &cli.global, &mut writer),
-        Commands::Case(args) => commands::case::cmd_case(args, &cli.global, &mut writer),
+        Commands::Del(args) => commands::del::cmd_del(args, &cli.global, &mut writer, defaults),
+        Commands::Case(args) => commands::case::cmd_case(args, &cli.global, &mut writer, defaults),
         Commands::Query(args) => commands::query::cmd_query(args, &cli.global, &mut writer),
         Commands::Outline(args) => commands::outline::cmd_outline(args, &cli.global, &mut writer),
         Commands::WalStats(args) => {
@@ -289,7 +304,7 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write) -> Result<()> {
             // attempting to re-acquire it from the same thread that
             // holds it (via `main.rs:106 stdin.lock()`) blocks forever.
             // See audit 2026-06-17.
-            commands::edit_loop::cmd_edit_loop(args, &cli.global, stdin, &mut writer)
+            commands::edit_loop::cmd_edit_loop(args, &cli.global, stdin, &mut writer, defaults)
         }
         Commands::Verify(args) => {
             let hash_args = cli_args::HashArgs {

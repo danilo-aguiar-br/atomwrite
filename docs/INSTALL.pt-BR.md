@@ -50,7 +50,7 @@ O fix do Windows 10/11 de v0.1.4 é preservado (cargo install agora funciona). v
 
 ### Cobertura de Testes
 
-- 631 testes passando (621 na v0.1.24 + 10 na v0.1.25)
+- 661 testes passando (v0.1.28)
 - 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/`
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
@@ -308,7 +308,7 @@ Esta release introduz uma nova camada de segurança chamada **intention guards**
 
 ### Estatísticas
 
-- 631 testes passando (621 na v0.1.24 + 10 na v0.1.25)
+- 661 testes passando (v0.1.28)
 - 11 GAP-2026 fechados
 - 3 targets de cross-compile Windows verdes
 - 19 ADRs em `docs/decisions/` (0019-0037)

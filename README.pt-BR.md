@@ -19,7 +19,20 @@
 - Todo arquivo recebe checksum BLAKE3: detecta drift, verifica integridade, habilita locking otimista
 
 
-## Novidades na v0.1.27 (2026-06-24)
+## Novidades na v0.1.28 (2026-07-06)
+
+- **BREAKING**: `delete` agora cria backup por padrão (antes era opt-in) — use `--no-backup` para desligar; `--keep-backup` em `delete` é redundante (backups de deleção são sempre preservados) e agora emite um campo `warnings` no envelope NDJSON
+- **BREAKING**: `move`/`copy` sobrescrevendo um destino existente agora exigem `--force` OU `--backup` explícito
+- GAP-CLI-SURFACE-DRIFT fechado — struct única `BackupOpts` (`--backup`, `--no-backup`, `--keep-backup`, `--retention <N>`) via `#[command(flatten)]` unifica o contrato de backup em 15 subcomandos mutantes: `write`, `edit`, `edit-loop`, `replace`, `transform`, `scope`, `apply`, `set`, `del`, `case`, `batch`, `delete`, `move`, `copy`, `rollback`. `replace --retention` e `delete --no-backup` agora funcionam (antes exit 2)
+- `--backup` e `--no-backup` agora são mutuamente exclusivos (exit 2) em vez da última flag vencer em silêncio
+- `rollback` mantém seu snapshot de segurança pré-rollback opt-in via `--backup` explícito — a única exceção documentada ao contrato unificado default-true
+- GAP-CONFIG-DEFAULTS-DEAD fechado — as chaves `[defaults]` `backup`/`retention` do `.atomwrite.toml` agora são efetivas; a precedência é `ATOMWRITE_BACKUP` (env) > flags CLI > config `[defaults]` > default embutido (`true`/`5`)
+- Os modos de stdin do `edit` (`--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`, `--multi`) agora falham rápido com exit 65 e `suggestion` acionável quando stdin é um terminal, em vez de travar indefinidamente
+- `batch --retention <N>` e `batch --backup` eram aceitos mas ignorados silenciosamente — ambos agora são efetivos de ponta a ponta, incluindo o pre-backup transacional do batch e a operação `delete`
+- 661 testes passando, zero warnings de clippy, zero diferenças de fmt
+
+
+## O Que Havia De Novo Na v0.1.27 (2026-06-24)
 
 - 10 bugs corrigidos em 3 rodadas de auditoria de segurança e scope
 - **Correção CRITICA de segurança**: escape de symlink-directory do jail do workspace (BUG-SEC-001) — todos os caminhos de escrita/leitura agora resolvem symlinks via `canonicalize_existing_prefix` antes da verificação de jail
@@ -455,6 +468,7 @@ atomwrite completions bash
 - `ATOMWRITE_WORKSPACE`: define a raiz do workspace para validação de path jail (alternativa a `--workspace`)
 - `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS`: knobs do G119 L4 HeuristicsEngine (v0.1.16+)
 - `RAYON_NUM_THREADS`: sobrescreve número de threads paralelas para search, replace, transform e scope
+- `ATOMWRITE_BACKUP`: sobrescreve a decisão de backup resolvida para todo subcomando mutante (valor exato `0` desliga, qualquer outro valor liga) — tem precedência sobre flags CLI e `.atomwrite.toml` `[defaults]` (v0.1.28)
 
 
 ## Códigos de Saída
@@ -549,6 +563,13 @@ atomwrite completions bash
 - O guard G120 L1 rejeitou 0 bytes do stdin como provável falha de pipeline upstream
 - Passe `--allow-empty-stdin` para confirmar que a entrada vazia é intencional
 - Ou pipe conteúdo real: `echo "x" | atomwrite --workspace . write file`
+
+### edit trava (ou falha com exit 65) em --after-line/--after-match/--between/--multi (v0.1.28+)
+- Esses modos leem o conteúdo de substituição do stdin, igual ao `write`
+- Desde v0.1.28 stdin de terminal falha RÁPIDO com exit 65 `INVALID_INPUT` em vez de bloquear para sempre
+- Pipe conteúdo: `echo "texto novo" | atomwrite --workspace . edit arquivo.rs --after-line 10`
+- Ou use `--new-file <PATH>` quando o modo aceitar
+- `--after-match`/`--before-match`/`--between`/`--after-line`/`--before-line`/`--range`/`--delete-range` rejeitam `--old`/`--new`/`--old-file`/`--new-file` no parse (exit 2) — esses modos só aceitam conteúdo via stdin
 
 
 ## Arquitetura

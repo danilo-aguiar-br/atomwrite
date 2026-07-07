@@ -19,7 +19,20 @@
 - Every file gets a BLAKE3 checksum: detect drift, verify integrity, enable optimistic locking
 
 
-## What Is New In v0.1.27 (2026-06-24)
+## What Is New In v0.1.28 (2026-07-06)
+
+- **BREAKING**: `delete` now creates a backup by default (was opt-in) — pass `--no-backup` to disable; `--keep-backup` on `delete` is redundant (deletion backups are always preserved) and now surfaces a `warnings` field in the NDJSON envelope
+- **BREAKING**: `move`/`copy` overwriting an existing destination now require `--force` OR an explicit `--backup`
+- GAP-CLI-SURFACE-DRIFT closed — single `BackupOpts` struct (`--backup`, `--no-backup`, `--keep-backup`, `--retention <N>`) via `#[command(flatten)]` unifies the backup contract across 15 mutating subcommands: `write`, `edit`, `edit-loop`, `replace`, `transform`, `scope`, `apply`, `set`, `del`, `case`, `batch`, `delete`, `move`, `copy`, `rollback`. `replace --retention` and `delete --no-backup` now work (previously exit 2)
+- `--backup` and `--no-backup` are now mutually exclusive (exit 2) instead of the last flag silently winning
+- `rollback` keeps its pre-rollback safety snapshot opt-in via explicit `--backup` — the one documented exception to the unified default-true contract
+- GAP-CONFIG-DEFAULTS-DEAD closed — `.atomwrite.toml` `[defaults]` `backup`/`retention` keys are now effective; precedence is `ATOMWRITE_BACKUP` env > CLI flags > `[defaults]` config > built-in default (`true`/`5`)
+- `edit`'s stdin-consuming modes (`--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`, `--multi`) now fail fast with exit 65 and an actionable `suggestion` when stdin is a terminal, instead of hanging indefinitely
+- `batch --retention <N>` and `batch --backup` were accepted but silently ignored — both are now effective end-to-end, including the batch transactional pre-backup and the `delete` operation
+- 661 tests passing, zero clippy warnings, zero fmt diffs
+
+
+## What Was New In v0.1.27 (2026-06-24)
 
 - 10 bugs fixed across 3 rounds of security and scope audit
 - **CRITICAL security fix**: symlink-directory escape from workspace jail (BUG-SEC-001) — all write/read paths now resolve symlinks via `canonicalize_existing_prefix` before jail check
@@ -455,6 +468,7 @@ atomwrite completions bash
 - `ATOMWRITE_WORKSPACE`: set the workspace root for path jail validation (alternative to `--workspace`)
 - `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS`: G119 L4 HeuristicsEngine knobs (v0.1.16+)
 - `RAYON_NUM_THREADS`: override number of parallel threads for search, replace, transform and scope
+- `ATOMWRITE_BACKUP`: override the resolved backup decision for every mutating subcommand (exact value `0` disables, any other value enables) — takes precedence over CLI flags and `.atomwrite.toml` `[defaults]` (v0.1.28)
 
 
 ## Exit Codes
@@ -549,6 +563,13 @@ atomwrite completions bash
 - The G120 L1 guard rejected 0 bytes from stdin as a likely upstream-pipeline failure
 - Pass `--allow-empty-stdin` to confirm the empty input is intentional
 - Or pipe real content: `echo "x" | atomwrite --workspace . write file`
+
+### edit hangs (or fails with exit 65) on --after-line/--after-match/--between/--multi (v0.1.28+)
+- These modes read replacement content from stdin, same as `write`
+- Since v0.1.28 a terminal stdin fails FAST with exit 65 `INVALID_INPUT` instead of blocking forever
+- Pipe content: `echo "new text" | atomwrite --workspace . edit file.rs --after-line 10`
+- Or use `--new-file <PATH>` where the mode accepts it
+- `--after-match`/`--before-match`/`--between`/`--after-line`/`--before-line`/`--range`/`--delete-range` reject `--old`/`--new`/`--old-file`/`--new-file` at parse time (exit 2) — these modes only take content from stdin
 
 
 ## Architecture

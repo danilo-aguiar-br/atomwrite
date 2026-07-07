@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 
 use crate::checksum;
 use crate::cli::{DeleteArgs, GlobalArgs};
+use crate::commands::resolve_backup;
 use crate::error::AtomwriteError;
 use crate::ndjson_types::{DeleteOutput, DryRunPlan, Summary};
 use crate::output::NdjsonWriter;
@@ -73,9 +74,22 @@ pub fn cmd_delete(
     args: &DeleteArgs,
     global: &GlobalArgs,
     writer: &mut NdjsonWriter<impl Write>,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
+    let resolved = resolve_backup(&args.backup_opts, defaults);
+    // v0.1.28 GAP-CLI-SURFACE-DRIFT: `--keep-backup` is a silent no-op for
+    // delete (deletion backups are never auto-removed); surface it instead
+    // of discarding the flag silently.
+    let warnings: Vec<String> = if args.backup_opts.keep_backup {
+        vec![
+            "--keep-backup is redundant for delete: deletion backups are always preserved"
+                .to_owned(),
+        ]
+    } else {
+        Vec::new()
+    };
     let mut deleted = 0u64;
     let mut _bytes_freed = 0u64;
     let mut skipped = 0u64;
@@ -163,8 +177,8 @@ pub fn cmd_delete(
                 continue;
             }
 
-            if args.backup {
-                crate::atomic::create_backup(file_path, args.retention)?;
+            if resolved.backup {
+                crate::atomic::create_backup(file_path, resolved.retention)?;
             }
 
             std::fs::remove_file(file_path)
@@ -189,6 +203,7 @@ pub fn cmd_delete(
                 bytes: size,
                 checksum_before: hash,
                 elapsed_ms: start.elapsed().as_millis() as u64,
+                warnings: warnings.clone(),
             })?;
         }
 

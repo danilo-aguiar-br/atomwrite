@@ -4,6 +4,23 @@
 [Read in English](AGENTS.md)
 
 
+## O Que Há de Novo na v0.1.28
+
+- BREAKING: `delete` agora cria backup por padrão (era opt-in) — passe `--no-backup` para desabilitar; `--keep-backup` no `delete` é redundante (backups de deleção são sempre preservados e nunca auto-removidos) e agora expõe campo `warnings` no envelope NDJSON em vez de um no-op silencioso
+- BREAKING: `move`/`copy` sobrescrevendo destino existente agora exigem `--force` OU `--backup` explícito
+- Struct `BackupOpts` unificada (`--backup`, `--no-backup`, `--keep-backup`, `--retention <N>`) flattened via `#[command(flatten)]` em todos os 15 subcomandos que mutam: `write`, `edit`, `edit-loop`, `replace`, `transform`, `scope`, `apply`, `set`, `del`, `case`, `batch`, `delete`, `move`, `copy`, `rollback` (GAP-CLI-SURFACE-DRIFT, ADR-0048)
+- `replace --retention` e `delete --no-backup` agora parseiam com sucesso — antes retornavam exit 2 `ARGUMENT_PARSE_ERROR` por declarações de flag divergentes por struct
+- `--backup`/`--no-backup` agora são mutuamente exclusivos via `conflicts_with` (exit 2) em vez da última flag vencer silenciosamente
+- `rollback` mantém seu snapshot de segurança pré-rollback opt-in via `--backup` explícito — exceção documentada ao contrato unificado default-true
+- Zero literais `retention: 5` hardcoded remanescentes; `Default` impls em `config.rs`/`atomic.rs` leem `constants::DEFAULT_BACKUP_RETENTION`
+- Chaves `[defaults]` `backup`/`retention` do `.atomwrite.toml` agora são efetivas ponta a ponta em todo subcomando que muta (GAP-CONFIG-DEFAULTS-DEAD, ADR-0049) — precedência `ATOMWRITE_BACKUP` env var > flags CLI (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > default embutido (`true`/`5`)
+- `batch --retention <N>` e `batch --backup` agora são efetivos ponta a ponta, incluindo o passo de pre-backup transacional e a operação `delete` dentro de um batch
+- Nova guarda stdin-tty nos modos de `edit` que consomem stdin (`--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`, `--multi`): falha rápido com exit 65 (`INVALID_INPUT`) e `suggestion` acionável quando stdin é um terminal, em vez de bloquear indefinidamente (ADR-0050)
+- Os modos de `edit` que consomem stdin agora rejeitam `--old`/`--new`/`--old-file`/`--new-file` no parse via `conflicts_with_all` (exit 2) em vez de despachar silenciosamente para `edit_by_marker`
+- 3 novos ADRs: 0048 (BackupOpts unificado), 0049 (config plumbing ao vivo), 0050 (guarda stdin-tty)
+- 661 testes passando (0 falhas, 3 ignorados); novos arquivos de teste: `cli_v0128_backup_matrix.rs` (12), `cli_v0128_config_defaults.rs` (6), `cli_v0128_edit_stdin_guard.rs` (3), `cli_v0128_batch_backup.rs` (6)
+
+
 ## O Que Há de Novo na v0.1.27
 
 - CORREÇÃO DE SEGURANÇA (BUG-SEC-001): escape do jail do workspace via symlink-directory corrigido — `canonicalize_existing_prefix` agora resolve symlinks em componentes do caminho antes da verificação de jail. Afeta: write, read, edit, edit-loop, apply, set, del, copy, move. Exit 126 na violação.

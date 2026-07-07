@@ -209,7 +209,7 @@ Adições v0.1.12:
 
 ## Architecture Decision Records (ADRs)
 - Veja `docs/decisions/README.md` para o índice completo de ADRs
-- 19 ADRs foram adicionados desde a v0.1.12 (0019-0037), todos seguindo o formato Michael Nygard (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
+- 32 ADRs foram adicionados desde a v0.1.12 (0019-0050), todos seguindo o formato Michael Nygard (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
 - 0019 — escolha de tree-sitter-language-pack
 - 0020 — path do WAL sidecar e shape JSONL
 - 0021 — v14 query/outline aceita apenas kind names, não S-expressions
@@ -222,8 +222,6 @@ Adições v0.1.12:
 - 0028 — G119 limpeza WAL em 5 camadas: L1 WalPolicy, L2 JournalGuard, L3 auto-heal no startup, L4 HeuristicsEngine, L5 telemetria wal-stats (v0.1.15-v0.1.17)
 - 0029 — G120 guard de stdin vazio em 4 camadas: L1 read_stdin_content, L2 handle_append_prepend, L3 warning de cross-validation, L4 telemetria stdin_bytes_read (v0.1.16)
 - 0030 — trio v0.1.18: replace pré-valida paths raiz, G120 L3 teste cross-flag, G117 casos de borda Unicode/CRLF/multi-par
-- 0026 — G117 edit multi-par: paridade fuzzy, relato por par, --partial opt-in (v0.1.15)
-- 0027 — G118 write resolve o alvo antes dos pré-passos (v0.1.15)
 
 
 - 0031 — Canonização de exit codes: 7 derivas de documentação consolidadas para casar com a lista canônica (v0.1.19)
@@ -243,6 +241,9 @@ Adições v0.1.12:
 - 0045 — suggestion acionável para erros de parsing do clap (v0.1.24)
 - 0046 — retrofit diff resolve-first (v0.1.24)
 - 0047 — correção do modo read-only do scope (v0.1.24)
+- 0048 — BackupOpts unificado: struct única flattened via `#[command(flatten)]` em 15 subcomandos mutantes, resolvida por um único `resolve_backup()` com precedência `ATOMWRITE_BACKUP` env > flags CLI > `.atomwrite.toml` `[defaults]` > default embutido (v0.1.28)
+- 0049 — config viva encanada: `load_config` chamado uma única vez em `lib.rs::run()`, `DefaultsSection` propagado a cada handler mutante (v0.1.28)
+- 0050 — guard de stdin-tty: `main.rs` calcula `stdin.is_terminal()` (std `IsTerminal`, Rust >= 1.70) e propaga `stdin_is_tty` até `cmd_edit`; modos consumidores de stdin falham rápido com exit 65 em vez de bloquear indefinidamente (v0.1.28)
 
 
 ## Arquitetura de Testes

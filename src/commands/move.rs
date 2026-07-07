@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 
 use crate::checksum;
 use crate::cli::{GlobalArgs, MoveArgs};
+use crate::commands::resolve_backup;
 use crate::error::AtomwriteError;
 use crate::ndjson_types::{MoveOutput, TransferPlan};
 use crate::output::NdjsonWriter;
@@ -28,9 +29,11 @@ pub fn cmd_move(
     args: &MoveArgs,
     global: &GlobalArgs,
     writer: &mut NdjsonWriter<impl Write>,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
+    let resolved = resolve_backup(&args.backup_opts, defaults);
 
     let source = crate::path_safety::validate_path(&args.source, &workspace)?;
     let target = crate::path_safety::validate_path(&args.target, &workspace)?;
@@ -58,7 +61,14 @@ pub fn cmd_move(
         }
     }
 
-    if target.exists() && !args.force && !args.backup {
+    // v0.1.28 GAP-CLI-SURFACE-DRIFT: overwrite requires an EXPLICIT authorization
+    // (--force, --backup, or ATOMWRITE_BACKUP enabled) now that backup defaults to true.
+    let env_backup_enabled = std::env::var("ATOMWRITE_BACKUP")
+        .map(|v| v != "0")
+        .unwrap_or(false);
+    let overwrite_authorized =
+        args.force || args.backup_opts.backup == Some(true) || env_backup_enabled;
+    if target.exists() && !overwrite_authorized {
         return Err(AtomwriteError::InvalidInput {
             reason: format!(
                 "target {} already exists, use --force or --backup",
@@ -79,8 +89,8 @@ pub fn cmd_move(
         return Ok(());
     }
 
-    let backup_path = if args.backup && target.exists() {
-        let bp = crate::atomic::create_backup(&target, args.retention)?;
+    let backup_path = if resolved.backup && target.exists() {
+        let bp = crate::atomic::create_backup(&target, resolved.retention)?;
         Some(bp.display().to_string())
     } else {
         None

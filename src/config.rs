@@ -25,7 +25,7 @@ pub struct DefaultsSection {
     /// Enable backup by default.
     pub backup: bool,
     /// Number of backups to retain.
-    pub retention: u32,
+    pub retention: u8,
     /// Line ending mode: auto, lf, crlf, cr.
     pub line_ending: String,
     /// Maximum file size in bytes.
@@ -36,7 +36,7 @@ impl Default for DefaultsSection {
     fn default() -> Self {
         Self {
             backup: true,
-            retention: 5,
+            retention: crate::constants::DEFAULT_BACKUP_RETENTION,
             line_ending: "auto".into(),
             max_filesize: 1_073_741_824,
         }

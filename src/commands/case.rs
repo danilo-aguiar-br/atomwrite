@@ -46,11 +46,12 @@ pub fn cmd_case(
     args: &CaseArgs,
     global: &GlobalArgs,
     writer: &mut NdjsonWriter<impl Write>,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
     let dry_run = args.dry_run;
-    let effective_backup = resolve_backup(args.backup, args.no_backup);
+    let resolved = resolve_backup(&args.backup_opts, defaults);
 
     if args.subvert.is_empty() {
         return Err(crate::error::AtomwriteError::InvalidInput {
@@ -120,15 +121,15 @@ pub fn cmd_case(
                 continue;
             }
             let opts = AtomicWriteOptions {
-                backup: effective_backup,
+                backup: resolved.backup,
                 syntax_check: false,
-                retention: 5,
+                retention: resolved.retention,
                 preserve_timestamps: args.preserve_timestamps,
                 backup_output_dir: None,
                 strategy: None,
                 strict_atomic: false,
                 wal_policy: crate::wal::WalPolicy::Auto,
-                keep_backup: false,
+                keep_backup: resolved.keep,
             };
             let _ = atomic_write(&validated, new_content.as_bytes(), &opts, &workspace)?;
             writer.write_event(&CaseResult {

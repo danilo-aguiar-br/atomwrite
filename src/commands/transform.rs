@@ -53,12 +53,13 @@ pub fn cmd_transform(
     global: &GlobalArgs,
     writer: &mut NdjsonWriter<impl Write>,
     shutdown: &ShutdownSignal,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
-    let effective_backup = resolve_backup(args.backup, args.no_backup);
+    let resolved_backup = resolve_backup(&args.backup_opts, defaults);
 
     // G44: multi-rule mode dispatch.
     if args.rules.is_some() || args.inline_rules.is_some() {
-        return cmd_transform_multi(args, global, writer, shutdown);
+        return cmd_transform_multi(args, global, writer, shutdown, defaults);
     }
 
     // Single-rule mode: validate the three required flags.
@@ -169,7 +170,7 @@ pub fn cmd_transform(
 
     let max_size = global.effective_max_filesize();
     let shutdown_flag = shutdown.flag();
-    let backup_flag = effective_backup;
+    let backup_flag = resolved_backup.backup;
     let verify_parse = args.verify_parse;
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
@@ -386,9 +387,10 @@ fn cmd_transform_multi(
     global: &GlobalArgs,
     writer: &mut NdjsonWriter<impl Write>,
     _shutdown: &ShutdownSignal,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     let start = Instant::now();
-    let effective_backup = resolve_backup(args.backup, args.no_backup);
+    let effective_backup = resolve_backup(&args.backup_opts, defaults);
 
     // Load the YAML rules.
     let rules: Vec<YamlRule> = if let Some(path) = &args.rules {
@@ -431,8 +433,12 @@ fn cmd_transform_multi(
             dry_run: args.dry_run,
             rules: None,
             inline_rules: None,
-            backup: effective_backup,
-            no_backup: false,
+            backup_opts: crate::cli_args::BackupOpts {
+                backup: effective_backup.backup.then_some(true),
+                no_backup: !effective_backup.backup,
+                keep_backup: effective_backup.keep,
+                retention: Some(effective_backup.retention),
+            },
             verify_parse: args.verify_parse,
         };
 
@@ -444,7 +450,7 @@ fn cmd_transform_multi(
             "language": rule.language,
         }))?;
 
-        match cmd_transform(&synthetic_args, global, writer, _shutdown) {
+        match cmd_transform(&synthetic_args, global, writer, _shutdown, defaults) {
             Ok(()) => {
                 // The inner cmd_transform already emitted a Summary event.
                 // The outer caller will emit a final summary below.

@@ -78,9 +78,50 @@ All additive. No existing dependency removed.
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
 ## Current Version
-- atomwrite is at v0.1.27
-- This document covers migration from v0.1.0 through v0.1.27
+- atomwrite is at v0.1.28
+- This document covers migration from v0.1.0 through v0.1.28
 - See the sections below for additive changes and breaking changes in each version
+
+
+## v0.1.27 to v0.1.28 (2026-07-06)
+
+### BREAKING Changes
+
+- `delete` now creates a backup by default (was opt-in) — pass `--no-backup` to disable; `--keep-backup` on `delete` is redundant (deletion backups are always preserved and never auto-removed) and now surfaces a `warnings` field in the NDJSON envelope instead of a silent no-op
+- `move`/`copy` overwriting an existing destination now require `--force` OR an explicit `--backup` — previously the two subcommands enforced this inconsistently
+
+### Bug Fixes (Critical) — GAP-CLI-SURFACE-DRIFT
+
+- Extracted a single `BackupOpts` struct (`--backup`, `--no-backup`, `--keep-backup`, `--retention <N>`) flattened via `#[command(flatten)]` into 15 mutating subcommands: `write`, `edit`, `edit-loop`, `replace`, `transform`, `scope`, `apply`, `set`, `del`, `case`, `batch`, `delete`, `move`, `copy`, `rollback`
+- `replace --retention` and `delete --no-backup` now parse successfully — previously both returned exit 2 `ARGUMENT_PARSE_ERROR` because each struct redeclared the backup flags by hand with divergent presence and defaults
+- `--backup` and `--no-backup` are now mutually exclusive via `conflicts_with` (exit 2) instead of the last flag silently winning
+- `rollback` keeps its pre-rollback safety snapshot opt-in via explicit `--backup`, documented as an intentional exception to the unified default-true contract
+- Added a shared `edit` stdin-tty guard: `--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`, and `--multi` now fail fast with exit 65 `INVALID_INPUT` and an actionable `suggestion` when stdin is a terminal, instead of blocking indefinitely (previously required an external timeout and exited 143)
+- `edit`'s stdin-consuming modes now reject `--old`/`--new`/`--old-file`/`--new-file` at parse time via `conflicts_with_all` (exit 2) instead of silently dispatching into `edit_by_marker`
+- Removed hardcoded `retention: 5` from 9 call sites; retention now flows end-to-end from `BackupOpts` through a single `resolve_backup()`
+- `batch --retention <N>` was accepted but silently ignored — now effective end-to-end with precedence CLI `--retention` > `.atomwrite.toml` `[defaults].retention` > built-in default (`5`), including the batch's transactional pre-backup step
+- `batch --backup` passed explicitly now forces a backup for every operation in the batch, symmetric to `--no-backup`
+
+### Bug Fixes (High) — GAP-CONFIG-DEFAULTS-DEAD
+
+- `.atomwrite.toml` `[defaults]` `backup`/`retention` keys are now effective across every mutating subcommand — `resolve_backup()` previously took only `(backup: bool, no_backup: bool)` and never consulted the parsed config
+- Precedence is now `ATOMWRITE_BACKUP` env var > CLI flags (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > built-in default (`true` / `5`)
+
+### Migration Action
+
+- Update version pin: `cargo install atomwrite --locked --version "^0.1.28"`
+- **BREAKING**: If you rely on `delete` never creating a backup by default, pass `--no-backup` explicitly — the default flipped from opt-in to opt-out
+- **BREAKING**: If you script `move`/`copy` to overwrite an existing destination, pass `--force` or `--backup` — the two subcommands now enforce this consistently
+- If you previously worked around `replace --retention` or `delete --no-backup` returning exit 2: both now parse successfully
+- If you pass both `--backup` and `--no-backup` together: this now fails fast with exit 2 instead of the last flag silently winning
+- If your `.atomwrite.toml` sets `[defaults]` `backup`/`retention`: these are now honored across every mutating subcommand — verify your project config reflects the intended behavior
+- If you invoke `edit`'s stdin-consuming modes (`--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`, `--multi`) interactively without piping stdin: this now fails fast with exit 65 `INVALID_INPUT` instead of blocking indefinitely
+- MSRV unchanged at Rust 1.88
+
+### Test Coverage
+
+- 661 tests passing, 0 failures, 3 ignored
+- 33 subcommands, 32 ADRs in `docs/decisions/`
 
 
 ## v0.1.26 to v0.1.27 (2026-06-24)

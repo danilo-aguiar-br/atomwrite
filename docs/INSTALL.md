@@ -50,7 +50,7 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 
 ### Test Coverage
 
-- 631 tests passing (621 in v0.1.24 + 10 in v0.1.25)
+- 661 tests passing (v0.1.28)
 - 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/`
 - See [docs/decisions/README.md](README.md) for architectural decisions
@@ -307,7 +307,7 @@ This release introduces a new safety layer called **intention guards** and renam
 
 ### Statistics
 
-- 631 tests passing (621 in v0.1.24 + 10 in v0.1.25)
+- 661 tests passing (v0.1.28)
 - 11 GAP-2026 closed
 - 3 Windows cross-compile targets green
 - 19 ADRs in `docs/decisions/` (0019-0037)

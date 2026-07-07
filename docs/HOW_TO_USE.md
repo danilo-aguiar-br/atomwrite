@@ -861,6 +861,48 @@ max_filesize = 10485760
 - 3 JSON schemas updated
 
 
+## v0.1.28 — What Is New
+
+This release closes two audit gaps (GAP-CLI-SURFACE-DRIFT, GAP-CONFIG-DEFAULTS-DEAD) by unifying backup flag handling across all 15 mutating subcommands and wiring `.atomwrite.toml` `[defaults]` end-to-end, plus adds a stdin-tty guard to `edit`'s stdin-consuming modes.
+
+### BREAKING Changes
+
+- `delete` now creates a backup by default (was opt-in) — pass `--no-backup` to disable
+- `--keep-backup` on `delete` is redundant (deletion backups are always preserved and never auto-removed) — now surfaces a `warnings` field in the NDJSON envelope instead of a silent no-op
+- `move`/`copy` overwriting an existing destination now require `--force` OR an explicit `--backup` — previously enforced inconsistently between the two subcommands
+
+### Unified BackupOpts (ADR-0048)
+
+- A single `BackupOpts` struct (`--backup`, `--no-backup`, `--keep-backup`, `--retention <N>`) is now flattened via `#[command(flatten)]` into all 15 mutating subcommands: `write`, `edit`, `edit-loop`, `replace`, `transform`, `scope`, `apply`, `set`, `del`, `case`, `batch`, `delete`, `move`, `copy`, `rollback`
+- `replace --retention` and `delete --no-backup` now parse successfully — previously returned exit 2 `ARGUMENT_PARSE_ERROR` because each struct redeclared the flags by hand with divergent presence and defaults
+- `--backup` and `--no-backup` are mutually exclusive via `conflicts_with` (exit 2) instead of the last flag silently winning
+- `rollback` keeps its pre-rollback safety snapshot opt-in via explicit `--backup` — a documented exception to the unified default-true contract
+- Zero hardcoded `retention: 5` literals remain; `Default` impls in `config.rs`/`atomic.rs` read `constants::DEFAULT_BACKUP_RETENTION`
+
+### Live Config Plumbing (ADR-0049)
+
+- `.atomwrite.toml` `[defaults]` `backup`/`retention` keys are now effective across every mutating subcommand, closing GAP-CONFIG-DEFAULTS-DEAD
+- Precedence: `ATOMWRITE_BACKUP` env var > CLI flags (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > built-in default (`true`/`5`)
+- `batch --retention <N>` and `batch --backup` are now effective end-to-end, including the transactional pre-backup step and the `delete` operation inside a batch
+
+### Edit stdin-tty Guard (ADR-0050)
+
+- `edit`'s stdin-consuming modes (`--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`, `--multi`) now fail fast with exit 65 (`INVALID_INPUT`) and an actionable `suggestion` when stdin is a terminal, instead of blocking indefinitely
+- These same stdin-consuming modes now reject `--old`/`--new`/`--old-file`/`--new-file` at parse time via `conflicts_with_all` (exit 2) instead of silently dispatching into `edit_by_marker`
+
+```bash
+# Interactive terminal now fails fast instead of hanging
+atomwrite --workspace . edit src/main.rs --after-line 10
+# exit 65 INVALID_INPUT — suggestion: pipe content via stdin, e.g. `echo "text" | atomwrite ... edit --after-line 10`
+```
+
+### Statistics
+
+- 661 tests passing, 0 failures, 3 ignored
+- 3 new ADRs: 0048 (unified BackupOpts), 0049 (live config plumbing), 0050 (stdin-tty guard)
+- New test files: `cli_v0128_backup_matrix.rs` (12 tests), `cli_v0128_config_defaults.rs` (6 tests), `cli_v0128_edit_stdin_guard.rs` (3 tests), `cli_v0128_batch_backup.rs` (6 tests)
+
+
 ## v0.1.24 — What Is New
 
 - ERROR HANDLING OVERHAUL

@@ -90,8 +90,14 @@ pub fn cmd_batch(
     transaction: bool,
     manifest_path: Option<&std::path::Path>,
     shutdown: &ShutdownSignal,
-    keep_backup: bool,
+    backup_opts: &crate::cli_args::BackupOpts,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
+    let resolved = crate::commands::resolve_backup(backup_opts, defaults);
+    let retention = resolved.retention;
+    let keep_backup = resolved.keep;
+    let no_backup = backup_opts.no_backup;
+    let backup_explicit = backup_opts.backup == Some(true);
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
 
@@ -166,7 +172,7 @@ pub fn cmd_batch(
         let paths = collect_target_paths(&ops, &workspace);
         let mut pairs = Vec::with_capacity(paths.len());
         for path in paths {
-            let backup = crate::atomic::create_backup(&path, 5)
+            let backup = crate::atomic::create_backup(&path, retention)
                 .with_context(|| format!("transaction pre-backup failed for {}", path.display()))?;
             pairs.push((path, backup));
         }
@@ -206,7 +212,17 @@ pub fn cmd_batch(
         } else {
             false
         };
-        let result = execute_op(op, idx, &workspace, global, dry_run, keep_backup);
+        let result = execute_op(
+            op,
+            idx,
+            &workspace,
+            global,
+            dry_run,
+            keep_backup,
+            no_backup,
+            backup_explicit,
+            retention,
+        );
 
         match result {
             Ok(details) => {
@@ -395,6 +411,7 @@ fn rollback_transaction(
     Ok((restored, removed))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_op(
     op: &BatchOp,
     _idx: usize,
@@ -402,16 +419,63 @@ fn execute_op(
     global: &GlobalArgs,
     dry_run: bool,
     keep_backup: bool,
+    no_backup: bool,
+    backup_explicit: bool,
+    retention: u8,
 ) -> Result<String> {
     let max_size = global.effective_max_filesize();
     match op.op.as_str() {
-        "write" => execute_write(op, workspace, dry_run, keep_backup),
-        "replace" => execute_replace(op, workspace, dry_run, max_size, keep_backup),
-        "delete" => execute_delete(op, workspace, dry_run, max_size),
-        "edit" => execute_edit(op, workspace, dry_run, max_size, keep_backup),
+        "write" => execute_write(
+            op,
+            workspace,
+            dry_run,
+            keep_backup,
+            no_backup,
+            backup_explicit,
+            retention,
+        ),
+        "replace" => execute_replace(
+            op,
+            workspace,
+            dry_run,
+            max_size,
+            keep_backup,
+            no_backup,
+            backup_explicit,
+            retention,
+        ),
+        "delete" => execute_delete(
+            op,
+            workspace,
+            dry_run,
+            max_size,
+            keep_backup,
+            no_backup,
+            backup_explicit,
+            retention,
+        ),
+        "edit" => execute_edit(
+            op,
+            workspace,
+            dry_run,
+            max_size,
+            keep_backup,
+            no_backup,
+            backup_explicit,
+            retention,
+        ),
         "hash" => execute_hash(op, workspace, max_size),
         "move" => execute_move(op, workspace, dry_run),
-        "copy" => execute_copy(op, workspace, dry_run, max_size, keep_backup),
+        "copy" => execute_copy(
+            op,
+            workspace,
+            dry_run,
+            max_size,
+            keep_backup,
+            no_backup,
+            backup_explicit,
+            retention,
+        ),
         _ => bail!("unsupported batch operation: {}", op.op),
     }
 }
@@ -421,6 +485,9 @@ fn execute_write(
     workspace: &std::path::Path,
     dry_run: bool,
     keep_backup: bool,
+    no_backup: bool,
+    backup_explicit: bool,
+    retention: u8,
 ) -> Result<String> {
     let target = op.resolve_file_path()?;
     let content = op
@@ -435,9 +502,9 @@ fn execute_write(
     }
 
     let opts = AtomicWriteOptions {
-        backup: op.backup || keep_backup,
+        backup: !no_backup && (op.backup || keep_backup || backup_explicit),
         syntax_check: false,
-        retention: 5,
+        retention,
         preserve_timestamps: false,
         backup_output_dir: None,
         strategy: None,
@@ -452,12 +519,16 @@ fn execute_write(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_replace(
     op: &BatchOp,
     workspace: &std::path::Path,
     dry_run: bool,
     max_size: u64,
     keep_backup: bool,
+    no_backup: bool,
+    backup_explicit: bool,
+    retention: u8,
 ) -> Result<String> {
     let path_str = op.resolve_file_path()?;
     let pattern =
@@ -490,9 +561,9 @@ fn execute_replace(
 
     let checksum_before = checksum::hash_bytes(content.as_bytes());
     let opts = AtomicWriteOptions {
-        backup: op.backup || keep_backup,
+        backup: !no_backup && (op.backup || keep_backup || backup_explicit),
         syntax_check: false,
-        retention: 5,
+        retention,
         preserve_timestamps: false,
         backup_output_dir: None,
         strategy: None,
@@ -507,11 +578,16 @@ fn execute_replace(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_delete(
     op: &BatchOp,
     workspace: &std::path::Path,
     dry_run: bool,
     max_size: u64,
+    keep_backup: bool,
+    no_backup: bool,
+    backup_explicit: bool,
+    retention: u8,
 ) -> Result<String> {
     let target = op.resolve_file_path()?;
 
@@ -529,8 +605,8 @@ fn execute_delete(
         return Ok(format!("would delete {target}"));
     }
 
-    if op.backup {
-        crate::atomic::create_backup(&validated, 5)
+    if !no_backup && (op.backup || keep_backup || backup_explicit) {
+        crate::atomic::create_backup(&validated, retention)
             .with_context(|| format!("cannot backup {target}"))?;
     }
 
@@ -550,12 +626,16 @@ fn execute_delete(
     Ok(format!("deleted {target}, checksum_before={checksum}"))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_edit(
     op: &BatchOp,
     workspace: &std::path::Path,
     dry_run: bool,
     max_size: u64,
     keep_backup: bool,
+    no_backup: bool,
+    backup_explicit: bool,
+    retention: u8,
 ) -> Result<String> {
     let path_str = op.resolve_file_path()?;
     let old = op
@@ -583,9 +663,9 @@ fn execute_edit(
     let edited = content.replacen(old, new, 1);
     let checksum_before = checksum::hash_bytes(content.as_bytes());
     let opts = AtomicWriteOptions {
-        backup: op.backup || keep_backup,
+        backup: !no_backup && (op.backup || keep_backup || backup_explicit),
         syntax_check: false,
-        retention: 5,
+        retention,
         preserve_timestamps: false,
         backup_output_dir: None,
         strategy: None,
@@ -658,12 +738,16 @@ fn execute_move(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Res
     Ok(format!("moved {source_str} to {dest_str}"))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_copy(
     op: &BatchOp,
     workspace: &std::path::Path,
     dry_run: bool,
     max_size: u64,
     keep_backup: bool,
+    no_backup: bool,
+    backup_explicit: bool,
+    retention: u8,
 ) -> Result<String> {
     let source_str = op
         .source
@@ -700,9 +784,9 @@ fn execute_copy(
     let content = crate::file_io::read_file_bytes(&source, max_size)
         .with_context(|| format!("cannot read {}", source.display()))?;
     let opts = AtomicWriteOptions {
-        backup: op.backup || keep_backup,
+        backup: !no_backup && (op.backup || keep_backup || backup_explicit),
         syntax_check: false,
-        retention: 5,
+        retention,
         preserve_timestamps: false,
         backup_output_dir: None,
         strategy: None,

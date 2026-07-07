@@ -39,11 +39,13 @@ pub fn cmd_write(
     stdin: impl Read,
     writer: &mut NdjsonWriter<impl Write>,
     shutdown: &ShutdownSignal,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
     let resolved = crate::path_safety::validate_path(&args.target, &workspace)?;
-    let effective_backup = resolve_backup(args.backup, args.no_backup);
+    let resolved_backup = resolve_backup(&args.backup_opts, defaults);
+    let effective_backup = resolved_backup.backup;
 
     let stdin_bytes_read;
     let mut content = {
@@ -137,7 +139,8 @@ pub fn cmd_write(
 
     // GAP-2026-011 L2 — require-backup guard
     // GAP-2026-033: check no_backup explicitly since backup has default_value_t=true
-    if args.require_backup && (args.no_backup || !effective_backup) && resolved.exists() {
+    if args.require_backup && (args.backup_opts.no_backup || !effective_backup) && resolved.exists()
+    {
         return Err(AtomwriteError::InvalidInput {
             reason: "--require-backup is set but --no-backup disables backup; remove --no-backup or remove --require-backup".into(),
         }
@@ -223,7 +226,7 @@ pub fn cmd_write(
     let opts = AtomicWriteOptions {
         backup: effective_backup || auto_rotate_active,
         syntax_check: args.syntax_check,
-        retention: args.retention,
+        retention: resolved_backup.retention,
         preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
         strategy: None,
@@ -231,7 +234,7 @@ pub fn cmd_write(
         wal_policy: args.wal_policy,
         // GAP-106: --require-backup implies --keep-backup so the backup
         // is retained on disk and the reported backup_path is valid.
-        keep_backup: args.keep_backup || args.require_backup || auto_rotate_active,
+        keep_backup: resolved_backup.keep || args.require_backup || auto_rotate_active,
     };
 
     let result = atomic_write(&resolved, &content, &opts, &workspace)?;

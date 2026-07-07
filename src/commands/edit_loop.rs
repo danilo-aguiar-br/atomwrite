@@ -51,11 +51,12 @@ pub fn cmd_edit_loop(
     global: &GlobalArgs,
     stdin: impl Read,
     writer: &mut NdjsonWriter<impl Write>,
+    defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
     let target = validate_path(&args.path, &workspace)?;
-    let effective_backup = resolve_backup(args.backup, args.no_backup);
+    let resolved_backup = resolve_backup(&args.backup_opts, defaults);
 
     if !target.exists() {
         return Err(crate::error::AtomwriteError::NotFound {
@@ -135,15 +136,15 @@ pub fn cmd_edit_loop(
     }
 
     let opts = AtomicWriteOptions {
-        backup: effective_backup,
+        backup: resolved_backup.backup,
         syntax_check: args.syntax_check.is_some(),
-        retention: args.retention,
+        retention: resolved_backup.retention,
         preserve_timestamps: false,
         backup_output_dir: None,
         strategy: None,
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
-        keep_backup: args.keep_backup,
+        keep_backup: resolved_backup.keep,
     };
 
     atomic_write(&target, content.as_bytes(), &opts, &workspace)?;

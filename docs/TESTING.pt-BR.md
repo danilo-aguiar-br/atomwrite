@@ -40,7 +40,19 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 - Testes de snapshot via `insta`
 - Testes de sinal (SIGINT, SIGTERM, SIGPIPE)
 
-## O Que Há de Novo na v0.1.27 (Atual)
+## O Que Há de Novo na v0.1.28 (Atual)
+
+- 661 testes passando, 0 falhas, 3 ignorados (gate de cross-compile)
+- BREAKING: `delete` agora cria backup por padrão (era opt-in) — passe `--no-backup` para desabilitar
+- BREAKING: `move`/`copy` sobrescrevendo um destino existente agora exigem `--force` OU um `--backup` explícito
+- GAP-CLI-SURFACE-DRIFT resolvido: struct única `BackupOpts` achatada via `#[command(flatten)]` em 15 subcomandos mutantes, substituindo 15 conjuntos de flags divergentes declarados manualmente
+- GAP-CONFIG-DEFAULTS-DEAD resolvido: chaves `backup`/`retention` de `[defaults]` do `.atomwrite.toml` agora são efetivas de ponta a ponta via uma única chamada `resolve_backup()` alimentada por `load_config()` em `lib.rs::run()`
+- Novo guard compartilhado de stdin-tty no `edit`: 7 modos consumidores de stdin falham rápido com exit 65 `INVALID_INPUT` em vez de bloquear indefinidamente quando stdin é um terminal
+- Novos arquivos de teste: `cli_v0128_backup_matrix.rs` (12 testes), `cli_v0128_config_defaults.rs` (6 testes), `cli_v0128_edit_stdin_guard.rs` (3 testes), `cli_v0128_batch_backup.rs` (6 testes)
+- 33 subcomandos, 32 ADRs (0019-0050)
+
+
+## O Que Há de Novo na v0.1.27
 
 - 631+ testes passando, 0 falhas, 3 ignorados (gate de cross-compile)
 - 10 bugs corrigidos: BUG-SEC-001 (CRÍTICO escape via symlink-dir), BUG-SCOPE-004 (CRÍTICO scope --delete destrói código), BUG-GET, BUG-001, BUG-002, BUG-005, BUG-008, BUG-SCOPE-002, BUG-SCOPE-003, BUG-SCOPE-005
@@ -158,7 +170,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ## Estatísticas Atuais
 - 70+ arquivos Rust em `src/` e `tests/`
-- **631+ testes no total em 63+ suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
+- **661 testes no total em 63+ suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
 - **96 novos testes adicionados em v0.1.11+v0.1.12**:
   - 11 testes em `tests/cli_v012_regressions.rs` (fixes GAP 13, GAP 14, GAP 18)
   - 27 testes em `tests/cli_v012_audit_regressions.rs` (auditoria v0.1.12 G72/G114)

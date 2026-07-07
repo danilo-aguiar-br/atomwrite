@@ -750,6 +750,12 @@ pub struct DeleteOutput {
     pub checksum_before: String,
     /// Duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Non-fatal warnings about backup flag combinations that had no
+    /// effect (v0.1.28 GAP-CLI-SURFACE-DRIFT), e.g. `--keep-backup` is
+    /// redundant for delete because deletion backups are always
+    /// preserved. Empty when there is nothing to warn about.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// NDJSON output for count grouped by file extension.
@@ -1430,6 +1436,7 @@ mod tests {
             bytes: 150,
             checksum_before: "dhash".into(),
             elapsed_ms: 1,
+            warnings: vec![],
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);

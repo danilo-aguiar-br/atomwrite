@@ -55,3 +55,9 @@
   - [PT-BR](0046-diff-resolve-first-retrofit.pt-BR.md) — tradução automática
 - [0047 — scope read-only mode fix](0047-scope-readonly-mode-fix.md) — scope read-only mode now correctly reports files_matched via Node::find_all; files_modified=None when no action configured
   - [PT-BR](0047-scope-readonly-mode-fix.pt-BR.md) — tradução automática
+- [0048 — unified BackupOpts](0048-unified-backup-opts.md) — single BackupOpts struct flattened via #[command(flatten)] into 15 mutating subcommands; single resolve_backup() with precedence ATOMWRITE_BACKUP env > CLI flags > .atomwrite.toml [defaults] > built-in default
+  - [PT-BR](0048-unified-backup-opts.pt-BR.md) — tradução automática
+- [0049 — live config plumbing](0049-live-config-plumbing.md) — load_config called once in lib.rs::run(); DefaultsSection propagated to every mutating handler, closing GAP-CONFIG-DEFAULTS-DEAD
+  - [PT-BR](0049-live-config-plumbing.pt-BR.md) — tradução automática
+- [0050 — stdin-tty guard](0050-stdin-tty-guard.md) — main.rs computes stdin.is_terminal() once and propagates stdin_is_tty down to cmd_edit; stdin-consuming edit modes fail fast with exit 65 instead of blocking indefinitely
+  - [PT-BR](0050-stdin-tty-guard.pt-BR.md) — tradução automática
