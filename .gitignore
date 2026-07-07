@@ -49,3 +49,4 @@ graphrag.sqlite-wal
 .cargo/config.toml
 gaps.md
 fuzz/corpus/
+.serena/
