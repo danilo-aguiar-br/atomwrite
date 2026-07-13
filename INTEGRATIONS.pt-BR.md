@@ -6,12 +6,16 @@
 > atomwrite funciona com todo agente LLM que pode executar comandos shell
 
 
-## Agentes Compatíveis (v0.1.29)
+## Agentes Compatíveis (v0.1.30)
 - atomwrite requer apenas acesso a `bash` para funcionar
 - Qualquer agente que pode executar um comando shell pode usar atomwrite
 - Saída NDJSON é parseável por todo LLM principal sem adaptadores customizados
 - Sem plugins, extensões ou SDKs necessários
-- **41 subcomandos** a partir da v0.1.29 (8 novos: semantic-merge, sparse, recipe, stat, agent-surface, watch, codemod, semantic-search)
+- **41 subcomandos** a partir da v0.1.30 (superfície da v0.1.29 mais correções de contrato residual)
+- Em sucesso de `edit --replace-all` parseie `match_count`; em indent flexível parseie `indent_adjusted`
+- Fuzzy é obrigatório (`auto`/`aggressive`); `--fuzzy off` é rejeitado (exit 65)
+- Backup reporta `reflink_or_copy` — nunca hardlink do arquivo vivo
+- Recipe exclui `*.bak.*` inclusive no passo hash
 - Use `agent-surface` para o manifesto de tools — MCP não é fornecido
 - Prefira `recipe list|run` para pipelines search-replace-verify
 - Leia `best_candidate` em falhas de match (exit 65) em vez de reler o arquivo inteiro

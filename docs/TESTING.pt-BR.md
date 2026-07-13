@@ -40,10 +40,11 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 - Testes de snapshot via `insta`
 - Testes de sinal (SIGINT, SIGTERM, SIGPIPE)
 
-## O Que Há de Novo na v0.1.29 (Atual)
+## O Que Há de Novo na v0.1.30 (Atual)
 
+- A suíte `tests/cli_v0130_agent_contract.rs` cobre o contrato residual: match_count, indent_adjusted, fuzzy off rejeitado, config fuzzy off rejeitado, recipe bak skip, sparse outline kind, semantic-merge help line-based, unicidade replace-all
 - A suíte `tests/cli_v0129_fuzzy_replace.rs` cobre a superfície 0.1.29: replace fuzzy, `best_candidate`, durability, recipe, sparse, semantic-merge, stat, agent-surface, semantic-search, `platform.rename_method`
-- `replace --fuzzy auto|off|aggressive` com `--fuzzy-threshold` opcional e `--progress-every` em massa
+- `replace --fuzzy auto|aggressive` (off rejeitado) com `--fuzzy-threshold` opcional e `--progress-every` em massa
 - Envelopes de falha de match podem incluir `best_candidate` (schema `best-candidate.schema.json`)
 - Cancel cooperativo emite eventos NDJSON `cancelled` (schema `cancelled-event.schema.json`, exit 143)
 - O NDJSON do write reporta `platform.rename_method` (`renameat2` ou `rename`)
@@ -51,6 +52,7 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 - Novos subcomandos: `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch` (feature), `codemod`, `semantic-search` — **41 subcomandos** no total
 - Matriz de features: slim `core` (~7.7 MiB, CI ≤15 MiB) vs default/full AST (~52 MB)
 - Jobs de CI: `size-gate` (slim ≤15 MiB), `core-test` (`--no-default-features --features core`), `schema-diff` (drift de regen em `docs/schemas`)
+- Rode a suíte de contrato 0.1.30: `cargo test --test cli_v0130_agent_contract`
 - Rode a suíte 0.1.29: `cargo test --test cli_v0129_fuzzy_replace`
 
 ## O Que Há de Novo na v0.1.28
@@ -143,6 +145,8 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 # Executar todos os testes
 cargo test
 
+# Executar a suíte de contrato residual v0.1.30
+cargo test --test cli_v0130_agent_contract
 # Executar a suíte v0.1.29 (replace fuzzy + nova superfície)
 cargo test --test cli_v0129_fuzzy_replace
 
@@ -189,7 +193,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ## Estatísticas Atuais
 - 70+ arquivos Rust em `src/` e `tests/`
-- **683 testes listados (working tree v0.1.29) em 63+ suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
+- **700+ testes listados (working tree v0.1.30) em 63+ suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
 - **96 novos testes adicionados em v0.1.11+v0.1.12**:
   - 11 testes em `tests/cli_v012_regressions.rs` (fixes GAP 13, GAP 14, GAP 18)
   - 27 testes em `tests/cli_v012_audit_regressions.rs` (auditoria v0.1.12 G72/G114)
@@ -396,7 +400,7 @@ cargo insta review
 - Execute `cargo test --test proptest_backup` com `PROPTEST_CASES=1000`
 - Verifique que todos os snapshots estão atualizados com `cargo insta test`
 
-### Jobs de CI (v0.1.29 — de `.github/workflows/ci.yml`)
+### Jobs de CI (v0.1.30 — de `.github/workflows/ci.yml`)
 - `size-gate` — binário slim core ≤15 MiB (`15728640` bytes)
   - `cargo build --release --no-default-features --features core`
   - `test "$(stat -c%s target/release/atomwrite)" -le 15728640`

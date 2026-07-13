@@ -7,7 +7,7 @@ use atomwrite::{FuzzyMode, match_pair};
 use proptest::prelude::*;
 
 proptest! {
-    // Property 1: an exact substring is always resolved with strategy "exact".
+    // Property 1: a unique exact substring is always resolved with strategy "exact".
     #[test]
     fn exact_substring_always_matches(
         prefix in "[a-zA-Z0-9 ]{0,50}",
@@ -15,9 +15,13 @@ proptest! {
         suffix in "[a-zA-Z0-9 ]{0,50}",
         replacement in "[a-zA-Z0-9]{1,20}",
     ) {
+        // Guard uniqueness (v0.1.30): skip when target appears more than once.
         let content = format!("{prefix}{target}{suffix}");
+        if content.matches(&target).count() != 1 {
+            return Ok(());
+        }
         let result = match_pair(&content, &target, &replacement, FuzzyMode::Auto, None);
-        prop_assert!(result.is_ok(), "exact substring must always match");
+        prop_assert!(result.is_ok(), "unique exact substring must always match");
         let (output, info) = result.unwrap();
         prop_assert_eq!(info.strategy, "exact");
         prop_assert!(!info.fuzzy);
@@ -35,22 +39,14 @@ proptest! {
         // Just verifying no panic occurs.
     }
 
-    // Property 3: an empty `old` resolves to an exact match at position 0 and
-    // never panics. The cascade uses memchr::memmem, which finds an empty
-    // needle at offset 0, so an empty `old` inserts `new` at the start. The
-    // production caller guards against empty `old` upstream; this asserts the
-    // raw match_pair contract holds without panicking.
+    // Property 3: empty `old` is rejected (v0.1.30) without panic.
     #[test]
     fn empty_old_inserts_at_start(
         content in "[a-zA-Z]{1,50}",
         new_text in "[a-zA-Z]{1,20}",
     ) {
         let result = match_pair(&content, "", &new_text, FuzzyMode::Auto, None);
-        prop_assert!(result.is_ok(), "empty old must resolve as exact match");
-        let (output, info) = result.unwrap();
-        prop_assert_eq!(info.strategy, "exact");
-        prop_assert!(!info.fuzzy);
-        prop_assert_eq!(output, format!("{new_text}{content}"));
+        prop_assert!(result.is_err(), "empty old must be rejected");
     }
 
     // Property 4: threshold 1.0 only accepts near-exact fuzzy matches.

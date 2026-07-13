@@ -150,6 +150,46 @@ pub fn cmd_outline(
     Ok(())
 }
 
+/// Emit structural outline items for one file (used by `outline` and `sparse outline`).
+///
+/// Returns the number of items emitted. Parse failures return `Ok(0)` so callers
+/// can skip unsupported/binary files under a budget.
+pub fn emit_outline_for_path(
+    path: &std::path::Path,
+    content: &[u8],
+    language: Option<&str>,
+    writer: &mut NdjsonWriter<impl Write>,
+) -> Result<usize> {
+    let lang_name = match crate::commands::query::resolve_language_name(language, path, content) {
+        Ok(l) => l,
+        Err(_) => return Ok(0),
+    };
+    let mut parser = match tree_sitter_language_pack::get_parser(&lang_name) {
+        Ok(p) => p,
+        Err(_) => return Ok(0),
+    };
+    let tree = match parser
+        .parse(std::str::from_utf8(content).unwrap_or(""))
+        .or_else(|| parser.parse_bytes(content))
+    {
+        Some(t) => t,
+        None => return Ok(0),
+    };
+    let root = tree.root_node();
+    let mut items = 0usize;
+    walk_outline(
+        &root,
+        content,
+        path,
+        &lang_name,
+        &None,
+        false,
+        writer,
+        &mut items,
+    )?;
+    Ok(items)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn walk_outline(
     root: &tree_sitter_language_pack::Node,

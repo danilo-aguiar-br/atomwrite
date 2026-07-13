@@ -28,10 +28,10 @@
 
 ## Consequências
 - Agentes devem pin cargo install --path . --force até publicar crates.io 0.1.29
-- Pipelines exact-only no replace precisam de --fuzzy off
+- Pipelines exact-only no replace precisavam de --fuzzy off na 0.1.29; na 0.1.30 off é rejeitado (ver ADR-0052)
 - Build slim omite AST e retorna exit 78 nos stubs
 - Documentação histórica que cita 33 subcomandos permanece em seções de versões antigas
-- Seções Current de README, INSTALL, MIGRATION, TESTING, skills e schemas apontam para 0.1.29
+- Seções Current na época da 0.1.29 apontavam para 0.1.29; a 0.1.30 residual superou Current via ADR-0052
 
 
 ## Alternativas rejeitadas

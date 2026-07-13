@@ -62,3 +62,4 @@
 - [0050 — stdin-tty guard](0050-stdin-tty-guard.md) — main.rs computes stdin.is_terminal() once and propagates stdin_is_tty down to cmd_edit; stdin-consuming edit modes fail fast with exit 65 instead of blocking indefinitely
   - [PT-BR](0050-stdin-tty-guard.pt-BR.md) — tradução automática
 - [0051 — v0.1.29 gap close and docs](0051-v0-1-29-gap-close-and-docs.md) — fecha P0–P3 e residuais: fuzzy compartilhado, best_candidate, features core/slim, recipe real, durability, renameat2, agent-surface anti-MCP, foundation P3, schemas e documentação EN/PT alinhados à 0.1.29
+- [0052 — v0.1.30 residual agent contract](0052-v0-1-30-residual-agent-contract.md) — fecha residual P17–P24: match_count, indent_adjusted, fuzzy off rejeitado, backup reflink_or_copy, recipe bak skip, sparse outline AST real, semantic-merge line-based, schema e docs

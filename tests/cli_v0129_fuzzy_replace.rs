@@ -43,6 +43,7 @@ fn replace_fuzzy_off_exits_no_matches() {
     let file = dir.path().join("a.rs");
     std::fs::write(&file, "fn main() {\n    let x = 1;\n}\n").unwrap();
 
+    // v0.1.30: --fuzzy off is rejected (exit 65), not silent zero-matches.
     atomwrite()
         .args([
             "--workspace",
@@ -56,7 +57,8 @@ fn replace_fuzzy_off_exits_no_matches() {
         ])
         .assert()
         .failure()
-        .code(1);
+        .code(65)
+        .stdout(predicates::str::contains("0.1.30").or(predicates::str::contains("off")));
 }
 
 #[test]
@@ -336,7 +338,7 @@ fn replace_many_files_completes_or_cancels_cleanly() {
             dir.path().to_str().unwrap(),
             "replace",
             "--fuzzy",
-            "off",
+            "auto",
             "old",
             "new",
             ".",

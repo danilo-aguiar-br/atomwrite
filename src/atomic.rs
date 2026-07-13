@@ -284,27 +284,11 @@ pub fn atomic_write(
 
     // Step 4: create backup if requested
     let backup_path = if opts.backup && target.exists() {
+        // v0.1.30: create_backup_in ALWAYS uses reflink_or_copy (never hardlink).
+        // Do not probe nlink — a hardlink target can make nlink>1 on the copy
+        // path only if create failed into hardlink, which we forbid.
         let bp = create_backup_in(&target, opts.retention, opts.backup_output_dir.as_deref())?;
-        // Detect hardlink via nlink > 1 on same filesystem.
-        backup_method_used = match std::fs::metadata(&bp) {
-            Ok(meta) => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::MetadataExt;
-                    if meta.nlink() > 1 {
-                        Some("hardlink")
-                    } else {
-                        Some("reflink_or_copy")
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = meta;
-                    Some("copy")
-                }
-            }
-            Err(_) => Some("unknown"),
-        };
+        backup_method_used = Some("reflink_or_copy");
         Some(bp)
     } else {
         None
@@ -864,8 +848,11 @@ pub(crate) fn create_backup_in(
         None => target.with_file_name(&backup_name),
     };
 
-    // v0.1.29 P2-3: prefer hardlink → reflink → copy.
-    // G64: prefer reflink (O(1) CoW on APFS/btrfs/XFS) over `fs::copy`.
+    // v0.1.29 P2-3 / audit fix: prefer reflink → copy. NEVER hardlink.
+    // Hardlink shares the inode with the live file. A later write that
+    // auto-switches to InPlace (nlink > 1) mutates the backup in place and
+    // makes `rollback` a silent no-op (checksum_before == checksum_after).
+    // G64: reflink is O(1) CoW on APFS/btrfs/XFS; falls back to full copy.
     //
     // Remove the existing backup file if any: reflink_or_copy refuses to
     // overwrite, and the test harness can produce timestamp collisions
@@ -873,12 +860,8 @@ pub(crate) fn create_backup_in(
     if backup_path.exists() {
         let _ = std::fs::remove_file(&backup_path);
     }
-    if fs::hard_link(target, &backup_path).is_err() {
-        // Prefer reflink; crate falls back to copy automatically.
-        // Caller detects hardlink via nlink after return.
-        reflink_copy::reflink_or_copy(target, &backup_path)
-            .with_context(|| format!("cannot create backup at {}", backup_path.display()))?;
-    }
+    reflink_copy::reflink_or_copy(target, &backup_path)
+        .with_context(|| format!("cannot create backup at {}", backup_path.display()))?;
     let backup_file = fs::File::open(&backup_path)
         .with_context(|| format!("cannot open backup for fsync: {}", backup_path.display()))?;
     // Best-effort fsync: backup file already exists on disk via fs::copy.
@@ -1093,6 +1076,47 @@ mod tests {
             backups.len() <= 5,
             "retention should keep at most 5 backups, got {}",
             backups.len()
+        );
+    }
+
+    /// Regression (audit 2026-07-13): backup must NOT share an inode with the
+    /// live file. A hardlink backup + InPlace write (nlink > 1) used to mutate
+    /// the `.bak` in place and turn `rollback` into a silent no-op.
+    #[test]
+    fn create_backup_is_not_hardlink_and_survives_inplace_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("target.txt");
+        std::fs::write(&file, b"ORIGINAL").unwrap();
+
+        let bak = create_backup(&file, 5).unwrap();
+        assert!(bak.exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let n_file = std::fs::metadata(&file).unwrap().nlink();
+            let n_bak = std::fs::metadata(&bak).unwrap().nlink();
+            assert_eq!(n_file, 1, "live file must have nlink=1 after backup");
+            assert_eq!(n_bak, 1, "backup must have nlink=1 (not hardlinked)");
+            let ino_file = std::fs::metadata(&file).unwrap().ino();
+            let ino_bak = std::fs::metadata(&bak).unwrap().ino();
+            assert_ne!(ino_file, ino_bak, "backup must be a distinct inode");
+        }
+
+        // Mutate the live file without creating another sidecar backup.
+        let opts = AtomicWriteOptions {
+            backup: false,
+            keep_backup: false,
+            ..AtomicWriteOptions::default()
+        };
+        atomic_write(&file, b"MODIFIED", &opts, dir.path()).unwrap();
+
+        let live = std::fs::read_to_string(&file).unwrap();
+        let snap = std::fs::read_to_string(&bak).unwrap();
+        assert_eq!(live, "MODIFIED");
+        assert_eq!(
+            snap, "ORIGINAL",
+            "backup content must survive subsequent write of the live file"
         );
     }
 

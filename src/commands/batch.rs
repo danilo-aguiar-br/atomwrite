@@ -92,8 +92,11 @@ pub fn cmd_batch(
     shutdown: &ShutdownSignal,
     backup_opts: &crate::cli_args::BackupOpts,
     defaults: &crate::config::DefaultsSection,
+    fuzzy_cfg: &crate::config::FuzzySection,
 ) -> Result<()> {
     let resolved = crate::commands::resolve_backup(backup_opts, defaults);
+    let (batch_fuzzy_mode, batch_fuzzy_threshold) =
+        crate::config::resolve_fuzzy(crate::cli::FuzzyMode::Auto, None, fuzzy_cfg)?;
     let retention = resolved.retention;
     let keep_backup = resolved.keep;
     let no_backup = backup_opts.no_backup;
@@ -252,6 +255,8 @@ pub fn cmd_batch(
             no_backup,
             backup_explicit,
             retention,
+            batch_fuzzy_mode,
+            batch_fuzzy_threshold,
         );
 
         match result {
@@ -452,6 +457,8 @@ fn execute_op(
     no_backup: bool,
     backup_explicit: bool,
     retention: u8,
+    fuzzy_mode: crate::cli::FuzzyMode,
+    fuzzy_threshold: Option<f64>,
 ) -> Result<String> {
     let max_size = global.effective_max_filesize();
     match op.op.as_str() {
@@ -473,6 +480,8 @@ fn execute_op(
             no_backup,
             backup_explicit,
             retention,
+            fuzzy_mode,
+            fuzzy_threshold,
         ),
         "delete" => execute_delete(
             op,
@@ -493,6 +502,8 @@ fn execute_op(
             no_backup,
             backup_explicit,
             retention,
+            fuzzy_mode,
+            fuzzy_threshold,
         ),
         "hash" => execute_hash(op, workspace, max_size),
         "move" => execute_move(op, workspace, dry_run),
@@ -560,6 +571,8 @@ fn execute_replace(
     no_backup: bool,
     backup_explicit: bool,
     retention: u8,
+    fuzzy_mode: crate::cli::FuzzyMode,
+    fuzzy_threshold: Option<f64>,
 ) -> Result<String> {
     let path_str = op.resolve_file_path()?;
     let pattern =
@@ -587,8 +600,8 @@ fn execute_replace(
             &content,
             pattern,
             replacement,
-            crate::cli::FuzzyMode::Auto,
-            None,
+            fuzzy_mode,
+            fuzzy_threshold,
         ) {
             Ok((edited, _)) => edited,
             Err(_) => content.clone(),
@@ -682,6 +695,8 @@ fn execute_edit(
     no_backup: bool,
     backup_explicit: bool,
     retention: u8,
+    fuzzy_mode: crate::cli::FuzzyMode,
+    fuzzy_threshold: Option<f64>,
 ) -> Result<String> {
     let path_str = op.resolve_file_path()?;
     let old = op
@@ -696,10 +711,8 @@ fn execute_edit(
         .with_context(|| format!("cannot read {}", validated.display()))?;
 
     if !content.contains(old) {
-        return Err(crate::error::AtomwriteError::InvalidInput {
-            reason: format!("old string not found in {path_str}"),
-        }
-        .into());
+        // Still try fuzzy path; exact-only early fail is too strict with config cascade.
+        // Fall through to match_pair below.
     }
 
     if dry_run {
@@ -707,7 +720,7 @@ fn execute_edit(
     }
 
     let edited =
-        match crate::fuzzy::match_pair(&content, old, new, crate::cli::FuzzyMode::Auto, None) {
+        match crate::fuzzy::match_pair(&content, old, new, fuzzy_mode, fuzzy_threshold) {
             Ok((e, _)) => e,
             Err(e) => return Err(e.into()),
         };

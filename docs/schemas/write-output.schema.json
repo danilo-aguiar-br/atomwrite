@@ -96,7 +96,7 @@
       "type": "object",
       "properties": {
         "backup_method": {
-          "description": "Backup method when a backup was created: hardlink|reflink|copy (v0.1.29 P2-3).",
+          "description": "Backup method when a backup was created: reflink_or_copy or copy (v0.1.30; never hardlink of the live file).",
           "type": [
             "string",
             "null"

@@ -6,21 +6,21 @@
 > Practical recipes you can copy-paste into your agent workflows
 
 
-## What's New in v0.1.29
+## What's New in v0.1.30
 
-v0.1.29 (2026-07-13) adds cookbook recipes for fuzzy monorepo replace, named recipes, sparse budgets, three-way merge, durability trade-offs, slim installs, best_candidate recovery, platform fields, hardlink backups, agent-surface, stat, watch, semantic-search, codemod, and progress heartbeats. **41 subcommands**.
+v0.1.30 (2026-07-13) residual agent-contract: fuzzy mandatory (off rejected), match_count and indent_adjusted in EditOutput NDJSON, recipe hash skips *.bak.*, live [fuzzy] config, sparse outline real AST, backup_method reflink_or_copy, semantic-merge line-based honesty. **41 subcommands**.
 
-### New Recipes (Added in v0.1.29)
+### New Recipes (v0.1.29 surface + v0.1.30 residual)
 
 - **How to Fuzzy-Replace Across a Monorepo** -- `replace --fuzzy auto` with optional `--progress-every`
 - **How to Run search-replace-verify** -- `recipe run --name search-replace-verify`
 - **How to Budget a Sparse List** -- `sparse list --max-files` / `--max-bytes`
-- **How to Three-Way Semantic Merge** -- `semantic-merge --base --ours --theirs`
+- **How to Three-Way Semantic Merge (line-based, not AST)** -- `semantic-merge --base --ours --theirs`
 - **How to Choose write Durability** -- `--durability full|fast|auto`
 - **How to Install Slim vs Full** -- `--no-default-features --features core` vs default
 - **How to Recover from a Missed Match with best_candidate** -- inspect error envelope near-miss and retry
 - **How to Inspect rename_method and durability** -- `platform.*` via `jaq` (Linux `renameat2`)
-- **How to Prefer Hardlink Backups** -- cascade hardlink→reflink→copy; `platform.backup_method`
+- **How to Read Honest Backup Method** -- `platform.backup_method` is `reflink_or_copy` (never hardlink of live file)
 - **How to Inventory the Agent Surface (no MCP)** -- `agent-surface`
 - **How to Stat Without Reading Body** -- `stat` (alias of `read --stat`)
 - **How to Watch with Debounce** -- `watch` (feature `watch`)
@@ -31,7 +31,7 @@ v0.1.29 (2026-07-13) adds cookbook recipes for fuzzy monorepo replace, named rec
 ## How to Fuzzy-Replace Across a Monorepo
 
 - Use fuzzy replace when indentation or whitespace diverges across packages
-- Pass `--fuzzy off` only when zero exact matches must fail hard (exit 1)
+- Do not pass `--fuzzy off` (rejected since v0.1.30); use auto or aggressive
 - Emit progress NDJSON on large trees with `--progress-every`
 
 ```bash
@@ -68,7 +68,7 @@ atomwrite --workspace . sparse list --max-files 20 src/ \
 atomwrite --workspace . sparse read --paths-file /tmp/paths.txt --head 30 --max-files 20
 ```
 
-## How to Three-Way Semantic Merge
+## How to Three-Way Semantic Merge (line-based, not AST)
 
 - Merge concurrent agent edits with a common base
 - Add `--fail-on-conflict` to exit 65 on unresolved conflicts
@@ -108,7 +108,7 @@ cargo install --path . --locked --force
 
 - Match failures may emit `best_candidate` (line, similarity, strategy, text, diff_preview)
 - Use the near-miss to correct `old` without re-reading the whole file
-- Exact-only pipelines must pass `--fuzzy off` (no candidate cascade)
+- Exact-only is unsupported; use auto/aggressive and MATCH_AMBIGUOUS / best_candidate
 
 ```bash
 # Capture the error envelope on a near-miss (exit 65 / MatchFailed)
@@ -136,11 +136,11 @@ echo scratch | atomwrite --workspace . write --durability fast /tmp/ci-out.txt \
   | jaq -r '.platform | "\(.durability) \(.rename_method)"'
 ```
 
-## How to Prefer Hardlink Backups
+## How to Read Honest Backup Method
 
-- Backup cascade is automatic: hardlink → reflink → copy
-- Inspect `platform.backup_method` (`hardlink` | `reflink` | `copy`)
-- Same-filesystem hardlinks keep backup O(1); EXDEV/EPERM falls back
+- Backup of the live file is NEVER a hardlink of the same inode
+- Inspect `platform.backup_method` (`reflink_or_copy` or `copy`)
+- Prefer this honesty for agent pipelines that would otherwise corrupt .bak via shared inode
 
 ```bash
 # Force a backuped overwrite and read the method used

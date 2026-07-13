@@ -4,7 +4,7 @@
 
 atomwrite is a Rust CLI that provides 41 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
-**Latest release: v0.1.29** (2026-07-13) — Agent-surface expansion: 8 new subcommands (`recipe`, `sparse`, `semantic-merge`, `agent-surface`, `watch`, `codemod`, `semantic-search`, `stat`); shared `fuzzy` cascade on `replace` with `best_candidate` on match errors; `write --durability full|fast|auto` plus Linux `renameat2` with rename fallback; Cargo features `core`/`ast`/`lang-*`/`watch`/`semantic`/`full` (slim core ~7.7 MiB; default+AST ~52 MB); `agent-surface` CLI manifesto (MCP forbidden — CLI only). 683 tests, 41 subcommands, 38 JSON schemas. See `CHANGELOG.md` for full notes.
+**Latest release: v0.1.30** (2026-07-13) — Fuzzy mandatory (`auto`/`aggressive`; `--fuzzy off` exit 65); `edit --replace-all` with NDJSON `match_count` and `indent_adjusted`; escape-drift; unicode_normalized; ranked `best_candidate`/`candidates[]`; `search --target` + pagination; recipe excludes `*.bak.*` including hash; `sparse outline` real AST; `backup_method=reflink_or_copy`; live `[fuzzy]` config; semantic-merge line-based honesty; `cli_v0130_agent_contract`. 41 subcommands. See `CHANGELOG.md`.
 
 **Previous release: v0.1.28** (2026-07-06) — BREAKING backup defaults on `delete`; unified `BackupOpts` on 15 mutating subcommands; live `.atomwrite.toml` `[defaults]`; stdin-tty guard on `edit`. 661 tests, 33 subcommands. See `CHANGELOG.md`.
 
@@ -29,7 +29,7 @@ Parsers for 305 languages are NOT bundled; they are downloaded on first use by `
 
 ### Search and replace
 - `search` -- search file contents in parallel (ripgrep engine). `--no-begin-end` disables anchor emission (v0.1.20)
-- `replace` -- replace text across files with atomic writes; `--fuzzy auto|off|aggressive` and `--fuzzy-threshold` (v0.1.29); reports `strategy`/`similarity`; match errors may include `best_candidate`
+- `replace` -- replace text across files with atomic writes; `--fuzzy auto|aggressive` (off rejected since v0.1.30) and `--fuzzy-threshold`; reports `strategy`/`similarity`/`match_count`/`indent_adjusted`; match errors may include `best_candidate`
 - `transform` -- AST refactoring via ast-grep (306 languages)
 
 ### Inspection
@@ -72,8 +72,8 @@ Parsers for 305 languages are NOT bundled; they are downloaded on first use by `
 
 ### Agent surface and workflows (v0.1.29)
 - `recipe` -- list/run versioned multi-step pipelines (e.g. search→replace→hash)
-- `sparse` -- budgeted monorepo list/read (`sparse list --max-files N`)
-- `semantic-merge` -- three-way merge for multi-agent conflicts
+- `sparse` -- budgeted monorepo list/read/outline (real AST outline_item) (`sparse list --max-files N`)
+- `semantic-merge` -- line-based three-way merge for multi-agent conflicts (not AST)
 - `agent-surface` -- clap-derived tool manifesto (CLI only; MCP is FORBIDDEN)
 - `watch` -- filesystem events with debounce/checksum/gitignore (feature `watch`)
 - `codemod` -- multi-rule AST campaign with `by_rule_id` summary

@@ -24,6 +24,13 @@
       "description": "BLAKE3 checksum before editing.",
       "type": "string"
     },
+    "diff_preview": {
+      "description": "Unified diff preview showing what the fuzzy match changed (truncated to 500 chars).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "edits": {
       "description": "Number of edit operations applied.",
       "type": "integer",
@@ -43,6 +50,13 @@
         "null"
       ]
     },
+    "indent_adjusted": {
+      "description": "True when fuzzy indent delta realigned the replacement text.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "lines_after": {
       "description": "Line count after editing.",
       "type": "integer",
@@ -52,6 +66,15 @@
     "lines_before": {
       "description": "Line count before editing.",
       "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "match_count": {
+      "description": "Number of occurrences replaced in old/new mode (1 unless `--replace-all`).",
+      "type": [
+        "integer",
+        "null"
+      ],
       "format": "uint64",
       "minimum": 0
     },
@@ -153,6 +176,13 @@
             "null"
           ],
           "format": "double"
+        },
+        "source": {
+          "description": "Source of the match/replacement content: `\"arg\"` or `\"file\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "strategy": {
           "description": "Matching strategy that succeeded (e.g. `exact`, `whitespace_normalized`).",

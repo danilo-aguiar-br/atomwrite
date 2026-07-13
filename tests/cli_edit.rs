@@ -719,13 +719,12 @@ fn edit_partial_dry_run_no_write() {
 /// G117 edge case: Unicode (non-ASCII) `--old`/`--new` must work via
 /// exact UTF-8 byte match. LLM agents commonly emit identifiers with
 /// diacritics (e.g. `José`, `naïve`, `über`) and the fuzzy cascade must
-/// not corrupt them via normalization. Single-pair `edit` replaces
-/// only the FIRST occurrence (use multi-pair to replace all); this
-/// test exercises the byte-exact match for the diacritic `ção`.
+/// not corrupt them via normalization. v0.1.30 requires unique match
+/// unless `--replace-all`; this test uses a unique old string with diacritics.
 #[test]
 fn edit_unicode_old_new_exact_match() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let before = "alpha ção beta ção\n";
+    let before = "alpha ção beta other\n";
     let path = common::create_test_file(dir.path(), "g117_unicode.txt", before);
 
     let output = common::atomwrite()
@@ -748,7 +747,7 @@ fn edit_unicode_old_new_exact_match() {
         String::from_utf8_lossy(&output.stderr)
     );
     let content = std::fs::read_to_string(&path).expect("read");
-    assert_eq!(content, "alpha AÇÃO beta ção\n");
+    assert_eq!(content, "alpha AÇÃO beta other\n");
 }
 
 /// G117 edge case: CRLF (Windows-style) line endings must NOT trip the
@@ -792,10 +791,8 @@ fn edit_crlf_line_endings_preserve_eol_after_replace() {
 #[test]
 fn edit_multi_pair_same_old_appears_twice_applies_both() {
     let dir = tempfile::tempdir().expect("tempdir");
-    // "foo" appears twice. Two pairs rename the first to "FOO_A" and
-    // the second to "FOO_B". After both pairs, both occurrences are
-    // renamed and they differ.
-    let before = "foo bar foo\n";
+    // v0.1.30: use unique contexts so each pair has a single match.
+    let before = "foo_a bar foo_b\n";
     let path = common::create_test_file(dir.path(), "g117_repeat.txt", before);
 
     let output = common::atomwrite()
@@ -804,11 +801,11 @@ fn edit_multi_pair_same_old_appears_twice_applies_both() {
             dir.path().to_str().unwrap(),
             "edit",
             "--old",
-            "foo",
+            "foo_a",
             "--new",
             "FOO_A",
             "--old",
-            "foo",
+            "foo_b",
             "--new",
             "FOO_B",
         ])
@@ -881,7 +878,8 @@ fn edit_nfc_vs_nfd_does_not_match() {
 #[test]
 fn edit_old_only_whitespace_matches_first_run_exact() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let before = "   hello world   \n";
+    // v0.1.30: unique whitespace-only old (single occurrence).
+    let before = "   hello world\n";
     let path = common::create_test_file(dir.path(), "g117_ws.txt", before);
 
     let output = common::atomwrite()
@@ -904,14 +902,11 @@ fn edit_old_only_whitespace_matches_first_run_exact() {
         String::from_utf8_lossy(&output.stderr)
     );
     let events = common::parse_ndjson(&output.stdout);
-    // 3 spaces appear byte-exactly at the start of the file → exact
-    // strategy wins immediately. The fuzzy cascade is NOT triggered.
     assert_eq!(events[0]["fuzzy"], false);
     assert_eq!(events[0]["strategy"], "exact");
 
     let content = std::fs::read_to_string(&path).expect("read");
-    // First run replaced; trailing 3 spaces preserved.
-    assert_eq!(content, "Xhello world   \n");
+    assert_eq!(content, "Xhello world\n");
 }
 
 /// G117 edge case: `--new ""` must perform a clean deletion of the

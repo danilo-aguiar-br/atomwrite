@@ -4,7 +4,7 @@
 
 atomwrite é um CLI Rust que fornece 41 subcomandos para manipulação de arquivos com garantias de escrita atômica. Toda escrita usa tempfile + fsync + rename + fsync do diretório. Toda resposta é NDJSON com checksums BLAKE3. Construído para agentes LLM que precisam de operações de arquivo confiáveis e estruturadas sem risco de corrupção.
 
-**Release mais recente: v0.1.29** (2026-07-13) — Expansão da superfície de agente: 8 subcomandos novos (`recipe`, `sparse`, `semantic-merge`, `agent-surface`, `watch`, `codemod`, `semantic-search`, `stat`); cascata `fuzzy` compartilhada no `replace` com `best_candidate` em erros de match; `write --durability full|fast|auto` e Linux `renameat2` com fallback para rename; features Cargo `core`/`ast`/`lang-*`/`watch`/`semantic`/`full` (core slim ~7,7 MiB; default+AST ~52 MB); `agent-surface` manifesto CLI (MCP proibido — só CLI). 683 testes, 41 subcomandos, 38 schemas JSON. Veja `CHANGELOG.pt-BR.md` para notas completas.
+**Release mais recente: v0.1.30** (2026-07-13) — Fuzzy obrigatório (`auto`/`aggressive`; `--fuzzy off` exit 65); `edit --replace-all` com NDJSON `match_count` e `indent_adjusted`; escape-drift; unicode_normalized; `best_candidate`/`candidates[]` ranqueados; `search --target` + paginação; recipe exclui `*.bak.*` inclusive no hash; `sparse outline` AST real; `backup_method=reflink_or_copy`; config `[fuzzy]` ao vivo; semantic-merge line-based; suíte `cli_v0130_agent_contract`. 41 subcomandos. Veja `CHANGELOG.pt-BR.md`.
 
 **Release anterior: v0.1.28** (2026-07-06) — BREAKING: backup default em `delete`; `BackupOpts` unificado em 15 subcomandos mutantes; `[defaults]` do `.atomwrite.toml` efetivo; guard de stdin-tty no `edit`. 661 testes, 33 subcomandos. Veja `CHANGELOG.pt-BR.md`.
 
@@ -21,7 +21,7 @@ atomwrite é um CLI Rust que fornece 41 subcomandos para manipulação de arquiv
 
 ### Busca e substituição (3)
 - `search` — buscar conteúdo de arquivos em paralelo (motor ripgrep). `--no-begin-end` desabilita a emissão de âncoras
-- `replace` — substituir texto entre arquivos com escritas atômicas; `--fuzzy auto|off|aggressive` e `--fuzzy-threshold` (v0.1.29); reporta `strategy`/`similarity`; erros de match podem incluir `best_candidate`
+- `replace` — substituir texto entre arquivos com escritas atômicas; `--fuzzy auto|aggressive` (off rejeitado desde v0.1.30) e `--fuzzy-threshold`; reporta `strategy`/`similarity`/`match_count`/`indent_adjusted`; erros de match podem incluir `best_candidate`
 - `transform` — refatoração AST via ast-grep (306 linguagens)
 
 ### Inspeção (9)
@@ -65,7 +65,7 @@ Além da verificação de sintaxe G72 em `write --syntax-check` (24 linguagens, 
 
 ### Superfície de agente e workflows (v0.1.29) (8)
 - `recipe` — listar/rodar pipelines multi-passo versionados (ex.: search→replace→hash)
-- `sparse` — list/read orçamentado em monorepo (`sparse list --max-files N`)
+- `sparse` — list/read/outline orçamentado em monorepo (`sparse list --max-files N`)
 - `semantic-merge` — merge de três vias para conflitos multi-agente
 - `agent-surface` — manifesto de tools derivado do clap (só CLI; MCP é PROIBIDO)
 - `watch` — eventos de filesystem com debounce/checksum/gitignore (feature `watch`)

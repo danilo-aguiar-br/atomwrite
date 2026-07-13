@@ -82,7 +82,7 @@ cargo fmt -- --check
 - Use `insta` for snapshot testing of NDJSON output
 - Use `proptest` for property-based testing where applicable
 - Target at least 80% coverage for new code
-- Run the full suite before submitting: `cargo test` (683 tests listed in v0.1.29)
+- Run the full suite before submitting: `cargo test` (700+ tests in v0.1.30) and `cargo test --test cli_v0130_agent_contract`
 - Slim core path: `cargo test --no-default-features --features core`
 - Full default path keeps AST languages: `cargo test`
 - CI enforces a size-gate on the release `core` binary (≤ 15 MiB; measured ~7.7 MiB)
@@ -115,7 +115,7 @@ cargo fmt -- --check
 - Add the subcommand to the README and llms.txt inventories
 - Write at least 3 integration tests in `tests/cli_your_subcommand.rs`
 - Update llms-full.txt to reference the new subcommand in the right category
-- v0.1.29 has 41 subcommands; the count must stay in sync across all docs
+- v0.1.30 has 41 subcommands; the count must stay in sync across all docs
 - New Cargo features: `core`, `ast`, `lang-*`, `watch`, `semantic`, `full` — keep docs honest that PRD 5–8 MiB is core-only
 
 
@@ -150,7 +150,7 @@ cargo fmt -- --check
 ## Quality Gates
 - Run `cargo fmt --check` before committing
 - Run `cargo clippy --all-targets -- -D warnings` for lint checks
-- Run `cargo test` for the full test suite (683 tests listed in v0.1.29)
+- Run `cargo test` and `cargo test --test cli_v0130_agent_contract` for the full suite and residual contract
 - Run `cargo test --no-default-features --features core` for the slim surface
 - Expect CI size-gate on release core binary
 - Run `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` for documentation checks
@@ -180,7 +180,7 @@ When you add or modify a destructive mutation path, consider whether intention g
 ## v0.1.12 Specific Gates
 - If you add a new subcommand, update the subcommand count in ALL of: `README.md`, `README.pt-BR.md`, `llms.txt`, `llms.pt-BR.txt`, `llms-full.txt`, `docs/AGENTS.md`, `docs/AGENTS.pt-BR.md`, `docs/MIGRATION.md`, `docs/MIGRATION.pt-BR.md`, `CHANGELOG.md`, `CHANGELOG.pt-BR.md`, `skill/atomwrite-en/SKILL.md`, `skill/atomwrite-pt/SKILL.md`
 - If you add a new error variant, update the exit codes in: `README.md`, `README.pt-BR.md`, `llms-full.txt`, `docs/AGENTS.md`, `docs/AGENTS.pt-BR.md`, `skill/atomwrite-en/SKILL.md`, `skill/atomwrite-pt/SKILL.md`, `locales/en.toml`, `locales/pt-BR.toml`
-- The single source of truth for the subcommand count is the binary: `atomwrite --help | rg "^  [a-z]" | wc -l` (v0.1.29: 41 user-facing subcommands plus `help`)
+- The single source of truth for the subcommand count is the binary: `atomwrite --help | rg "^  [a-z]" | wc -l` (v0.1.30: 41 user-facing subcommands plus `help`)
 
 
 ## Questions

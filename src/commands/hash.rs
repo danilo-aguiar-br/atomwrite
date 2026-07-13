@@ -46,6 +46,14 @@ pub fn cmd_hash(
     }
 
     let mut file_paths: Vec<std::path::PathBuf> = Vec::new();
+    // Recipe and agents pass exclude; recursive walks always skip `*.bak.*`.
+    let excludes = if args.exclude.is_empty() && args.recursive {
+        vec!["*.bak.*".into(), "**/*.bak.*".into()]
+    } else {
+        args.exclude.clone()
+    };
+    let skip_bak_in_walk = args.recursive
+        || excludes.iter().any(|e| e.contains("bak"));
 
     for path in &args.paths {
         let path = crate::path_safety::validate_path(path, &workspace)?;
@@ -59,17 +67,26 @@ pub fn cmd_hash(
         }
 
         if path.is_dir() && args.recursive {
-            let walker = ignore::WalkBuilder::new(&path)
-                .hidden(false)
-                .git_ignore(true)
-                .build();
-            for entry in walker.flatten() {
+            let mut builder = ignore::WalkBuilder::new(&path);
+            builder.hidden(false);
+            builder.git_ignore(true);
+            if skip_bak_in_walk {
+                builder.filter_entry(|entry| !path_looks_like_bak(entry.path()));
+            }
+            for entry in builder.build().flatten() {
                 if entry.file_type().is_some_and(|ft| ft.is_file()) {
-                    file_paths.push(entry.into_path());
+                    let p = entry.into_path();
+                    if !is_excluded_path(&p, &excludes) {
+                        file_paths.push(p);
+                    }
                 }
             }
         } else if path.is_file() {
-            file_paths.push(path);
+            // Explicit single-file paths are hashed even if they look like backups,
+            // unless an exclude pattern matches.
+            if excludes.is_empty() || !is_excluded_path(&path, &excludes) {
+                file_paths.push(path);
+            }
         }
     }
 
@@ -114,4 +131,40 @@ pub fn cmd_hash(
     }
 
     Ok(())
+}
+
+fn path_looks_like_bak(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|name| name.contains(".bak."))
+}
+
+fn is_excluded_path(path: &std::path::Path, excludes: &[String]) -> bool {
+    if excludes.is_empty() {
+        return false;
+    }
+    let s = path.to_string_lossy();
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    for pat in excludes {
+        if pat == "*.bak.*" || pat == "**/*.bak.*" {
+            if name.contains(".bak.") || s.contains(".bak.") {
+                return true;
+            }
+            continue;
+        }
+        if let Some(stripped) = pat.strip_prefix("**/") {
+            if s.contains(stripped.trim_start_matches('*')) {
+                return true;
+            }
+        }
+        if let Some(stripped) = pat.strip_prefix('*') {
+            if name.ends_with(stripped) || s.ends_with(stripped) {
+                return true;
+            }
+        }
+        if s.contains(pat) || name == pat {
+            return true;
+        }
+    }
+    false
 }

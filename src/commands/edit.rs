@@ -94,9 +94,12 @@ pub fn cmd_edit(
     writer: &mut NdjsonWriter<impl Write>,
     workspace: &Path,
     defaults: &crate::config::DefaultsSection,
+    fuzzy_cfg: &crate::config::FuzzySection,
     stdin_is_tty: bool,
 ) -> Result<()> {
     let start = Instant::now();
+    let (fuzzy_mode, fuzzy_threshold) =
+        crate::config::resolve_fuzzy(args.fuzzy, args.fuzzy_threshold, fuzzy_cfg)?;
     let path = crate::path_safety::validate_path(&args.path, workspace)?;
     let resolved_backup = resolve_backup(&args.backup_opts, defaults);
 
@@ -188,9 +191,10 @@ pub fn cmd_edit(
             &original,
             &effective_old,
             &effective_new,
-            args.fuzzy,
+            fuzzy_mode,
             args.partial,
-            args.fuzzy_threshold,
+            fuzzy_threshold,
+            args.replace_all,
         )?;
         (e, m, Some(fi), report)
     } else if args.after_line.is_some()
@@ -251,16 +255,19 @@ pub fn cmd_edit(
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
     let lines_after = edited.lines().count() as u64;
 
-    let (fuzzy, strategy, strategies_tried, similarity, diff_preview) = match fuzzy_info {
-        Some(fi) => (
-            Some(fi.fuzzy),
-            Some(fi.strategy),
-            Some(fi.strategies_tried),
-            fi.similarity,
-            fi.diff_preview,
-        ),
-        None => (None, None, None, None, None),
-    };
+    let (fuzzy, strategy, strategies_tried, similarity, diff_preview, match_count, indent_adjusted) =
+        match fuzzy_info {
+            Some(fi) => (
+                Some(fi.fuzzy),
+                Some(fi.strategy),
+                Some(fi.strategies_tried),
+                fi.similarity,
+                fi.diff_preview,
+                Some(fi.match_count),
+                Some(fi.indent_adjusted),
+            ),
+            None => (None, None, None, None, None, None, None),
+        };
 
     let from_file = !args.old_file.is_empty();
     let (edits, pairs_total, pair_results) = match multi_report {
@@ -299,6 +306,8 @@ pub fn cmd_edit(
         pairs_total,
         pair_results,
         mtime_preserved: Some(args.preserve_timestamps),
+        match_count,
+        indent_adjusted,
     };
 
     writer.write_event(&output)?;
@@ -575,6 +584,8 @@ fn cmd_edit_multi(
         pairs_total: None,
         pair_results: None,
         mtime_preserved: Some(args.preserve_timestamps),
+        match_count: None,
+        indent_adjusted: None,
     };
 
     writer.write_event(&output)?;
@@ -597,13 +608,27 @@ fn edit_old_new(
     fuzzy: FuzzyMode,
     partial: bool,
     custom_threshold: Option<f64>,
+    replace_all: bool,
 ) -> Result<(String, String, FuzzyInfo, Option<MultiReport>)> {
     if old.len() > 1 {
-        return edit_old_new_multi(original, old, new, fuzzy, partial, custom_threshold);
+        return edit_old_new_multi(
+            original,
+            old,
+            new,
+            fuzzy,
+            partial,
+            custom_threshold,
+            replace_all,
+        );
     }
     let old_str = &old[0];
     let new_str = new.first().map(|s| s.as_str()).unwrap_or("");
-    match match_pair(original, old_str, new_str, fuzzy, custom_threshold) {
+    let opts = crate::fuzzy::MatchOpts {
+        mode: fuzzy,
+        threshold: custom_threshold,
+        replace_all,
+    };
+    match crate::fuzzy::match_pair_with(original, old_str, new_str, opts) {
         Ok((edited, info)) => {
             let mode = if info.strategy == "exact" {
                 "exact".into()
@@ -628,6 +653,7 @@ fn edit_old_new_multi(
     fuzzy: FuzzyMode,
     partial: bool,
     custom_threshold: Option<f64>,
+    replace_all: bool,
 ) -> Result<(String, String, FuzzyInfo, Option<MultiReport>)> {
     let pairs_total = old.len() as u64;
     let mut content = original.to_string();
@@ -638,7 +664,12 @@ fn edit_old_new_multi(
 
     for (i, (old_str, new_str)) in old.iter().zip(new.iter()).enumerate() {
         let index = (i + 1) as u64;
-        match match_pair(&content, old_str, new_str, fuzzy, custom_threshold) {
+        let opts = crate::fuzzy::MatchOpts {
+            mode: fuzzy,
+            threshold: custom_threshold,
+            replace_all,
+        };
+        match crate::fuzzy::match_pair_with(&content, old_str, new_str, opts) {
             Ok((edited, info)) => {
                 content = edited;
                 applied += 1;
@@ -666,6 +697,12 @@ fn edit_old_new_multi(
                     AtomwriteError::MatchFailed {
                         reason,
                         best_candidate,
+                        ..
+                    } => (reason, best_candidate),
+                    AtomwriteError::MatchAmbiguous {
+                        reason,
+                        best_candidate,
+                        ..
                     } => (reason, best_candidate),
                     AtomwriteError::InvalidInput { reason } => (reason, None),
                     other => (other.to_string(), None),
@@ -690,8 +727,6 @@ fn edit_old_new_multi(
     }
 
     if applied == 0 {
-        // --partial with zero applicable pairs: no write, same exit semantics
-        // as `replace` with zero matches.
         return Err(AtomwriteError::NoMatches.into());
     }
 
@@ -709,6 +744,8 @@ fn edit_old_new_multi(
             strategies_tried: max_strategies_tried,
             similarity: None,
             diff_preview: None,
+            match_count: applied,
+            indent_adjusted: false,
         },
         Some(MultiReport {
             pair_results,

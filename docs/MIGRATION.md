@@ -6,7 +6,7 @@
 
 ## What's New in v0.1.12
 
-This section summarizes the migration-relevant changes in v0.1.12. See the [v0.1.11 to v0.1.12](#v0111-to-v0112) section below for the v0.1.12 migration guide and the [v0.1.28 to v0.1.29 (Current)](#v0128-to-v0129-current) section for the latest transition.
+This section summarizes the migration-relevant changes in v0.1.12. See the [v0.1.11 to v0.1.12](#v0111-to-v0112) section below for the v0.1.12 migration guide, the [v0.1.28 to v0.1.29](#v0128-to-v0129-current) section, and the [v0.1.29 to v0.1.30 (Current)](#v0129-to-v0130-current) section for the latest transition.
 
 ### New Subcommands (6)
 
@@ -68,7 +68,7 @@ All additive. No existing dependency removed.
 
 - Update version pin: `cargo install atomwrite --locked --version "^0.1.12"`
 - New subcommands and flags are opt-in. No code changes required for existing callers.
-- See the [v0.1.28 to v0.1.29 (Current)](#v0128-to-v0129-current) section for the latest migration steps.
+- See the [v0.1.29 to v0.1.30 (Current)](#v0129-to-v0130-current) section for the latest migration steps.
 
 ### Test Coverage
 
@@ -78,29 +78,56 @@ All additive. No existing dependency removed.
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
 ## Current Version
-- atomwrite is at v0.1.29
-- This document covers migration from v0.1.0 through v0.1.29
+- atomwrite is at v0.1.30
+- This document covers migration from v0.1.0 through v0.1.30
 - See the sections below for additive changes and breaking changes in each version
 
 
-## v0.1.28 to v0.1.29 (Current)
+## v0.1.29 to v0.1.30 (Current)
+
+### BREAKING Changes
+
+- `--fuzzy off` is rejected (exit 65) with a migration note; only `auto` and `aggressive` remain
+- `.atomwrite.toml` with `[fuzzy] mode = "off"` fails parse with INVALID_INPUT
+- Multi-match without `--replace-all` fails with MATCH_AMBIGUOUS (exit 65)
+
+### Added (migration-relevant)
+
+- EditOutput NDJSON fields: `match_count` and optional `indent_adjusted`
+- Escape-drift guard; unicode_normalized strategy; ranked best_candidate and candidates[]
+- search --target content|files|both with --offset and --limit; similar_paths on path miss
+- recipe hash excludes *.bak.*; sparse outline emits real AST outline_item under budget
+- config [fuzzy] applied to edit/replace/loop/batch; platform.backup_method is reflink_or_copy
+- Contract suite tests/cli_v0130_agent_contract.rs
+
+### Migration Action
+
+- Remove `--fuzzy off` from scripts and agent prompts; use auto or aggressive
+- Remove mode = "off" from .atomwrite.toml [fuzzy]
+- For bulk multi-occurrence edits pass --replace-all and parse match_count with jaq
+- Prefer jaq on match_count and indent_adjusted over full file re-reads after edit
+- Update version pin: cargo install atomwrite --locked --version "^0.1.30"
+- Run: cargo test --test cli_v0130_agent_contract
+
+
+## v0.1.28 to v0.1.29
 
 ### BREAKING Changes
 
 - Default fixed-string `replace` now uses `fuzzy=auto` after exact multi-match finds zero hits — previously exact-only failure returned exit 1 with no fuzzy fallback
-- Pipelines that required exact-only failure (exit 1 on zero exact hits) must pass `--fuzzy off`
+- Pipelines that required exact-only failure (exit 1 on zero exact hits) must not rely on exact-only (as of v0.1.30 `--fuzzy off` is rejected)
 
 ### Added (migration-relevant)
 
 - Shared `fuzzy` module: 9-strategy cascade for `edit`, `replace`, `batch`, `edit-loop`
 - `best_candidate` structured diagnostics on match failure (error envelopes, exit 65 paths)
-- `replace --fuzzy auto|off|aggressive` and `--fuzzy-threshold`
+- `replace --fuzzy auto|off|aggressive` and `--fuzzy-threshold` (in 0.1.29 only; `off` rejected since 0.1.30)
 - `replace --progress-every` and batch progress heartbeats
 - Cargo features: `core`, `ast`, `lang-*`, `watch`, `semantic`, `full` — slim install without AST
 - New subcommands: `semantic-merge`, `sparse list|read`, `recipe list|run`, `stat` (alias of `read --stat`), `agent-surface`, `watch` (feature `watch`), `codemod`, `semantic-search`
 - `write --durability full|fast|auto` with NDJSON `platform.durability`
 - Linux `renameat2` in `atomic_rename` with ENOSYS fallback
-- Backup prefers hardlink before reflink/copy
+- Backup uses reflink_or_copy (never hardlink of the live file)
 - Cooperative cancel during stdin read and chunked atomic write
 - Versioned recipe docs under `recipes/*.yaml`
 - CI `size-gate` (slim core ≤ 15 MiB), `core-test`, `schema-diff`
@@ -113,11 +140,11 @@ All additive. No existing dependency removed.
 
 ### Migration Action
 
-- Update version pin: `cargo install atomwrite --locked --version "^0.1.29"`
-- **BREAKING**: if your pipeline depends on exact-only `replace` failing with exit 1 when the fixed string is absent, pass `--fuzzy off`
+- Update version pin: `cargo install atomwrite --locked --version "^0.1.30"`
+- **BREAKING**: if your pipeline depends on exact-only `replace` failing with exit 1 when the fixed string is absent, use auto/aggressive only (off rejected in v0.1.30)
 - On match failures, inspect optional `best_candidate` in the NDJSON error envelope for near-miss diagnostics
 - Slim install (no AST): `cargo install --path . --locked --no-default-features --features core`
-- Full install (default features): `cargo install --path . --locked` or `cargo install atomwrite --locked --version "^0.1.29"`
+- Full install (default features): `cargo install --path . --locked` or `cargo install atomwrite --locked --version "^0.1.30"`
 - MCP is not provided; use `agent-surface` for clap-derived tool inventory (anti-MCP)
 - Optional durability: `write --durability full|fast|auto` — read `platform.durability` in NDJSON
 - Linux operators: atomic rename may use `renameat2` (falls back on ENOSYS)

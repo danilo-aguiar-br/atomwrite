@@ -19,19 +19,34 @@
 - Every file gets a BLAKE3 checksum: detect drift, verify integrity, enable optimistic locking
 
 
-## What Is New In v0.1.29 (2026-07-13)
+## What Is New In v0.1.30 (2026-07-13)
+
+- **Fuzzy mandatory**: only `auto` and `aggressive`; `--fuzzy off` rejected (exit 65) with migration note
+- **`edit --replace-all`** with uniqueness: multi-match without it fails `MATCH_AMBIGUOUS`; success NDJSON includes **`match_count`**
+- Fuzzy success NDJSON includes **`indent_adjusted`** when indent delta realigns the replacement
+- **Escape-drift** guard blocks spurious escaped quotes; **unicode_normalized** strategy preserves typography
+- Match failures emit ranked **`best_candidate`**, **`candidates[]`**, and **`diff_preview`**
+- **`search --target content|files|both`** with **`--offset`** / **`--limit`**; path typos get **`similar_paths`**
+- **`replace --progress-every`** reports `total`, `rate_per_s`, `eta_ms`
+- **`recipe`** default exclude `*.bak.*` (including hash step); **`sparse outline`** emits real AST `outline_item` under budget
+- **`platform.backup_method`** is honest **`reflink_or_copy`** (never hardlink of live file)
+- **`.atomwrite.toml [fuzzy]`** is applied to edit/replace/loop/batch; `mode = "off"` rejected at parse
+- **`semantic-merge`** help admits line-based three-way merge (not AST)
+- Contract suite: `tests/cli_v0130_agent_contract.rs`
+
+## What Was New In v0.1.29 (2026-07-13)
 
 - **41 subcommands** (was 33): added `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch`, `codemod`, `semantic-search`
-- Shared **fuzzy** module: 9-strategy cascade for `edit`, `replace`, `batch`, `edit-loop` — `replace --fuzzy auto|off|aggressive` and `--fuzzy-threshold`
+- Shared **fuzzy** module: 9-strategy cascade for `edit`, `replace`, `batch`, `edit-loop` — `replace --fuzzy auto|aggressive` and `--fuzzy-threshold`
 - **`best_candidate`** structured diagnostics on match failure (near-miss scores no longer discarded)
 - Cargo **features**: `core`, `ast`, `lang-*`, `watch`, `semantic`, `full` — slim core build without AST crates (stubs exit 78)
 - Cooperative **cancel** during stdin read and chunked atomic write
-- **`semantic-merge`** three-way merge with shutdown checks
+- **`semantic-merge`** three-way merge with shutdown checks (line-based; not AST)
 - **`sparse list|read`** budgeted monorepo surface
 - **`replace --progress-every`** and batch progress heartbeats
 - **`recipe list|run`** with real dispatch search→replace→hash (no longer plan-only stub); versioned recipes under `recipes/*.yaml`
 - **`write --durability full|fast|auto`** with NDJSON `platform.durability`; Linux `renameat2` in `atomic_rename` with ENOSYS fallback
-- Backup prefers **hardlink** before reflink/copy
+- Backup uses **reflink_or_copy** (never hardlink of the live file)
 - **`stat`** alias for `read --stat`; **`agent-surface`** clap-derived inventory (anti-MCP, no MCP server)
 - **`watch`** debounce coalesce + optional `--checksum` + gitignore (feature `watch`)
 - **`semantic-search --index-dir`** offline Jaccard inverted index (feature `semantic`)

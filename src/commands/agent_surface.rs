@@ -74,9 +74,13 @@ pub fn cmd_agent_surface(
         notes: vec![
             "MCP servers are forbidden by project rules; use CLI + NDJSON".into(),
             "write supports --durability full|fast|auto (default auto)".into(),
-            "replace supports --fuzzy auto|off|aggressive (default auto)".into(),
-            "match failures may include best_candidate in the error envelope".into(),
-            "recipe run dispatches real search/replace/hash handlers".into(),
+            "fuzzy is mandatory: auto (default) or aggressive; off is rejected since v0.1.30".into(),
+            "edit requires unique --old match unless --replace-all".into(),
+            "match failures include best_candidate and optional candidates[]".into(),
+            "recipe run excludes *.bak.* by default; progress_every 50 on replace".into(),
+            "watch requires: cargo install atomwrite --features watch".into(),
+            "semantic-search backend is offline jaccard (no embeddings)".into(),
+            "semantic-merge is line-based three-way merge (not AST/embedding)".into(),
         ],
     })?;
     Ok(())

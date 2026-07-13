@@ -74,6 +74,10 @@ pub struct HashArgs {
     /// Recurse into directories.
     #[arg(short, long, help = "Recurse into directories")]
     pub recursive: bool,
+
+    /// Glob patterns to exclude (e.g. `*.bak.*`). Appendable.
+    #[arg(long, action = clap::ArgAction::Append, help = "Exclude files matching glob when hashing")]
+    pub exclude: Vec<String>,
 }
 
 /// Arguments for the verify subcommand (alias for hash --verify).
@@ -508,11 +512,13 @@ impl From<DurabilityCli> for crate::platform::Durability {
 }
 
 /// Fuzzy matching behavior for --old/--new edit mode.
-#[derive(Debug, Clone, Copy, ValueEnum)]
+///
+/// v0.1.30: fuzzy is mandatory. `Off` is rejected at runtime with exit 65.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum FuzzyMode {
-    /// Try exact match first, then fuzzy strategies automatically.
+    /// Try exact match first, then fuzzy strategies automatically (default).
     Auto,
-    /// Exact match only, no fuzzy fallback.
+    /// Removed in v0.1.30 — rejected with migration note (kept for clap parse of legacy scripts).
     Off,
     /// Try all fuzzy strategies including low-confidence block anchor.
     Aggressive,
@@ -603,7 +609,7 @@ pub struct EditArgs {
         long,
         value_enum,
         default_value_t = FuzzyMode::Auto,
-        help = "Fuzzy match mode for --old/--new: auto, off, aggressive"
+        help = "Fuzzy match mode: auto (default, mandatory) or aggressive; off is rejected since v0.1.30"
     )]
     pub fuzzy: FuzzyMode,
 
@@ -655,6 +661,13 @@ pub struct EditArgs {
     /// Override the fuzzy similarity threshold (0.0–1.0).
     #[arg(long, help = "Override fuzzy similarity threshold (0.0-1.0)")]
     pub fuzzy_threshold: Option<f64>,
+
+    /// Replace every occurrence of --old (default: require unique match) (v0.1.30).
+    #[arg(
+        long,
+        help = "Replace all occurrences of --old (default: fail if match is not unique)"
+    )]
+    pub replace_all: bool,
 
     /// WAL sidecar creation policy (G119 L1 prevention). See `write` for
     /// the full description; the same enum applies to edit operations
@@ -864,6 +877,34 @@ pub struct SearchArgs {
         help = "Use PCRE2 regex engine (requires pcre2 feature)"
     )]
     pub pcre2: bool,
+
+    /// Search target: content (default), files (basename), or both (v0.1.30).
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = SearchTarget::Content,
+        help = "Search target: content, files (basename), or both"
+    )]
+    pub target: SearchTarget,
+
+    /// Skip first N matches when paginating results (v0.1.30).
+    #[arg(long, default_value_t = 0, help = "Skip first N matches (pagination offset)")]
+    pub offset: u64,
+
+    /// Limit number of match events emitted (v0.1.30).
+    #[arg(long, help = "Limit number of match events emitted")]
+    pub limit: Option<u64>,
+}
+
+/// Where `search` looks for the pattern (v0.1.30).
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum SearchTarget {
+    /// Search file contents (default).
+    Content,
+    /// Match basenames only.
+    Files,
+    /// Search content and basenames.
+    Both,
 }
 
 /// Sort criterion for search results.
@@ -956,7 +997,7 @@ pub struct ReplaceArgs {
         long,
         value_enum,
         default_value_t = FuzzyMode::Auto,
-        help = "Fuzzy match cascade for fixed-string replace (auto|off|aggressive)"
+        help = "Fuzzy match cascade for fixed-string replace (auto|aggressive; off rejected since v0.1.30)"
     )]
     pub fuzzy: FuzzyMode,
 

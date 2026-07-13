@@ -1,5 +1,6 @@
 ---
 source: tests/snapshot_write.rs
+assertion_line: 30
 expression: event
 ---
 {
@@ -9,10 +10,13 @@ expression: event
   "path": "[redacted]",
   "platform": {
     "dir_fsync": "[platform_dir_fsync]",
-    "fsync": "[platform_fsync]"
+    "durability": "fast",
+    "fsync": "[platform_fsync]",
+    "rename_method": "renameat2"
   },
   "status": "success",
   "stdin_bytes_read": 17,
   "type": "write",
   "wal_policy": "auto"
 }
+

@@ -48,6 +48,79 @@ pub fn cmd_search(
     let canonical_paths =
         crate::commands::path_resolution::resolve_paths_against_workspace(&args.paths, &workspace)?;
 
+    use crate::cli_args::SearchTarget;
+    let mut file_hits_emitted = 0u64;
+    if matches!(args.target, SearchTarget::Files | SearchTarget::Both) {
+        let pat = if args.case_insensitive || args.smart_case {
+            args.pattern.to_ascii_lowercase()
+        } else {
+            args.pattern.clone()
+        };
+        let mut walker = ignore::WalkBuilder::new(&canonical_paths[0]);
+        for p in canonical_paths.iter().skip(1) {
+            walker.add(p);
+        }
+        walker.standard_filters(true);
+        let mut skipped = 0u64;
+        for entry in walker.build() {
+            if shutdown.is_shutdown() {
+                break;
+            }
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy();
+            let hay = if args.case_insensitive || args.smart_case {
+                name.to_ascii_lowercase()
+            } else {
+                name.to_string()
+            };
+            let ok = if args.fixed || !args.regex {
+                hay.contains(&pat)
+            } else {
+                hay.contains(&pat)
+            };
+            if ok {
+                if file_hits_emitted < args.offset {
+                    skipped += 1;
+                    file_hits_emitted += 1;
+                    continue;
+                }
+                if let Some(lim) = args.limit {
+                    if file_hits_emitted.saturating_sub(args.offset) >= lim {
+                        break;
+                    }
+                }
+                writer.write_event(&serde_json::json!({
+                    "type": "file_match",
+                    "path": entry.path().display().to_string(),
+                    "name": name,
+                    "target": "files",
+                }))?;
+                file_hits_emitted += 1;
+            }
+        }
+        if matches!(args.target, SearchTarget::Files) {
+            let matched = file_hits_emitted.saturating_sub(args.offset.min(file_hits_emitted));
+            writer.write_event(&Summary {
+                r#type: "summary",
+                files_visited: file_hits_emitted,
+                files_matched: matched,
+                files_modified: None,
+                files_skipped: None,
+                total_matches: Some(matched),
+                total_replacements: None,
+                elapsed_ms: start.elapsed().as_millis() as u64,
+            })?;
+            return Ok(());
+        }
+        let _ = skipped;
+    }
+
     let matcher = build_matcher(args)?;
 
     let walker = build_walker(args, &canonical_paths, global)?;

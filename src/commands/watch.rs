@@ -182,7 +182,7 @@ pub fn cmd_watch(
     _defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     Err(crate::error::AtomwriteError::ConfigInvalid {
-        reason: "watch requires rebuild with --features watch".into(),
+        reason: "watch requires rebuild: cargo install atomwrite --features watch (or cargo build --features watch)".into(),
     }
     .into())
 }

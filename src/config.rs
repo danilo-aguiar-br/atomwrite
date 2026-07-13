@@ -6,6 +6,9 @@
 
 use std::path::Path;
 
+use crate::cli_args::FuzzyMode;
+use crate::error::AtomwriteError;
+
 /// Top-level configuration structure matching `.atomwrite.toml`.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
@@ -47,7 +50,7 @@ impl Default for DefaultsSection {
 #[derive(Debug, serde::Deserialize)]
 #[serde(default)]
 pub struct FuzzySection {
-    /// Default fuzzy mode: auto, off, aggressive.
+    /// Default fuzzy mode: auto or aggressive (off rejected since v0.1.30).
     pub mode: String,
     /// Default similarity threshold (0.0–1.0).
     pub threshold: f64,
@@ -132,6 +135,71 @@ fn load_from_path(path: &Path) -> AtomwriteConfig {
             AtomwriteConfig::default()
         }
     }
+}
+
+/// Reject illegal `[fuzzy]` values (v0.1.30 product policy).
+pub fn validate_fuzzy(cfg: &FuzzySection) -> Result<(), AtomwriteError> {
+    let mode = cfg.mode.trim().to_ascii_lowercase();
+    match mode.as_str() {
+        "auto" | "aggressive" => {}
+        "off" | "exact" | "disabled" | "false" | "0" => {
+            return Err(AtomwriteError::InvalidInput {
+                reason: format!(
+                    "config [fuzzy] mode = \"{}\" is not allowed since v0.1.30; use \"auto\" or \"aggressive\"",
+                    cfg.mode
+                ),
+            });
+        }
+        other => {
+            return Err(AtomwriteError::InvalidInput {
+                reason: format!(
+                    "config [fuzzy] mode = \"{other}\" is invalid; use \"auto\" or \"aggressive\""
+                ),
+            });
+        }
+    }
+    if !(0.0..=1.0).contains(&cfg.threshold) {
+        return Err(AtomwriteError::InvalidInput {
+            reason: format!(
+                "config [fuzzy] threshold = {} is out of range; must be between 0.0 and 1.0",
+                cfg.threshold
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Resolve effective fuzzy mode/threshold.
+///
+/// Precedence: explicit CLI `Aggressive` or `cli_threshold` wins; when CLI is
+/// default `Auto` with no threshold, inherit from `.atomwrite.toml` `[fuzzy]`.
+pub fn resolve_fuzzy(
+    cli_mode: FuzzyMode,
+    cli_threshold: Option<f64>,
+    cfg: &FuzzySection,
+) -> Result<(FuzzyMode, Option<f64>), AtomwriteError> {
+    validate_fuzzy(cfg)?;
+    if matches!(cli_mode, FuzzyMode::Off) {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "fuzzy mode 'off' was removed in v0.1.30; use auto (default) or aggressive"
+                .into(),
+        });
+    }
+    let cfg_mode = match cfg.mode.trim().to_ascii_lowercase().as_str() {
+        "aggressive" => FuzzyMode::Aggressive,
+        _ => FuzzyMode::Auto,
+    };
+    let mode = match cli_mode {
+        FuzzyMode::Aggressive => FuzzyMode::Aggressive,
+        FuzzyMode::Auto => cfg_mode,
+        FuzzyMode::Off => FuzzyMode::Auto, // unreachable after check
+    };
+    let threshold = match cli_threshold {
+        Some(t) => Some(t),
+        None if (cfg.threshold - 0.70).abs() > f64::EPSILON => Some(cfg.threshold),
+        None => None,
+    };
+    Ok((mode, threshold))
 }
 
 #[cfg(test)]

@@ -15,7 +15,7 @@ use regex::Regex;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
-use crate::cli::FuzzyMode;
+
 use crate::cli::{GlobalArgs, ReplaceArgs};
 use crate::commands::resolve_backup;
 use crate::fuzzy;
@@ -37,6 +37,7 @@ pub fn cmd_replace(
     writer: &mut NdjsonWriter<impl Write>,
     shutdown: &ShutdownSignal,
     defaults: &crate::config::DefaultsSection,
+    fuzzy_cfg: &crate::config::FuzzySection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
@@ -53,6 +54,21 @@ pub fn cmd_replace(
 
     let walker = build_walker(args, &canonical_paths, global)?;
 
+    // v0.1.30: pre-count eligible files so progress has total/rate/eta.
+    let mut precount = 0u64;
+    for entry in walker.build() {
+        if shutdown.is_shutdown() {
+            break;
+        }
+        if let Ok(e) = entry {
+            if e.file_type().is_some_and(|ft| ft.is_file()) {
+                precount += 1;
+            }
+        }
+    }
+    let files_total = Arc::new(AtomicU64::new(precount));
+    let walker = build_walker(args, &canonical_paths, global)?;
+
     let (tx, rx) = crossbeam_channel::bounded::<ReplaceEvent>(1024);
 
     let files_visited = Arc::new(AtomicU64::new(0));
@@ -64,6 +80,7 @@ pub fn cmd_replace(
     let fm = Arc::clone(&files_modified);
     let fs_skip = Arc::clone(&files_skipped);
     let tr = Arc::clone(&total_replacements);
+    let ft = Arc::clone(&files_total);
     let replacement: Arc<str> = args.replacement.clone().into();
     let max_replacements = args.max_replacements;
     let dry_run = args.dry_run;
@@ -80,8 +97,8 @@ pub fn cmd_replace(
     let preserve_timestamps = args.preserve_timestamps;
     let preserve_case = args.preserve_case;
     let use_regex = args.regex;
-    let fuzzy_mode = args.fuzzy;
-    let fuzzy_threshold = args.fuzzy_threshold;
+    let (fuzzy_mode, fuzzy_threshold) =
+        crate::config::resolve_fuzzy(args.fuzzy, args.fuzzy_threshold, fuzzy_cfg)?;
     let word_flag = args.word;
     let progress_every = args.progress_every;
     let quiet = global.quiet;
@@ -96,6 +113,7 @@ pub fn cmd_replace(
             let fm = Arc::clone(&fm);
             let fs_skip = Arc::clone(&fs_skip);
             let tr = Arc::clone(&tr);
+            let ft = Arc::clone(&ft);
             let ws = Arc::clone(&ws);
             let expect_ck = expect_ck.clone();
             let shutdown_flag = Arc::clone(&shutdown_flag);
@@ -118,7 +136,7 @@ pub fn cmd_replace(
                 if progress_every > 0 && visited.is_multiple_of(progress_every) && quiet == 0 {
                     let _ = tx.send(ReplaceEvent::Progress {
                         done: visited,
-                        total: 0,
+                        total: ft.load(Ordering::Relaxed),
                     });
                 }
 
@@ -164,8 +182,6 @@ pub fn cmd_replace(
                     );
                     if exact_count > 0 {
                         (exact, exact_count)
-                    } else if matches!(fuzzy_mode, FuzzyMode::Off) {
-                        (std::borrow::Cow::Borrowed(content.as_str()), 0)
                     } else {
                         if word_flag {
                             word_ignored = true;
@@ -343,12 +359,23 @@ pub fn cmd_replace(
                 })?;
             }
             ReplaceEvent::Progress { done, total } => {
+                let elapsed = start.elapsed().as_secs_f64();
+                let rate = if elapsed > 0.0 {
+                    done as f64 / elapsed
+                } else {
+                    0.0
+                };
+                let eta_ms = if rate > 0.0 && total > done {
+                    Some(((total - done) as f64 / rate * 1000.0) as u64)
+                } else {
+                    None
+                };
                 writer.write_event(&ProgressEvent {
                     r#type: "progress",
                     done,
                     total,
-                    rate_per_s: None,
-                    eta_ms: None,
+                    rate_per_s: Some(rate),
+                    eta_ms,
                     phase: "replace".into(),
                 })?;
             }

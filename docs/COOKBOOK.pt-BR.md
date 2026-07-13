@@ -6,21 +6,21 @@
 > Receitas práticas que você pode copiar e colar nos seus workflows de agente
 
 
-## O Que Há de Novo na v0.1.29
+## O Que Há de Novo na v0.1.30
 
-A v0.1.29 (2026-07-13) adiciona receitas de replace fuzzy em monorepo, recipes nomeadas, orçamentos sparse, merge de 3 vias, trade-offs de durability, instalação slim, recuperação com best_candidate, campos platform, backup hardlink, agent-surface, stat, watch, semantic-search, codemod e heartbeats de progresso. **41 subcomandos**.
+A v0.1.30 (2026-07-13) residual de contrato de agente: fuzzy obrigatório (off rejeitado), match_count e indent_adjusted no NDJSON do EditOutput, recipe hash pula *.bak.*, config [fuzzy] ao vivo, sparse outline AST real, backup_method reflink_or_copy, semantic-merge line-based. **41 subcomandos**.
 
-### Novas Receitas (Adicionadas em v0.1.29)
+### Novas Receitas (superfície v0.1.29 + residual v0.1.30)
 
 - **Como Fazer Replace Fuzzy em um Monorepo** -- `replace --fuzzy auto` com `--progress-every` opcional
 - **Como Rodar search-replace-verify** -- `recipe run --name search-replace-verify`
 - **Como Orçar um Sparse List** -- `sparse list --max-files` / `--max-bytes`
-- **Como Fazer Semantic Merge de 3 Vias** -- `semantic-merge --base --ours --theirs`
+- **Como Fazer Semantic Merge de 3 Vias (line-based, não AST)** -- `semantic-merge --base --ours --theirs`
 - **Como Escolher Durability no write** -- `--durability full|fast|auto`
 - **Como Instalar Slim vs Full** -- `--no-default-features --features core` vs default
 - **Como Recuperar Match Falho com best_candidate** -- inspecione o near-miss no envelope de erro e retente
 - **Como Inspecionar rename_method e durability** -- `platform.*` via `jaq` (Linux `renameat2`)
-- **Como Preferir Backup por Hardlink** -- cascata hardlink→reflink→copy; `platform.backup_method`
+- **Como Ler o Método de Backup Honesto** -- `platform.backup_method` é `reflink_or_copy` (nunca hardlink do arquivo vivo)
 - **Como Inventariar a Superfície do Agente (sem MCP)** -- `agent-surface`
 - **Como Fazer Stat Sem Ler o Corpo** -- `stat` (alias de `read --stat`)
 - **Como Observar com Debounce** -- `watch` (feature `watch`)
@@ -31,7 +31,7 @@ A v0.1.29 (2026-07-13) adiciona receitas de replace fuzzy em monorepo, recipes n
 ## Como Fazer Replace Fuzzy em um Monorepo
 
 - Use replace fuzzy quando indentação ou whitespace diverge entre pacotes
-- Passe `--fuzzy off` só quando zero matches exatos devem falhar duro (exit 1)
+- NÃO passe `--fuzzy off` (rejeitado desde v0.1.30); use auto ou aggressive
 - Emita progresso NDJSON em árvores grandes com `--progress-every`
 
 ```bash
@@ -68,7 +68,7 @@ atomwrite --workspace . sparse list --max-files 20 src/ \
 atomwrite --workspace . sparse read --paths-file /tmp/paths.txt --head 30 --max-files 20
 ```
 
-## Como Fazer Semantic Merge de 3 Vias
+## Como Fazer Semantic Merge de 3 Vias (line-based, não AST)
 
 - Una edições concorrentes de agentes com uma base comum
 - Adicione `--fail-on-conflict` para exit 65 em conflitos não resolvidos
@@ -108,7 +108,7 @@ cargo install --path . --locked --force
 
 - Falhas de match podem emitir `best_candidate` (line, similarity, strategy, text, diff_preview)
 - Use o near-miss para corrigir `old` sem reler o arquivo inteiro
-- Pipelines só-exato devem passar `--fuzzy off` (sem cascata de candidato)
+- Exact-only não é suportado; use auto/aggressive e MATCH_AMBIGUOUS / best_candidate
 
 ```bash
 # Capture o envelope de erro no near-miss (exit 65 / MatchFailed)
@@ -136,11 +136,11 @@ echo scratch | atomwrite --workspace . write --durability fast /tmp/ci-out.txt \
   | jaq -r '.platform | "\(.durability) \(.rename_method)"'
 ```
 
-## Como Preferir Backup por Hardlink
+## Como Ler o Método de Backup Honesto
 
-- A cascata de backup é automática: hardlink → reflink → copy
-- Inspecione `platform.backup_method` (`hardlink` | `reflink` | `copy`)
-- Hardlinks no mesmo filesystem mantêm backup O(1); EXDEV/EPERM faz fallback
+- Backup do arquivo vivo NUNCA é hardlink do mesmo inode
+- Inspecione `platform.backup_method` (`reflink_or_copy` ou `copy`)
+- Prefira essa honestidade em pipelines de agente que corromperiam .bak via inode compartilhado
 
 ```bash
 # Force sobrescrita com backup e leia o método usado

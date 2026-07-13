@@ -268,7 +268,7 @@ pub enum Commands {
     /// Remove stale terminal journals older than the threshold (G119 L3).
     WalHeal(crate::cli_args::WalHealArgs),
 
-    /// Three-way semantic merge for multi-agent writes (v0.1.29 P1-1).
+    /// Three-way line-based merge (not AST/embedding) for multi-agent writes (v0.1.29 P1-1).
     SemanticMerge(crate::commands::semantic_merge::SemanticMergeArgs),
     /// Budgeted sparse list/read (v0.1.29 P1-2).
     Sparse(crate::commands::sparse::SparseArgs),

@@ -10,6 +10,7 @@ fi
 OUT=docs/schemas
 mkdir -p "$OUT"
 "$BIN" --json-schema write > "$OUT/write-output.schema.json"
+"$BIN" --json-schema edit > "$OUT/edit-output.schema.json"
 "$BIN" --json-schema replace > "$OUT/replace-result.schema.json"
 "$BIN" --json-schema error > "$OUT/error-output.schema.json"
 "$BIN" --json-schema progress > "$OUT/progress-event.schema.json"

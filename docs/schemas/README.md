@@ -1,6 +1,6 @@
 # atomwrite JSON Schemas
 
-_Last updated: 2026-07-13 (v0.1.29) — 38 schemas in index_
+_Last updated: 2026-07-13 (v0.1.30) — 38 schemas in index; edit-output residual fields_
 
 ## English
 ### Purpose
@@ -9,9 +9,9 @@ _Last updated: 2026-07-13 (v0.1.29) — 38 schemas in index_
 - Use these schemas to validate agent-consumed output programmatically
 
 ### Schema Index
-- `write-output.schema.json` -- output of `atomwrite write` (v0.1.29: `platform.durability`, `platform.rename_method`, `platform.backup_method`)
+- `write-output.schema.json` -- output of `atomwrite write` (v0.1.29: `platform.durability`, `platform.rename_method`, `platform.backup_method`; v0.1.30: `backup_method` is `reflink_or_copy` or `copy`, never hardlink of live file)
 - `read-output.schema.json` -- output of `atomwrite read`
-- `edit-output.schema.json` -- output of `atomwrite edit` (v0.1.15: adds `pairs_total` and `pair_results` -- G117) (v0.1.23: adds `source` field in `pair_results` -- GAP-2026-018)
+- `edit-output.schema.json` -- output of `atomwrite edit` (v0.1.15: `pairs_total`/`pair_results` -- G117) (v0.1.23: `source` in `pair_results`) (v0.1.30 residual: `match_count`, `indent_adjusted`)
 - `search-match.schema.json` -- output of `atomwrite search` (per-match event)
 - `replace-result.schema.json` -- output of `atomwrite replace` (per-file event) (v0.1.29: `fuzzy`, `strategy`, `similarity`, `strategies_tried`)
 - `delete-output.schema.json` -- output of `atomwrite delete` (v0.1.28: adds `warnings`)
@@ -52,9 +52,15 @@ _Last updated: 2026-07-13 (v0.1.29) — 38 schemas in index_
 - Subcommands added in 0.1.29 (`sparse`, `semantic-merge`, `agent-surface`, `watch`, `codemod`, `semantic-search`, `stat`) reuse existing envelopes or emit types documented in the binary `help` / `--json-schema`
 - Dedicated schemas listed for 0.1.29: `best-candidate`, `progress-event`, `cancelled-event`, `recipe-result` (plus `write` / `replace` / `error` field extensions)
 
+### v0.1.30 residual schema updates
+- `edit-output.schema.json` regenerated with `match_count` (uint64|null) and `indent_adjusted` (bool|null)
+- `write-output.schema.json` documents honest `platform.backup_method` values (`reflink_or_copy` | `copy`)
+- Regenerate with `scripts/regen-schemas.sh` or `atomwrite --json-schema edit` / write as needed
+- Contract suite: `cargo test --test cli_v0130_agent_contract`
+
 
 ## Português
-### Última atualização: 2026-07-13 (v0.1.29) — 38 schemas no índice
+### Última atualização: 2026-07-13 (v0.1.30) — 38 schemas no índice; campos residuais do edit-output
 
 ### Objetivo
 - Cada schema descreve a saída NDJSON de um subcomando do atomwrite
@@ -62,9 +68,9 @@ _Last updated: 2026-07-13 (v0.1.29) — 38 schemas in index_
 - Use estes schemas para validar saída consumida por agentes de forma programática
 
 ### Índice de Schemas
-- `write-output.schema.json` -- saída do `atomwrite write` (v0.1.29: `platform.durability`, `platform.rename_method`, `platform.backup_method`)
+- `write-output.schema.json` -- saída do `atomwrite write` (v0.1.29: `platform.durability`, `platform.rename_method`, `platform.backup_method`; v0.1.30: `backup_method` é `reflink_or_copy` ou `copy`, nunca hardlink do arquivo vivo)
 - `read-output.schema.json` -- saída do `atomwrite read`
-- `edit-output.schema.json` -- saída do `atomwrite edit` (v0.1.15: adiciona `pairs_total` e `pair_results` -- G117) (v0.1.23: adiciona campo `source` em `pair_results` -- GAP-2026-018)
+- `edit-output.schema.json` -- saída do `atomwrite edit` (v0.1.15: `pairs_total`/`pair_results` -- G117) (v0.1.23: `source` em `pair_results`) (residual v0.1.30: `match_count`, `indent_adjusted`)
 - `search-match.schema.json` -- saída do `atomwrite search` (evento por match)
 - `replace-result.schema.json` -- saída do `atomwrite replace` (evento por arquivo) (v0.1.29: `fuzzy`, `strategy`, `similarity`, `strategies_tried`)
 - `delete-output.schema.json` -- saída do `atomwrite delete` (v0.1.28: adiciona `warnings`)
@@ -104,3 +110,9 @@ _Last updated: 2026-07-13 (v0.1.29) — 38 schemas in index_
 ### Subcomandos 0.1.29 sem schema dedicado
 - Subcomandos adicionados na 0.1.29 (`sparse`, `semantic-merge`, `agent-surface`, `watch`, `codemod`, `semantic-search`, `stat`) reutilizam envelopes existentes ou emitem tipos documentados no `help` / `--json-schema` do binário
 - Schemas dedicados listados para 0.1.29: `best-candidate`, `progress-event`, `cancelled-event`, `recipe-result` (mais extensões de campos em `write` / `replace` / `error`)
+
+### Atualizações de schema residual v0.1.30
+- `edit-output.schema.json` regenerado com `match_count` (uint64|null) e `indent_adjusted` (bool|null)
+- `write-output.schema.json` documenta valores honestos de `platform.backup_method` (`reflink_or_copy` | `copy`)
+- Regenere com `scripts/regen-schemas.sh` ou `atomwrite --json-schema edit` / write quando preciso
+- Suíte de contrato: `cargo test --test cli_v0130_agent_contract`

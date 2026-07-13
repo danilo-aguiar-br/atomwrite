@@ -25,7 +25,7 @@
 - `src/checksum.rs` — cálculo de hash BLAKE3 para arquivos e slices de bytes (usa memmap2 para arquivos grandes)
 - `src/file_io.rs` — leitura inteligente de arquivos com memmap2 automático acima de 1 MiB
 - `src/platform.rs` — durabilidade e rename por plataforma: `Durability` full|fast|auto; Linux `renameat2` com fallback para rename; macOS `F_FULLFSYNC` em full; o write reporta no NDJSON `platform.durability` e `platform.rename_method`
-- `src/fuzzy.rs` — cascata compartilhada de 9 estratégias de match (exato, whitespace, indent, Jaro-Winkler, …) usada por edit, replace, batch, edit-loop (v0.1.29)
+- `src/fuzzy.rs` — cascata compartilhada de 9 estratégias de match (exato, whitespace, indent, Jaro-Winkler, unicode_normalized, …) usada por edit, replace, batch, edit-loop; expõe `match_count` e `indent_adjusted` no EditOutput (residual v0.1.30)
 
 ### Segurança e Validação
 - `src/path_safety.rs` — jail do workspace: prevenção de path traversal, validação de symlinks, detecção de FIFO/device
@@ -63,7 +63,7 @@
 - **Adicionados em v0.1.29 (8)**: recipe, sparse, semantic-merge, agent-surface, watch, codemod, semantic-search, stat (alias de `read --stat`)
 - **Módulos de comando v0.1.29**: `recipe.rs`, `sparse.rs`, `semantic_merge.rs`, `agent_surface.rs`, `watch.rs`, `codemod.rs`, `semantic_search.rs`
 
-### Features Cargo (v0.1.29)
+### Features Cargo (v0.1.29+)
 - `core` — binário slim sem AST/watch/semantic (meta PRD 5–8 MiB; medido ~7,7 MiB release)
 - `ast` — ast-grep + tree-sitter + language-pack + serde_yaml (padrão com lang-rust/ts/py)
 - `lang-rust` / `lang-ts` / `lang-py` / `lang-go` / `lang-full` — superfície de linguagem para scope/transform

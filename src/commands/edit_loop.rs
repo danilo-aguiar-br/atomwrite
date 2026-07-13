@@ -54,11 +54,14 @@ pub fn cmd_edit_loop(
     stdin: impl Read,
     writer: &mut NdjsonWriter<impl Write>,
     defaults: &crate::config::DefaultsSection,
+    fuzzy_cfg: &crate::config::FuzzySection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
     let target = validate_path(&args.path, &workspace)?;
     let resolved_backup = resolve_backup(&args.backup_opts, defaults);
+    let (fuzzy_mode, fuzzy_threshold) =
+        crate::config::resolve_fuzzy(FuzzyMode::Auto, None, fuzzy_cfg)?;
 
     if !target.exists() {
         return Err(crate::error::AtomwriteError::NotFound {
@@ -106,7 +109,13 @@ pub fn cmd_edit_loop(
     let mut applied = 0usize;
     let mut unmatched = 0usize;
     for (i, pair) in pairs.iter().enumerate() {
-        match fuzzy::match_pair(&content, &pair.old, &pair.new, FuzzyMode::Auto, None) {
+        match fuzzy::match_pair(
+            &content,
+            &pair.old,
+            &pair.new,
+            fuzzy_mode,
+            fuzzy_threshold,
+        ) {
             Ok((edited, _info)) => {
                 content = edited;
                 applied += 1;

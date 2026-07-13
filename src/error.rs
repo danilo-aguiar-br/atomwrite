@@ -85,6 +85,21 @@ pub enum AtomwriteError {
         reason: String,
         /// Closest near-miss region, when similarity ≥ 0.5 (boxed for clippy `result_large_err`).
         best_candidate: Option<Box<BestCandidate>>,
+        /// Additional near-misses for did_you_mean (v0.1.30).
+        candidates: Option<Vec<BestCandidate>>,
+    },
+
+    /// Multiple matches for the same `old` without `--replace-all` (v0.1.30).
+    ///
+    /// Exit 65 / `MATCH_AMBIGUOUS`. Agents must narrow context or pass replace_all.
+    #[error("match ambiguous: {reason}")]
+    MatchAmbiguous {
+        /// Description including match count.
+        reason: String,
+        /// Number of matches found.
+        count: u64,
+        /// Optional first near-miss (unused for exact multi).
+        best_candidate: Option<Box<BestCandidate>>,
     },
 
     /// Operation cancelled by SIGINT/SIGTERM (v0.1.29 P0-4).
@@ -300,7 +315,7 @@ impl AtomwriteError {
         match self {
             Self::NotFound { .. } => 4,
             Self::InvalidInput { .. } => 65,
-            Self::MatchFailed { .. } => 65,
+            Self::MatchFailed { .. } | Self::MatchAmbiguous { .. } => 65,
             Self::Cancelled { exit, .. } => *exit,
             Self::PermissionDenied { .. } => 13,
             Self::DiskFull { .. } => 28,
@@ -384,6 +399,7 @@ impl AtomwriteError {
             Self::NotFound { .. } => "FILE_NOT_FOUND",
             Self::InvalidInput { .. } => "INVALID_INPUT",
             Self::MatchFailed { .. } => "INVALID_INPUT",
+            Self::MatchAmbiguous { .. } => "MATCH_AMBIGUOUS",
             Self::Cancelled { .. } => "CANCELLED",
             Self::PermissionDenied { .. } => "PERMISSION_DENIED",
             Self::DiskFull { .. } => "DISK_FULL",
@@ -443,6 +459,7 @@ impl AtomwriteError {
             | Self::BrokenPipe
             | Self::InternalError { .. }
             | Self::MatchFailed { .. }
+            | Self::MatchAmbiguous { .. }
             | Self::Cancelled { .. } => None,
         }
     }
@@ -485,6 +502,15 @@ pub struct ErrorJson {
     /// Closest near-miss when a match cascade fails (v0.1.29 P0-2).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub best_candidate: Option<BestCandidate>,
+    /// Additional near-miss candidates for did_you_mean (v0.1.30).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidates: Option<Vec<BestCandidate>>,
+    /// Match count when ambiguity is reported (v0.1.30).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_count: Option<u64>,
+    /// Similar basenames when path is missing (v0.1.30).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub similar_paths: Option<Vec<String>>,
 }
 
 impl ErrorJson {
@@ -531,9 +557,20 @@ impl ErrorJson {
             AtomwriteError::MatchFailed { best_candidate, .. } => {
                 best_candidate.as_ref().map(|b| (**b).clone())
             }
+            AtomwriteError::MatchAmbiguous { best_candidate, .. } => {
+                best_candidate.as_ref().map(|b| (**b).clone())
+            }
             AtomwriteError::EditPairFailed { best_candidate, .. } => {
                 best_candidate.as_ref().map(|b| (**b).clone())
             }
+            _ => None,
+        };
+        let candidates = match err {
+            AtomwriteError::MatchFailed { candidates, .. } => candidates.clone(),
+            _ => None,
+        };
+        let match_count = match err {
+            AtomwriteError::MatchAmbiguous { count, .. } => Some(*count),
             _ => None,
         };
         Self {
@@ -550,7 +587,42 @@ impl ErrorJson {
             pairs_total,
             pair_results,
             best_candidate,
+            candidates,
+            match_count,
+            similar_paths: similar_paths_for(err, ctx),
         }
+    }
+}
+
+/// Suggest similar basenames under workspace when a path is missing (v0.1.30).
+fn similar_paths_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<Vec<String>> {
+    let path = match err {
+        AtomwriteError::NotFound { path } => path,
+        _ => return None,
+    };
+    let wanted = path.file_name()?.to_string_lossy().to_string();
+    if wanted.is_empty() {
+        return None;
+    }
+    let root = ctx.workspace.as_ref()?;
+    let mut scored: Vec<(f64, String)> = Vec::new();
+    let walker = ignore::WalkBuilder::new(root).max_depth(Some(6)).build();
+    for entry in walker.flatten() {
+        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy();
+        let score = strsim::jaro_winkler(&wanted, &name);
+        if score >= 0.75 {
+            scored.push((score, entry.path().display().to_string()));
+        }
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(5);
+    if scored.is_empty() {
+        None
+    } else {
+        Some(scored.into_iter().map(|(_, p)| p).collect())
     }
 }
 
@@ -638,6 +710,9 @@ fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
                 .into(),
         ),
         AtomwriteError::BrokenPipe => None,
+        AtomwriteError::MatchAmbiguous { .. } => Some(
+            "narrow --old with more surrounding context or pass --replace-all".into(),
+        ),
         AtomwriteError::MatchFailed { .. } => Some(
             "inspect best_candidate in the error NDJSON and adjust --old, or lower --fuzzy-threshold".into(),
         ),

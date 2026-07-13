@@ -1,6 +1,6 @@
 ---
 source: tests/snapshot_write.rs
-assertion_line: 193
+assertion_line: 198
 expression: event
 ---
 {
@@ -8,11 +8,14 @@ expression: event
   "bytes_before": 21,
   "checksum_after": "[redacted]",
   "checksum_before": "[redacted]",
+  "diff_preview": " old_text",
   "edits": 1,
   "elapsed_ms": "[redacted]",
   "fuzzy": false,
+  "indent_adjusted": false,
   "lines_after": 3,
   "lines_before": 3,
+  "match_count": 1,
   "mode": "exact",
   "mtime_preserved": false,
   "path": "[redacted]",

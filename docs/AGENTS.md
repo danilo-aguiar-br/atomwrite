@@ -4,9 +4,16 @@
 [Leia em Português](AGENTS.pt-BR.md)
 
 
-## What's New in v0.1.29
+## What's New in v0.1.30
 
-- BREAKING: `replace` default is `fuzzy=auto` after zero exact matches; exact-only pipelines must pass `--fuzzy off`
+- BREAKING residual: `--fuzzy off` is rejected (exit 65); only `auto` and `aggressive`
+- Edit success NDJSON includes `match_count` and optional `indent_adjusted`
+- `platform.backup_method` is `reflink_or_copy` (never hardlink of live file)
+- Recipe hash excludes `*.bak.*`; sparse outline emits real AST items
+
+## What Was New in v0.1.29
+
+- BREAKING: `replace` default is `fuzzy=auto` after zero exact matches; as of 0.1.30 exact-only via `--fuzzy off` is rejected
 - 8 new agent-facing subcommands: `recipe`, `sparse`, `semantic-merge`, `agent-surface`, `watch`, `codemod`, `semantic-search`, `stat`
 - Shared fuzzy cascade on `replace` (`--fuzzy`, `--fuzzy-threshold`); match errors may include `best_candidate`
 - `write --durability full|fast|auto`; NDJSON `platform.durability`, `platform.rename_method`, `platform.backup_method`
@@ -238,9 +245,9 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 ## 41 Subcommands
 - `read` -- reads files with metadata, checksum, optional content; `--format raw` (alias `--raw`) emits raw bytes for Unix composability (G81); `--grep <REGEX>` filters returned lines
 - `write` -- creates or overwrites files atomically via stdin; `--syntax-check` valida com tree-sitter após escrita (G72, exit 88)
-- `edit` -- edits surgically by line number, text marker, or exact match; `--fuzzy auto|off|aggressive` for fuzzy matching; `--multi` for NDJSON multi-edit
+- `edit` -- edits surgically by line number, text marker, or exact match; `--fuzzy auto|aggressive` for fuzzy matching (off rejected exit 65 since v0.1.30); success NDJSON may include `match_count` and `indent_adjusted`; `--multi` for NDJSON multi-edit
 - `search` -- searches file content in parallel (ripgrep engine); supports `--context N`, `--max-count N`, `--invert`, `--sort path`, `--fixed`, `--word`, `--case-insensitive`, `--include`, `--exclude`
-- `replace` -- replaces text across multiple files with atomic writes; `--fuzzy auto|off|aggressive`, `--fuzzy-threshold`, `--progress-every`; match failures may emit `best_candidate`
+- `replace` -- replaces text across multiple files with atomic writes; `--fuzzy auto|aggressive` (off rejected exit 65), `--fuzzy-threshold`, `--progress-every`; match failures may emit `best_candidate`
 - `hash` -- computes BLAKE3 checksums
 - `delete` -- deletes files with optional backup
 - `count` -- counts lines, files by extension
@@ -269,9 +276,9 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `edit-loop` -- (v0.1.22) applies N `{old, new}` pairs in 1 invocation via NDJSON on stdin; supports `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`
 - `prune-backups` -- (v0.1.22) manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` files (v0.1.20 and earlier); flags `--max-age-secs <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` for safety); NDJSON output with `path`, `reason`, `action`, `total`
 - `verify` -- (v0.1.25) verify a file checksum against an expected BLAKE3 hash; delegates to `hash --verify`; exit 0 on match, exit 81 on mismatch
-- `recipe` -- (v0.1.29) list/run versioned multi-step pipelines (e.g. search→replace→hash)
-- `sparse` -- (v0.1.29) budgeted monorepo list/read
-- `semantic-merge` -- (v0.1.29) three-way merge for multi-agent conflicts
+- `recipe` -- (v0.1.29/v0.1.30) list/run versioned multi-step pipelines; recursive hash skips `*.bak.*`
+- `sparse` -- (v0.1.29/v0.1.30) budgeted monorepo list/read/outline; outline emits real AST kinds
+- `semantic-merge` -- (v0.1.29/v0.1.30) three-way line-based merge for multi-agent conflicts (not AST)
 - `agent-surface` -- (v0.1.29) clap-derived tool manifesto (CLI only; MCP forbidden)
 - `watch` -- (v0.1.29, feature `watch`) filesystem events with debounce/checksum/gitignore
 - `codemod` -- (v0.1.29) multi-rule AST campaign with `by_rule_id` summary
@@ -330,7 +337,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 ### Write Response
 
 ```json
-{"type":"write","status":"ok","path":"/abs/path","bytes_written":42,"checksum":"abc...","elapsed_ms":1,"platform":{"fsync":"sync_data","dir_fsync":"sync_all","durability":"full","rename_method":"rename","backup_method":"hardlink"}}
+{"type":"write","status":"ok","path":"/abs/path","bytes_written":42,"checksum":"abc...","elapsed_ms":1,"platform":{"fsync":"sync_data","dir_fsync":"sync_all","durability":"full","rename_method":"rename","backup_method":"reflink_or_copy"}}
 ```
 
 ### Read Response
@@ -342,7 +349,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 ### Edit Response
 
 ```json
-{"type":"edit","path":"/abs/path","edits":1,"mode":"old_new","bytes_before":100,"bytes_after":110,"checksum_before":"abc...","checksum_after":"def...","lines_before":10,"lines_after":11,"elapsed_ms":1,"fuzzy":true,"strategy":"exact_whitespace","strategies_tried":2,"similarity":null}
+{"type":"edit","path":"/abs/path","edits":1,"mode":"old_new","bytes_before":100,"bytes_after":110,"checksum_before":"abc...","checksum_after":"def...","lines_before":10,"lines_after":11,"elapsed_ms":1,"fuzzy":true,"strategy":"exact_whitespace","strategies_tried":2,"similarity":null,"match_count":1,"indent_adjusted":null}
 ```
 
 ### Search Match
@@ -360,7 +367,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 ### Error Envelope
 
 ```json
-{"error":true,"code":"NO_MATCHES","exit":1,"message":"no matches for pattern","path":"src/file.rs","error_class":"permanent","retryable":false,"suggestion":"inspect best_candidate or pass --fuzzy off for exact-only","workspace":null,"best_candidate":{"text":"near miss snippet","similarity":0.82,"strategy":"jaro_winkler","line":12,"column":4,"diff_preview":null}}
+{"error":true,"code":"NO_MATCHES","exit":1,"message":"no matches for pattern","path":"src/file.rs","error_class":"permanent","retryable":false,"suggestion":"inspect best_candidate or retry with --fuzzy aggressive and uniqueness / --replace-all","workspace":null,"best_candidate":{"text":"near miss snippet","similarity":0.82,"strategy":"jaro_winkler","line":12,"column":4,"diff_preview":null}}
 ```
 
 - The `workspace` field only appears on `WORKSPACE_JAIL` errors and reports the resolved workspace root (may be `null`)

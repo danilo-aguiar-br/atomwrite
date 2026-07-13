@@ -204,10 +204,43 @@ pub fn cmd_semantic_search(
 }
 
 fn tokenize(s: &str) -> HashSet<String> {
-    s.split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .filter(|t| t.len() >= 2)
-        .map(|t| t.to_ascii_lowercase())
-        .collect()
+    let mut out = HashSet::new();
+    // Split on non-alnum except underscore; then split snake and camel.
+    for raw in s.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+        if raw.is_empty() {
+            continue;
+        }
+        let lower = raw.to_ascii_lowercase();
+        if lower.len() >= 2 {
+            out.insert(lower.clone());
+        }
+        // snake_case subtokens
+        for part in raw.split('_') {
+            let p = part.to_ascii_lowercase();
+            if p.len() >= 2 {
+                out.insert(p);
+            }
+        }
+        // camelCase / PascalCase subtokens
+        let mut cur = String::new();
+        for ch in raw.chars() {
+            if ch.is_uppercase() && !cur.is_empty() {
+                let p = cur.to_ascii_lowercase();
+                if p.len() >= 2 {
+                    out.insert(p);
+                }
+                cur.clear();
+            }
+            cur.push(ch);
+        }
+        if !cur.is_empty() {
+            let p = cur.to_ascii_lowercase();
+            if p.len() >= 2 {
+                out.insert(p);
+            }
+        }
+    }
+    out
 }
 
 fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {

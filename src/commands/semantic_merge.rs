@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Three-way semantic merge (v0.1.29 P1-1).
+//! Three-way **line-based** merge (v0.1.29 P1-1, honesty note v0.1.30).
+//!
+//! Despite the name, this is NOT AST or embedding merge — it aligns by line
+//! index with optional first/last-line anchoring for insert shifts.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -19,8 +22,13 @@ use crate::output::NdjsonWriter;
 use crate::path_safety::validate_path;
 use crate::signal::ShutdownSignal;
 
-/// Arguments for `semantic-merge`.
+/// Arguments for `semantic-merge` (line-based three-way merge, not AST/embedding).
 #[derive(Args, Debug)]
+#[command(
+    about = "Three-way line-based merge by line index (not AST or embedding)",
+    long_about = "Three-way LINE-BASED merge: aligns base/ours/theirs by line index \
+with optional first/last-line anchoring. This is NOT AST merge and NOT embedding merge."
+)]
 pub struct SemanticMergeArgs {
     /// Common ancestor file.
     #[arg(long)]

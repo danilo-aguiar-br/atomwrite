@@ -8,6 +8,36 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.30] - 2026-07-13
+
+### Adicionado
+- Política fuzzy de produto: apenas auto/aggressive; --fuzzy off rejeitado
+- edit --replace-all com unicidade e match_count no NDJSON
+- Guarda escape-drift; delta de indent; estratégia unicode_normalized
+- best_candidate sempre ranqueado; candidates[]; diff_preview preenchido
+- MatchAmbiguous exit 65 / MATCH_AMBIGUOUS
+- search --target content|files|both com --offset e --limit
+- similar_paths em NotFound quando workspace é conhecido
+- progress do replace com pre-count total rate_per_s eta_ms
+- recipe exclui *.bak.* por padrão e progress_every 50
+- sparse outline com orçamento
+- backup_method honesto reflink_or_copy
+- Notas de agent-surface para fuzzy obrigatório e install do watch
+
+### Alterado
+- Versão 0.1.30
+- Skills EN/PT removem --fuzzy off da superfície recomendada
+
+### Corrigido
+- Tokenizer do semantic-search faz split de snake_case e camelCase
+- Docs e help do semantic-merge: honestidade line-based three-way (não AST)
+- EditOutput NDJSON serializa match_count e indent_adjusted (P17/P18)
+- recipe/hash recursive pula backups *.bak.* (P19)
+- config [fuzzy] mode off rejeitado; seção fuzzy aplicada em edit/replace/loop/batch (P20)
+- sparse outline emite outline_item AST real sob orçamento (P21)
+- Testes e2e agent-contract dos campos NDJSON residuais (P23)
+
+
 ## [0.1.29] - 2026-07-13
 
 ### Adicionado

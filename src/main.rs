@@ -80,6 +80,9 @@ fn main() -> ExitCode {
                         pairs_total: None,
                         pair_results: None,
                         best_candidate: None,
+                        candidates: None,
+                        match_count: None,
+                        similar_paths: None,
                     };
                     let mut out = io::stdout().lock();
                     if let Err(e) = serde_json::to_writer(&mut out, &ej) {

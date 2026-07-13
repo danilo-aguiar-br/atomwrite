@@ -54,11 +54,12 @@ This section summarizes cross-platform-relevant changes in v0.1.12.
 
 ### Test Coverage
 
-- 683 tests listed (v0.1.29 working tree)
+- 700+ tests listed (v0.1.30 working tree; contract suite `cli_v0130_agent_contract`)
 - Cross-compile gate: `cargo test --test cross_compile_check -- --ignored` validates Windows GNU/MSVC targets
 - 5 signal tests in `tests/signal_test.rs` cover SIGINT/SIGTERM/SIGPIPE/batch/shutdown
 - See [docs/decisions/README.md](README.md) for architectural decisions
 - For v0.1.29 durability and rename, see [v0.1.29 — Durability and rename](#v0129--durability-and-rename)
+- For v0.1.30 backup honesty and residual contract, see [v0.1.30 — Backup and agent residual](#v0130--backup-and-agent-residual)
 
 ## The Pain You Already Know
 - You write a file on Linux and it reaches disk reliably
@@ -283,5 +284,17 @@ This release is fully backward-compatible across Linux, macOS, and Windows for e
 - `auto` — heuristic based on path and environment
 - macOS under durability `full` uses `F_FULLFSYNC` via `fcntl` (same primitive as before, now gated by policy)
 - Windows keeps its existing flush path; durability labels still appear in NDJSON for agents
-- Backup may prefer hardlink then reflink then copy; reported as `platform.backup_method`
+- Backup of the live file is NEVER a hardlink of the same inode (v0.1.30 residual)
+- `platform.backup_method` reports `reflink_or_copy` or `copy` only
 - Cargo feature `core` keeps the slim binary path; AST/watch/semantic remain optional
+
+## v0.1.30 — Backup and agent residual
+
+- Residual agent-contract release on top of the v0.1.29 platform surface
+- Backup path uses `reflink_or_copy` with copy fallback; never hardlink of the live file
+- Edit NDJSON may include `match_count` and `indent_adjusted` for agent parsing
+- `--fuzzy off` is rejected (exit 65) on CLI and in `.atomwrite.toml` `[fuzzy] mode`
+- Sparse outline emits real AST `outline_item` kinds under budget
+- `semantic-merge` help and docs state line-based merge (not AST)
+- Recipe recursive hash excludes `*.bak.*` paths
+- See [gaps.md](../gaps.md) and [MIGRATION.md](MIGRATION.md#v0129-to-v0130-current)

@@ -115,6 +115,7 @@ pub fn cmd_recipe(
     writer: &mut NdjsonWriter<impl Write>,
     shutdown: &ShutdownSignal,
     defaults: &crate::config::DefaultsSection,
+    fuzzy_cfg: &crate::config::FuzzySection,
 ) -> Result<()> {
     match &args.action {
         RecipeAction::List => {
@@ -127,7 +128,9 @@ pub fn cmd_recipe(
             }
             Ok(())
         }
-        RecipeAction::Run(a) => run_recipe(a.as_ref(), global, writer, shutdown, defaults),
+        RecipeAction::Run(a) => {
+            run_recipe(a.as_ref(), global, writer, shutdown, defaults, fuzzy_cfg)
+        }
     }
 }
 
@@ -137,6 +140,7 @@ fn run_recipe(
     writer: &mut NdjsonWriter<impl Write>,
     shutdown: &ShutdownSignal,
     defaults: &crate::config::DefaultsSection,
+    fuzzy_cfg: &crate::config::FuzzySection,
 ) -> Result<()> {
     let start = std::time::Instant::now();
     // Allow documented YAML names that map to the same built-ins.
@@ -150,10 +154,10 @@ fn run_recipe(
 
     match name {
         "search-replace-verify" => {
-            run_search_replace_verify(args, global, writer, shutdown, defaults, start)
+            run_search_replace_verify(args, global, writer, shutdown, defaults, fuzzy_cfg, start)
         }
         "edit-loop-syntax-check" => {
-            run_edit_loop_syntax_check(args, global, writer, shutdown, defaults, start)
+            run_edit_loop_syntax_check(args, global, writer, shutdown, defaults, fuzzy_cfg, start)
         }
         other => Err(AtomwriteError::InvalidInput {
             reason: format!("unknown recipe: {other}"),
@@ -168,6 +172,7 @@ fn run_search_replace_verify(
     writer: &mut NdjsonWriter<impl Write>,
     shutdown: &ShutdownSignal,
     defaults: &crate::config::DefaultsSection,
+    fuzzy_cfg: &crate::config::FuzzySection,
     start: std::time::Instant,
 ) -> Result<()> {
     let pattern = args
@@ -199,7 +204,14 @@ fn run_search_replace_verify(
         smart_case: false,
         context: 0,
         include: args.include.clone(),
-        exclude: args.exclude.clone(),
+        exclude: {
+            let mut ex = args.exclude.clone();
+            if !ex.iter().any(|e| e.contains("bak")) {
+                ex.push("*.bak.*".into());
+                ex.push("**/*.bak.*".into());
+            }
+            ex
+        },
         count: false,
         files: false,
         max_count: None,
@@ -211,6 +223,9 @@ fn run_search_replace_verify(
         max_columns: 500,
         no_begin_end: false,
         pcre2: false,
+        target: crate::cli_args::SearchTarget::Content,
+        offset: 0,
+        limit: None,
     };
     {
         let mut buf = Vec::new();
@@ -285,15 +300,25 @@ fn run_search_replace_verify(
         literal: true,
         backup_opts: BackupOpts::default(),
         include: args.include.clone(),
-        exclude: args.exclude.clone(),
+        exclude: {
+            let mut ex = args.exclude.clone();
+            if !ex.iter().any(|e| e.contains("bak")) {
+                ex.push("*.bak.*".into());
+                ex.push("**/*.bak.*".into());
+            }
+            ex
+        },
         preview: false,
         max_replacements: None,
         expect_checksum: None,
         dry_run: args.dry_run,
         preserve_case: false,
-        fuzzy: args.fuzzy,
+        fuzzy: match args.fuzzy {
+            FuzzyMode::Off => FuzzyMode::Auto,
+            other => other,
+        },
         fuzzy_threshold: args.fuzzy_threshold,
-        progress_every: 0,
+        progress_every: 50,
         preserve_timestamps: false,
     };
     {
@@ -306,6 +331,7 @@ fn run_search_replace_verify(
                 &mut inner,
                 shutdown,
                 defaults,
+                fuzzy_cfg,
             )
         };
         match res {
@@ -342,6 +368,7 @@ fn run_search_replace_verify(
         verify: None,
         stdin: false,
         recursive: true,
+        exclude: vec!["*.bak.*".into(), "**/*.bak.*".into()],
     };
     let mut buf = Vec::new();
     let hash_res = {
@@ -390,6 +417,7 @@ fn run_edit_loop_syntax_check(
     writer: &mut NdjsonWriter<impl Write>,
     shutdown: &ShutdownSignal,
     defaults: &crate::config::DefaultsSection,
+    fuzzy_cfg: &crate::config::FuzzySection,
     start: std::time::Instant,
 ) -> Result<()> {
     let pairs_file = args
@@ -438,6 +466,7 @@ fn run_edit_loop_syntax_check(
                 Cursor::new(pairs_bytes),
                 &mut inner,
                 defaults,
+                fuzzy_cfg,
             )
         };
         match res {

@@ -210,7 +210,9 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
     let shutdown = signal::get_or_install_handlers()?;
     let workspace = cli.global.resolve_workspace()?;
     let config = crate::config::load_config(&workspace, None);
+    crate::config::validate_fuzzy(&config.fuzzy)?;
     let defaults = &config.defaults;
+    let fuzzy_cfg = &config.fuzzy;
 
     // G119 L3 — autonomous startup `wal-heal` pass. Walks the workspace
     // once, removes every `Committed`/`Aborted` sidecar older than
@@ -258,13 +260,21 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
             &mut writer,
             &workspace,
             defaults,
+            fuzzy_cfg,
             stdin_is_tty,
         ),
         Commands::Search(args) => {
             commands::search::cmd_search(args, &cli.global, &mut writer, &shutdown)
         }
         Commands::Replace(args) => {
-            commands::replace::cmd_replace(args, &cli.global, &mut writer, &shutdown, defaults)
+            commands::replace::cmd_replace(
+                args,
+                &cli.global,
+                &mut writer,
+                &shutdown,
+                defaults,
+                fuzzy_cfg,
+            )
         }
         Commands::Hash(args) => commands::hash::cmd_hash(args, &cli.global, stdin, &mut writer),
         Commands::Delete(args) => {
@@ -297,6 +307,7 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
                 &shutdown,
                 &args.backup_opts,
                 defaults,
+                fuzzy_cfg,
             )
         }
         Commands::Scope(args) => {
@@ -331,7 +342,14 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
             // attempting to re-acquire it from the same thread that
             // holds it (via `main.rs:106 stdin.lock()`) blocks forever.
             // See audit 2026-06-17.
-            commands::edit_loop::cmd_edit_loop(args, &cli.global, stdin, &mut writer, defaults)
+            commands::edit_loop::cmd_edit_loop(
+                args,
+                &cli.global,
+                stdin,
+                &mut writer,
+                defaults,
+                fuzzy_cfg,
+            )
         }
         Commands::Verify(args) => {
             let hash_args = cli_args::HashArgs {
@@ -339,6 +357,7 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
                 verify: Some(args.checksum.clone()),
                 stdin: false,
                 recursive: false,
+                exclude: Vec::new(),
             };
             commands::hash::cmd_hash(&hash_args, &cli.global, stdin, &mut writer)
         }
@@ -353,7 +372,14 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
             commands::sparse::cmd_sparse(args, &cli.global, &mut writer, &shutdown, defaults)
         }
         Commands::Recipe(args) => {
-            commands::recipe::cmd_recipe(args, &cli.global, &mut writer, &shutdown, defaults)
+            commands::recipe::cmd_recipe(
+                args,
+                &cli.global,
+                &mut writer,
+                &shutdown,
+                defaults,
+                fuzzy_cfg,
+            )
         }
         Commands::Stat(args) => {
             let mut a = args.clone();

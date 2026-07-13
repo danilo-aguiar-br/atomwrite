@@ -54,11 +54,12 @@ Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
 
 ### Cobertura de Testes
 
-- 683 testes listados (working tree v0.1.29)
+- 700+ testes listados (working tree v0.1.30; suíte de contrato `cli_v0130_agent_contract`)
 - Gate de cross-compile: `cargo test --test cross_compile_check -- --ignored` valida targets Windows GNU/MSVC
 - 5 testes de sinal em `tests/signal_test.rs` cobrem SIGINT/SIGTERM/SIGPIPE/batch/shutdown
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 - Para durabilidade e rename na v0.1.29, veja [v0.1.29 — Durabilidade e rename](#v0129--durabilidade-e-rename)
+- Para honestidade de backup e residual de agente na v0.1.30, veja [v0.1.30 — Backup e residual de agente](#v0130--backup-e-residual-de-agente)
 
 ## A Dor Que Você Já Conhece
 - Você escreve um arquivo no Linux e ele chega ao disco de forma confiável
@@ -283,5 +284,17 @@ Esta release é retrocompatível em Linux, macOS e Windows para flags existentes
 - `auto` — heurística baseada no path e no ambiente
 - macOS sob durability `full` usa `F_FULLFSYNC` via `fcntl` (mesmo primitivo de antes, agora sob política)
 - Windows mantém o flush existente; rótulos de durability ainda aparecem no NDJSON para agentes
-- Backup pode preferir hardlink, depois reflink, depois copy; reportado em `platform.backup_method`
+- Backup do arquivo vivo NUNCA é hardlink do mesmo inode (residual v0.1.30)
+- `platform.backup_method` reporta apenas `reflink_or_copy` ou `copy`
 - Feature Cargo `core` mantém o caminho de binário slim; AST/watch/semantic permanecem opcionais
+
+## v0.1.30 — Backup e residual de agente
+
+- Release residual de contrato de agente sobre a superfície de plataforma da v0.1.29
+- Caminho de backup usa `reflink_or_copy` com fallback para copy; nunca hardlink do arquivo vivo
+- NDJSON do edit pode incluir `match_count` e `indent_adjusted` para parsing por agentes
+- `--fuzzy off` é rejeitado (exit 65) na CLI e em `.atomwrite.toml` `[fuzzy] mode`
+- Sparse outline emite kinds reais de `outline_item` AST sob orçamento
+- Help e docs de `semantic-merge` admitem merge line-based (não AST)
+- Hash recursivo de recipe exclui paths `*.bak.*`
+- Veja [gaps.md](../gaps.md) e [MIGRATION.pt-BR.md](MIGRATION.pt-BR.md#v0129-para-v0130-atual)

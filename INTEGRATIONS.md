@@ -6,15 +6,18 @@
 > atomwrite works with every LLM agent that can execute shell commands
 
 
-## Compatible Agents (v0.1.29)
+## Compatible Agents (v0.1.30)
 - atomwrite requires only `bash` access to function
 - Any agent that can run a shell command can use atomwrite
 - NDJSON output is parseable by every major LLM without custom adapters
 - No plugins, extensions, or SDKs required
-- **41 subcommands** as of v0.1.29 (8 new: semantic-merge, sparse, recipe, stat, agent-surface, watch, codemod, semantic-search)
+- **41 subcommands** as of v0.1.30 (surface from v0.1.29 plus residual contract fixes)
 - Use `agent-surface` for the tool manifesto — MCP is not provided
-- Prefer `recipe list|run` for multi-step search-replace-verify pipelines
+- Prefer `recipe list|run` for multi-step search-replace-verify pipelines (excludes `*.bak.*` including hash)
 - Read `best_candidate` on match failures (exit 65) instead of re-reading whole files
+- On successful `edit --replace-all` parse `match_count`; on indent flex parse `indent_adjusted`
+- Fuzzy is mandatory (`auto`/`aggressive`); `--fuzzy off` is rejected (exit 65)
+- Backup method is `reflink_or_copy` — never hardlink of the live file
 - Slim install: `cargo install --path . --locked --force --no-default-features --features core`
 - As of v0.1.12, atomwrite runs on Windows 10/11, Linux, and macOS with identical NDJSON contract
 - The v0.1.12 release added 5 new error variants and the v0.1.20 release lands 542 tests across 47 test suites

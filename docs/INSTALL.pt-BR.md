@@ -1,7 +1,7 @@
 # Guia de Instalação
 
 - Instruções completas para instalar atomwrite em Linux, macOS e Windows
-- Versão alvo atual: v0.1.29 (replace fuzzy, recipes, sparse, semantic-merge, 41 subcomandos; builds slim/full por features)
+- Versão alvo atual: v0.1.30 (replace fuzzy, recipes, sparse, semantic-merge, 41 subcomandos; builds slim/full por features)
 - Seções ordenadas por plataforma, com pré-requisitos e solução de problemas
 
 
@@ -50,7 +50,7 @@ O fix do Windows 10/11 de v0.1.4 é preservado (cargo install agora funciona). v
 
 ### Cobertura de Testes
 
-- 683 testes listados (working tree v0.1.29)
+- 683 testes listados (working tree v0.1.30)
 - ADRs em `docs/decisions/` até 0051
 - 38 schemas JSON em `docs/schemas/`
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
@@ -64,10 +64,10 @@ O fix do Windows 10/11 de v0.1.4 é preservado (cargo install agora funciona). v
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Instalar atomwrite v0.1.29 (path/fonte recomendado até o crates.io publicar)
+# Instalar atomwrite v0.1.30 (path/fonte recomendado até o crates.io publicar)
 cargo install --path . --locked --force
-# Ou pin do crates.io quando 0.1.29 estiver publicado:
-# cargo install atomwrite --locked --version "^0.1.29"
+# Ou pin do crates.io quando 0.1.30 estiver publicada:
+# cargo install atomwrite --locked --version "^0.1.30"
 
 # Verificar
 atomwrite --version
@@ -79,10 +79,10 @@ atomwrite --version
 # Instalar ferramentas de build
 sudo dnf install rust cargo gcc
 
-# Preferido: a partir do clone (v0.1.29)
+# Preferido: a partir do clone (v0.1.30)
 cargo install --path . --locked --force
-# Alternativa quando o crates.io publicar 0.1.29:
-# cargo install atomwrite --locked --version "^0.1.29"
+# Alternativa quando o crates.io publicar 0.1.30:
+# cargo install atomwrite --locked --version "^0.1.30"
 # Nota: o crates.io pode ainda listar 0.1.28
 ```
 
@@ -91,10 +91,10 @@ cargo install --path . --locked --force
 ```bash
 sudo pacman -S rust
 
-# Preferido: a partir do clone (v0.1.29)
+# Preferido: a partir do clone (v0.1.30)
 cargo install --path . --locked --force
-# Alternativa quando o crates.io publicar 0.1.29:
-# cargo install atomwrite --locked --version "^0.1.29"
+# Alternativa quando o crates.io publicar 0.1.30:
+# cargo install atomwrite --locked --version "^0.1.30"
 # Nota: o crates.io pode ainda listar 0.1.28
 ```
 
@@ -108,10 +108,10 @@ cargo install --path . --locked --force
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Preferido: a partir do clone (v0.1.29)
+# Preferido: a partir do clone (v0.1.30)
 cargo install --path . --locked --force
-# Alternativa quando o crates.io publicar 0.1.29:
-# cargo install atomwrite --locked --version "^0.1.29"
+# Alternativa quando o crates.io publicar 0.1.30:
+# cargo install atomwrite --locked --version "^0.1.30"
 # Nota: o crates.io pode ainda listar 0.1.28
 
 # Liberar no Gatekeeper se solicitado
@@ -136,7 +136,7 @@ cd atomwrite
 cargo install --path . --locked --force
 ```
 
-### Instalação Rápida (do crates.io — quando 0.1.29 estiver publicado)
+### Instalação Rápida (do crates.io — quando 0.1.30 estiver publicada)
 
 ```powershell
 # Abrir PowerShell 7+ ou Windows Terminal
@@ -144,7 +144,7 @@ rustup default stable
 rustup target add x86_64-pc-windows-msvc
 
 # Prefira pin de versão; o crates.io pode ainda listar 0.1.28
-cargo install atomwrite --locked --version "^0.1.29"
+cargo install atomwrite --locked --version "^0.1.30"
 
 # Verificar (esperar saída NDJSON)
 atomwrite --version
@@ -199,11 +199,11 @@ Feche o arquivo na aplicação que o segura e tente novamente.
 ## Instalando Versões Específicas
 
 ```bash
-# Preferido: árvore fonte v0.1.29 (até publicar no crates.io)
+# Preferido: árvore fonte v0.1.30 (até publicar no crates.io)
 cargo install --path . --locked --force
 
-# Pin no crates.io quando 0.1.29 estiver publicada
-cargo install atomwrite --locked --version "^0.1.29"
+# Pin no crates.io quando 0.1.30 estiver publicada
+cargo install atomwrite --locked --version "^0.1.30"
 
 # Pin histórico de exemplo (0.1.28)
 cargo install atomwrite --locked --version 0.1.28
@@ -215,7 +215,7 @@ cargo install --path . --locked --force
 A flag `--locked` garante que o `Cargo.lock` seja respeitado, garantindo um build
 reproduzível que corresponde ao que os maintainers testaram.
 
-Nota: o crates.io pode ainda listar 0.1.28 depois que a árvore chega em 0.1.29.
+Nota: o crates.io pode ainda listar versão mais antiga depois que a árvore chega em 0.1.30.
 Use `cargo install --path . --locked --force` para a árvore que você tem no checkout.
 
 
@@ -243,9 +243,9 @@ O binário de release fica em `target/release/atomwrite` (ou `atomwrite.exe`
 no Windows).
 
 
-## Builds Slim vs Full por Features (v0.1.29)
+## Builds Slim vs Full por Features (v0.1.30)
 
-A v0.1.29 expõe features do Cargo para trocar tamanho AST por um binário slim de agente.
+A v0.1.30 expõe features do Cargo para trocar tamanho AST por um binário slim de agente.
 
 | Perfil | Comando | Tamanho aprox. | Notas |
 |---|---|---|---|
@@ -280,7 +280,7 @@ atomwrite --version
 atomwrite --help
 ```
 
-O crates.io pode ainda publicar 0.1.28 até o maintainer lançar 0.1.29. Prefira
+O crates.io pode ainda publicar versão mais antiga até o maintainer lançar 0.1.30. Prefira
 `--path . --force` para esta árvore.
 
 
@@ -367,7 +367,7 @@ Esta release introduz uma nova camada de segurança chamada **intention guards**
 
 ### Estatísticas
 
-- 683 testes listados (working tree v0.1.29)
+- 683 testes listados (working tree v0.1.30)
 - 11 GAP-2026 fechados
 - 3 targets de cross-compile Windows verdes
 - ADRs em `docs/decisions/` até 0051; 38 schemas JSON

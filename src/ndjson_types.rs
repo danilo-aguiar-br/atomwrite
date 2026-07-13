@@ -423,6 +423,12 @@ pub struct EditOutput {
     /// Critical for build systems: false ensures cargo/make/cmake detect the change.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mtime_preserved: Option<bool>,
+    /// Number of occurrences replaced in old/new mode (1 unless `--replace-all`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_count: Option<u64>,
+    /// True when fuzzy indent delta realigned the replacement text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indent_adjusted: Option<bool>,
 }
 
 /// NDJSON output for dry-run and diff preview operations.
@@ -1216,6 +1222,8 @@ mod tests {
                 source: None,
             }]),
             mtime_preserved: Some(false),
+            match_count: Some(1),
+            indent_adjusted: Some(false),
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);

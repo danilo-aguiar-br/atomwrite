@@ -6,23 +6,30 @@
 > One CLI replaces dozens of file-manipulation tool calls your agent makes today
 
 
-## What's New in v0.1.29
+## What's New in v0.1.30
 
-v0.1.29 (2026-07-13) adds agent-facing matching, budgets, recipes, and surface inventory. There are **41 subcommands**.
+v0.1.30 (2026-07-13) closes residual agent-contract gaps on top of the v0.1.29 surface. There are **41 subcommands**.
 
-### `replace --fuzzy` and `best_candidate`
+### Fuzzy mandatory, match_count, indent_adjusted
 
-- Fixed-string `replace` uses `fuzzy=auto` after exact multi-match finds zero hits
-- Modes: `auto`, `off`, `aggressive` plus optional `--fuzzy-threshold <0.0-1.0>`
-- Match failures may emit `best_candidate` (line, similarity, strategy, diff_preview) so agents correct `old` without re-reading the whole file
-- Exact-only pipelines must pass `--fuzzy off`
+- Fuzzy modes: only `auto` and `aggressive` (`--fuzzy off` is rejected with exit 65)
+- Multi-occurrence edits require `--replace-all`; success NDJSON includes `match_count`
+- When indent delta realigns the replacement, success NDJSON includes `indent_adjusted: true`
+- Match failures emit ranked `best_candidate`, `candidates[]`, and `diff_preview`
+- Config `[fuzzy]` is live; `mode = "off"` in `.atomwrite.toml` is rejected
 
 ```bash
 atomwrite --workspace . replace --fuzzy auto $'fn main() {\n  let x = 1;\n}' $'fn main() {\n    let x = 2;\n}' src/main.rs
 
-# Exact-only (legacy exit 1 on zero exact matches)
-atomwrite --workspace . replace --fuzzy off 'exact-token' 'new-token' src/
+# Multi-occurrence edit with match_count
+atomwrite --workspace . edit src/app.rs --old 'TODO' --new 'DONE' --replace-all --fuzzy auto \
+  | jaq '{match_count, indent_adjusted, strategy}'
 ```
+
+### Carry-over from v0.1.29
+
+- Fixed-string `replace` uses `fuzzy=auto` after exact multi-match finds zero hits
+- Optional `--fuzzy-threshold <0.0-1.0>`
 
 ### `write --durability`
 
@@ -45,14 +52,21 @@ atomwrite --workspace . recipe run --name search-replace-verify \
   --path src --pattern OLD --replacement NEW --fuzzy auto
 ```
 
-### `sparse` (budgeted list/read)
+### `sparse` (budgeted list/read/outline)
+
+- Budgeted monorepo list and read
+- Sparse outline emits real AST `outline_item` kinds under budget (v0.1.30 residual)
 
 ```bash
 atomwrite --workspace . sparse list --max-files 50 --max-bytes 1048576 src/
 atomwrite --workspace . sparse read --paths-file /tmp/paths.txt --head 40
+atomwrite --workspace . sparse outline --max-files 20 src/
 ```
 
-### `semantic-merge` (3-way)
+### `semantic-merge` (3-way, line-based)
+
+- Line-based three-way merge (honest: not AST-aware in v0.1.30)
+- Use for multi-agent conflict resolution when line-level merge is enough
 
 ```bash
 atomwrite --workspace . semantic-merge \
@@ -279,7 +293,7 @@ echo "data" | atomwrite write --expect-checksum abc123 src/file.txt
 - `full` = strongest file+dir fsync; `fast` = sync_data only; `auto` = config/path policy
 - Success NDJSON reports `platform.durability`, `platform.rename_method`, `platform.backup_method`
 - Linux atomic rename prefers `renameat2` with ENOSYS fallback to rename
-- Backup prefers hardlink, then reflink, then copy
+- Backup uses reflink_or_copy (never hardlink of the live file)
 
 ```bash
 echo payload | atomwrite --workspace . write --durability full config.toml
@@ -317,7 +331,7 @@ echo "replacement block" | atomwrite edit src/main.rs --range 10:20
 atomwrite edit src/main.rs --old "old_text" --new "new_text"
 ```
 
-- Use `--fuzzy auto|off|aggressive` for fuzzy text matching when exact match fails (9 strategies in cascade, G116)
+- Use `--fuzzy auto|aggressive` for fuzzy text matching when exact match fails (9 strategies in cascade; off rejected since v0.1.30)
 - Since v0.1.15 repeated `--old`/`--new` pairs also run the fuzzy cascade per pair (G117); responses include `pairs_total` and per-pair `pair_results`, and failures report `failed_pair_index`
 - Use `--partial` (v0.1.15) to apply the matching pairs and report the rest; zero applied pairs exits 1 (`NO_MATCHES`) without writing
 - Never pipe `edit` into `jaq` without `-e`: the error envelope goes to stdout, so `| jaq '.edits'` masks exit 65 as `null` — use `jaq -e '.edits'` or `${PIPESTATUS[0]}`
@@ -373,9 +387,9 @@ atomwrite replace --dry-run 'before' 'after' src/
 - Use `--dry-run` to preview replacements without modifying files
 - Use `--preserve-timestamps` to keep the original mtime of modified files (default: mtime is updated to reflect the change)
 - Fixed-string replace defaults to `--fuzzy auto` after zero exact multi-match hits (v0.1.29 BREAKING vs exact-only exit 1)
-- Modes: `--fuzzy auto|off|aggressive` and optional `--fuzzy-threshold <0.0-1.0>`
+- Modes: `--fuzzy auto|aggressive` (off rejected) and optional `--fuzzy-threshold <0.0-1.0>`
 - Shared 9-strategy cascade (same as edit) after exact multi-match finds zero hits
-- Exact-only pipelines MUST pass `--fuzzy off` (exit 1 on zero exact matches)
+- Exact-only is not supported; use auto/aggressive and structured uniqueness errors
 - Match failures may emit `best_candidate` with line, similarity, strategy, diff_preview
 - Use `--progress-every N` for NDJSON progress heartbeats on large trees
 - Regex mode (`--regex`) keeps the regex engine and does not run fuzzy cascade
@@ -384,8 +398,8 @@ atomwrite replace --dry-run 'before' 'after' src/
 - Use `--include` and `--exclude` for glob filtering
 
 ```bash
-atomwrite --workspace . replace --fuzzy auto 'legacy(' 'new(' src/
-atomwrite --workspace . replace --fuzzy off 'exact' 'new' src/
+# --fuzzy off rejected since v0.1.30; use auto or aggressive
+# off rejected: use --fuzzy auto or --fuzzy aggressive
 atomwrite --workspace . replace --progress-every 50 'old' 'new' packages/
 ```
 
