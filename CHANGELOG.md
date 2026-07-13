@@ -8,6 +8,46 @@
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.29] - 2026-07-13
+
+### Added
+- Shared `fuzzy` module: 9-strategy cascade for edit, replace, batch, edit-loop (P0-1)
+- `best_candidate` structured diagnostics on match failure (P0-2)
+- `replace --fuzzy auto|off|aggressive` and `--fuzzy-threshold`
+- Cooperative cancel during stdin read and chunked atomic write (P0-4)
+- Cargo features: `core`, `ast`, `lang-*`, `watch`, `semantic`, `full` (P0-3)
+- CI `size-gate` job: slim core release must be ≤ 15 MiB; `core-test` job; `schema-diff` job
+- `semantic-merge` three-way merge with shutdown checks (P1-1)
+- `sparse list|read` budgeted monorepo surface (P1-2)
+- `replace --progress-every` and batch progress heartbeats (P1-3)
+- `recipe list|run` with **real** dispatch search→replace→hash (P1-4)
+- Versioned recipe docs under `recipes/*.yaml`
+- Backup prefers hardlink before reflink/copy (P2-3)
+- `stat` subcommand alias for `read --stat` (P2-4)
+- `agent-surface` clap-derived inventory (anti-MCP, P2-5)
+- `write --durability full|fast|auto` with NDJSON `platform.durability` (P2-1)
+- Linux `renameat2` in `atomic_rename` with ENOSYS fallback (P2-2)
+- `watch` debounce coalesce + optional `--checksum` + gitignore (P3-1, feature watch)
+- `semantic-search --index-dir` offline inverted index (P3-2)
+- `codemod` campaign `codemod_summary.by_rule_id` (P3-3)
+- Regenerated schemas: write durability/rename_method, replace fuzzy*, error best_candidate, recipe/progress/cancelled
+
+### Changed
+- Default fixed-string `replace` uses fuzzy=auto after exact multi-match misses (breaking vs 0.1.28 exact-only exit 1)
+- Strategy numbering normalized to nine named strategies
+- Skill surface documents 41 subcommands (was 33)
+
+### Fixed
+- Match failures no longer discard near-miss scores
+- Recipe run no longer plan-only stub
+- Clippy `result_large_err` via boxed `BestCandidate`
+- Core-only build works without AST crates (stubs exit 78)
+
+### Binary size (measured honesty)
+- Slim (`--no-default-features --features core`): ~7.7 MiB (CI asserts ≤ 15 MiB)
+- Default/full with AST: ~52 MB — PRD 5–8 MB applies to **core** only, not default AST build
+
+
 ## [0.1.28] - 2026-07-06
 
 ### BREAKING Changes

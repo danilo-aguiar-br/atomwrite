@@ -13,13 +13,33 @@
 
 ## O Que É
 - Um único binário Rust que resolve toda operação de arquivo que um agente LLM precisa
-- **33 subcomandos**: read, write, edit, search, replace, hash, verify, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions, edit-loop, prune-backups
+- **41 subcomandos**: read, write, edit, search, replace, hash, verify, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions, edit-loop, prune-backups, semantic-merge, sparse, recipe, stat, agent-surface, watch, codemod, semantic-search
 - Toda escrita é atômica: tempfile, fsync, rename, fsync do diretório
 - Toda resposta é NDJSON: um objeto JSON por linha, legível por máquina
 - Todo arquivo recebe checksum BLAKE3: detecta drift, verifica integridade, habilita locking otimista
 
 
-## Novidades na v0.1.28 (2026-07-06)
+## Novidades na v0.1.29 (2026-07-13)
+
+- **41 subcomandos** (antes 33): adicionados `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch`, `codemod`, `semantic-search`
+- Módulo **fuzzy** compartilhado: cascata de 9 estratégias para `edit`, `replace`, `batch`, `edit-loop` — `replace --fuzzy auto|off|aggressive` e `--fuzzy-threshold`
+- Diagnóstico estruturado **`best_candidate`** em falha de match (scores de near-miss não são mais descartados)
+- Cargo **features**: `core`, `ast`, `lang-*`, `watch`, `semantic`, `full` — build slim core sem crates AST (stubs com exit 78)
+- **Cancel cooperativo** durante leitura de stdin e escrita atômica em chunks
+- **`semantic-merge`**: merge three-way com checagens de shutdown
+- **`sparse list|read`**: superfície orçada para monorepo
+- **`replace --progress-every`** e heartbeats de progresso no batch
+- **`recipe list|run`** com dispatch real search→replace→hash (não é mais stub plan-only); receitas versionadas em `recipes/*.yaml`
+- **`write --durability full|fast|auto`** com `platform.durability` no NDJSON; Linux `renameat2` em `atomic_rename` com fallback ENOSYS
+- Backup prefere **hardlink** antes de reflink/copy
+- **`stat`** alias de `read --stat`; **`agent-surface`** inventário derivado do clap (anti-MCP, sem servidor MCP)
+- **`watch`** com debounce coalesce + `--checksum` opcional + gitignore (feature `watch`)
+- **`semantic-search --index-dir`** índice invertido offline Jaccard (feature `semantic`)
+- **`codemod`** com `codemod_summary.by_rule_id` na campanha
+- CI **size-gate**: release slim core ≤ 15 MiB; medido slim ~7.7 MiB; default/full com AST ~52 MB — meta PRD 5–8 MB vale para **core**, não para o build default com AST
+- `replace` em fixed-string usa fuzzy=auto após misses de multi-match exato (breaking vs 0.1.28, que saía só com exit 1)
+
+## O Que Havia De Novo Na v0.1.28 (2026-07-06)
 
 - **BREAKING**: `delete` agora cria backup por padrão (antes era opt-in) — use `--no-backup` para desligar; `--keep-backup` em `delete` é redundante (backups de deleção são sempre preservados) e agora emite um campo `warnings` no envelope NDJSON
 - **BREAKING**: `move`/`copy` sobrescrevendo um destino existente agora exigem `--force` OU `--backup` explícito
@@ -279,6 +299,17 @@ atomwrite --workspace . wal-stats
 atomwrite --workspace . wal-heal --threshold-secs 3600
 ```
 
+
+## Instalação (slim vs full)
+
+- Features: `core`, `ast`, `lang-*`, `watch`, `semantic`, `full` (default inclui AST)
+- Slim (somente core, ~7.7 MiB, CI size-gate ≤ 15 MiB):
+  `cargo install --path . --locked --force --no-default-features --features core`
+- Full/default (linguagens AST, ~52 MB):
+  `cargo install --path . --locked --force`
+- Meta PRD 5–8 MB aplica-se ao perfil **core**, não ao build default com AST
+- Durabilidade: `write --durability full|fast|auto` (default auto)
+- Recipe: `atomwrite recipe run --name search-replace-verify --pattern OLD --replacement NEW --path src/`
 
 ## Instalação
 ### Do crates.io

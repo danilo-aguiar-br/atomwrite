@@ -103,6 +103,7 @@ pub fn cmd_apply(
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup: resolved_backup.keep,
+        durability: crate::platform::Durability::Auto,
     };
     atomic_write(&target, result_content.as_bytes(), &opts, &workspace)?;
 

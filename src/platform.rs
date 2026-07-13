@@ -9,32 +9,98 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
+/// File durability trade-off for atomic writes (v0.1.29 P2-1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Durability {
+    /// Full durable flush: `F_FULLFSYNC` on macOS, `sync_all` when available; always fsync dir.
+    Full,
+    /// Fast path: file `sync_data` only; skip directory fsync when safe enough for agent workloads.
+    Fast,
+    /// Auto: Full for config-like extensions, Fast for source trees (default).
+    #[default]
+    Auto,
+}
+
+impl Durability {
+    /// Resolve Auto against a target path.
+    pub fn resolve(self, target: &Path) -> Durability {
+        match self {
+            Durability::Auto => {
+                let name = target
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let ext = target
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if matches!(
+                    ext.as_str(),
+                    "toml" | "json" | "yaml" | "yml" | "ini" | "conf" | "cfg" | "env"
+                ) || name.starts_with('.')
+                    || name == "cargo.lock"
+                    || name == "dockerfile"
+                {
+                    Durability::Full
+                } else {
+                    Durability::Fast
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// Stable name for NDJSON.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Durability::Full => "full",
+            Durability::Fast => "fast",
+            Durability::Auto => "auto",
+        }
+    }
+}
+
 /// Flush file data to persistent storage using the best platform-specific method.
 ///
 /// # Errors
 ///
 /// Returns an I/O error if the fsync syscall fails.
 pub fn fsync_file(file: &File) -> Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        use std::os::unix::io::AsRawFd;
-        let fd = file.as_raw_fd();
-        // SAFETY: F_FULLFSYNC is a macOS-specific fcntl command that flushes the
-        // disk cache to physical media. The fd is valid because it comes from a
-        // live File reference. This is required because macOS fsync() does NOT
-        // guarantee data reaches persistent storage without F_FULLFSYNC.
-        let ret = unsafe { libc::fcntl(fd, libc::F_FULLFSYNC) };
-        if ret == -1 {
-            file.sync_data()
-                .context("fsync fallback after F_FULLFSYNC failure")?;
-        }
-        Ok(())
-    }
+    fsync_file_with_durability(file, Durability::Full)
+}
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        file.sync_data().context("fsync file")?;
-        Ok(())
+/// Flush file data according to the durability policy (v0.1.29 P2-1).
+///
+/// - `Full`: macOS `F_FULLFSYNC`, else `sync_all` on the file descriptor path when available
+/// - `Fast` / resolved `Auto`: `sync_data` only
+pub fn fsync_file_with_durability(file: &File, durability: Durability) -> Result<()> {
+    match durability {
+        Durability::Fast | Durability::Auto => {
+            file.sync_data().context("fsync file (fast)")?;
+            Ok(())
+        }
+        Durability::Full => {
+            #[cfg(target_os = "macos")]
+            {
+                use std::os::unix::io::AsRawFd;
+                let fd = file.as_raw_fd();
+                // SAFETY: F_FULLFSYNC requires a valid fd from a live File.
+                let ret = unsafe { libc::fcntl(fd, libc::F_FULLFSYNC) };
+                if ret == -1 {
+                    file.sync_data()
+                        .context("fsync fallback after F_FULLFSYNC failure")?;
+                }
+                return Ok(());
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                // Prefer sync_all for full durability of metadata+data on Linux/Windows.
+                file.sync_all().context("fsync file (full)")?;
+                Ok(())
+            }
+        }
     }
 }
 
@@ -160,5 +226,81 @@ pub fn platform_dir_fsync_name() -> &'static str {
     #[cfg(not(any(unix, windows)))]
     {
         "none"
+    }
+}
+
+/// Perform an atomic rename and report the method used (v0.1.29 P2-2).
+///
+/// On Linux, prefers `renameat2(..., flags=0)` which is equivalent to
+/// `renameat` for overwrite semantics (man7). Falls back to `std::fs::rename`
+/// when the kernel returns `ENOSYS`.
+pub fn atomic_rename(from: &Path, to: &Path) -> Result<&'static str> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let from_c = CString::new(from.as_os_str().as_bytes())
+            .with_context(|| format!("invalid rename source path: {}", from.display()))?;
+        let to_c = CString::new(to.as_os_str().as_bytes())
+            .with_context(|| format!("invalid rename dest path: {}", to.display()))?;
+        // flags=0: same overwrite semantics as renameat/rename (not RENAME_NOREPLACE).
+        let ret = unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                from_c.as_ptr(),
+                libc::AT_FDCWD,
+                to_c.as_ptr(),
+                0,
+            )
+        };
+        if ret == 0 {
+            return Ok("renameat2");
+        }
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() == Some(libc::ENOSYS) {
+            std::fs::rename(from, to)
+                .with_context(|| format!("rename {} -> {}", from.display(), to.display()))?;
+            return Ok("rename");
+        }
+        return Err(err)
+            .with_context(|| format!("renameat2 {} -> {}", from.display(), to.display()));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::fs::rename(from, to)
+            .with_context(|| format!("rename {} -> {}", from.display(), to.display()))?;
+        #[cfg(target_os = "macos")]
+        {
+            Ok("rename")
+        }
+        #[cfg(windows)]
+        {
+            Ok("MoveFileEx")
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
+        {
+            Ok("rename")
+        }
+    }
+}
+
+/// Name of the rename method that will be used (diagnostic helper).
+pub fn platform_rename_method() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        "renameat2"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "rename"
+    }
+    #[cfg(windows)]
+    {
+        "MoveFileEx"
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        "rename"
     }
 }

@@ -24,6 +24,12 @@ pub struct ShutdownSignal {
     signal_code: AtomicU8,
 }
 
+/// Return true if the process-wide shutdown flag is set (v0.1.29 cooperative cancel).
+#[inline]
+pub fn is_global_shutdown() -> bool {
+    GLOBAL_SHUTDOWN.get().is_some_and(|s| s.is_shutdown())
+}
+
 impl ShutdownSignal {
     /// Return true if a shutdown signal has been received.
     #[inline]

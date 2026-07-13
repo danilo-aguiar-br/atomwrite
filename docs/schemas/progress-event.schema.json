@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProgressEvent",
+  "description": "Periodic progress heartbeat for long batch/replace jobs (v0.1.29 P1-3).",
+  "type": "object",
+  "properties": {
+    "done": {
+      "description": "Items completed so far.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "eta_ms": {
+      "description": "Estimated remaining milliseconds.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "phase": {
+      "description": "Phase label (e.g. `replace`, `batch`).",
+      "type": "string"
+    },
+    "rate_per_s": {
+      "description": "Throughput estimate (items per second).",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "total": {
+      "description": "Total items known (0 if unknown).",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "type": {
+      "description": "Event type discriminator (`\"progress\"`).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "type",
+    "done",
+    "total",
+    "phase"
+  ]
+}

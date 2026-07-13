@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RecipeResult",
+  "description": "Final recipe envelope.",
+  "type": "object",
+  "properties": {
+    "dry_run": {
+      "description": "Whether dry-run was requested.",
+      "type": "boolean"
+    },
+    "elapsed_ms": {
+      "description": "Wall-clock elapsed ms.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "failed_step_id": {
+      "description": "Failed step id when status is partial/error.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "recipe": {
+      "description": "Recipe name.",
+      "type": "string"
+    },
+    "steps": {
+      "description": "Per-step results.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RecipeStepResult"
+      }
+    },
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "type",
+    "recipe",
+    "dry_run",
+    "steps",
+    "elapsed_ms"
+  ],
+  "$defs": {
+    "RecipeStepResult": {
+      "description": "Per-step result in a recipe run.",
+      "type": "object",
+      "properties": {
+        "checksum": {
+          "description": "Optional BLAKE3 checksum produced by the step.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detail": {
+          "description": "Human detail or error message.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Step name (search, replace, hash, …).",
+          "type": "string"
+        },
+        "status": {
+          "description": "ok | dry_run | error | skipped.",
+          "type": "string"
+        },
+        "step_id": {
+          "description": "1-based step id.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "step_id",
+        "name",
+        "status",
+        "detail"
+      ]
+    }
+  }
+}

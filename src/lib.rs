@@ -32,6 +32,8 @@ pub mod constants;
 pub mod error;
 /// Smart file reading with memmap2 for large files.
 pub mod file_io;
+/// Shared 9-strategy fuzzy match cascade (edit/replace/batch/edit-loop).
+pub mod fuzzy;
 /// Shared language utilities for AST commands.
 pub mod lang_utils;
 /// Line ending detection and normalization.
@@ -49,6 +51,10 @@ pub mod platform;
 /// Graceful shutdown signal handling.
 pub mod signal;
 /// G72 — Real syntax check via `tree-sitter-language-pack` (v0.1.12).
+#[cfg(feature = "ast")]
+pub mod syntax_check;
+#[cfg(not(feature = "ast"))]
+#[path = "syntax_check_stub.rs"]
 pub mod syntax_check;
 /// G114 — Write-Ahead Log (WAL) sidecar for crash recovery (v0.1.12).
 pub mod wal;
@@ -61,6 +67,11 @@ use anyhow::Result;
 
 use crate::cli::{Cli, Commands};
 use crate::output::NdjsonWriter;
+
+// Re-export fuzzy cascade for property tests and external reuse (v0.1.29).
+pub use crate::cli_args::FuzzyMode;
+pub use crate::fuzzy::{FuzzyInfo, match_pair};
+pub use crate::ndjson_types::BestCandidate;
 
 /// Emit the JSON Schema for the given subcommand's NDJSON output.
 fn emit_json_schema(command: &Commands, mut out: impl Write) -> Result<()> {
@@ -97,6 +108,14 @@ fn emit_json_schema(command: &Commands, mut out: impl Write) -> Result<()> {
         Commands::PruneBackups(_) => schemars::schema_for!(ndjson_types::PruneBackupSummary),
         Commands::EditLoop(_) => schemars::schema_for!(ndjson_types::EditLoopSummary),
         Commands::Verify(_) => schemars::schema_for!(ndjson_types::WriteOutput),
+        Commands::SemanticMerge(_) => schemars::schema_for!(ndjson_types::WriteOutput),
+        Commands::Sparse(_) => schemars::schema_for!(ndjson_types::WriteOutput),
+        Commands::Recipe(_) => schemars::schema_for!(crate::commands::recipe::RecipeResult),
+        Commands::Stat(_) => schemars::schema_for!(ndjson_types::ReadOutput),
+        Commands::AgentSurface(_) => schemars::schema_for!(ndjson_types::WriteOutput),
+        Commands::Watch(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
+        Commands::Codemod(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
+        Commands::SemanticSearch(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
         Commands::Completions(_) => schemars::schema_for!(ndjson_types::CalcOutput),
     };
     serde_json::to_writer_pretty(&mut out, &schema)?;
@@ -144,6 +163,14 @@ pub fn emit_schema_by_name(name: &str, mut out: impl Write) -> Result<bool> {
         "prune-backups" => schemars::schema_for!(ndjson_types::PruneBackupSummary),
         "edit-loop" => schemars::schema_for!(ndjson_types::EditLoopSummary),
         "completions" => schemars::schema_for!(ndjson_types::WriteOutput),
+        "recipe" => schemars::schema_for!(crate::commands::recipe::RecipeResult),
+        "progress" => schemars::schema_for!(ndjson_types::ProgressEvent),
+        "error" => schemars::schema_for!(crate::error::ErrorJson),
+        "best-candidate" => schemars::schema_for!(ndjson_types::BestCandidate),
+        "cancelled" => schemars::schema_for!(ndjson_types::CancelledEvent),
+        "semantic-merge" | "sparse" | "agent-surface" | "watch" | "codemod" | "semantic-search" => {
+            schemars::schema_for!(ndjson_types::ProgressEvent)
+        }
         _ => return Ok(false),
     };
     serde_json::to_writer_pretty(&mut out, &schema)?;
@@ -315,6 +342,44 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
             };
             commands::hash::cmd_hash(&hash_args, &cli.global, stdin, &mut writer)
         }
+        Commands::SemanticMerge(args) => commands::semantic_merge::cmd_semantic_merge(
+            args,
+            &cli.global,
+            &mut writer,
+            &shutdown,
+            defaults,
+        ),
+        Commands::Sparse(args) => {
+            commands::sparse::cmd_sparse(args, &cli.global, &mut writer, &shutdown, defaults)
+        }
+        Commands::Recipe(args) => {
+            commands::recipe::cmd_recipe(args, &cli.global, &mut writer, &shutdown, defaults)
+        }
+        Commands::Stat(args) => {
+            let mut a = args.clone();
+            a.stat = true;
+            commands::read::cmd_read(&a, &cli.global, &mut writer)
+        }
+        Commands::AgentSurface(args) => commands::agent_surface::cmd_agent_surface(
+            args,
+            &cli.global,
+            &mut writer,
+            &shutdown,
+            defaults,
+        ),
+        Commands::Watch(args) => {
+            commands::watch::cmd_watch(args, &cli.global, &mut writer, &shutdown, defaults)
+        }
+        Commands::Codemod(args) => {
+            commands::codemod::cmd_codemod(args, &cli.global, &mut writer, &shutdown, defaults)
+        }
+        Commands::SemanticSearch(args) => commands::semantic_search::cmd_semantic_search(
+            args,
+            &cli.global,
+            &mut writer,
+            &shutdown,
+            defaults,
+        ),
         Commands::Completions(_) => unreachable!("completions handled in prescan_json_schema"),
     };
 

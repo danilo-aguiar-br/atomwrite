@@ -268,6 +268,22 @@ pub enum Commands {
     /// Remove stale terminal journals older than the threshold (G119 L3).
     WalHeal(crate::cli_args::WalHealArgs),
 
+    /// Three-way semantic merge for multi-agent writes (v0.1.29 P1-1).
+    SemanticMerge(crate::commands::semantic_merge::SemanticMergeArgs),
+    /// Budgeted sparse list/read (v0.1.29 P1-2).
+    Sparse(crate::commands::sparse::SparseArgs),
+    /// Named multi-step recipes (v0.1.29 P1-4).
+    Recipe(crate::commands::recipe::RecipeArgs),
+    /// Metadata alias for `read --stat` (v0.1.29 P2-4).
+    Stat(crate::cli_args::ReadArgs),
+    /// Agent tool surface manifesto without MCP (v0.1.29 P2-5).
+    AgentSurface(crate::commands::agent_surface::AgentSurfaceArgs),
+    /// Watch filesystem events (feature `watch`) (v0.1.29 P3-1).
+    Watch(crate::commands::watch::WatchArgs),
+    /// Multi-rule codemod campaign (v0.1.29 P3-3).
+    Codemod(crate::commands::codemod::CodemodArgs),
+    /// Offline token Jaccard search (v0.1.29 P3-2).
+    SemanticSearch(crate::commands::semantic_search::SemanticSearchArgs),
     /// Generate shell completions for bash, zsh, fish, or powershell
     Completions(CompletionsArgs),
 

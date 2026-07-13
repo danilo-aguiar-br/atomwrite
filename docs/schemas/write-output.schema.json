@@ -4,17 +4,12 @@
   "description": "NDJSON output for write, delete, move, copy, and hash operations.",
   "type": "object",
   "properties": {
-    "type": {
-      "description": "Event type discriminator.",
-      "type": "string"
-    },
-    "status": {
-      "description": "Operation outcome: \"ok\" or \"error\".",
-      "type": "string"
-    },
-    "path": {
-      "description": "Absolute path of the target file.",
-      "type": "string"
+    "backup_path": {
+      "description": "Backup file path, if a backup was created.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "bytes_written": {
       "description": "Number of bytes written.",
@@ -33,40 +28,55 @@
         "null"
       ]
     },
-    "backup_path": {
-      "description": "Backup file path, if a backup was created.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "elapsed_ms": {
       "description": "Operation duration in milliseconds.",
       "type": "integer",
       "format": "uint64",
       "minimum": 0
     },
-    "stdin_bytes_read": {
-      "description": "Number of bytes read from stdin.",
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
-    },
-    "wal_policy": {
-      "description": "WAL policy used for this write (auto, enabled, disabled).",
-      "type": "string"
-    },
     "mtime_preserved": {
-      "description": "True when --preserve-timestamps was active and mtime was kept. Absent when not applicable.",
-      "type": "boolean"
+      "description": "Whether the original mtime was preserved (--preserve-timestamps).",
+      "type": [
+        "boolean",
+        "null"
+      ]
     },
-    "risk_assessment": {
-      "description": "Risk assessment telemetry when a write guard triggered.",
-      "type": ["object", "null"]
+    "path": {
+      "description": "Absolute path of the target file.",
+      "type": "string"
     },
     "platform": {
       "description": "Platform-specific fsync methods used.",
       "$ref": "#/$defs/PlatformInfo"
+    },
+    "risk_assessment": {
+      "description": "GAP-2026-011 L6: risk telemetry for size-delta warnings. Omitted\nwhen the write is below the configured risk threshold (default\n50% delta) and no other guard was triggered.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WriteRiskAssessment"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "description": "Operation outcome: \"ok\" or \"error\".",
+      "type": "string"
+    },
+    "stdin_bytes_read": {
+      "description": "Number of bytes read from stdin (G120 L4 telemetry). 0 means the\ncaller passed empty stdin and explicitly opted in via\n`--allow-empty-stdin`.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "wal_policy": {
+      "description": "G119 L1: sidecar creation policy in effect for this write.\n\"auto\" (default heuristic), \"always\" (legacy), or \"never\"\n(suppressed).",
+      "type": "string"
     }
   },
   "required": [
@@ -85,18 +95,78 @@
       "description": "Platform-specific fsync method names for diagnostics.",
       "type": "object",
       "properties": {
-        "fsync": {
-          "description": "File fsync method name (e.g. \"F_FULLFSYNC\" or \"sync_data\").",
-          "type": "string"
+        "backup_method": {
+          "description": "Backup method when a backup was created: hardlink|reflink|copy (v0.1.29 P2-3).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "dir_fsync": {
-          "description": "Directory fsync method name (e.g. \"sync_all\" or \"best_effort\").",
+          "description": "Directory fsync method name (e.g. `sync_all` or `best_effort`).",
           "type": "string"
+        },
+        "durability": {
+          "description": "Durability mode resolved for this write (v0.1.29 P2-1).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fsync": {
+          "description": "File fsync method name (e.g. `F_FULLFSYNC` or `sync_data`).",
+          "type": "string"
+        },
+        "rename_method": {
+          "description": "Rename method used (v0.1.29 P2-2).",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "fsync",
         "dir_fsync"
+      ]
+    },
+    "WriteRiskAssessment": {
+      "description": "GAP-2026-011 L1/L6: Telemetry describing why a write was classified\nas risky. Emitted in `WriteOutput.risk_assessment` when the size\ndelta exceeds the user-configured `--risk-threshold` (default 50%).",
+      "type": "object",
+      "properties": {
+        "guard_triggered": {
+          "description": "Which guard triggered the assessment (always \"size\" for L1).",
+          "type": "string"
+        },
+        "new_bytes": {
+          "description": "New file size after the write.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "original_bytes": {
+          "description": "File size before the write.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "risk_level": {
+          "description": "\"low\" (<70%) | \"medium\" (70-89%) | \"high\" (>=90%).",
+          "type": "string"
+        },
+        "size_delta_pct": {
+          "description": "|new - original| / original * 100.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "original_bytes",
+        "new_bytes",
+        "size_delta_pct",
+        "risk_level",
+        "guard_triggered"
       ]
     }
   }

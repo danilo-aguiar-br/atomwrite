@@ -121,6 +121,7 @@ pub fn cmd_rollback(
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup: resolved.keep,
+        durability: crate::platform::Durability::Auto,
     };
     atomic_write(&target, &content, &opts, &workspace)?;
 

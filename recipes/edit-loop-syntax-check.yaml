@@ -1,0 +1,9 @@
+name: edit-loop-syntax-check
+description: Apply NDJSON edit pairs then optional tree-sitter syntax-check
+steps:
+  - id: 1
+    op: edit-loop
+    args: [--pairs-file, $PAIRS, --target, $TARGET]
+  - id: 2
+    op: syntax-check
+    args: [--syntax-check, $LANG]

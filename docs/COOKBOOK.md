@@ -6,6 +6,235 @@
 > Practical recipes you can copy-paste into your agent workflows
 
 
+## What's New in v0.1.29
+
+v0.1.29 (2026-07-13) adds cookbook recipes for fuzzy monorepo replace, named recipes, sparse budgets, three-way merge, durability trade-offs, slim installs, best_candidate recovery, platform fields, hardlink backups, agent-surface, stat, watch, semantic-search, codemod, and progress heartbeats. **41 subcommands**.
+
+### New Recipes (Added in v0.1.29)
+
+- **How to Fuzzy-Replace Across a Monorepo** -- `replace --fuzzy auto` with optional `--progress-every`
+- **How to Run search-replace-verify** -- `recipe run --name search-replace-verify`
+- **How to Budget a Sparse List** -- `sparse list --max-files` / `--max-bytes`
+- **How to Three-Way Semantic Merge** -- `semantic-merge --base --ours --theirs`
+- **How to Choose write Durability** -- `--durability full|fast|auto`
+- **How to Install Slim vs Full** -- `--no-default-features --features core` vs default
+- **How to Recover from a Missed Match with best_candidate** -- inspect error envelope near-miss and retry
+- **How to Inspect rename_method and durability** -- `platform.*` via `jaq` (Linux `renameat2`)
+- **How to Prefer Hardlink Backups** -- cascade hardlink→reflink→copy; `platform.backup_method`
+- **How to Inventory the Agent Surface (no MCP)** -- `agent-surface`
+- **How to Stat Without Reading Body** -- `stat` (alias of `read --stat`)
+- **How to Watch with Debounce** -- `watch` (feature `watch`)
+- **How to Semantic-Search Offline (Jaccard)** -- `semantic-search` feature `semantic`, `--index-dir`
+- **How to Run a Codemod Campaign** -- `codemod --dry-run`, `by_rule_id`
+- **How to Observe Batch Progress** -- batch heartbeats + `--progress-every` on replace
+
+## How to Fuzzy-Replace Across a Monorepo
+
+- Use fuzzy replace when indentation or whitespace diverges across packages
+- Pass `--fuzzy off` only when zero exact matches must fail hard (exit 1)
+- Emit progress NDJSON on large trees with `--progress-every`
+
+```bash
+# Preview first
+atomwrite --workspace . replace --dry-run --fuzzy auto \
+  'legacy_api(' 'new_api(' packages/ --include '*.rs'
+
+# Apply with progress every 50 files
+atomwrite --workspace . replace --fuzzy auto --progress-every 50 \
+  'legacy_api(' 'new_api(' packages/ --include '*.rs'
+```
+
+## How to Run search-replace-verify
+
+- Built-in recipe searches, replaces, then hashes for integrity
+- Requires `--pattern` and `--replacement`
+
+```bash
+atomwrite --workspace . recipe list
+atomwrite --workspace . recipe run --name search-replace-verify \
+  --path src --pattern OLD_TOKEN --replacement NEW_TOKEN --fuzzy auto
+```
+
+## How to Budget a Sparse List
+
+- Cap file count and path-byte budget for agent context windows
+
+```bash
+atomwrite --workspace . sparse list --max-files 100 --max-bytes 1048576 src/
+atomwrite --workspace . sparse list --max-files 20 --include '*.rs' .
+# Feed paths into sparse read
+atomwrite --workspace . sparse list --max-files 20 src/ \
+  | atomwrite extract path > /tmp/paths.txt
+atomwrite --workspace . sparse read --paths-file /tmp/paths.txt --head 30 --max-files 20
+```
+
+## How to Three-Way Semantic Merge
+
+- Merge concurrent agent edits with a common base
+- Add `--fail-on-conflict` to exit 65 on unresolved conflicts
+
+```bash
+atomwrite --workspace . semantic-merge \
+  --base /tmp/base.rs \
+  --ours /tmp/ours.rs \
+  --theirs /tmp/theirs.rs \
+  --output src/lib.rs
+```
+
+## How to Choose write Durability
+
+- `full` for configs and durable state
+- `fast` for ephemeral CI artifacts
+- `auto` for default policy resolution
+
+```bash
+echo critical | atomwrite --workspace . write --durability full config.toml
+echo scratch | atomwrite --workspace . write --durability fast /tmp/ci-out.txt
+```
+
+## How to Install Slim vs Full
+
+- Slim (~7.7 MiB, CI ≤15 MiB): core-only, no AST stack
+- Default/full (~52 MB): AST languages included
+
+```bash
+# Slim
+cargo install --path . --locked --force --no-default-features --features core
+# Default with AST
+cargo install --path . --locked --force
+```
+
+## How to Recover from a Missed Match with best_candidate
+
+- Match failures may emit `best_candidate` (line, similarity, strategy, text, diff_preview)
+- Use the near-miss to correct `old` without re-reading the whole file
+- Exact-only pipelines must pass `--fuzzy off` (no candidate cascade)
+
+```bash
+# Capture the error envelope on a near-miss (exit 65 / MatchFailed)
+atomwrite --workspace . replace --fuzzy auto \
+  'fn main(){let x=1;}' 'fn main(){let x=2;}' src/main.rs \
+  | jaq '{exit: .exit, best: .best_candidate}'
+
+# Retry with the candidate text (or a hand-fixed snippet from diff_preview)
+atomwrite --workspace . replace --fuzzy auto \
+  "$(jaq -r '.best_candidate.text' < /tmp/miss.json)" 'fn main() { let x = 2; }' src/main.rs
+```
+
+## How to Inspect rename_method and durability
+
+- Write NDJSON reports `platform.durability`, `platform.rename_method`, `platform.backup_method`
+- Linux prefers `renameat2` when available, else `rename`
+- Parse platform fields with `jaq` after every durable write
+
+```bash
+echo payload | atomwrite --workspace . write --durability full config.toml \
+  | jaq '{durability: .platform.durability, rename_method: .platform.rename_method, backup_method: .platform.backup_method, fsync: .platform.fsync}'
+
+# Fast path for ephemeral CI output
+echo scratch | atomwrite --workspace . write --durability fast /tmp/ci-out.txt \
+  | jaq -r '.platform | "\(.durability) \(.rename_method)"'
+```
+
+## How to Prefer Hardlink Backups
+
+- Backup cascade is automatic: hardlink → reflink → copy
+- Inspect `platform.backup_method` (`hardlink` | `reflink` | `copy`)
+- Same-filesystem hardlinks keep backup O(1); EXDEV/EPERM falls back
+
+```bash
+# Force a backuped overwrite and read the method used
+echo "v2" | atomwrite --workspace . write --keep-backup config.toml \
+  | jaq -r '.platform.backup_method // "none"'
+
+# Compare with a plain write (default transactional backup auto-removes on success)
+echo "v3" | atomwrite --workspace . write config.toml \
+  | jaq '{backup_method: .platform.backup_method, rename_method: .platform.rename_method}'
+```
+
+## How to Inventory the Agent Surface (no MCP)
+
+- `agent-surface` emits a clap-derived tool manifesto
+- MCP is forbidden; wire Bash/argv from this inventory
+- Use for host tool registration without hand-maintained flag lists
+
+```bash
+atomwrite --workspace . agent-surface
+atomwrite --workspace . agent-surface | jaq '{version, integration: .integration, mcp: .mcp, tools: [.tools[].name]}'
+```
+
+## How to Stat Without Reading Body
+
+- `stat` is a thin alias of `read --stat`
+- Returns metadata and checksum without body bytes
+- Prefer for agent loops that only need size, mode, or BLAKE3
+
+```bash
+atomwrite --workspace . stat src/lib.rs
+atomwrite --workspace . stat src/lib.rs | jaq '{path, size, checksum, lines, mode}'
+# Equivalent:
+atomwrite --workspace . read --stat src/lib.rs
+```
+
+## How to Watch with Debounce
+
+- Requires build with `--features watch` (or full default with watch enabled)
+- Coalesces per-path events with `--debounce-ms`
+- Cap lifetime with `--max-events`; optional `--checksum` for BLAKE3 on regular files
+
+```bash
+# Build with watch, then stream debounced events
+cargo install --path . --locked --force --features watch
+atomwrite --workspace . watch . --debounce-ms 200 --max-events 20
+atomwrite --workspace . watch src/ --debounce-ms 100 --checksum --max-events 5
+```
+
+## How to Semantic-Search Offline (Jaccard)
+
+- Offline token ranking (Jaccard); not OpenRouter embeddings
+- Requires feature `semantic`
+- Pass `--index-dir` for inverted-index backend under a local directory
+
+```bash
+atomwrite --workspace . semantic-search "atomic rename tempfile" src/ --k 10
+atomwrite --workspace . semantic-search "fsync durability" . --k 20 --min-score 0.1 \
+  --index-dir .atomwrite/semantic-index
+```
+
+## How to Run a Codemod Campaign
+
+- Multi-rule AST campaign over a YAML rules file
+- Always dry-run first; summary includes `codemod_summary.by_rule_id`
+- Apply only after the dry-run envelope looks correct
+
+```bash
+atomwrite --workspace . codemod --rules rules.yaml --dry-run src/
+atomwrite --workspace . codemod --rules rules.yaml --dry-run src/ \
+  | jaq 'select(.type=="summary" or .codemod_summary != null) | .codemod_summary.by_rule_id // .'
+# Apply
+atomwrite --workspace . codemod --rules rules.yaml src/
+```
+
+## How to Observe Batch Progress
+- `replace --progress-every N` emits NDJSON heartbeats (`type: progress`)
+- Long batch/replace also checks cooperative cancel between units (SIGINT/SIGTERM → cancelled / exit 143)
+- Batch emits automatic heartbeats about every max(1, total/20) ops (capped at 50)
+- Suppress progress with global `-q` / `-qq` when only the final summary matters
+
+```bash
+# Bulk replace with progress every 50 files (default)
+atomwrite --workspace . replace --progress-every 50 'old_api' 'new_api' src/ \
+  | jaq -c 'select(.type=="progress" or .type=="summary")'
+
+# Batch transaction with built-in heartbeats
+printf '%s\n' \
+  '{"op":"write","target":"a.txt","content":"one"}' \
+  '{"op":"write","target":"b.txt","content":"two"}' \
+  | atomwrite --workspace . batch --transaction \
+  | jaq -c 'select(.type=="progress" or .type=="summary")'
+```
+
+
 ## What's New in v0.1.12
 
 This section summarizes recipe-relevant changes in v0.1.12. The v0.1.12 release adds new recipes to the cookbook for the 6 new subcommands, the new flags, and the crash recovery workflow.

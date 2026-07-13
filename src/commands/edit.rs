@@ -16,25 +16,12 @@ pub use crate::cli::FuzzyMode;
 use crate::cli::{EditArgs, GlobalArgs};
 use crate::commands::{read_stdin_text_guarded, resolve_backup};
 use crate::error::AtomwriteError;
-
-fn find_str(haystack: &str, needle: &str) -> Option<usize> {
-    memchr::memmem::find(haystack.as_bytes(), needle.as_bytes())
-}
+use crate::fuzzy::FuzzyInfo;
 use crate::ndjson_types::{EditOutput, PairResult};
 use crate::output::NdjsonWriter;
 
-/// Diagnostic detail about which fuzzy-matching strategy resolved a pair.
-pub struct FuzzyInfo {
-    /// Whether a fuzzy (non-exact) strategy was used.
-    pub fuzzy: bool,
-    /// Name of the strategy that produced the match.
-    pub strategy: String,
-    /// Number of strategies attempted before finding a match.
-    pub strategies_tried: u64,
-    /// Similarity score of the match (0.0–1.0), if applicable.
-    pub similarity: Option<f64>,
-    /// Mini unified diff showing what matched vs what was expected.
-    pub diff_preview: Option<String>,
+fn find_str(haystack: &str, needle: &str) -> Option<usize> {
+    memchr::memmem::find(haystack.as_bytes(), needle.as_bytes())
 }
 
 fn strip_file_trailing_newline(s: String) -> String {
@@ -258,6 +245,7 @@ pub fn cmd_edit(
         strict_atomic: false,
         wal_policy: args.wal_policy,
         keep_backup: resolved_backup.keep,
+        durability: crate::platform::Durability::Auto,
     };
 
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
@@ -562,6 +550,7 @@ fn cmd_edit_multi(
         strict_atomic: false,
         wal_policy: args.wal_policy,
         keep_backup: resolved_backup.keep,
+        durability: crate::platform::Durability::Auto,
     };
 
     let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
@@ -628,227 +617,9 @@ fn edit_old_new(
     }
 }
 
-/// Match a single `old` string in `content` via the 9-strategy fuzzy cascade
-/// and return the edited content with `new` substituted.
-///
-/// Shared by the single-pair and multi-pair `--old`/`--new` paths so both
-/// have identical fuzzy behavior (G117 fix: the multi path previously used
-/// exact matching only).
-/// Resolve a single `old` → `new` replacement against `content`, running the
-/// 9-strategy fuzzy cascade. Exposed for property-based testing (GAP-086).
-pub fn match_pair(
-    content: &str,
-    old: &str,
-    new: &str,
-    fuzzy_mode: FuzzyMode,
-    custom_threshold: Option<f64>,
-) -> std::result::Result<(String, FuzzyInfo), AtomwriteError> {
-    // Strategy 1: exact match
-    if let Some(pos) = find_str(content, old) {
-        let edited = format!("{}{}{}", &content[..pos], new, &content[pos + old.len()..]);
-        return Ok((
-            edited,
-            FuzzyInfo {
-                fuzzy: false,
-                strategy: "exact".into(),
-                strategies_tried: 1,
-                similarity: None,
-                diff_preview: None,
-            },
-        ));
-    }
-
-    if matches!(fuzzy_mode, FuzzyMode::Off) {
-        return Err(AtomwriteError::InvalidInput {
-            reason: format!("old string not found in file (fuzzy=off): {old:?}"),
-        });
-    }
-
-    let old_lines: Vec<&str> = old.lines().collect();
-    let content_lines: Vec<&str> = content.lines().collect();
-
-    // Strategy 2: line-trimmed
-    if let Some((start, end)) = match_line_trimmed(&content_lines, &old_lines) {
-        let edited = apply_replacement(content, &content_lines, start, end, new);
-        return Ok((
-            edited,
-            FuzzyInfo {
-                fuzzy: true,
-                strategy: "line_trimmed".into(),
-                strategies_tried: 2,
-                similarity: Some(1.0),
-                diff_preview: None,
-            },
-        ));
-    }
-
-    // Strategy 3: whitespace-normalized
-    if let Some((start, end)) = match_whitespace_normalized(&content_lines, &old_lines) {
-        let edited = apply_replacement(content, &content_lines, start, end, new);
-        return Ok((
-            edited,
-            FuzzyInfo {
-                fuzzy: true,
-                strategy: "whitespace_normalized".into(),
-                strategies_tried: 3,
-                similarity: Some(1.0),
-                diff_preview: None,
-            },
-        ));
-    }
-
-    // Strategy 3.5: punctuation-whitespace-normalized
-    if let Some((start, end)) = match_punctuation_normalized(&content_lines, &old_lines) {
-        let edited = apply_replacement(content, &content_lines, start, end, new);
-        return Ok((
-            edited,
-            FuzzyInfo {
-                fuzzy: true,
-                strategy: "punctuation_normalized".into(),
-                strategies_tried: 4,
-                similarity: Some(1.0),
-                diff_preview: None,
-            },
-        ));
-    }
-
-    // Strategy 4: indent-flexible
-    if let Some((start, end)) = match_indent_flexible(&content_lines, &old_lines) {
-        let edited = apply_replacement(content, &content_lines, start, end, new);
-        return Ok((
-            edited,
-            FuzzyInfo {
-                fuzzy: true,
-                strategy: "indent_flexible".into(),
-                strategies_tried: 5,
-                similarity: Some(1.0),
-                diff_preview: None,
-            },
-        ));
-    }
-
-    // Strategy 5: escape-normalized
-    if let Some((orig_start, orig_end)) = match_escape_normalized(content, old) {
-        let edited = format!("{}{}{}", &content[..orig_start], new, &content[orig_end..]);
-        return Ok((
-            edited,
-            FuzzyInfo {
-                fuzzy: true,
-                strategy: "escape_normalized".into(),
-                strategies_tried: 6,
-                similarity: Some(1.0),
-                diff_preview: None,
-            },
-        ));
-    }
-
-    // Strategy 7: trimmed-boundary
-    if let Some((start, end)) = match_trimmed_boundary(&content_lines, &old_lines) {
-        let edited = apply_replacement(content, &content_lines, start, end, new);
-        return Ok((
-            edited,
-            FuzzyInfo {
-                fuzzy: true,
-                strategy: "trimmed_boundary".into(),
-                strategies_tried: 8,
-                similarity: Some(1.0),
-                diff_preview: None,
-            },
-        ));
-    }
-
-    // Strategy 8: block-anchor (only in auto/aggressive, requires >= 50% similarity in auto, >= 50% in aggressive)
-    let min_ratio = custom_threshold.unwrap_or(match fuzzy_mode {
-        FuzzyMode::Aggressive => 0.50,
-        _ => 0.70,
-    });
-    if let Some((start, end, ratio)) = match_block_anchor(&content_lines, &old_lines, min_ratio) {
-        let edited = apply_replacement(content, &content_lines, start, end, new);
-        return Ok((
-            edited,
-            FuzzyInfo {
-                fuzzy: true,
-                strategy: "block_anchor".into(),
-                strategies_tried: 8,
-                similarity: Some(ratio),
-                diff_preview: None,
-            },
-        ));
-    }
-
-    // Strategy 9: context-aware (G116, opt-in via aggressive or auto).
-    // Uses `strsim::normalized_levenshtein` to find a window of `old_lines`
-    // in `content_lines` with similarity >= 0.80. More expensive than
-    // block-anchor but catches edits where leading/trailing context is
-    // also wrong (e.g. when an LLM adds comments near the match).
-    if matches!(fuzzy_mode, FuzzyMode::Aggressive | FuzzyMode::Auto) {
-        let ctx_threshold = custom_threshold.unwrap_or(0.80);
-        // Strategy 9a: Jaro-Winkler for short single-line patterns (< 60 chars).
-        // JW weights prefix commonality — better for function names and identifiers.
-        if old_lines.len() == 1 && old.len() < 60 {
-            let jw_threshold = custom_threshold.unwrap_or(0.85);
-            let mut best_jw = (0usize, 0.0f64);
-            for (i, line) in content_lines.iter().enumerate() {
-                let score = strsim::jaro_winkler(line.trim(), old.trim());
-                if score > best_jw.1 {
-                    best_jw = (i, score);
-                }
-            }
-            if best_jw.1 >= jw_threshold {
-                let edited =
-                    apply_replacement(content, &content_lines, best_jw.0, best_jw.0 + 1, new);
-                return Ok((
-                    edited,
-                    FuzzyInfo {
-                        fuzzy: true,
-                        strategy: "context_aware_jw".into(),
-                        strategies_tried: 9,
-                        similarity: Some(best_jw.1),
-                        diff_preview: None,
-                    },
-                ));
-            }
-        }
-        // Strategy 9b: Levenshtein sliding window for multi-line patterns.
-        if let Some((start, end, similarity)) =
-            match_context_aware(&content_lines, &old_lines, ctx_threshold)
-        {
-            let edited = apply_replacement(content, &content_lines, start, end, new);
-            return Ok((
-                edited,
-                FuzzyInfo {
-                    fuzzy: true,
-                    strategy: "context_aware".into(),
-                    strategies_tried: 9,
-                    similarity: Some(similarity),
-                    diff_preview: None,
-                },
-            ));
-        }
-    }
-
-    Err(AtomwriteError::InvalidInput {
-        reason: format!("old string not found after fuzzy cascade (9 strategies tried): {old:?}"),
-    })
-}
-
-// ─── matching strategies ─────────────────────────────────────────────────────
-
-fn match_line_trimmed(content: &[&str], pattern: &[&str]) -> Option<(usize, usize)> {
-    if pattern.is_empty() {
-        return None;
-    }
-    let trimmed_pat: Vec<&str> = pattern.iter().map(|l| l.trim()).collect();
-    'outer: for i in 0..content.len().saturating_sub(pattern.len() - 1) {
-        for (j, pat_line) in trimmed_pat.iter().enumerate() {
-            if content[i + j].trim() != *pat_line {
-                continue 'outer;
-            }
-        }
-        return Some((i, i + pattern.len()));
-    }
-    None
-}
+// Fuzzy cascade lives in `crate::fuzzy` (v0.1.29 P0-1).
+/// Re-export for property tests (GAP-086) and historical `commands::edit::match_pair`.
+pub use crate::fuzzy::match_pair;
 
 fn edit_old_new_multi(
     original: &str,
@@ -891,9 +662,13 @@ fn edit_old_new_multi(
                 });
             }
             Err(err) => {
-                let reason = match err {
-                    AtomwriteError::InvalidInput { reason } => reason,
-                    other => other.to_string(),
+                let (reason, best_candidate) = match err {
+                    AtomwriteError::MatchFailed {
+                        reason,
+                        best_candidate,
+                    } => (reason, best_candidate),
+                    AtomwriteError::InvalidInput { reason } => (reason, None),
+                    other => (other.to_string(), None),
                 };
                 pair_results.push(PairResult {
                     index,
@@ -906,7 +681,8 @@ fn edit_old_new_multi(
                     index,
                     total: pairs_total,
                     reason,
-                    pair_results,
+                    pair_results: Box::new(pair_results),
+                    best_candidate,
                 }
                 .into());
             }
@@ -940,234 +716,6 @@ fn edit_old_new_multi(
             applied,
         }),
     ))
-}
-
-fn normalize_whitespace(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut first = true;
-    for word in s.split_whitespace() {
-        if !first {
-            result.push(' ');
-        }
-        result.push_str(word);
-        first = false;
-    }
-    result
-}
-
-fn normalize_punctuation_whitespace(s: &str) -> String {
-    static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"\s*([(){}\[\]<>,;:])\s*").expect("static regex is valid")
-    });
-    RE.replace_all(&normalize_whitespace(s), "$1").to_string()
-}
-
-fn match_punctuation_normalized(content: &[&str], pattern: &[&str]) -> Option<(usize, usize)> {
-    if pattern.is_empty() {
-        return None;
-    }
-    let norm_pat: Vec<String> = pattern
-        .iter()
-        .map(|l| normalize_punctuation_whitespace(l))
-        .collect();
-    'outer: for i in 0..content.len().saturating_sub(pattern.len() - 1) {
-        for (j, norm) in norm_pat.iter().enumerate() {
-            if normalize_punctuation_whitespace(content[i + j]) != *norm {
-                continue 'outer;
-            }
-        }
-        return Some((i, i + pattern.len()));
-    }
-    None
-}
-
-fn match_whitespace_normalized(content: &[&str], pattern: &[&str]) -> Option<(usize, usize)> {
-    if pattern.is_empty() {
-        return None;
-    }
-    let norm_pat: Vec<String> = pattern.iter().map(|l| normalize_whitespace(l)).collect();
-    'outer: for i in 0..content.len().saturating_sub(pattern.len() - 1) {
-        for (j, norm) in norm_pat.iter().enumerate() {
-            if normalize_whitespace(content[i + j]) != *norm {
-                continue 'outer;
-            }
-        }
-        return Some((i, i + pattern.len()));
-    }
-    None
-}
-
-fn match_indent_flexible(content: &[&str], pattern: &[&str]) -> Option<(usize, usize)> {
-    if pattern.is_empty() {
-        return None;
-    }
-    let stripped_pat: Vec<&str> = pattern.iter().map(|l| l.trim_start()).collect();
-    'outer: for i in 0..content.len().saturating_sub(pattern.len() - 1) {
-        for (j, pat) in stripped_pat.iter().enumerate() {
-            if content[i + j].trim_start() != *pat {
-                continue 'outer;
-            }
-        }
-        return Some((i, i + pattern.len()));
-    }
-    None
-}
-
-fn normalize_escapes(s: &str) -> String {
-    s.replace("\\n", "\n")
-        .replace("\\t", "\t")
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\")
-}
-
-fn match_escape_normalized(content: &str, pattern: &str) -> Option<(usize, usize)> {
-    let norm_pat = normalize_escapes(pattern);
-    if norm_pat == pattern {
-        return None; // nothing to normalize, already tried exact
-    }
-    let norm_content = normalize_escapes(content);
-    if let Some(norm_pos) = norm_content.find(&norm_pat) {
-        // Map back: use byte position in original via ratio of normalized content
-        // This is approximate; we use the norm_pos as-is since it's a best-effort strategy
-        let end_pos = norm_pos + norm_pat.len();
-        if end_pos <= content.len() {
-            return Some((norm_pos, end_pos));
-        }
-    }
-    None
-}
-
-fn match_trimmed_boundary(content: &[&str], pattern: &[&str]) -> Option<(usize, usize)> {
-    let start = pattern.iter().position(|l| !l.trim().is_empty())?;
-    let end = pattern.iter().rposition(|l| !l.trim().is_empty())? + 1;
-    if start >= end {
-        return None;
-    }
-    let trimmed = &pattern[start..end];
-    match_line_trimmed(content, trimmed)
-}
-
-fn match_block_anchor(
-    content: &[&str],
-    pattern: &[&str],
-    min_ratio: f64,
-) -> Option<(usize, usize, f64)> {
-    if pattern.len() < 2 {
-        return None;
-    }
-    let first = pattern.first()?.trim();
-    let last = pattern.last()?.trim();
-    let plen = pattern.len();
-    let mut candidates: Vec<(usize, usize, f64)> = Vec::with_capacity(4);
-
-    for (i, line) in content.iter().enumerate() {
-        if line.trim() != first {
-            continue;
-        }
-        let search_end = (i + plen * 2).min(content.len());
-        for j in (i + 1)..search_end {
-            if content[j].trim() != last {
-                continue;
-            }
-            let block = content[i..=j].join("\n");
-            let pat = pattern.join("\n");
-            let diff = similar::TextDiff::from_lines(&pat, &block);
-            let raw_ratio = diff.ratio() as f64;
-            let ratio = if raw_ratio.is_finite() {
-                raw_ratio
-            } else {
-                0.0
-            };
-            if ratio >= min_ratio {
-                candidates.push((i, j + 1, ratio));
-            }
-        }
-    }
-
-    if candidates.len() == 1 {
-        return Some(candidates[0]);
-    }
-    // Multiple candidates: keep only high-confidence ones
-    candidates.retain(|c| c.2 >= 0.70);
-    candidates.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-    candidates.first().copied()
-}
-
-/// Strategy 9: context-aware similarity via normalized Levenshtein (G116).
-///
-/// Slides a window of `pattern.len()` lines over `content` and computes
-/// `strsim::normalized_levenshtein` between the joined window and the
-/// pattern. Returns the first window whose similarity >= `threshold`.
-/// More expensive than block-anchor but tolerates edits where leading
-/// AND trailing context lines are also wrong (e.g. when an LLM rewrites
-/// a few lines around the target match).
-fn match_context_aware(
-    content: &[&str],
-    pattern: &[&str],
-    threshold: f64,
-) -> Option<(usize, usize, f64)> {
-    if pattern.is_empty() || pattern.len() > content.len() {
-        return None;
-    }
-    let pat_joined = pattern.join("\n");
-    let plen = pattern.len();
-    let mut best: Option<(usize, usize, f64)> = None;
-    for i in 0..=(content.len() - plen) {
-        let window_joined = content[i..i + plen].join("\n");
-        let sim = strsim::normalized_levenshtein(&pat_joined, &window_joined);
-        if sim >= threshold {
-            return Some((i, i + plen, sim));
-        }
-        // Track the best match in case no candidate crosses the threshold.
-        if best.is_none_or(|(_, _, b)| sim > b) {
-            best = Some((i, i + plen, sim));
-        }
-    }
-    // If nothing crossed the threshold, return the best one anyway if it's
-    // within 0.05 of the threshold. This handles near-misses (e.g. 0.79 vs
-    // 0.80) that are clearly the intended target.
-    if let Some((i, j, sim)) = best {
-        if sim >= threshold - 0.05 {
-            return Some((i, j, sim));
-        }
-    }
-    None
-}
-
-fn lines_from_str(s: &str) -> Vec<String> {
-    s.lines().map(String::from).collect()
-}
-
-fn lines_to_owned(lines: &[&str]) -> Vec<String> {
-    let mut v = Vec::with_capacity(lines.len());
-    v.extend(lines.iter().map(|s| String::from(*s)));
-    v
-}
-
-fn apply_replacement(
-    original: &str,
-    content_lines: &[&str],
-    start: usize,
-    end: usize,
-    new: &str,
-) -> String {
-    let before = content_lines[..start].join("\n");
-    let after = content_lines[end..].join("\n");
-    let mut out = String::with_capacity(before.len() + new.len() + after.len() + 2);
-    if !before.is_empty() {
-        out.push_str(&before);
-        out.push('\n');
-    }
-    out.push_str(new);
-    if !after.is_empty() {
-        out.push('\n');
-        out.push_str(&after);
-    }
-    // Preserve trailing newline if original had one
-    if original.ends_with('\n') && !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out
 }
 
 // ─── line-based and marker-based edits (unchanged) ───────────────────────────
@@ -1335,6 +883,16 @@ fn find_line_with_after(lines: &[&str], marker: &str, after: usize) -> Result<us
         reason: format!("end marker not found after line {after}: {marker:?}"),
     }
     .into())
+}
+
+fn lines_from_str(s: &str) -> Vec<String> {
+    s.lines().map(String::from).collect()
+}
+
+fn lines_to_owned(lines: &[&str]) -> Vec<String> {
+    let mut v = Vec::with_capacity(lines.len());
+    v.extend(lines.iter().map(|s| String::from(*s)));
+    v
 }
 
 fn join_lines(lines: &[String]) -> String {

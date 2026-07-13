@@ -6,7 +6,7 @@
 
 ## What's New in v0.1.12
 
-This section summarizes the migration-relevant changes in v0.1.12. See the [v0.1.11 to v0.1.12](#v0111-to-v0112) section below for the v0.1.12 migration guide and the [v0.1.12 to v0.1.15 (Current)](#v0112-to-v0115-current) section for the latest transition.
+This section summarizes the migration-relevant changes in v0.1.12. See the [v0.1.11 to v0.1.12](#v0111-to-v0112) section below for the v0.1.12 migration guide and the [v0.1.28 to v0.1.29 (Current)](#v0128-to-v0129-current) section for the latest transition.
 
 ### New Subcommands (6)
 
@@ -68,7 +68,7 @@ All additive. No existing dependency removed.
 
 - Update version pin: `cargo install atomwrite --locked --version "^0.1.12"`
 - New subcommands and flags are opt-in. No code changes required for existing callers.
-- See the [v0.1.12 to v0.1.15 (Current)](#v0112-to-v0115-current) section for the latest migration steps.
+- See the [v0.1.28 to v0.1.29 (Current)](#v0128-to-v0129-current) section for the latest migration steps.
 
 ### Test Coverage
 
@@ -78,9 +78,57 @@ All additive. No existing dependency removed.
 - See [docs/decisions/README.md](README.md) for architectural decisions
 
 ## Current Version
-- atomwrite is at v0.1.28
-- This document covers migration from v0.1.0 through v0.1.28
+- atomwrite is at v0.1.29
+- This document covers migration from v0.1.0 through v0.1.29
 - See the sections below for additive changes and breaking changes in each version
+
+
+## v0.1.28 to v0.1.29 (Current)
+
+### BREAKING Changes
+
+- Default fixed-string `replace` now uses `fuzzy=auto` after exact multi-match finds zero hits — previously exact-only failure returned exit 1 with no fuzzy fallback
+- Pipelines that required exact-only failure (exit 1 on zero exact hits) must pass `--fuzzy off`
+
+### Added (migration-relevant)
+
+- Shared `fuzzy` module: 9-strategy cascade for `edit`, `replace`, `batch`, `edit-loop`
+- `best_candidate` structured diagnostics on match failure (error envelopes, exit 65 paths)
+- `replace --fuzzy auto|off|aggressive` and `--fuzzy-threshold`
+- `replace --progress-every` and batch progress heartbeats
+- Cargo features: `core`, `ast`, `lang-*`, `watch`, `semantic`, `full` — slim install without AST
+- New subcommands: `semantic-merge`, `sparse list|read`, `recipe list|run`, `stat` (alias of `read --stat`), `agent-surface`, `watch` (feature `watch`), `codemod`, `semantic-search`
+- `write --durability full|fast|auto` with NDJSON `platform.durability`
+- Linux `renameat2` in `atomic_rename` with ENOSYS fallback
+- Backup prefers hardlink before reflink/copy
+- Cooperative cancel during stdin read and chunked atomic write
+- Versioned recipe docs under `recipes/*.yaml`
+- CI `size-gate` (slim core ≤ 15 MiB), `core-test`, `schema-diff`
+
+### Changed
+
+- Strategy numbering normalized to nine named strategies
+- Skill surface documents 41 subcommands
+- Slim core release ~7.7 MiB (CI asserts ≤ 15 MiB); default/full with AST ~52 MB — PRD 5–8 MB applies to core only
+
+### Migration Action
+
+- Update version pin: `cargo install atomwrite --locked --version "^0.1.29"`
+- **BREAKING**: if your pipeline depends on exact-only `replace` failing with exit 1 when the fixed string is absent, pass `--fuzzy off`
+- On match failures, inspect optional `best_candidate` in the NDJSON error envelope for near-miss diagnostics
+- Slim install (no AST): `cargo install --path . --locked --no-default-features --features core`
+- Full install (default features): `cargo install --path . --locked` or `cargo install atomwrite --locked --version "^0.1.29"`
+- MCP is not provided; use `agent-surface` for clap-derived tool inventory (anti-MCP)
+- Optional durability: `write --durability full|fast|auto` — read `platform.durability` in NDJSON
+- Linux operators: atomic rename may use `renameat2` (falls back on ENOSYS)
+- Feature-gated: enable `watch` for `watch`; enable `semantic` for semantic subcommands as packaged
+- MSRV unchanged at Rust 1.88
+
+### Test Coverage
+
+- Core-only build works without AST crates (stubs exit 78)
+- Recipe run dispatches real search→replace→hash (no longer plan-only stub)
+- Regenerated schemas: write durability/rename_method, replace fuzzy*, error best_candidate, recipe/progress/cancelled
 
 
 ## v0.1.27 to v0.1.28 (2026-07-06)
@@ -505,7 +553,7 @@ atomwrite v0.1.2 now compiles on macOS arm64 (Apple Silicon) and macOS x86_64. T
 - Performance improvements
 
 ### Planned Stabilizations for 1.0
-- NDJSON output schemas for all 33 subcommands
+- NDJSON output schemas for all 41 subcommands
 - Exit code assignments
 - Error code strings (`FILE_NOT_FOUND`, `STATE_DRIFT`, etc)
 - Global flag names and behavior
@@ -714,7 +762,7 @@ The v0.1.12 release closes 13 of the Top 20 gaps from the PRD v5-v16 audit (`gap
 - Update version pin: `cargo install atomwrite --locked --version "^0.1.12"`
 
 ## Compatibility Notes
-### v0.1.15 (Current)
+### v0.1.15
 - G117: `edit` multi-pair gains fuzzy parity, `pair_results`, `failed_pair_index`, and opt-in `--partial` -- envelope fields are additive
 - G118: `write` resolves the target against the workspace before append/prepend, line-ending auto-detection, and `--expect-checksum` -- exits 82/126 now fire where a silent overwrite happened
 - No new error codes; MSRV stays at Rust 1.88
@@ -882,3 +930,5 @@ For the complete migration guide, see `docs/MIGRATION-v0.1.21-to-v0.1.22.md`.
 - If checking for `.bak.*` file absence in CI: add `--no-backup` or set `ATOMWRITE_BACKUP=0`
 - If using `write --expect-checksum` to legitimately truncate files: add `--allow-shrink`
 - If passing values starting with `-` to `edit --old`, `search`, `replace`, `calc`, `regex`, `transform`, `read --grep`, `query --query`: the fix is automatic, no migration needed
+
+

@@ -49,7 +49,12 @@ pub fn cmd_write(
 
     let stdin_bytes_read;
     let mut content = {
-        let (buf, n) = read_stdin_content(stdin, args.max_size, args.allow_empty_stdin)?;
+        let (buf, n) = read_stdin_content_cancellable(
+            stdin,
+            args.max_size,
+            args.allow_empty_stdin,
+            Some(shutdown),
+        )?;
         stdin_bytes_read = n;
         buf
     };
@@ -235,6 +240,7 @@ pub fn cmd_write(
         // GAP-106: --require-backup implies --keep-backup so the backup
         // is retained on disk and the reported backup_path is valid.
         keep_backup: resolved_backup.keep || args.require_backup || auto_rotate_active,
+        durability: args.durability.into(),
     };
 
     let result = atomic_write(&resolved, &content, &opts, &workspace)?;
@@ -274,31 +280,50 @@ pub fn cmd_write(
 /// expands to nothing, a failing `find`, etc.). Callers that genuinely
 /// intend to write zero bytes (e.g. truncating a file to empty) must pass
 /// `--allow-empty-stdin` to make the intent explicit.
-fn read_stdin_content(
+/// Read stdin in 64 KiB chunks, optionally honouring cooperative cancel (v0.1.29 P0-4).
+pub(crate) fn read_stdin_content_cancellable(
     stdin: impl Read,
     max_size: Option<u64>,
     allow_empty: bool,
+    shutdown: Option<&crate::signal::ShutdownSignal>,
 ) -> Result<(Vec<u8>, u64)> {
+    use std::io::Read as _;
     let mut reader = BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
     let mut buf = Vec::with_capacity(crate::constants::STDIN_INITIAL_CAPACITY);
-    let n = reader
-        .read_to_end(&mut buf)
-        .context("failed to read stdin")?;
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        if shutdown.is_some_and(|s| s.is_shutdown()) {
+            return Err(AtomwriteError::Cancelled {
+                reason: "stdin read cancelled by signal".into(),
+                exit: 143,
+            }
+            .into());
+        }
+        let n = reader.read(&mut chunk).context("failed to read stdin")?;
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(max) = max_size {
+            if buf.len() as u64 > max {
+                return Err(AtomwriteError::InvalidInput {
+                    reason: format!(
+                        "stdin exceeds max size {} bytes (got {} bytes)",
+                        max,
+                        buf.len()
+                    ),
+                }
+                .into());
+            }
+        }
+    }
+    let n = buf.len();
 
     if !allow_empty && n == 0 {
         return Err(AtomwriteError::InvalidInput {
             reason: "stdin produced 0 bytes; pass --allow-empty-stdin to confirm an empty write is intentional".into(),
         }
         .into());
-    }
-
-    if let Some(max) = max_size {
-        if n as u64 > max {
-            return Err(AtomwriteError::InvalidInput {
-                reason: format!("stdin exceeds max size {} bytes (got {} bytes)", max, n),
-            }
-            .into());
-        }
     }
 
     Ok((buf, n as u64))

@@ -70,6 +70,15 @@ pub struct PlatformInfo {
     pub fsync: &'static str,
     /// Directory fsync method name (e.g. `sync_all` or `best_effort`).
     pub dir_fsync: &'static str,
+    /// Durability mode resolved for this write (v0.1.29 P2-1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub durability: Option<&'static str>,
+    /// Rename method used (v0.1.29 P2-2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rename_method: Option<&'static str>,
+    /// Backup method when a backup was created: hardlink|reflink|copy (v0.1.29 P2-3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_method: Option<&'static str>,
 }
 
 /// NDJSON output for read operations with metadata and optional content.
@@ -265,6 +274,80 @@ pub struct ReplaceResult {
     /// Critical for build systems: false ensures cargo/make/cmake detect the change.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mtime_preserved: Option<bool>,
+    /// Whether any replacement used a non-exact fuzzy strategy (v0.1.29).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fuzzy: Option<bool>,
+    /// Last fuzzy strategy that applied (v0.1.29).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<String>,
+    /// Similarity of the last fuzzy match when applicable (v0.1.29).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub similarity: Option<f64>,
+    /// Strategies tried for the last fuzzy application (v0.1.29).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strategies_tried: Option<u64>,
+    /// True when `--word` was ignored because fuzzy path was used (v0.1.29).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word_ignored: Option<bool>,
+}
+
+/// Periodic progress heartbeat for long batch/replace jobs (v0.1.29 P1-3).
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct ProgressEvent {
+    /// Event type discriminator (`"progress"`).
+    pub r#type: &'static str,
+    /// Items completed so far.
+    pub done: u64,
+    /// Total items known (0 if unknown).
+    pub total: u64,
+    /// Throughput estimate (items per second).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_per_s: Option<f64>,
+    /// Estimated remaining milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eta_ms: Option<u64>,
+    /// Phase label (e.g. `replace`, `batch`).
+    pub phase: String,
+}
+
+/// Cooperative cancel envelope (v0.1.29 P0-4).
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct CancelledEvent {
+    /// Event type discriminator (`"cancelled"`).
+    pub r#type: &'static str,
+    /// Path being written when cancel was observed, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Human-readable cancel reason.
+    pub reason: String,
+    /// Signal name when known (`SIGINT`, `SIGTERM`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signal: Option<String>,
+}
+
+/// Closest near-miss when a fuzzy/exact match fails (v0.1.29 P0-2).
+///
+/// Agents use this to correct `old` without re-reading the full file.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct BestCandidate {
+    /// Snippet of the best matching region (truncated to 500 chars).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// 1-based line of the candidate start in the file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<u64>,
+    /// 1-based column of the candidate start.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<u64>,
+    /// Similarity score 0.0–1.0 of the best attempt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub similarity: Option<f64>,
+    /// Strategy that produced this candidate score.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<String>,
+    /// Optional short unified-diff style preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff_preview: Option<String>,
 }
 
 /// Outcome of matching a single `--old`/`--new` pair in multi-pair edit mode.
@@ -1046,6 +1129,9 @@ mod tests {
             platform: PlatformInfo {
                 fsync: "sync_data",
                 dir_fsync: "sync_all",
+                durability: None,
+                rename_method: None,
+                backup_method: None,
             },
             mtime_preserved: None,
             risk_assessment: None,
@@ -1167,6 +1253,9 @@ mod tests {
             platform: PlatformInfo {
                 fsync: "sync_data",
                 dir_fsync: "best_effort",
+                durability: None,
+                rename_method: None,
+                backup_method: None,
             },
             mtime_preserved: None,
             risk_assessment: None,
@@ -1226,6 +1315,11 @@ mod tests {
             checksum_after: "bbb".into(),
             elapsed_ms: 5,
             mtime_preserved: Some(false),
+            fuzzy: None,
+            strategy: None,
+            similarity: None,
+            strategies_tried: None,
+            word_ignored: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);

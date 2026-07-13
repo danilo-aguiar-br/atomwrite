@@ -2,13 +2,13 @@
 
 > Operações atômicas de arquivo para agentes LLM — um CLI, zero corrupção
 
-atomwrite é um CLI Rust que fornece 33 subcomandos para manipulação de arquivos com garantias de escrita atômica. Toda escrita usa tempfile + fsync + rename + fsync do diretório. Toda resposta é NDJSON com checksums BLAKE3. Construído para agentes LLM que precisam de operações de arquivo confiáveis e estruturadas sem risco de corrupção.
+atomwrite é um CLI Rust que fornece 41 subcomandos para manipulação de arquivos com garantias de escrita atômica. Toda escrita usa tempfile + fsync + rename + fsync do diretório. Toda resposta é NDJSON com checksums BLAKE3. Construído para agentes LLM que precisam de operações de arquivo confiáveis e estruturadas sem risco de corrupção.
 
-**Release mais recente: v0.1.28** (2026-07-06) — BREAKING: `delete` agora cria um backup por padrão (`--no-backup` desabilita; `--keep-backup` em `delete` é redundante e agora expõe um campo `warnings` no envelope NDJSON em vez de um no-op silencioso); `move`/`copy` sobrescrevendo um destino existente agora exigem `--force` OU um `--backup` explícito. GAP-CLI-SURFACE-DRIFT fechado — struct única `BackupOpts` (`--backup`, `--no-backup`, `--keep-backup`, `--retention <N>`) via `#[command(flatten)]` em 15 subcomandos mutantes (`write`, `edit`, `edit-loop`, `replace`, `transform`, `scope`, `apply`, `set`, `del`, `case`, `batch`, `delete`, `move`, `copy`, `rollback`); `replace --retention` e `delete --no-backup` agora funcionam (antes exit 2). GAP-CONFIG-DEFAULTS-DEAD fechado — chaves `.atomwrite.toml` `[defaults]` `backup`/`retention` agora são efetivas em todos os subcomandos mutantes, com precedência `ATOMWRITE_BACKUP` env var > flags CLI > `[defaults]` > default embutido (`true`/`5`). Novo guard de stdin-tty em `edit` — `--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between` e `--multi` agora falham rápido com exit 65 quando stdin é um terminal. `batch --retention` e `batch --backup` agora são efetivos de ponta a ponta (antes aceitos e ignorados silenciosamente). `rollback` mantém seu snapshot de segurança pré-rollback opt-in via `--backup` explícito (exceção documentada ao contrato unificado default-true). 661 testes, 33 subcomandos. Veja `CHANGELOG.pt-BR.md` para notas completas.
+**Release mais recente: v0.1.29** (2026-07-13) — Expansão da superfície de agente: 8 subcomandos novos (`recipe`, `sparse`, `semantic-merge`, `agent-surface`, `watch`, `codemod`, `semantic-search`, `stat`); cascata `fuzzy` compartilhada no `replace` com `best_candidate` em erros de match; `write --durability full|fast|auto` e Linux `renameat2` com fallback para rename; features Cargo `core`/`ast`/`lang-*`/`watch`/`semantic`/`full` (core slim ~7,7 MiB; default+AST ~52 MB); `agent-surface` manifesto CLI (MCP proibido — só CLI). 683 testes, 41 subcomandos, 38 schemas JSON. Veja `CHANGELOG.pt-BR.md` para notas completas.
 
-**Release anterior: v0.1.27** (2026-06-24) — 10 correções em 3 rodadas de auditoria: escape CRÍTICO de symlink-directory do jail (BUG-SEC-001), destruição CRÍTICA de código pelo scope --delete (BUG-SCOPE-004), visibilidade pub para todas as queries Rust do scope, declarações Go var com tipo inferido, edit-loop endurecido (stdin vazio, JSON inválido, campos pair_results). 3 limitações conhecidas documentadas (GAP-01/02/03). Veja `CHANGELOG.pt-BR.md`.
+**Release anterior: v0.1.28** (2026-07-06) — BREAKING: backup default em `delete`; `BackupOpts` unificado em 15 subcomandos mutantes; `[defaults]` do `.atomwrite.toml` efetivo; guard de stdin-tty no `edit`. 661 testes, 33 subcomandos. Veja `CHANGELOG.pt-BR.md`.
 
-## 33 Subcomandos
+## 41 Subcomandos
 
 ### I/O Principal (7)
 - `read` — ler arquivos com metadados, checksum, conteúdo opcional. `--mode raw|envelope` seleciona byte-stream vs envelope NDJSON
@@ -21,7 +21,7 @@ atomwrite é um CLI Rust que fornece 33 subcomandos para manipulação de arquiv
 
 ### Busca e substituição (3)
 - `search` — buscar conteúdo de arquivos em paralelo (motor ripgrep). `--no-begin-end` desabilita a emissão de âncoras
-- `replace` — substituir texto entre arquivos com escritas atômicas
+- `replace` — substituir texto entre arquivos com escritas atômicas; `--fuzzy auto|off|aggressive` e `--fuzzy-threshold` (v0.1.29); reporta `strategy`/`similarity`; erros de match podem incluir `best_candidate`
 - `transform` — refatoração AST via ast-grep (306 linguagens)
 
 ### Inspeção (9)
@@ -63,6 +63,26 @@ atomwrite é um CLI Rust que fornece 33 subcomandos para manipulação de arquiv
 
 Além da verificação de sintaxe G72 em `write --syntax-check` (24 linguagens, exit 88).
 
+### Superfície de agente e workflows (v0.1.29) (8)
+- `recipe` — listar/rodar pipelines multi-passo versionados (ex.: search→replace→hash)
+- `sparse` — list/read orçamentado em monorepo (`sparse list --max-files N`)
+- `semantic-merge` — merge de três vias para conflitos multi-agente
+- `agent-surface` — manifesto de tools derivado do clap (só CLI; MCP é PROIBIDO)
+- `watch` — eventos de filesystem com debounce/checksum/gitignore (feature `watch`)
+- `codemod` — campanha AST multi-regra com summary `by_rule_id`
+- `semantic-search` — ranking offline por tokens/índice invertido (feature `semantic`; NÃO embeddings OpenRouter)
+- `stat` — alias de `read --stat`
+
+### Durabilidade de write (v0.1.29)
+- `write --durability full|fast|auto` — trade-off de fsync; NDJSON `platform.durability`, `platform.rename_method`, `platform.backup_method`
+- Linux usa `renameat2` quando disponível, com fallback para rename
+- macOS usa `F_FULLFSYNC` sob durability `full`
+
+### Features Cargo (v0.1.29)
+- Slim: `cargo build --release --no-default-features --features core`
+- Full: `cargo build --release --features full`
+- Padrão: `core` + `ast` + `lang-rust` + `lang-ts` + `lang-py`
+
 ## Destaques Da v0.1.20 — Intention Guards
 
 - **5 flags de intention-guard** formam uma nova camada de segurança que intercepta mutações destrutivas antes de tocarem o disco:
@@ -89,7 +109,7 @@ Além da verificação de sintaxe G72 em `write --syntax-check` (24 linguagens, 
 
 ## Documentação Principal
 
-- [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.pt-BR.md): Documentação completa com todos os 33 subcomandos e exemplos
+- [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.pt-BR.md): Documentação completa com todos os 41 subcomandos e exemplos
 - [HOW_TO_USE](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/HOW_TO_USE.pt-BR.md): Guia de início rápido
 - [COOKBOOK](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/COOKBOOK.pt-BR.md): Receitas para tarefas comuns
 - [AGENTS](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.pt-BR.md): Arquivo de descoberta de agente com contrato de saída e budget de tokens
@@ -101,6 +121,6 @@ Além da verificação de sintaxe G72 em `write --syntax-check` (24 linguagens, 
 - [CONTRIBUTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/CONTRIBUTING.pt-BR.md): Setup de desenvolvimento e diretrizes
 - [SECURITY](https://github.com/daniloaguiarbr/atomwrite/blob/main/SECURITY.pt-BR.md): Reporte de vulnerabilidades
 - [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 29 ADRs (0019-0047, decisões arquiteturais da v0.1.12 até v0.1.24)
-- [docs/schemas/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/schemas/): 29 contratos estáveis de JSON Schema
+- [docs/schemas/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/schemas/): 38 contratos estáveis de JSON Schema
 - [Crates.io](https://crates.io/crates/atomwrite): Registro de pacotes
 - [Repositório](https://github.com/daniloaguiarbr/atomwrite): Código-fonte

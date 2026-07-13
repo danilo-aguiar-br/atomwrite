@@ -6,7 +6,7 @@
 
 ## O Que Há de Novo na v0.1.12
 
-Esta seção resume as mudanças relevantes para migração em v0.1.12. Veja a seção [v0.1.11 para v0.1.12](#v0111-para-v0112) abaixo para o guia de migração da v0.1.12 e a seção [v0.1.12 para v0.1.15 (Atual)](#v0112-para-v0115-atual) para a transição mais recente.
+Esta seção resume as mudanças relevantes para migração em v0.1.12. Veja a seção [v0.1.11 para v0.1.12](#v0111-para-v0112) abaixo para o guia de migração da v0.1.12 e a seção [v0.1.28 para v0.1.29 (Atual)](#v0128-para-v0129-atual) para a transição mais recente.
 
 ### Novos Subcomandos (6)
 
@@ -68,7 +68,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 
 - Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.12"`
 - Novos subcomandos e flags são opt-in. Nenhuma mudança de código necessária para chamadores existentes.
-- Veja a seção [v0.1.12 para v0.1.15 (Atual)](#v0112-para-v0115-atual) para os passos de migração mais recentes.
+- Veja a seção [v0.1.28 para v0.1.29 (Atual)](#v0128-para-v0129-atual) para os passos de migração mais recentes.
 
 ### Cobertura de Testes
 
@@ -78,9 +78,57 @@ Todas aditivas. Nenhuma dependência existente removida.
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
 
 ## Versão Atual
-- atomwrite está na v0.1.28
-- Este documento cobre migração de v0.1.0 a v0.1.28
+- atomwrite está na v0.1.29
+- Este documento cobre migração de v0.1.0 a v0.1.29
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
+
+
+## v0.1.28 para v0.1.29 (Atual)
+
+### Mudanças BREAKING
+
+- O `replace` de string fixa agora usa `fuzzy=auto` por padrão após multi-match exato com zero hits — antes a falha exact-only retornava exit 1 sem fallback fuzzy
+- Pipelines que exigiam falha exact-only (exit 1 quando a string fixa está ausente) devem passar `--fuzzy off`
+
+### Adicionado (relevante para migração)
+
+- Módulo compartilhado `fuzzy`: cascata de 9 estratégias para `edit`, `replace`, `batch`, `edit-loop`
+- Diagnósticos estruturados `best_candidate` em falha de match (envelopes de erro, caminhos de exit 65)
+- `replace --fuzzy auto|off|aggressive` e `--fuzzy-threshold`
+- `replace --progress-every` e heartbeats de progresso em batch
+- Features Cargo: `core`, `ast`, `lang-*`, `watch`, `semantic`, `full` — install slim sem AST
+- Novos subcomandos: `semantic-merge`, `sparse list|read`, `recipe list|run`, `stat` (alias de `read --stat`), `agent-surface`, `watch` (feature `watch`), `codemod`, `semantic-search`
+- `write --durability full|fast|auto` com NDJSON `platform.durability`
+- Linux `renameat2` em `atomic_rename` com fallback ENOSYS
+- Backup prefere hardlink antes de reflink/copy
+- Cancelamento cooperativo durante leitura de stdin e escrita atômica em chunks
+- Documentação versionada de recipes em `recipes/*.yaml`
+- CI `size-gate` (slim core ≤ 15 MiB), `core-test`, `schema-diff`
+
+### Alterado
+
+- Numeração de estratégias normalizada para nove estratégias nomeadas
+- Superfície skill documenta 41 subcomandos
+- Release slim core ~7.7 MiB (CI exige ≤ 15 MiB); default/full com AST ~52 MB — PRD 5–8 MB aplica-se somente ao core
+
+### Ação de Migração
+
+- Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.29"`
+- **BREAKING**: se seu pipeline depende de `replace` exact-only falhando com exit 1 quando a string fixa está ausente, passe `--fuzzy off`
+- Em falhas de match, inspecione o campo opcional `best_candidate` no envelope NDJSON de erro para diagnósticos de near-miss
+- Install slim (sem AST): `cargo install --path . --locked --no-default-features --features core`
+- Install full (features default): `cargo install --path . --locked` ou `cargo install atomwrite --locked --version "^0.1.29"`
+- MCP não é fornecido; use `agent-surface` para inventário de ferramentas derivado do clap (anti-MCP)
+- Durabilidade opcional: `write --durability full|fast|auto` — leia `platform.durability` no NDJSON
+- Operadores Linux: rename atômico pode usar `renameat2` (fallback em ENOSYS)
+- Feature-gated: habilite `watch` para o subcomando `watch`; habilite `semantic` para subcomandos semânticos conforme empacotado
+- MSRV inalterado em Rust 1.88
+
+### Cobertura de Testes
+
+- Build core-only funciona sem crates AST (stubs com exit 78)
+- Recipe run despacha search→replace→hash de verdade (não é mais stub somente de plano)
+- Schemas regenerados: write durability/rename_method, replace fuzzy*, error best_candidate, recipe/progress/cancelled
 
 
 ## v0.1.27 para v0.1.28 (2026-07-06)
@@ -317,7 +365,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 - Veja `gaps.md` para a auditoria completa de 52 issues resolvidos
 
 
-## v0.1.12 para v0.1.15 (Atual)
+## v0.1.12 para v0.1.15
 
 ### Aditivo (G117)
 
@@ -505,7 +553,7 @@ atomwrite v0.1.2 agora compila no macOS arm64 (Apple Silicon) e macOS x86_64. A 
 - Melhorias de performance
 
 ### Estabilizações Planejadas para 1.0
-- Schemas de saída NDJSON para todos os 30 subcomandos
+- Schemas de saída NDJSON para todos os 41 subcomandos
 - Atribuições de exit codes
 - Strings de código de erro (`FILE_NOT_FOUND`, `STATE_DRIFT`, etc)
 - Nomes e comportamento de flags globais
@@ -714,7 +762,7 @@ A release v0.1.12 fecha 13 dos Top 20 gaps da auditoria PRD v5-v16 (`gaps.md`). 
 - Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.12"`
 
 ## Notas de Compatibilidade
-### v0.1.15 (Atual)
+### v0.1.15
 - G117: o `edit` multi-par ganha paridade fuzzy, `pair_results`, `failed_pair_index` e o opt-in `--partial` -- os campos de envelope são aditivos
 - G118: o `write` resolve o alvo contra o workspace antes de append/prepend, detecção automática de line ending e `--expect-checksum` -- exits 82/126 agora disparam onde havia sobrescrita silenciosa
 - Nenhum código de erro novo; MSRV permanece em Rust 1.88
@@ -919,3 +967,5 @@ Esta release adiciona 2 novos sub-comandos para fechar o último GAP-2026-012 e 
 - Se verifica ausência de arquivos `.bak.*` em CI: adicione `--no-backup` ou defina `ATOMWRITE_BACKUP=0`
 - Se usa `write --expect-checksum` para truncar arquivos legitimamente: adicione `--allow-shrink`
 - Se passa valores iniciando com `-` para `edit --old`, `search`, `replace`, `calc`, `regex`, `transform`, `read --grep`, `query --query`: a correção é automática, nenhuma migração necessária
+
+

@@ -24,7 +24,8 @@
 - `src/atomic.rs` — pipeline de escrita atômica: tempfile + fsync + rename + fsync dir
 - `src/checksum.rs` — cálculo de hash BLAKE3 para arquivos e slices de bytes (usa memmap2 para arquivos grandes)
 - `src/file_io.rs` — leitura inteligente de arquivos com memmap2 automático acima de 1 MiB
-- `src/platform.rs` — fsync específico de plataforma: F_FULLFSYNC em macOS via libc::fcntl
+- `src/platform.rs` — durabilidade e rename por plataforma: `Durability` full|fast|auto; Linux `renameat2` com fallback para rename; macOS `F_FULLFSYNC` em full; o write reporta no NDJSON `platform.durability` e `platform.rename_method`
+- `src/fuzzy.rs` — cascata compartilhada de 9 estratégias de match (exato, whitespace, indent, Jaro-Winkler, …) usada por edit, replace, batch, edit-loop (v0.1.29)
 
 ### Segurança e Validação
 - `src/path_safety.rs` — jail do workspace: prevenção de path traversal, validação de symlinks, detecção de FIFO/device
@@ -51,11 +52,26 @@
 - `src/reflink.rs` — helper de reflink (copy-on-write) via `reflink-copy`
 
 ### Handlers de Subcomando
-- `src/commands/` — 33 implementações de subcomando, cada uma em seu próprio módulo
+- `src/commands/` — 41 implementações de subcomando (handlers + aliases), cada uma no próprio módulo quando aplicável
 - Cada handler recebe args parseados, config global, escritor NDJSON e sinal de shutdown
 - Todos os handlers seguem a mesma assinatura: `fn cmd_*(args, global, writer, shutdown) -> Result<()>`
 - **Baseline v0.1.11 (22)**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, completions
 - **Adicionados em v0.1.12 (6)**: set, get, del, case, query, outline
+- **Adicionados em v0.1.15 (2)**: wal-heal (G119 L3), wal-stats (G119 L5)
+- **Adicionados em v0.1.22 (2)**: edit-loop, prune-backups
+- **Adicionados em v0.1.25 (1)**: verify
+- **Adicionados em v0.1.29 (8)**: recipe, sparse, semantic-merge, agent-surface, watch, codemod, semantic-search, stat (alias de `read --stat`)
+- **Módulos de comando v0.1.29**: `recipe.rs`, `sparse.rs`, `semantic_merge.rs`, `agent_surface.rs`, `watch.rs`, `codemod.rs`, `semantic_search.rs`
+
+### Features Cargo (v0.1.29)
+- `core` — binário slim sem AST/watch/semantic (meta PRD 5–8 MiB; medido ~7,7 MiB release)
+- `ast` — ast-grep + tree-sitter + language-pack + serde_yaml (padrão com lang-rust/ts/py)
+- `lang-rust` / `lang-ts` / `lang-py` / `lang-go` / `lang-full` — superfície de linguagem para scope/transform
+- `watch` — observação de filesystem via notify (subcomando `watch`)
+- `semantic` — ranking offline por tokens/índice (`semantic-search`)
+- `full` — default + lang-full + watch + semantic
+- Features padrão: `core`, `ast`, `lang-rust`, `lang-ts`, `lang-py`
+- Build slim: `cargo build --release --no-default-features --features core`
 
 
 ## Fluxo de Dados

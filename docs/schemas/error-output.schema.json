@@ -1,115 +1,200 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "ErrorOutput",
-  "description": "Serializable error envelope emitted as a single NDJSON line. The suggestion field is context-aware: for WORKSPACE_JAIL, the text varies based on whether --workspace was provided to the CLI.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ErrorJson",
+  "description": "Serializable error envelope emitted as a single NDJSON line.",
   "type": "object",
-  "required": ["error", "code", "exit", "message", "error_class", "retryable"],
   "properties": {
-    "error": {
-      "type": "boolean",
-      "const": true
-    },
-    "code": {
-      "type": "string",
-      "enum": [
-        "FILE_NOT_FOUND",
-        "INVALID_INPUT",
-        "PERMISSION_DENIED",
-        "DISK_FULL",
-        "QUOTA_EXCEEDED",
-        "CROSS_DEVICE",
-        "IO_ERROR",
-        "CONFIG_INVALID",
-        "STATE_DRIFT",
-        "CHECKSUM_VERIFY_FAILED",
-        "FILE_TOO_LARGE",
-        "WORKSPACE_JAIL",
-        "SYMLINK_BLOCKED",
-        "IMMUTABLE_FILE",
-        "BINARY_FILE",
-        "FIFO_DETECTED",
-        "DEVICE_FILE",
-        "NO_MATCHES",
-        "BROKEN_PIPE",
-        "INTERNAL_ERROR",
-        "LOCK_TIMEOUT",
-        "SYNTAX_ERROR_DETECTED",
-        "EXDEV_FALLBACK_DISABLED",
-        "COPY_BACK_BLAKE3_FAILED",
-        "ORPHAN_JOURNAL"
+    "best_candidate": {
+      "description": "Closest near-miss when a match cascade fails (v0.1.29 P0-2).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BestCandidate"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
-    "exit": {
-      "type": "integer",
-      "description": "Suggested process exit code"
+    "code": {
+      "description": "Machine-readable error code string.",
+      "type": "string"
     },
-    "message": {
-      "type": "string",
-      "description": "Human-readable error message"
-    },
-    "path": {
-      "type": ["string", "null"],
-      "description": "Filesystem path related to the error, if applicable"
+    "error": {
+      "description": "Always true, marks this line as an error event.",
+      "type": "boolean"
     },
     "error_class": {
-      "type": "string",
-      "enum": ["permanent", "transient", "conflict", "precondition_failed"]
+      "description": "Error class: transient, conflict, `precondition_failed`, or permanent.",
+      "type": "string"
     },
-    "retryable": {
-      "type": "boolean",
-      "description": "Whether a retry may resolve this error"
-    },
-    "suggestion": {
-      "type": ["string", "null"],
-      "description": "Optional actionable suggestion for the caller. Context-aware for WORKSPACE_JAIL: when --workspace is provided the text says 'use a path inside the workspace (<root>)', when absent it says 'set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>'. For IMMUTABLE_FILE it mentions 'chattr -i' on Unix or 'fsutil' on Windows. For BINARY_FILE it recommends 'read --stat'. Only BROKEN_PIPE has no suggestion because SIGPIPE is not actionable."
-    },
-    "workspace": {
-      "type": ["string", "null"],
-      "description": "Workspace root used for jail validation. Appears on WORKSPACE_JAIL errors (and may appear on any error in future releases) to help the caller diagnose path resolution."
+    "exit": {
+      "description": "Suggested process exit code.",
+      "type": "integer",
+      "format": "uint8",
+      "maximum": 255,
+      "minimum": 0
     },
     "failed_pair_index": {
-      "type": ["integer", "null"],
-      "minimum": 1,
-      "description": "1-based index of the failed --old/--new pair. Present only on multi-pair edit failures (G117, v0.1.15+)."
+      "description": "1-based index of the failed `--old`/`--new` pair (multi-pair edit, G117).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
     },
-    "pairs_total": {
-      "type": ["integer", "null"],
-      "minimum": 1,
-      "description": "Total number of --old/--new pairs in the invocation. Present only on multi-pair edit failures (G117, v0.1.15+)."
+    "message": {
+      "description": "Human-readable error message.",
+      "type": "string"
     },
     "pair_results": {
-      "type": ["array", "null"],
-      "description": "Per-pair diagnostics up to and including the failed pair. Pairs after the failure were never attempted and are absent (all-or-nothing default). Present only on multi-pair edit failures (G117, v0.1.15+).",
+      "description": "Per-pair diagnostics up to and including the failed pair (multi-pair edit, G117).\nPairs after the failure were never attempted and are absent.",
+      "type": [
+        "array",
+        "null"
+      ],
       "items": {
-        "$ref": "#/definitions/PairResult"
+        "$ref": "#/$defs/PairResult"
       }
+    },
+    "pairs_total": {
+      "description": "Total number of `--old`/`--new` pairs in the invocation (multi-pair edit, G117).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "path": {
+      "description": "Filesystem path related to the error, if applicable.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "retryable": {
+      "description": "Whether a retry may resolve this error.",
+      "type": "boolean"
+    },
+    "suggestion": {
+      "description": "Optional actionable suggestion for the caller.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "workspace": {
+      "description": "Workspace root used for jail validation, if applicable.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
-  "definitions": {
-    "PairResult": {
+  "required": [
+    "error",
+    "code",
+    "exit",
+    "message",
+    "error_class",
+    "retryable"
+  ],
+  "$defs": {
+    "BestCandidate": {
+      "description": "Closest near-miss when a fuzzy/exact match fails (v0.1.29 P0-2).\n\nAgents use this to correct `old` without re-reading the full file.",
       "type": "object",
-      "required": ["index", "matched"],
       "properties": {
-        "index": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "1-based position of the pair in the --old/--new invocation order"
+        "column": {
+          "description": "1-based column of the candidate start.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
         },
-        "matched": {
-          "type": "boolean",
-          "description": "Whether the pair matched and was applied to the content"
+        "diff_preview": {
+          "description": "Optional short unified-diff style preview.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
-        "strategy": {
-          "type": "string",
-          "description": "Matching strategy that succeeded (e.g. exact, whitespace_normalized)"
+        "line": {
+          "description": "1-based line of the candidate start in the file.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
         },
         "similarity": {
-          "type": "number",
-          "minimum": 0.0,
-          "maximum": 1.0,
-          "description": "Similarity score of the fuzzy match (block-anchor and context-aware only)"
+          "description": "Similarity score 0.0–1.0 of the best attempt.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "strategy": {
+          "description": "Strategy that produced this candidate score.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "description": "Snippet of the best matching region (truncated to 500 chars).",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
+    },
+    "PairResult": {
+      "description": "Outcome of matching a single `--old`/`--new` pair in multi-pair edit mode.\n\nEmitted in `pair_results` on both success and error envelopes so agents\ncan verify each pair objectively without re-running the edit (G117).\nIn the default all-or-nothing mode, pairs after the first failure are\nnever attempted and are absent from the array.",
+      "type": "object",
+      "properties": {
+        "index": {
+          "description": "1-based position of the pair in the `--old`/`--new` invocation order.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "matched": {
+          "description": "Whether the pair matched and was applied to the content.",
+          "type": "boolean"
+        },
+        "similarity": {
+          "description": "Similarity score of the fuzzy match, 0.0-1.0 (block-anchor and context-aware only).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "source": {
+          "description": "Source of the match/replacement content: `\"arg\"` or `\"file\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "strategy": {
+          "description": "Matching strategy that succeeded (e.g. `exact`, `whitespace_normalized`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "index",
+        "matched"
+      ]
     }
   }
 }

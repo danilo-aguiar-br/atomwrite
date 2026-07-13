@@ -4,9 +4,45 @@
   "description": "NDJSON output for a per-file replace operation.",
   "type": "object",
   "properties": {
-    "type": {
-      "description": "Event type discriminator.",
+    "bytes_after": {
+      "description": "File size in bytes after replacement.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "bytes_before": {
+      "description": "File size in bytes before replacement.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "checksum_after": {
+      "description": "BLAKE3 checksum after replacement.",
       "type": "string"
+    },
+    "checksum_before": {
+      "description": "BLAKE3 checksum before replacement.",
+      "type": "string"
+    },
+    "elapsed_ms": {
+      "description": "Operation duration in milliseconds.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "fuzzy": {
+      "description": "Whether any replacement used a non-exact fuzzy strategy (v0.1.29).",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "mtime_preserved": {
+      "description": "Whether the original modification time was preserved (true) or updated to now (false).\nCritical for build systems: false ensures cargo/make/cmake detect the change.",
+      "type": [
+        "boolean",
+        "null"
+      ]
     },
     "path": {
       "description": "Path of the modified file.",
@@ -18,31 +54,40 @@
       "format": "uint64",
       "minimum": 0
     },
-    "bytes_before": {
-      "description": "File size in bytes before replacement.",
-      "type": "integer",
+    "similarity": {
+      "description": "Similarity of the last fuzzy match when applicable (v0.1.29).",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "strategies_tried": {
+      "description": "Strategies tried for the last fuzzy application (v0.1.29).",
+      "type": [
+        "integer",
+        "null"
+      ],
       "format": "uint64",
       "minimum": 0
     },
-    "bytes_after": {
-      "description": "File size in bytes after replacement.",
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
+    "strategy": {
+      "description": "Last fuzzy strategy that applied (v0.1.29).",
+      "type": [
+        "string",
+        "null"
+      ]
     },
-    "checksum_before": {
-      "description": "BLAKE3 checksum before replacement.",
+    "type": {
+      "description": "Event type discriminator.",
       "type": "string"
     },
-    "checksum_after": {
-      "description": "BLAKE3 checksum after replacement.",
-      "type": "string"
-    },
-    "elapsed_ms": {
-      "description": "Operation duration in milliseconds.",
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
+    "word_ignored": {
+      "description": "True when `--word` was ignored because fuzzy path was used (v0.1.29).",
+      "type": [
+        "boolean",
+        "null"
+      ]
     }
   },
   "required": [

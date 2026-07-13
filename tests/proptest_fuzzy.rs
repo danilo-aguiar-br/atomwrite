@@ -3,7 +3,7 @@
 //! GAP-086: property-based tests for the fuzzy-matching cascade in
 //! `atomwrite::commands::edit::match_pair`.
 
-use atomwrite::commands::edit::{FuzzyMode, match_pair};
+use atomwrite::{FuzzyMode, match_pair};
 use proptest::prelude::*;
 
 proptest! {

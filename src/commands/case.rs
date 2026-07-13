@@ -130,6 +130,7 @@ pub fn cmd_case(
                 strict_atomic: false,
                 wal_policy: crate::wal::WalPolicy::Auto,
                 keep_backup: resolved.keep,
+                durability: crate::platform::Durability::Auto,
             };
             let _ = atomic_write(&validated, new_content.as_bytes(), &opts, &workspace)?;
             writer.write_event(&CaseResult {

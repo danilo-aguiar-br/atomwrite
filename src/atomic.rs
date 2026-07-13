@@ -90,6 +90,8 @@ pub struct AtomicWriteOptions {
     /// according to `retention`. Backup-on-failure is ALWAYS preserved
     /// regardless of this flag.
     pub keep_backup: bool,
+    /// Durability policy for fsync (v0.1.29 P2-1).
+    pub durability: crate::platform::Durability,
 }
 
 impl Default for AtomicWriteOptions {
@@ -104,6 +106,7 @@ impl Default for AtomicWriteOptions {
             syntax_check: false,
             wal_policy: crate::wal::WalPolicy::Auto,
             keep_backup: false,
+            durability: crate::platform::Durability::Auto,
         }
     }
 }
@@ -135,6 +138,12 @@ pub struct WriteResult {
     /// Number of syntax errors detected by `--syntax-check` (G72), if enabled.
     /// Always 0 when the check is disabled or no parser is available.
     pub syntax_errors: u32,
+    /// Resolved durability mode name (v0.1.29 P2-1).
+    pub durability: &'static str,
+    /// Rename method used (v0.1.29 P2-2).
+    pub rename_method: &'static str,
+    /// Backup method if backup was created (v0.1.29 P2-3).
+    pub backup_method: Option<&'static str>,
 }
 
 /// Write content atomically via tempfile, fsync, and rename.
@@ -156,6 +165,8 @@ pub fn atomic_write(
 
     // Step 1: validate path
     let target = crate::path_safety::validate_path(target, workspace)?;
+    let resolved_durability = opts.durability.resolve(&target);
+    let mut backup_method_used: Option<&'static str> = None;
 
     // Step 1a: G119 L1 — decide whether to create a sidecar at all. The
     // heuristic short-circuits for trivial writes (small file in a git
@@ -273,11 +284,28 @@ pub fn atomic_write(
 
     // Step 4: create backup if requested
     let backup_path = if opts.backup && target.exists() {
-        Some(create_backup_in(
-            &target,
-            opts.retention,
-            opts.backup_output_dir.as_deref(),
-        )?)
+        let bp = create_backup_in(&target, opts.retention, opts.backup_output_dir.as_deref())?;
+        // Detect hardlink via nlink > 1 on same filesystem.
+        backup_method_used = match std::fs::metadata(&bp) {
+            Ok(meta) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    if meta.nlink() > 1 {
+                        Some("hardlink")
+                    } else {
+                        Some("reflink_or_copy")
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = meta;
+                    Some("copy")
+                }
+            }
+            Err(_) => Some("unknown"),
+        };
+        Some(bp)
     } else {
         None
     };
@@ -358,21 +386,29 @@ pub fn atomic_write(
     }
 
     // Step 6–9: dispatch by strategy
-    let exdev_fallback = match strategy {
-        WriteStrategy::Rename => write_rename_path(target.as_path(), content, opts.strict_atomic)?,
-        WriteStrategy::InPlace | WriteStrategy::CopyBack => {
-            write_inplace_path(target.as_path(), content)?
-        }
+    let (exdev_fallback, rename_method_used) = match strategy {
+        WriteStrategy::Rename => write_rename_path(
+            target.as_path(),
+            content,
+            opts.strict_atomic,
+            resolved_durability,
+        )?,
+        WriteStrategy::InPlace | WriteStrategy::CopyBack => (
+            write_inplace_path(target.as_path(), content)?,
+            strategy.as_str(),
+        ),
     };
 
-    // Step 10: fsync parent directory (critical for durability)
-    if let Some(parent) = target.parent() {
-        if let Err(e) = platform::fsync_dir(parent) {
-            tracing::warn!(
-                path = %parent.display(),
-                error = %e,
-                "fsync_dir after persist failed"
-            );
+    // Step 10: fsync parent directory (Full durability; skip for Fast)
+    if !matches!(resolved_durability, crate::platform::Durability::Fast) {
+        if let Some(parent) = target.parent() {
+            if let Err(e) = platform::fsync_dir(parent) {
+                tracing::warn!(
+                    path = %parent.display(),
+                    error = %e,
+                    "fsync_dir after persist failed"
+                );
+            }
         }
     }
 
@@ -433,6 +469,9 @@ pub fn atomic_write(
         platform: PlatformInfo {
             fsync: platform::platform_fsync_name(),
             dir_fsync: platform::platform_dir_fsync_name(),
+            durability: Some(resolved_durability.as_str()),
+            rename_method: Some(rename_method_used),
+            backup_method: backup_method_used,
         },
         hardlink_nlink,
         write_strategy: strategy.as_str(),
@@ -440,6 +479,9 @@ pub fn atomic_write(
         xattr_count,
         exdev_fallback,
         syntax_errors,
+        durability: resolved_durability.as_str(),
+        rename_method: rename_method_used,
+        backup_method: backup_method_used,
     })
 }
 
@@ -450,7 +492,8 @@ fn write_rename_path(
     target: &Path,
     content: &[u8],
     #[cfg_attr(not(unix), allow(unused_variables))] strict_atomic: bool,
-) -> Result<bool> {
+    durability: crate::platform::Durability,
+) -> Result<(bool, &'static str)> {
     // Step 6: create tempfile in same directory
     let parent = target.parent().unwrap_or(Path::new("."));
     let mut builder = tempfile::Builder::new();
@@ -468,12 +511,26 @@ fn write_rename_path(
         .tempfile_in(parent)
         .with_context(|| format!("cannot create tempfile in {}", parent.display()))?;
 
-    // Step 7: write content
+    // Step 7: write content in 64 KiB chunks with cooperative cancel (v0.1.29 P0-4).
     {
         let mut writer = BufWriter::with_capacity(crate::constants::BUF_CAPACITY, temp.as_file());
-        writer
-            .write_all(content)
-            .with_context(|| format!("write error for {}", target.display()))?;
+        const CHUNK: usize = 64 * 1024;
+        let mut offset = 0usize;
+        while offset < content.len() {
+            if crate::signal::is_global_shutdown() {
+                // Drop tempfile by not persisting — NamedTempFile cleans on drop.
+                return Err(crate::error::AtomwriteError::Cancelled {
+                    reason: format!("atomic write cancelled for {}", target.display()),
+                    exit: 143,
+                }
+                .into());
+            }
+            let end = (offset + CHUNK).min(content.len());
+            writer
+                .write_all(&content[offset..end])
+                .with_context(|| format!("write error for {}", target.display()))?;
+            offset = end;
+        }
         writer
             .flush()
             .with_context(|| format!("flush error for {}", target.display()))?;
@@ -486,20 +543,20 @@ fn write_rename_path(
         })?;
     }
 
-    // Step 8: fsync file
-    platform::fsync_file(temp.as_file())
+    // Step 8: fsync file (respect durability policy)
+    platform::fsync_file_with_durability(temp.as_file(), durability)
         .with_context(|| format!("fsync error for {}", target.display()))?;
 
     // Step 9: atomic rename with EXDEV fallback
     #[cfg(windows)]
     {
         persist_with_retry(temp, target)?;
-        return Ok(false);
+        return Ok((false, "MoveFileEx"));
     }
     #[cfg(not(windows))]
     {
         match temp.persist(target) {
-            Ok(_) => Ok(false),
+            Ok(_) => Ok((false, platform::platform_rename_method())),
             Err(e) => {
                 #[cfg(unix)]
                 {
@@ -516,7 +573,7 @@ fn write_rename_path(
                         );
                         let recovered = e.file;
                         copy_tempfile_to_target(recovered.as_file(), target, content)?;
-                        return Ok(true);
+                        return Ok((true, "copy_exdev"));
                     }
                 }
                 return Err(e.error)
@@ -807,10 +864,8 @@ pub(crate) fn create_backup_in(
         None => target.with_file_name(&backup_name),
     };
 
+    // v0.1.29 P2-3: prefer hardlink → reflink → copy.
     // G64: prefer reflink (O(1) CoW on APFS/btrfs/XFS) over `fs::copy`.
-    // reflink-copy falls back to a regular copy automatically if the
-    // filesystem does not support reflinks. Result is the same as
-    // `fs::copy` in the non-reflink case (returns bytes copied).
     //
     // Remove the existing backup file if any: reflink_or_copy refuses to
     // overwrite, and the test harness can produce timestamp collisions
@@ -818,8 +873,12 @@ pub(crate) fn create_backup_in(
     if backup_path.exists() {
         let _ = std::fs::remove_file(&backup_path);
     }
-    reflink_copy::reflink_or_copy(target, &backup_path)
-        .with_context(|| format!("cannot create backup at {}", backup_path.display()))?;
+    if fs::hard_link(target, &backup_path).is_err() {
+        // Prefer reflink; crate falls back to copy automatically.
+        // Caller detects hardlink via nlink after return.
+        reflink_copy::reflink_or_copy(target, &backup_path)
+            .with_context(|| format!("cannot create backup at {}", backup_path.display()))?;
+    }
     let backup_file = fs::File::open(&backup_path)
         .with_context(|| format!("cannot open backup for fsync: {}", backup_path.display()))?;
     // Best-effort fsync: backup file already exists on disk via fs::copy.

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::ndjson_types::PairResult;
+use crate::ndjson_types::{BestCandidate, PairResult};
 
 /// Classification of error recoverability for retry decisions.
 ///
@@ -73,6 +73,27 @@ pub enum AtomwriteError {
     InvalidInput {
         /// Description of the validation failure.
         reason: String,
+    },
+
+    /// Fuzzy/exact match cascade failed (v0.1.29 P0-2).
+    ///
+    /// Carries an optional [`BestCandidate`] so agents can correct `old`
+    /// without re-reading the full file. Exit 65 / `INVALID_INPUT`.
+    #[error("match failed: {reason}")]
+    MatchFailed {
+        /// Description of the match failure.
+        reason: String,
+        /// Closest near-miss region, when similarity ≥ 0.5 (boxed for clippy `result_large_err`).
+        best_candidate: Option<Box<BestCandidate>>,
+    },
+
+    /// Operation cancelled by SIGINT/SIGTERM (v0.1.29 P0-4).
+    #[error("cancelled: {reason}")]
+    Cancelled {
+        /// Description of the cancel (signal name, path, etc.).
+        reason: String,
+        /// Suggested exit code (130 SIGINT, 143 SIGTERM).
+        exit: u8,
     },
 
     /// Insufficient filesystem permissions.
@@ -266,7 +287,9 @@ pub enum AtomwriteError {
         /// Description of why the pair did not match.
         reason: String,
         /// Per-pair results accumulated up to and including the failed pair.
-        pair_results: Vec<PairResult>,
+        pair_results: Box<Vec<PairResult>>,
+        /// Closest near-miss for the failing pair (v0.1.29 P0-2).
+        best_candidate: Option<Box<BestCandidate>>,
     },
 }
 
@@ -277,6 +300,8 @@ impl AtomwriteError {
         match self {
             Self::NotFound { .. } => 4,
             Self::InvalidInput { .. } => 65,
+            Self::MatchFailed { .. } => 65,
+            Self::Cancelled { exit, .. } => *exit,
             Self::PermissionDenied { .. } => 13,
             Self::DiskFull { .. } => 28,
             Self::QuotaExceeded { .. } => 30,
@@ -358,6 +383,8 @@ impl AtomwriteError {
         match self {
             Self::NotFound { .. } => "FILE_NOT_FOUND",
             Self::InvalidInput { .. } => "INVALID_INPUT",
+            Self::MatchFailed { .. } => "INVALID_INPUT",
+            Self::Cancelled { .. } => "CANCELLED",
             Self::PermissionDenied { .. } => "PERMISSION_DENIED",
             Self::DiskFull { .. } => "DISK_FULL",
             Self::QuotaExceeded { .. } => "QUOTA_EXCEEDED",
@@ -414,7 +441,9 @@ impl AtomwriteError {
             | Self::ConfigInvalid { .. }
             | Self::NoMatches
             | Self::BrokenPipe
-            | Self::InternalError { .. } => None,
+            | Self::InternalError { .. }
+            | Self::MatchFailed { .. }
+            | Self::Cancelled { .. } => None,
         }
     }
 }
@@ -453,6 +482,9 @@ pub struct ErrorJson {
     /// Pairs after the failure were never attempted and are absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pair_results: Option<Vec<PairResult>>,
+    /// Closest near-miss when a match cascade fails (v0.1.29 P0-2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_candidate: Option<BestCandidate>,
 }
 
 impl ErrorJson {
@@ -488,8 +520,21 @@ impl ErrorJson {
                 total,
                 pair_results,
                 ..
-            } => (Some(*index), Some(*total), Some(pair_results.clone())),
+            } => (
+                Some(*index),
+                Some(*total),
+                Some(pair_results.as_ref().clone()),
+            ),
             _ => (None, None, None),
+        };
+        let best_candidate = match err {
+            AtomwriteError::MatchFailed { best_candidate, .. } => {
+                best_candidate.as_ref().map(|b| (**b).clone())
+            }
+            AtomwriteError::EditPairFailed { best_candidate, .. } => {
+                best_candidate.as_ref().map(|b| (**b).clone())
+            }
+            _ => None,
         };
         Self {
             error: true,
@@ -504,6 +549,7 @@ impl ErrorJson {
             failed_pair_index,
             pairs_total,
             pair_results,
+            best_candidate,
         }
     }
 }
@@ -592,6 +638,12 @@ fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
                 .into(),
         ),
         AtomwriteError::BrokenPipe => None,
+        AtomwriteError::MatchFailed { .. } => Some(
+            "inspect best_candidate in the error NDJSON and adjust --old, or lower --fuzzy-threshold".into(),
+        ),
+        AtomwriteError::Cancelled { .. } => Some(
+            "operation cancelled by signal; retry after inspecting journal/temp cleanup".into(),
+        ),
         AtomwriteError::InternalError { reason } => Some(format!(
             "this is a bug; please report it with the {reason} context"
         )),
@@ -1105,7 +1157,8 @@ mod tests {
                 index: 2,
                 total: 3,
                 reason: "x".into(),
-                pair_results: vec![],
+                pair_results: Box::new(vec![]),
+                best_candidate: None,
             },
         ];
         assert_eq!(variants.len(), 26);

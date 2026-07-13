@@ -54,10 +54,11 @@ This section summarizes cross-platform-relevant changes in v0.1.12.
 
 ### Test Coverage
 
-- 661 tests passing (v0.1.28)
+- 683 tests listed (v0.1.29 working tree)
 - Cross-compile gate: `cargo test --test cross_compile_check -- --ignored` validates Windows GNU/MSVC targets
 - 5 signal tests in `tests/signal_test.rs` cover SIGINT/SIGTERM/SIGPIPE/batch/shutdown
 - See [docs/decisions/README.md](README.md) for architectural decisions
+- For v0.1.29 durability and rename, see [v0.1.29 — Durability and rename](#v0129--durability-and-rename)
 
 ## The Pain You Already Know
 - You write a file on Linux and it reaches disk reliably
@@ -71,7 +72,8 @@ This section summarizes cross-platform-relevant changes in v0.1.12.
 ### Linux (Full Support)
 - File fsync: `fdatasync` via `sync_data()`
 - Directory fsync: `sync_all()` on parent directory
-- Atomic rename: `rename(2)` within same filesystem
+- Atomic rename: prefers `renameat2` with fallback to `rename` on `ENOSYS`
+- NDJSON write reports `platform.rename_method` (`renameat2` or `rename`)
 - Cross-device: automatic copy-then-delete fallback
 - Tested on x86_64 and aarch64
 
@@ -266,3 +268,20 @@ This release is fully backward-compatible across all 3 supported platforms.
   - Reads the file once with `read_file_string` (uses memmap2 for large files on Linux/macOS)
   - Writes atomically via the same pipeline as `edit`
   - On Windows: respects `init_console` UTF-8 and ANSI handling (v0.1.4)
+
+
+## v0.1.29 — Durability and rename
+
+This release is fully backward-compatible across Linux, macOS, and Windows for existing flags. New controls are opt-in.
+
+- Behavior break for `replace --fuzzy auto` is documented in [MIGRATION.md](MIGRATION.md) (this section covers platform I/O only)
+- Linux atomic rename prefers `renameat2` and falls back to `rename` on `ENOSYS`
+- NDJSON write output reports `platform.rename_method` (`renameat2` or `rename`)
+- `write --durability full|fast|auto` selects fsync policy
+- `full` — full file fsync plus directory fsync when available
+- `fast` — skip parent-directory fsync for speed
+- `auto` — heuristic based on path and environment
+- macOS under durability `full` uses `F_FULLFSYNC` via `fcntl` (same primitive as before, now gated by policy)
+- Windows keeps its existing flush path; durability labels still appear in NDJSON for agents
+- Backup may prefer hardlink then reflink then copy; reported as `platform.backup_method`
+- Cargo feature `core` keeps the slim binary path; AST/watch/semantic remain optional

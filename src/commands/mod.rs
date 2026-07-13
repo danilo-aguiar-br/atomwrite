@@ -4,6 +4,8 @@
 
 use std::io::Read as _;
 
+/// v0.1.29
+pub mod agent_surface;
 /// Patch application from stdin (unified diff, SEARCH/REPLACE, full file).
 pub mod apply;
 /// Standalone file backup with BLAKE3 checksums.
@@ -14,6 +16,7 @@ pub mod batch;
 pub mod calc;
 /// v14 Tier 3: identifier case conversion (snake/camel/Pascal/kebab/SCREAMING).
 pub mod case;
+pub mod codemod;
 /// Atomic file copy with checksum verification.
 pub mod copy;
 /// Line, match, and extension counting.
@@ -39,15 +42,25 @@ pub mod list;
 /// Atomic file move and rename.
 pub mod r#move;
 /// v14 Tier 3 (v0.1.12): tree-sitter S-expression query against a file.
+#[cfg(feature = "ast")]
+pub mod outline;
+#[cfg(not(feature = "ast"))]
+#[path = "outline_stub.rs"]
 pub mod outline;
 /// v0.1.19 G121: workspace-relative path resolution helper for walking commands.
 pub mod path_resolution;
 /// v0.1.22 ADR-0040: prune `.bak.YYYYMMDD_HHMMSS` backups by age or count.
 pub mod prune_backups;
 /// v14 Tier 3 (v0.1.12): tree-sitter S-expression query against a file.
+#[cfg(feature = "ast")]
+pub mod query;
+#[cfg(not(feature = "ast"))]
+#[path = "query_stub.rs"]
 pub mod query;
 /// File reading with metadata and content.
 pub mod read;
+/// v0.1.29
+pub mod recipe;
 /// Regex generation from examples via grex.
 pub mod regex_gen;
 /// Parallel text replacement with atomic writes.
@@ -55,15 +68,29 @@ pub mod replace;
 /// File restoration from backup.
 pub mod rollback;
 /// Grammatical scoping with AST-based actions.
+#[cfg(feature = "ast")]
+pub mod scope;
+#[cfg(not(feature = "ast"))]
+#[path = "scope_stub.rs"]
 pub mod scope;
 /// Parallel file content search via ripgrep.
 pub mod search;
+/// v0.1.29
+pub mod semantic_merge;
+pub mod semantic_search;
 /// v14 Tier 3: structured config value setter.
 pub mod set;
+/// v0.1.29
+pub mod sparse;
 /// Structural AST code search and rewrite.
+#[cfg(feature = "ast")]
+pub mod transform;
+#[cfg(not(feature = "ast"))]
+#[path = "transform_stub.rs"]
 pub mod transform;
 /// G119 L5 — snapshot of WAL sidecar state (read-only, no I/O side effects).
 pub mod wal_stats;
+pub mod watch;
 /// Atomic file creation and overwrite.
 pub mod write;
 

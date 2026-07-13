@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "atomwrite"
-version = "0.1.28"
+version = "0.1.29"
 edition = "2024"
 rust-version = "1.88"
 description = "Atomic file operations CLI for LLM agents — read, write, edit, search, replace with NDJSON output"
@@ -31,6 +31,7 @@ exclude = [
 ]
 
 [dependencies]
+notify = { version = "7", optional = true }
 clap = { version = "4", features = ["derive", "env", "wrap_help", "string"] }
 clap_complete = "4"
 serde = { version = "1", features = ["derive"] }
@@ -61,8 +62,8 @@ filetime = "0.2"
 human-panic = "2"
 grex = "1.4"
 fend-core = "1.5"
-ast-grep-core = "0.43"
-ast-grep-language = "0.43"
+ast-grep-core = { version = "0.43", optional = true }
+ast-grep-language = { version = "0.43", optional = true }
 same-file = "1"
 unicode-normalization = "0.1"
 sys-locale = "0.3"
@@ -72,7 +73,7 @@ reflink-copy = "0.1"   # G64: O(1) copy-on-write backup on APFS/btrfs/XFS
 content_inspector = "0.2"  # G41: accurate binary/text detection (UTF-16LE aware)
 strsim = "0.11"        # G116: fuzzy match cascade strategy 9 (context-aware)
 heck = "0.5"           # v14 Tier 3: identifier case conversion (case subcommand)
-serde_yaml = "0.9"     # G44: multi-rule YAML for transform subcommand
+serde_yaml = { version = "0.9", optional = true }     # G44: multi-rule YAML for transform subcommand
 directories = "6"      # GAP-072: XDG config paths for .atomwrite.toml
 toml = "0.8"           # GAP-072: serde deserialize for .atomwrite.toml config
 indexmap = { version = "2", features = ["serde"] }  # v14 Tier 3: preserve JSON key order
@@ -81,9 +82,9 @@ toml_edit = "0.22"     # v14 Tier 3: TOML editor preserving comments/formatting
 # Downloads parsers on first use (cache local); keeps install footprint small while
 # enabling AST validation across 305 languages. See src/syntax_check.rs and
 # src/commands/query.rs/outline.rs.
-tree-sitter-language-pack = { version = "1.8", default-features = false, features = ["download", "dynamic-loading"] }
+tree-sitter-language-pack = { version = "1.8", default-features = false, features = ["download", "dynamic-loading"], optional = true }
 # v0.1.19 G122: direct tree-sitter dep for S-expression Query/QueryCursor APIs (language-pack only re-exports Language).
-tree-sitter = "0.26"
+tree-sitter = { version = "0.26", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["fs"] }
@@ -143,6 +144,17 @@ targets = ["x86_64-unknown-linux-gnu"]
 status = "actively-developed"
 
 [features]
+default = ["core", "ast", "lang-rust", "lang-ts", "lang-py"]
+core = []
+ast = ["dep:ast-grep-core", "dep:ast-grep-language", "dep:tree-sitter", "dep:tree-sitter-language-pack", "dep:serde_yaml"]
+lang-rust = []
+lang-ts = []
+lang-py = []
+lang-go = []
+lang-full = ["lang-rust", "lang-ts", "lang-py", "lang-go"]
+watch = ["dep:notify"]
+semantic = []
+full = ["default", "lang-full", "watch", "semantic"]
 # Opt-in property tests that may take longer than the default budget.
 # Run with: cargo test --features slow-tests
 slow-tests = []

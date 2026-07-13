@@ -24,7 +24,8 @@
 - `src/atomic.rs` — atomic write pipeline: tempfile + fsync + rename + fsync dir
 - `src/checksum.rs` — BLAKE3 hash computation for files and byte slices (uses memmap2 for large files)
 - `src/file_io.rs` — smart file reading with automatic memmap2 above 1 MiB threshold
-- `src/platform.rs` — platform-specific fsync: F_FULLFSYNC on macOS via libc::fcntl
+- `src/platform.rs` — platform durability and rename: `Durability` full|fast|auto; Linux `renameat2` with rename fallback; macOS `F_FULLFSYNC` on full; write NDJSON reports `platform.durability` and `platform.rename_method`
+- `src/fuzzy.rs` — shared 9-strategy match cascade (exact, whitespace, indent, Jaro-Winkler, …) used by edit, replace, batch, edit-loop (v0.1.29)
 
 ### Safety and Validation
 - `src/path_safety.rs` — workspace jail: path traversal prevention, symlink validation, FIFO/device detection
@@ -53,12 +54,26 @@
 - `src/reflink.rs` — reflink (copy-on-write) helper via `reflink-copy`
 
 ### Subcommand Handlers
-- `src/commands/` — 33 subcommand implementations, each in its own module
+- `src/commands/` — 41 subcommand implementations (handlers + aliases), each in its own module where applicable
 - Each handler receives parsed args, global config, an NDJSON writer, and shutdown signal
 - All handlers follow the same signature: `fn cmd_*(args, global, writer, shutdown) -> Result<()>`
 - **v0.1.11 baseline (22)**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, completions
 - **v0.1.12 added (6)**: set, get, del, case, query, outline
 - **v0.1.15 added (2)**: wal-heal (G119 L3), wal-stats (G119 L5)
+- **v0.1.22 added (2)**: edit-loop, prune-backups
+- **v0.1.25 added (1)**: verify
+- **v0.1.29 added (8)**: recipe, sparse, semantic-merge, agent-surface, watch, codemod, semantic-search, stat (alias of `read --stat`)
+- **v0.1.29 command modules**: `recipe.rs`, `sparse.rs`, `semantic_merge.rs`, `agent_surface.rs`, `watch.rs`, `codemod.rs`, `semantic_search.rs`
+
+### Cargo Features (v0.1.29)
+- `core` — slim binary without AST/watch/semantic (PRD 5–8 MiB target; measured ~7.7 MiB release)
+- `ast` — ast-grep + tree-sitter + language-pack + serde_yaml (default with lang-rust/ts/py)
+- `lang-rust` / `lang-ts` / `lang-py` / `lang-go` / `lang-full` — language surface for scope/transform
+- `watch` — filesystem watch via notify (`watch` subcommand)
+- `semantic` — offline token/index ranking (`semantic-search`)
+- `full` — default + lang-full + watch + semantic
+- Default features: `core`, `ast`, `lang-rust`, `lang-ts`, `lang-py`
+- Slim build: `cargo build --release --no-default-features --features core`
 
 
 ## Data Flow

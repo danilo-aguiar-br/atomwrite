@@ -79,6 +79,7 @@ fn main() -> ExitCode {
                         failed_pair_index: None,
                         pairs_total: None,
                         pair_results: None,
+                        best_candidate: None,
                     };
                     let mut out = io::stdout().lock();
                     if let Err(e) = serde_json::to_writer(&mut out, &ej) {
@@ -334,6 +335,22 @@ fn prescan_json_schema() -> Option<String> {
         "outline",
         "query",
         "case",
+        // v0.1.29 surface + schema aliases
+        "semantic-merge",
+        "sparse",
+        "recipe",
+        "stat",
+        "agent-surface",
+        "watch",
+        "codemod",
+        "semantic-search",
+        "verify",
+        "wal-stats",
+        "wal-heal",
+        "progress",
+        "error",
+        "best-candidate",
+        "cancelled",
     ];
     for arg in &args[1..] {
         if SUBCOMMANDS.contains(&arg.as_str()) {

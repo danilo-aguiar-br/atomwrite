@@ -16,8 +16,10 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
+use crate::cli::FuzzyMode;
 use crate::cli::{EditLoopArgs, GlobalArgs};
 use crate::commands::resolve_backup;
+use crate::fuzzy;
 use crate::ndjson_types::{EditLoopPairResult, EditLoopSummary};
 use crate::output::NdjsonWriter;
 use crate::path_safety::validate_path;
@@ -99,29 +101,31 @@ pub fn cmd_edit_loop(
             .collect::<std::result::Result<Vec<_>, _>>()?
     };
 
-    // Apply each pair in order. `replacen(.., 1)` matches the single-pair
-    // `edit` semantics: only the first occurrence is touched.
+    // Apply each pair via shared fuzzy cascade (v0.1.29 P0-1).
     let mut pair_results: Vec<EditLoopPairResult> = Vec::with_capacity(pairs.len());
     let mut applied = 0usize;
     let mut unmatched = 0usize;
     for (i, pair) in pairs.iter().enumerate() {
-        if content.contains(&pair.old) {
-            content = content.replacen(&pair.old, &pair.new, 1);
-            applied += 1;
-            pair_results.push(EditLoopPairResult {
-                index: i + 1,
-                matched: true,
-                old: pair.old.clone(),
-                new: pair.new.clone(),
-            });
-        } else {
-            unmatched += 1;
-            pair_results.push(EditLoopPairResult {
-                index: i + 1,
-                matched: false,
-                old: pair.old.clone(),
-                new: pair.new.clone(),
-            });
+        match fuzzy::match_pair(&content, &pair.old, &pair.new, FuzzyMode::Auto, None) {
+            Ok((edited, _info)) => {
+                content = edited;
+                applied += 1;
+                pair_results.push(EditLoopPairResult {
+                    index: i + 1,
+                    matched: true,
+                    old: pair.old.clone(),
+                    new: pair.new.clone(),
+                });
+            }
+            Err(_) => {
+                unmatched += 1;
+                pair_results.push(EditLoopPairResult {
+                    index: i + 1,
+                    matched: false,
+                    old: pair.old.clone(),
+                    new: pair.new.clone(),
+                });
+            }
         }
     }
 
@@ -145,6 +149,7 @@ pub fn cmd_edit_loop(
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup: resolved_backup.keep,
+        durability: crate::platform::Durability::Auto,
     };
 
     atomic_write(&target, content.as_bytes(), &opts, &workspace)?;

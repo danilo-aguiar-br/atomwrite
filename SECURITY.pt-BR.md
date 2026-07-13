@@ -11,7 +11,9 @@
 
 | Versão  | Suportada          |
 |---------|--------------------|
-| 0.1.27  | Sim                |
+| 0.1.29  | Sim                |
+| 0.1.28  | Best-effort        |
+| 0.1.27  | Best-effort        |
 | 0.1.26  | Best-effort        |
 | 0.1.25  | Best-effort        |
 | 0.1.24  | Best-effort        |
@@ -96,13 +98,13 @@
 - **Correção**: Adicionada `canonicalize_existing_prefix` que resolve symlinks via `std::fs::canonicalize` na porção existente do caminho antes da verificação de jail
 - **Mitigação**: Atualize para v0.1.27; não crie symlinks dentro do workspace apontando para fora
 
-### Sem advisories ativas em v0.1.27
+### Sem advisories ativas em v0.1.29
 - `cargo audit` reporta 0 vulnerabilidades
 - `cargo deny check` reporta 4/4 OK (advisories, bans, licenses, sources)
 - Todas as dependências transitivas com notas de segurança foram atualizadas ou substituídas
 
 
-## Postura de Segurança de Dependências (v0.1.27)
+## Postura de Segurança de Dependências (v0.1.29)
 - **Segurança de memória**: 0 blocos de código unsafe em `src/` (negado via `#![deny(unsafe_code)]` na raiz da lib)
 - **BLAKE3**: Usado apenas para checksums, não para segurança criptográfica
 - **tree-sitter-language-pack**: Parsers são baixados no primeiro uso a partir das releases oficiais do `tree-sitter` no GitHub via a feature `download`. Os parsers baixados são carregados dinamicamente mas não executados como código

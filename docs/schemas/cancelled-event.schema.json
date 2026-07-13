@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CancelledEvent",
+  "description": "Cooperative cancel envelope (v0.1.29 P0-4).",
+  "type": "object",
+  "properties": {
+    "path": {
+      "description": "Path being written when cancel was observed, if any.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reason": {
+      "description": "Human-readable cancel reason.",
+      "type": "string"
+    },
+    "signal": {
+      "description": "Signal name when known (`SIGINT`, `SIGTERM`).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "type": {
+      "description": "Event type discriminator (`\"cancelled\"`).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "type",
+    "reason"
+  ]
+}

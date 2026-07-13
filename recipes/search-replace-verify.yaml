@@ -1,0 +1,13 @@
+# Built-in recipe documentation (dispatched by name, not by loading this file).
+name: search-replace-verify
+description: Search, replace with fuzzy cascade, then hash for verification
+steps:
+  - id: 1
+    op: search
+    args: [--pattern, $PATTERN, --path, $PATH]
+  - id: 2
+    op: replace
+    args: [--pattern, $PATTERN, --replacement, $REPLACEMENT, --fuzzy, auto]
+  - id: 3
+    op: hash
+    args: [--recursive, $PATH]

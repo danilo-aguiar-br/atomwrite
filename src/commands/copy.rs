@@ -158,6 +158,7 @@ fn copy_file_atomic(
         wal_policy: crate::wal::WalPolicy::Auto,
         // GAP-104: retain backup on disk when a backup was actually created
         keep_backup: resolved.keep || resolved.backup,
+        durability: crate::platform::Durability::Auto,
     };
 
     let result = atomic_write(target, &content, &opts, workspace)?;

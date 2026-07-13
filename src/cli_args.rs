@@ -265,7 +265,7 @@ pub struct CopyArgs {
 }
 
 /// Arguments for the read subcommand.
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct ReadArgs {
     /// File path to read.
     pub path: PathBuf,
@@ -366,6 +366,15 @@ pub struct WriteArgs {
         help = "Run tree-sitter syntax check (G72). Aborts on parse errors (exit 88)."
     )]
     pub syntax_check: bool,
+
+    /// Durability trade-off for fsync (v0.1.29 P2-1): full|fast|auto.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = DurabilityCli::Auto,
+        help = "Durability: full (strongest fsync), fast (sync_data only), auto (config=full else fast)"
+    )]
+    pub durability: DurabilityCli,
 
     /// Expected checksum for optimistic locking.
     #[arg(
@@ -474,6 +483,28 @@ pub struct WriteArgs {
     /// Preview without writing.
     #[arg(long, help = "Show what would be done without writing")]
     pub dry_run: bool,
+}
+
+/// CLI durability policy (v0.1.29 P2-1).
+#[derive(Debug, Clone, Copy, ValueEnum, Default, PartialEq, Eq)]
+pub enum DurabilityCli {
+    /// Strongest fsync (`F_FULLFSYNC` / `sync_all`) + dir fsync.
+    Full,
+    /// Fast path: file `sync_data` only.
+    Fast,
+    /// Auto: full for config files, fast for source.
+    #[default]
+    Auto,
+}
+
+impl From<DurabilityCli> for crate::platform::Durability {
+    fn from(v: DurabilityCli) -> Self {
+        match v {
+            DurabilityCli::Full => crate::platform::Durability::Full,
+            DurabilityCli::Fast => crate::platform::Durability::Fast,
+            DurabilityCli::Auto => crate::platform::Durability::Auto,
+        }
+    }
 }
 
 /// Fuzzy matching behavior for --old/--new edit mode.
@@ -916,6 +947,33 @@ pub struct ReplaceArgs {
         help = "Preserve original casing (UPPER→UPPER, lower→lower, Title→Title)"
     )]
     pub preserve_case: bool,
+
+    /// Fuzzy matching when the fixed pattern does not match exactly (v0.1.29).
+    ///
+    /// Ignored when `--regex` is set. Default `auto` runs the 9-strategy cascade
+    /// after exact multi-occurrence replacement finds zero hits.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = FuzzyMode::Auto,
+        help = "Fuzzy match cascade for fixed-string replace (auto|off|aggressive)"
+    )]
+    pub fuzzy: FuzzyMode,
+
+    /// Override fuzzy similarity threshold (0.0–1.0) for replace cascade.
+    #[arg(
+        long,
+        help = "Override fuzzy similarity threshold (0.0-1.0) for replace"
+    )]
+    pub fuzzy_threshold: Option<f64>,
+
+    /// Emit progress NDJSON every N files (0 disables; default 50) (v0.1.29 P1-3).
+    #[arg(
+        long,
+        default_value_t = 50,
+        help = "Emit progress NDJSON every N files visited (0=off)"
+    )]
+    pub progress_every: u64,
 
     /// Preserve original modification time (mtime) of replaced files.
     /// Default is false: mtime is updated to reflect the change.

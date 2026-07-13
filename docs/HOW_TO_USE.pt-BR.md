@@ -6,6 +6,121 @@
 > Uma CLI substitui dezenas de chamadas de ferramenta que seu agente faz hoje
 
 
+## O Que Há de Novo na v0.1.29
+
+A v0.1.29 (2026-07-13) adiciona matching orientado a agente, orçamentos, recipes e inventário de superfície. Há **41 subcomandos**.
+
+### `replace --fuzzy` e `best_candidate`
+
+- `replace` com string fixa usa `fuzzy=auto` depois que multi-match exato encontra zero hits
+- Modos: `auto`, `off`, `aggressive` mais `--fuzzy-threshold <0.0-1.0>` opcional
+- Falhas de match podem emitir `best_candidate` (linha, similaridade, strategy, diff_preview) para o agente corrigir `old` sem reler o arquivo inteiro
+- Pipelines que exigem só match exato devem passar `--fuzzy off`
+
+```bash
+atomwrite --workspace . replace --fuzzy auto $'fn main() {\n  let x = 1;\n}' $'fn main() {\n    let x = 2;\n}' src/main.rs
+
+# Somente exato (exit 1 legado em zero matches exatos)
+atomwrite --workspace . replace --fuzzy off 'token-exato' 'token-novo' src/
+```
+
+### `write --durability`
+
+- `full` — fsync mais forte + fsync de diretório
+- `fast` — apenas `sync_data` do arquivo
+- `auto` — default via config/caminho full vs fast
+
+```bash
+echo payload | atomwrite --workspace . write --durability fast tmp/out.txt
+echo payload | atomwrite --workspace . write --durability full config.toml
+```
+
+### `recipe list` / `recipe run`
+
+- Built-ins incluem `search-replace-verify` e `edit-loop-syntax-check`
+
+```bash
+atomwrite --workspace . recipe list
+atomwrite --workspace . recipe run --name search-replace-verify \
+  --path src --pattern OLD --replacement NEW --fuzzy auto
+```
+
+### `sparse` (list/read com orçamento)
+
+```bash
+atomwrite --workspace . sparse list --max-files 50 --max-bytes 1048576 src/
+atomwrite --workspace . sparse read --paths-file /tmp/paths.txt --head 40
+```
+
+### `semantic-merge` (3 vias)
+
+```bash
+atomwrite --workspace . semantic-merge \
+  --base base.rs --ours ours.rs --theirs theirs.rs --output merged.rs
+```
+
+### `stat`
+
+```bash
+atomwrite --workspace . stat src/lib.rs
+```
+
+### `agent-surface` (anti-MCP)
+
+- Inventário de superfície somente CLI para agentes
+- Sem servidor MCP; atomwrite permanece uma CLI local
+
+```bash
+atomwrite --workspace . agent-surface
+```
+
+### `semantic-search`
+
+- Similaridade Jaccard offline sobre o texto do workspace
+- `--index-dir` opcional para cache de índice local
+- Exige feature `semantic`
+
+```bash
+atomwrite --workspace . semantic-search "atomic rename tempfile" src/ --k 10
+```
+
+### `codemod`
+
+- Refactors por regra emitem `codemod_summary.by_rule_id` com contagens por regra
+
+```bash
+atomwrite --workspace . codemod --rules rules.yaml --dry-run src/
+```
+
+### `watch`
+
+- Exige feature `watch`
+- Debounce, filtros de checksum e streams de eventos com gitignore
+
+```bash
+atomwrite --workspace . watch . --debounce-ms 200 --max-events 20
+```
+
+### Cancelamento cooperativo
+
+- SIGINT/SIGTERM cancelam leitores de stdin e escritas em chunks
+- Exit 143 com evento cancelled no shutdown cooperativo
+
+### Honestidade de tamanho binário
+
+- Perfil core ~7.7 MiB (orçamento CI ≤15 MiB)
+- Build default/full ~52 MB
+- Meta PRD de 5-8 MB vale só para core
+
+### `progress-every` no replace em massa e no batch
+
+- `replace` em massa e transações longas de `batch` emitem heartbeats NDJSON de progresso
+
+```bash
+atomwrite --workspace . replace --progress-every 50 'old_api' 'new_api' src/
+```
+
+
 ## O Que Há de Novo na v0.1.12
 
 ## Início Rápido: Limpeza de WAL (G119)
@@ -160,6 +275,16 @@ echo "data" | atomwrite write --expect-checksum abc123 src/file.txt
 - Use `--strict-atomic` para abortar em EXDEV (G90, padrão: copy fallback para Docker/NFS)
 - Use `--lock` para adquirir lock advisory via flock (G54, exit 83 em timeout)
 - Use `--no-reflink` para desabilitar backup CoW (G64, padrão: reflink em APFS/btrfs/XFS)
+- Use `--durability full|fast|auto` (v0.1.29)
+- `full` = fsync de arquivo+dir mais forte; `fast` = apenas sync_data; `auto` = política de config/caminho
+- NDJSON de sucesso reporta `platform.durability`, `platform.rename_method`, `platform.backup_method`
+- Rename atômico no Linux prefere `renameat2` com fallback ENOSYS para rename
+- Backup prefere hardlink, depois reflink, depois cópia
+
+```bash
+echo payload | atomwrite --workspace . write --durability full config.toml
+echo payload | atomwrite --workspace . write --durability fast tmp/out.txt
+```
 
 ### read
 - Lê arquivos com metadados, checksum e conteúdo opcional
@@ -247,10 +372,23 @@ atomwrite replace --dry-run 'before' 'after' src/
 
 - Use `--dry-run` para visualizar substituições sem modificar arquivos
 - Use `--preserve-timestamps` para manter o mtime original dos arquivos modificados (padrão: mtime é atualizado para refletir a mudança)
+- Replace com string fixa usa `--fuzzy auto` por padrão após zero hits no multi-match exato (v0.1.29 BREAKING vs exit 1 só-exato)
+- Modos: `--fuzzy auto|off|aggressive` e `--fuzzy-threshold <0.0-1.0>` opcional
+- Cascata compartilhada de 9 estratégias (igual ao edit) depois que multi-match exato encontra zero hits
+- Pipelines somente-exato DEVEM passar `--fuzzy off` (exit 1 em zero matches exatos)
+- Falhas de match podem emitir `best_candidate` com linha, similaridade, strategy, diff_preview
+- Use `--progress-every N` para heartbeats NDJSON de progresso em árvores grandes
+- Modo regex (`--regex`) mantém o motor regex e NÃO roda cascata fuzzy
 - Use `--literal` (alias `-F`, `--fixed-strings`) para desabilitar interpretação de regex (G66)
 - Use `--regex` para forçar modo regex (padrão)
-- Use `--fuzzy auto|off|aggressive` para matching fuzzy (9 estratégias, G116)
 - Use `--include` e `--exclude` para filtragem por glob
+
+```bash
+atomwrite --workspace . replace --fuzzy auto 'legacy(' 'new(' src/
+atomwrite --workspace . replace --fuzzy off 'exato' 'novo' src/
+atomwrite --workspace . replace --progress-every 50 'old' 'new' packages/
+```
+
 - Retorna NDJSON por arquivo com contagem de substituições e checksums
 - Emite uma linha de resumo com total de arquivos e substituições
 

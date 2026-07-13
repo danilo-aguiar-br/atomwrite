@@ -15,9 +15,11 @@ use regex::Regex;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
+use crate::cli::FuzzyMode;
 use crate::cli::{GlobalArgs, ReplaceArgs};
 use crate::commands::resolve_backup;
-use crate::ndjson_types::{DryRunPlan, ReplaceResult, Summary};
+use crate::fuzzy;
+use crate::ndjson_types::{DryRunPlan, ProgressEvent, ReplaceResult, Summary};
 use crate::output::NdjsonWriter;
 use crate::signal::ShutdownSignal;
 
@@ -77,9 +79,17 @@ pub fn cmd_replace(
     let shutdown_flag = shutdown.flag();
     let preserve_timestamps = args.preserve_timestamps;
     let preserve_case = args.preserve_case;
+    let use_regex = args.regex;
+    let fuzzy_mode = args.fuzzy;
+    let fuzzy_threshold = args.fuzzy_threshold;
+    let word_flag = args.word;
+    let progress_every = args.progress_every;
+    let quiet = global.quiet;
+    let pattern_owned: Arc<str> = args.pattern.clone().into();
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
             let pattern = pattern.clone();
+            let pattern_owned = Arc::clone(&pattern_owned);
             let replacement = Arc::clone(&replacement);
             let tx = tx.clone();
             let fv = Arc::clone(&fv);
@@ -104,7 +114,13 @@ pub fn cmd_replace(
                     return ignore::WalkState::Continue;
                 }
 
-                fv.fetch_add(1, Ordering::Relaxed);
+                let visited = fv.fetch_add(1, Ordering::Relaxed) + 1;
+                if progress_every > 0 && visited.is_multiple_of(progress_every) && quiet == 0 {
+                    let _ = tx.send(ReplaceEvent::Progress {
+                        done: visited,
+                        total: 0,
+                    });
+                }
 
                 let path = entry.path().to_path_buf();
                 let _span = tracing::debug_span!("process_file", path = %path.display()).entered();
@@ -127,13 +143,71 @@ pub fn cmd_replace(
                     }
                 };
 
-                let (replaced, count) = apply_replacement(
-                    &pattern,
-                    &content,
-                    &replacement,
-                    max_replacements,
-                    preserve_case,
-                );
+                let mut fuzzy_meta: Option<(bool, String, Option<f64>, u64)> = None;
+                let mut word_ignored = false;
+                let (replaced, count) = if use_regex {
+                    apply_replacement(
+                        &pattern,
+                        &content,
+                        &replacement,
+                        max_replacements,
+                        preserve_case,
+                    )
+                } else {
+                    // Fixed string: exact multi first, then fuzzy cascade if zero hits.
+                    let (exact, exact_count) = apply_replacement(
+                        &pattern,
+                        &content,
+                        &replacement,
+                        max_replacements,
+                        preserve_case,
+                    );
+                    if exact_count > 0 {
+                        (exact, exact_count)
+                    } else if matches!(fuzzy_mode, FuzzyMode::Off) {
+                        (std::borrow::Cow::Borrowed(content.as_str()), 0)
+                    } else {
+                        if word_flag {
+                            word_ignored = true;
+                        }
+                        let mut cur = content.clone();
+                        let mut applied = 0u64;
+                        let limit = max_replacements.unwrap_or(usize::MAX) as u64;
+                        let mut last_info: Option<crate::fuzzy::FuzzyInfo> = None;
+                        while applied < limit {
+                            match fuzzy::match_pair(
+                                &cur,
+                                pattern_owned.as_ref(),
+                                replacement.as_ref(),
+                                fuzzy_mode,
+                                fuzzy_threshold,
+                            ) {
+                                Ok((edited, info)) => {
+                                    if edited == cur {
+                                        break;
+                                    }
+                                    cur = edited;
+                                    applied += 1;
+                                    last_info = Some(info);
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        if applied > 0 {
+                            if let Some(info) = last_info {
+                                fuzzy_meta = Some((
+                                    info.fuzzy,
+                                    info.strategy,
+                                    info.similarity,
+                                    info.strategies_tried,
+                                ));
+                            }
+                            (std::borrow::Cow::Owned(cur), applied)
+                        } else {
+                            (std::borrow::Cow::Borrowed(content.as_str()), 0)
+                        }
+                    }
+                };
 
                 if count == 0 {
                     fs_skip.fetch_add(1, Ordering::Relaxed);
@@ -190,11 +264,16 @@ pub fn cmd_replace(
                     wal_policy: crate::wal::WalPolicy::Auto,
                     // GAP-105: retain backup when --backup is explicitly active
                     keep_backup: keep_backup || backup,
+                    durability: crate::platform::Durability::Auto,
                 };
 
                 match atomic_write(&path, replaced.as_bytes(), &opts, &ws) {
                     Ok(result) => {
                         fm.fetch_add(1, Ordering::Relaxed);
+                        let (fuzzy, strategy, similarity, strategies_tried) = match fuzzy_meta {
+                            Some((f, s, sim, tried)) => (Some(f), Some(s), sim, Some(tried)),
+                            None => (Some(false), Some("exact".into()), None, Some(1)),
+                        };
                         let _ = tx.send(ReplaceEvent::Replaced {
                             path,
                             replacements: count,
@@ -204,6 +283,11 @@ pub fn cmd_replace(
                             checksum_after: result.checksum,
                             elapsed_ms: result.elapsed_ms,
                             mtime_preserved: preserve_timestamps,
+                            fuzzy,
+                            strategy,
+                            similarity,
+                            strategies_tried,
+                            word_ignored: if word_ignored { Some(true) } else { None },
                         });
                     }
                     Err(e) => {
@@ -234,6 +318,11 @@ pub fn cmd_replace(
                 checksum_after,
                 elapsed_ms,
                 mtime_preserved,
+                fuzzy,
+                strategy,
+                similarity,
+                strategies_tried,
+                word_ignored,
             } => {
                 let path_str = path.display().to_string();
                 writer.write_event(&ReplaceResult {
@@ -246,6 +335,21 @@ pub fn cmd_replace(
                     checksum_after,
                     elapsed_ms,
                     mtime_preserved: Some(mtime_preserved),
+                    fuzzy,
+                    strategy,
+                    similarity,
+                    strategies_tried,
+                    word_ignored,
+                })?;
+            }
+            ReplaceEvent::Progress { done, total } => {
+                writer.write_event(&ProgressEvent {
+                    r#type: "progress",
+                    done,
+                    total,
+                    rate_per_s: None,
+                    eta_ms: None,
+                    phase: "replace".into(),
                 })?;
             }
             ReplaceEvent::DryRun { path, replacements } => {
@@ -331,6 +435,15 @@ enum ReplaceEvent {
         checksum_after: String,
         elapsed_ms: u64,
         mtime_preserved: bool,
+        fuzzy: Option<bool>,
+        strategy: Option<String>,
+        similarity: Option<f64>,
+        strategies_tried: Option<u64>,
+        word_ignored: Option<bool>,
+    },
+    Progress {
+        done: u64,
+        total: u64,
     },
     DryRun {
         path: PathBuf,

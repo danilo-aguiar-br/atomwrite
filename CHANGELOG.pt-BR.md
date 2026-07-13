@@ -8,6 +8,46 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.29] - 2026-07-13
+
+### Adicionado
+- Módulo compartilhado `fuzzy`: cascata de 9 estratégias para edit, replace, batch, edit-loop (P0-1)
+- Diagnósticos estruturados `best_candidate` em falha de match (P0-2)
+- `replace --fuzzy auto|off|aggressive` e `--fuzzy-threshold`
+- Cancelamento cooperativo durante leitura de stdin e escrita atômica em chunks (P0-4)
+- Features Cargo: `core`, `ast`, `lang-*`, `watch`, `semantic`, `full` (P0-3)
+- Job CI `size-gate`: release slim core deve ser ≤ 15 MiB; jobs `core-test` e `schema-diff`
+- `semantic-merge` merge de três vias com checagens de shutdown (P1-1)
+- `sparse list|read` superfície de monorepo com orçamento (P1-2)
+- `replace --progress-every` e heartbeats de progresso em batch (P1-3)
+- `recipe list|run` com despacho REAL search→replace→hash (P1-4)
+- Documentação versionada de recipes em `recipes/*.yaml`
+- Backup prefere hardlink antes de reflink/copy (P2-3)
+- Subcomando `stat` como alias de `read --stat` (P2-4)
+- `agent-surface` inventário derivado do clap (anti-MCP, P2-5)
+- `write --durability full|fast|auto` com NDJSON `platform.durability` (P2-1)
+- Linux `renameat2` em `atomic_rename` com fallback ENOSYS (P2-2)
+- `watch` debounce coalesce + `--checksum` opcional + gitignore (P3-1, feature watch)
+- `semantic-search --index-dir` índice invertido offline (P3-2)
+- Campanha `codemod` com `codemod_summary.by_rule_id` (P3-3)
+- Schemas regenerados: write durability/rename_method, replace fuzzy*, error best_candidate, recipe/progress/cancelled
+
+### Alterado
+- `replace` de string fixa usa fuzzy=auto por padrão após miss de multi-match exato (breaking vs 0.1.28, que só falhava com exit 1)
+- Numeração de estratégias normalizada para nove estratégias nomeadas
+- Superfície skill documenta 41 subcomandos (antes 33)
+
+### Corrigido
+- Falhas de match não descartam mais scores de near-miss
+- Recipe run não é mais stub somente de plano
+- Clippy `result_large_err` via `BestCandidate` em box
+- Build core-only funciona sem crates AST (stubs com exit 78)
+
+### Tamanho do binário (honestidade medida)
+- Slim (`--no-default-features --features core`): ~7.7 MiB (CI exige ≤ 15 MiB)
+- Default/full com AST: ~52 MB — PRD 5–8 MB aplica-se somente ao CORE, não ao build default com AST
+
+
 ## [0.1.28] - 2026-07-06
 
 ### Mudanças BREAKING

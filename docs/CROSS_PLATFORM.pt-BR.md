@@ -54,10 +54,11 @@ Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
 
 ### Cobertura de Testes
 
-- 661 testes passando (v0.1.28)
+- 683 testes listados (working tree v0.1.29)
 - Gate de cross-compile: `cargo test --test cross_compile_check -- --ignored` valida targets Windows GNU/MSVC
 - 5 testes de sinal em `tests/signal_test.rs` cobrem SIGINT/SIGTERM/SIGPIPE/batch/shutdown
 - Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
+- Para durabilidade e rename na v0.1.29, veja [v0.1.29 — Durabilidade e rename](#v0129--durabilidade-e-rename)
 
 ## A Dor Que Você Já Conhece
 - Você escreve um arquivo no Linux e ele chega ao disco de forma confiável
@@ -71,7 +72,8 @@ Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
 ### Linux (Suporte Completo)
 - Fsync de arquivo: `fdatasync` via `sync_data()`
 - Fsync de diretório: `sync_all()` no diretório pai
-- Rename atômico: `rename(2)` dentro do mesmo filesystem
+- Rename atômico: prefere `renameat2` com fallback para `rename` em `ENOSYS`
+- O NDJSON do write reporta `platform.rename_method` (`renameat2` ou `rename`)
 - Cross-device: fallback automático para cópia-depois-deleta
 - Testado em x86_64 e aarch64
 
@@ -266,3 +268,20 @@ Esta release é totalmente retrocompatível em todas as 3 plataformas suportadas
   - Lê o arquivo uma vez com `read_file_string` (usa memmap2 para arquivos grandes em Linux/macOS)
   - Escreve atomicamente via o mesmo pipeline do `edit`
   - No Windows: respeita `init_console` UTF-8 e tratamento ANSI (v0.1.4)
+
+
+## v0.1.29 — Durabilidade e rename
+
+Esta release é retrocompatível em Linux, macOS e Windows para flags existentes. Novos controles são opt-in.
+
+- O behavior break de `replace --fuzzy auto` está documentado em [MIGRATION.pt-BR.md](MIGRATION.pt-BR.md) (esta seção cobre I/O de plataforma)
+- Linux prefere `renameat2` no rename atômico e faz fallback para `rename` em `ENOSYS`
+- Saída NDJSON do write reporta `platform.rename_method` (`renameat2` ou `rename`)
+- `write --durability full|fast|auto` seleciona a política de fsync
+- `full` — fsync completo do arquivo mais fsync do diretório quando disponível
+- `fast` — omite fsync do diretório pai em favor da velocidade
+- `auto` — heurística baseada no path e no ambiente
+- macOS sob durability `full` usa `F_FULLFSYNC` via `fcntl` (mesmo primitivo de antes, agora sob política)
+- Windows mantém o flush existente; rótulos de durability ainda aparecem no NDJSON para agentes
+- Backup pode preferir hardlink, depois reflink, depois copy; reportado em `platform.backup_method`
+- Feature Cargo `core` mantém o caminho de binário slim; AST/watch/semantic permanecem opcionais

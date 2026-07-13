@@ -4,6 +4,21 @@
 [Read in English](AGENTS.md)
 
 
+## O Que Há de Novo na v0.1.29
+
+- BREAKING: o padrão de `replace` é `fuzzy=auto` após zero matches exatos; pipelines exact-only devem passar `--fuzzy off`
+- 8 subcomandos novos para agentes: `recipe`, `sparse`, `semantic-merge`, `agent-surface`, `watch`, `codemod`, `semantic-search`, `stat`
+- Cascata fuzzy compartilhada no `replace` (`--fuzzy`, `--fuzzy-threshold`); erros de match podem incluir `best_candidate`
+- `write --durability full|fast|auto`; NDJSON `platform.durability`, `platform.rename_method`, `platform.backup_method`
+- Linux `renameat2` com fallback para rename
+- Features Cargo: `core` / `ast` / `lang-*` / `watch` / `semantic` / `full` (core slim ~7,7 MiB; meta PRD 5–8 MiB = só core)
+- `agent-surface` é o manifesto de tools da CLI — MCP é PROIBIDO
+- `recipe` executa dispatch multi-passo real (search→replace→hash)
+- Cancel cooperativo: SIGINT/SIGTERM aborta stdin e trabalho em chunks; NDJSON cancelled pode sair com exit 143
+- `semantic-search` é ranking offline por tokens/índice com foundation Jaccard (não embeddings OpenRouter)
+- 41 subcomandos no total, 38 schemas JSON, 683 testes listados
+
+
 ## O Que Há de Novo na v0.1.28
 
 - BREAKING: `delete` agora cria backup por padrão (era opt-in) — passe `--no-backup` para desabilitar; `--keep-backup` no `delete` é redundante (backups de deleção são sempre preservados e nunca auto-removidos) e agora expõe campo `warnings` no envelope NDJSON em vez de um no-op silencioso
@@ -205,12 +220,12 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 ```
 
 
-## 32 Subcomandos
+## 41 Subcomandos
 - `read` -- lê arquivos com metadados, checksum, conteúdo opcional; `--format raw` (alias `--raw`) emite bytes crus para composabilidade Unix (G81); `--grep <REGEX>` filtra linhas retornadas
 - `write` -- cria ou sobrescreve arquivos atomicamente via stdin; `--syntax-check` valida com tree-sitter após escrita (G72, exit 88)
 - `edit` -- edita cirurgicamente por número de linha, marcador de texto ou match exato; `--fuzzy auto|off|aggressive` para matching fuzzy; `--multi` para multi-edit NDJSON
 - `search` -- busca conteúdo de arquivos em paralelo (engine ripgrep); suporta `--context N`, `--max-count N`, `--invert`, `--sort path`, `--fixed`, `--word`, `--case-insensitive`, `--include`, `--exclude`
-- `replace` -- substitui texto em múltiplos arquivos com escritas atômicas
+- `replace` -- substitui texto em múltiplos arquivos com escritas atômicas; `--fuzzy auto|off|aggressive`, `--fuzzy-threshold`, `--progress-every`; falhas de match podem emitir `best_candidate`
 - `hash` -- calcula checksums BLAKE3
 - `delete` -- deleta arquivos com backup opcional
 - `count` -- conta linhas, arquivos por extensão
@@ -238,6 +253,22 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - `wal-heal` -- (v0.1.18) remove journals terminais órfãos mais antigos que `--threshold-secs` (padrão 3600s); budget de wall-clock via `--max-duration-ms` (padrão 100ms)
 - `edit-loop` -- (v0.1.22) aplica N pares `{old, new}` em 1 invocação via NDJSON no stdin; suporta `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`
 - `prune-backups` -- (v0.1.22) limpeza manual de arquivos `.bak.YYYYMMDD_HHMMSS` legados (v0.1.20 e anteriores); flags `--max-age-secs <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` para segurança); saída NDJSON com `path`, `reason`, `action`, `total`
+- `verify` -- (v0.1.25) verifica checksum BLAKE3 de um arquivo; delega a `hash --verify`; exit 0 se casa, exit 81 se não
+- `recipe` -- (v0.1.29) listar/rodar pipelines multi-passo versionados (ex.: search→replace→hash)
+- `sparse` -- (v0.1.29) list/read orçamentado em monorepo
+- `semantic-merge` -- (v0.1.29) merge de três vias para conflitos multi-agente
+- `agent-surface` -- (v0.1.29) manifesto de tools derivado do clap (só CLI; MCP proibido)
+- `watch` -- (v0.1.29, feature `watch`) eventos de filesystem com debounce/checksum/gitignore
+- `codemod` -- (v0.1.29) campanha AST multi-regra com summary `by_rule_id`
+- `semantic-search` -- (v0.1.29, feature `semantic`) ranking offline por tokens/índice invertido
+- `stat` -- (v0.1.29) alias de `read --stat`
+
+
+## OBRIGATÓRIO — Hierarquia de edição
+- Prefira o nível mais preciso que resolve a tarefa
+- Ordem: `ssr` (quando aplicável) → `transform` → `scope` → `replace` → `edit` → `write`
+- `write` de arquivo completo é o último recurso
+- Use `transform`/`scope` para estrutura AST; `replace`/`edit` para texto; `write` só quando reescrita total for necessária
 
 
 ## OBRIGATÓRIO -- Contrato de Saída
@@ -284,7 +315,7 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 ### Resposta de Write
 
 ```json
-{"type":"write","status":"ok","path":"/abs/path","bytes_written":42,"checksum":"abc...","elapsed_ms":1,"platform":{"fsync":"sync_data","dir_fsync":"sync_all"}}
+{"type":"write","status":"ok","path":"/abs/path","bytes_written":42,"checksum":"abc...","elapsed_ms":1,"platform":{"fsync":"sync_data","dir_fsync":"sync_all","durability":"full","rename_method":"rename","backup_method":"hardlink"}}
 ```
 
 ### Resposta de Read
@@ -314,7 +345,7 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 ### Envelope de Erro
 
 ```json
-{"error":true,"code":"FILE_NOT_FOUND","exit":4,"message":"file not found: src/missing.rs","path":"src/missing.rs","error_class":"permanent","retryable":false,"suggestion":"verify the file path exists","workspace":null}
+{"error":true,"code":"NO_MATCHES","exit":1,"message":"no matches for pattern","path":"src/file.rs","error_class":"permanent","retryable":false,"suggestion":"inspecione best_candidate ou passe --fuzzy off para exact-only","workspace":null,"best_candidate":{"text":"near miss snippet","similarity":0.82,"strategy":"jaro_winkler","line":12,"column":4,"diff_preview":null}}
 ```
 
 - Campo `workspace` aparece apenas em erros `WORKSPACE_JAIL` e reporta a raiz do workspace resolvida (pode ser `null`)

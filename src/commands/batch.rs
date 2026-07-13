@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 use crate::cli::GlobalArgs;
-use crate::ndjson_types::{BatchOpResult, BatchSummary};
+use crate::ndjson_types::{BatchOpResult, BatchSummary, ProgressEvent};
 use crate::output::NdjsonWriter;
 use crate::signal::ShutdownSignal;
 
@@ -188,6 +188,13 @@ pub fn cmd_batch(
 
     let mut succeeded: u64 = 0;
     let mut failed: u64 = 0;
+    let total_ops = ops.len() as u64;
+    // Progress every ~max(1, total/20) or every 50 ops (P1-3 residual for batch).
+    let progress_every = if total_ops == 0 {
+        0
+    } else {
+        (total_ops / 20).clamp(1, 50)
+    };
 
     for (idx, op) in ops.iter().enumerate() {
         if shutdown.is_shutdown() {
@@ -197,6 +204,29 @@ pub fn cmd_batch(
                 "batch interrupted by signal"
             );
             break;
+        }
+        if progress_every > 0
+            && idx > 0
+            && (idx as u64).is_multiple_of(progress_every)
+            && global.quiet == 0
+        {
+            let done = idx as u64;
+            let elapsed = start.elapsed().as_secs_f64().max(0.001);
+            let rate = done as f64 / elapsed;
+            let remaining = total_ops.saturating_sub(done);
+            let eta_ms = if rate > 0.0 {
+                Some(((remaining as f64 / rate) * 1000.0) as u64)
+            } else {
+                None
+            };
+            writer.write_event(&ProgressEvent {
+                r#type: "progress",
+                done,
+                total: total_ops,
+                rate_per_s: Some(rate),
+                eta_ms,
+                phase: "batch".into(),
+            })?;
         }
 
         let op_start = Instant::now();
@@ -511,6 +541,7 @@ fn execute_write(
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup,
+        durability: crate::platform::Durability::Auto,
     };
     let result = atomic_write(target_path, content.as_bytes(), &opts, workspace)?;
     Ok(format!(
@@ -548,7 +579,21 @@ fn execute_replace(
     let content = crate::file_io::read_file_string(&validated, max_size)
         .with_context(|| format!("cannot read {}", validated.display()))?;
 
-    let new_content = content.replace(pattern, replacement);
+    // Prefer exact multi-replace; fall back to fuzzy cascade (v0.1.29).
+    let new_content = if content.contains(pattern) {
+        content.replace(pattern, replacement)
+    } else {
+        match crate::fuzzy::match_pair(
+            &content,
+            pattern,
+            replacement,
+            crate::cli::FuzzyMode::Auto,
+            None,
+        ) {
+            Ok((edited, _)) => edited,
+            Err(_) => content.clone(),
+        }
+    };
     if new_content == content {
         return Ok(format!("no matches in {path_str}"));
     }
@@ -570,6 +615,7 @@ fn execute_replace(
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup,
+        durability: crate::platform::Durability::Auto,
     };
     let result = atomic_write(&validated, new_content.as_bytes(), &opts, workspace)?;
     Ok(format!(
@@ -660,7 +706,11 @@ fn execute_edit(
         return Ok(format!("would edit {path_str}"));
     }
 
-    let edited = content.replacen(old, new, 1);
+    let edited =
+        match crate::fuzzy::match_pair(&content, old, new, crate::cli::FuzzyMode::Auto, None) {
+            Ok((e, _)) => e,
+            Err(e) => return Err(e.into()),
+        };
     let checksum_before = checksum::hash_bytes(content.as_bytes());
     let opts = AtomicWriteOptions {
         backup: !no_backup && (op.backup || keep_backup || backup_explicit),
@@ -672,6 +722,7 @@ fn execute_edit(
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup,
+        durability: crate::platform::Durability::Auto,
     };
     let result = atomic_write(&validated, edited.as_bytes(), &opts, workspace)?;
     Ok(format!(
@@ -793,6 +844,7 @@ fn execute_copy(
         strict_atomic: false,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup,
+        durability: crate::platform::Durability::Auto,
     };
     let result = atomic_write(&dest, &content, &opts, workspace)?;
     Ok(format!(
