@@ -287,18 +287,18 @@ cat patch.diff | atomwrite --workspace . apply src/file.rs
 
 ## Primary Documentation
 
-- [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.md): Full documentation with all 28 commands and examples
-- [HOW_TO_USE](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/HOW_TO_USE.md): Quickstart guide
-- [COOKBOOK](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/COOKBOOK.md): Recipes for common tasks
-- [AGENTS.md](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget
-- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.md): 542 tests across 47 test suites
-- [MIGRATION](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/MIGRATION.md): Migration guide between versions
-- [INSTALL](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/INSTALL.md): Platform-specific install instructions
-- [CROSS_PLATFORM](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/CROSS_PLATFORM.md): macOS, Linux, Windows quirks
-- [CHANGELOG](https://github.com/daniloaguiarbr/atomwrite/blob/main/CHANGELOG.md): Release history
-- [CONTRIBUTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/CONTRIBUTING.md): Development setup and guidelines
-- [SECURITY](https://github.com/daniloaguiarbr/atomwrite/blob/main/SECURITY.md): Vulnerability reporting
-- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 19 ADRs (v0.1.12 + v0.1.19 + v0.1.20 architectural decisions)
-- [docs/schemas/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/schemas/): 22 stable JSON Schema contracts
+- [README](https://github.com/danilo-aguiar-br/atomwrite/blob/main/README.md): Full documentation with all 28 commands and examples
+- [HOW_TO_USE](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/HOW_TO_USE.md): Quickstart guide
+- [COOKBOOK](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/COOKBOOK.md): Recipes for common tasks
+- [AGENTS.md](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget
+- [TESTING](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/TESTING.md): 542 tests across 47 test suites
+- [MIGRATION](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/MIGRATION.md): Migration guide between versions
+- [INSTALL](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/INSTALL.md): Platform-specific install instructions
+- [CROSS_PLATFORM](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/CROSS_PLATFORM.md): macOS, Linux, Windows quirks
+- [CHANGELOG](https://github.com/danilo-aguiar-br/atomwrite/blob/main/CHANGELOG.md): Release history
+- [CONTRIBUTING](https://github.com/danilo-aguiar-br/atomwrite/blob/main/CONTRIBUTING.md): Development setup and guidelines
+- [SECURITY](https://github.com/danilo-aguiar-br/atomwrite/blob/main/SECURITY.md): Vulnerability reporting
+- [docs/decisions/](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/decisions/): 19 ADRs (v0.1.12 + v0.1.19 + v0.1.20 architectural decisions)
+- [docs/schemas/](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/schemas/): 22 stable JSON Schema contracts
 - [Crates.io](https://crates.io/crates/atomwrite): Package registry
-- [Repository](https://github.com/daniloaguiarbr/atomwrite): Source code
+- [Repository](https://github.com/danilo-aguiar-br/atomwrite): Source code

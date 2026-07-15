@@ -8,6 +8,19 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.31] - 2026-07-15
+
+### Changed
+- Migração de ownership do crate e repositório para a conta GitHub `danilo-aguiar-br`
+- `Cargo.toml` `repository` e `homepage` apontam para https://github.com/danilo-aguiar-br/atomwrite
+- E-mail de contato do author atualizado para `daniloaguiarbr@proton.me`
+- Removidos workflows de GitHub Actions e badges de CI (sem Actions no repositório novo)
+
+### Notes
+- Ownership no crates.io convidado/aceito sob `danilo-aguiar-br`
+- Publish e atualização de metadados exigem esta versão nova (URL do repository só muda no publish)
+
+
 ## [0.1.30] - 2026-07-13
 
 ### Adicionado
@@ -1057,7 +1070,8 @@
 - Perfil release com LTO, codegen unit único, stripping de símbolos e panic=abort
 
 
-[Unreleased]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.2...HEAD
-[0.1.2]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/daniloaguiarbr/atomwrite/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/daniloaguiarbr/atomwrite/releases/tag/v0.1.0
+[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.31...HEAD
+[0.1.31]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.30...v0.1.31
+[0.1.2]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/danilo-aguiar-br/atomwrite/releases/tag/v0.1.0

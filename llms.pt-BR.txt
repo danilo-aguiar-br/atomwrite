@@ -109,18 +109,18 @@ Além da verificação de sintaxe G72 em `write --syntax-check` (24 linguagens, 
 
 ## Documentação Principal
 
-- [README](https://github.com/daniloaguiarbr/atomwrite/blob/main/README.pt-BR.md): Documentação completa com todos os 41 subcomandos e exemplos
-- [HOW_TO_USE](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/HOW_TO_USE.pt-BR.md): Guia de início rápido
-- [COOKBOOK](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/COOKBOOK.pt-BR.md): Receitas para tarefas comuns
-- [AGENTS](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/AGENTS.pt-BR.md): Arquivo de descoberta de agente com contrato de saída e budget de tokens
-- [TESTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/TESTING.pt-BR.md): 542 testes em 47 suites de teste
-- [MIGRATION](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/MIGRATION.pt-BR.md): Guia de migração entre versões
-- [INSTALL](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/INSTALL.pt-BR.md): Instruções de instalação por plataforma
-- [CROSS_PLATFORM](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/CROSS_PLATFORM.pt-BR.md): Quirks de macOS, Linux, Windows
-- [CHANGELOG](https://github.com/daniloaguiarbr/atomwrite/blob/main/CHANGELOG.pt-BR.md): Histórico de releases
-- [CONTRIBUTING](https://github.com/daniloaguiarbr/atomwrite/blob/main/CONTRIBUTING.pt-BR.md): Setup de desenvolvimento e diretrizes
-- [SECURITY](https://github.com/daniloaguiarbr/atomwrite/blob/main/SECURITY.pt-BR.md): Reporte de vulnerabilidades
-- [docs/decisions/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/decisions/): 29 ADRs (0019-0047, decisões arquiteturais da v0.1.12 até v0.1.24)
-- [docs/schemas/](https://github.com/daniloaguiarbr/atomwrite/blob/main/docs/schemas/): 38 contratos estáveis de JSON Schema
+- [README](https://github.com/danilo-aguiar-br/atomwrite/blob/main/README.pt-BR.md): Documentação completa com todos os 41 subcomandos e exemplos
+- [HOW_TO_USE](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/HOW_TO_USE.pt-BR.md): Guia de início rápido
+- [COOKBOOK](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/COOKBOOK.pt-BR.md): Receitas para tarefas comuns
+- [AGENTS](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/AGENTS.pt-BR.md): Arquivo de descoberta de agente com contrato de saída e budget de tokens
+- [TESTING](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/TESTING.pt-BR.md): 542 testes em 47 suites de teste
+- [MIGRATION](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/MIGRATION.pt-BR.md): Guia de migração entre versões
+- [INSTALL](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/INSTALL.pt-BR.md): Instruções de instalação por plataforma
+- [CROSS_PLATFORM](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/CROSS_PLATFORM.pt-BR.md): Quirks de macOS, Linux, Windows
+- [CHANGELOG](https://github.com/danilo-aguiar-br/atomwrite/blob/main/CHANGELOG.pt-BR.md): Histórico de releases
+- [CONTRIBUTING](https://github.com/danilo-aguiar-br/atomwrite/blob/main/CONTRIBUTING.pt-BR.md): Setup de desenvolvimento e diretrizes
+- [SECURITY](https://github.com/danilo-aguiar-br/atomwrite/blob/main/SECURITY.pt-BR.md): Reporte de vulnerabilidades
+- [docs/decisions/](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/decisions/): 29 ADRs (0019-0047, decisões arquiteturais da v0.1.12 até v0.1.24)
+- [docs/schemas/](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/schemas/): 38 contratos estáveis de JSON Schema
 - [Crates.io](https://crates.io/crates/atomwrite): Registro de pacotes
-- [Repositório](https://github.com/daniloaguiarbr/atomwrite): Código-fonte
+- [Repositório](https://github.com/danilo-aguiar-br/atomwrite): Código-fonte

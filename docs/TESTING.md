@@ -400,7 +400,7 @@ cargo insta review
 - Run `cargo test --test proptest_backup` with `PROPTEST_CASES=1000`
 - Verify all snapshots are up to date with `cargo insta test`
 
-### CI Jobs (v0.1.30 — from `.github/workflows/ci.yml`)
+### CI Jobs (historical reference — GitHub Actions removed in v0.1.31)
 - `size-gate` — slim core binary ≤15 MiB (`15728640` bytes)
   - `cargo build --release --no-default-features --features core`
   - `test "$(stat -c%s target/release/atomwrite)" -le 15728640`

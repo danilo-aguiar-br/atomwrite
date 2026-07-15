@@ -131,7 +131,7 @@ xattr -d com.apple.quarantine $(which atomwrite) 2>/dev/null || true
 ### Quick Install (from source — preferred)
 
 ```powershell
-git clone https://github.com/daniloaguiarbr/atomwrite.git
+git clone https://github.com/danilo-aguiar-br/atomwrite.git
 cd atomwrite
 cargo install --path . --locked --force
 ```
@@ -232,7 +232,7 @@ If the command is not found, ensure `~/.cargo/bin` (Linux/macOS) or
 ## Building from Source (all platforms)
 
 ```bash
-git clone https://github.com/daniloaguiarbr/atomwrite.git
+git clone https://github.com/danilo-aguiar-br/atomwrite.git
 cd atomwrite
 cargo build --release
 ./target/release/atomwrite --version

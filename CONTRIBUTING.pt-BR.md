@@ -26,7 +26,7 @@
 
 ### Build
 ```bash
-git clone https://github.com/daniloaguiarbr/atomwrite.git
+git clone https://github.com/danilo-aguiar-br/atomwrite.git
 cd atomwrite
 cargo build
 # só core slim (meta de tamanho do PRD)
