@@ -625,7 +625,6 @@ atomwrite completions bash
 
 
 ## Contribuindo
-- Veja [CONTRIBUTING.pt-BR.md](CONTRIBUTING.pt-BR.md) para setup de desenvolvimento e guidelines
 - Veja [docs/decisions/README.md](docs/decisions/README.md) para o log de decisões
 
 

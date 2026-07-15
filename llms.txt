@@ -118,7 +118,6 @@ Plus the G72 syntax check on `write --syntax-check` (24 languages, exit 88).
 - [INSTALL](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/INSTALL.md): Platform-specific install instructions
 - [CROSS_PLATFORM](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/CROSS_PLATFORM.md): macOS, Linux, Windows quirks
 - [CHANGELOG](https://github.com/danilo-aguiar-br/atomwrite/blob/main/CHANGELOG.md): Release history
-- [CONTRIBUTING](https://github.com/danilo-aguiar-br/atomwrite/blob/main/CONTRIBUTING.md): Development setup and guidelines
 - [SECURITY](https://github.com/danilo-aguiar-br/atomwrite/blob/main/SECURITY.md): Vulnerability reporting
 - [docs/decisions/](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/decisions/): 29 ADRs (0019-0047, v0.1.12 through v0.1.24 architectural decisions)
 - [docs/schemas/](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/schemas/): 38 stable JSON Schema contracts

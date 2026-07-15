@@ -118,7 +118,6 @@ Além da verificação de sintaxe G72 em `write --syntax-check` (24 linguagens, 
 - [INSTALL](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/INSTALL.pt-BR.md): Instruções de instalação por plataforma
 - [CROSS_PLATFORM](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/CROSS_PLATFORM.pt-BR.md): Quirks de macOS, Linux, Windows
 - [CHANGELOG](https://github.com/danilo-aguiar-br/atomwrite/blob/main/CHANGELOG.pt-BR.md): Histórico de releases
-- [CONTRIBUTING](https://github.com/danilo-aguiar-br/atomwrite/blob/main/CONTRIBUTING.pt-BR.md): Setup de desenvolvimento e diretrizes
 - [SECURITY](https://github.com/danilo-aguiar-br/atomwrite/blob/main/SECURITY.pt-BR.md): Reporte de vulnerabilidades
 - [docs/decisions/](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/decisions/): 29 ADRs (0019-0047, decisões arquiteturais da v0.1.12 até v0.1.24)
 - [docs/schemas/](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/schemas/): 38 contratos estáveis de JSON Schema

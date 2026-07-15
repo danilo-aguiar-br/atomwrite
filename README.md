@@ -626,7 +626,6 @@ atomwrite completions bash
 
 
 ## Contributing
-- See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines
 - See [docs/decisions/README.md](docs/decisions/README.md) for the decision log
 
 

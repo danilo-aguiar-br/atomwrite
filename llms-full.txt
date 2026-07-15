@@ -296,7 +296,6 @@ cat patch.diff | atomwrite --workspace . apply src/file.rs
 - [INSTALL](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/INSTALL.md): Platform-specific install instructions
 - [CROSS_PLATFORM](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/CROSS_PLATFORM.md): macOS, Linux, Windows quirks
 - [CHANGELOG](https://github.com/danilo-aguiar-br/atomwrite/blob/main/CHANGELOG.md): Release history
-- [CONTRIBUTING](https://github.com/danilo-aguiar-br/atomwrite/blob/main/CONTRIBUTING.md): Development setup and guidelines
 - [SECURITY](https://github.com/danilo-aguiar-br/atomwrite/blob/main/SECURITY.md): Vulnerability reporting
 - [docs/decisions/](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/decisions/): 19 ADRs (v0.1.12 + v0.1.19 + v0.1.20 architectural decisions)
 - [docs/schemas/](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/schemas/): 22 stable JSON Schema contracts
