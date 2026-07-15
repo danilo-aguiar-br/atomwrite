@@ -624,10 +624,6 @@ atomwrite completions bash
 - Veja [docs/schemas/](docs/schemas/README.md) para 22 contratos estáveis de JSON Schema para toda saída NDJSON
 
 
-## Contribuindo
-- Veja [docs/decisions/README.md](docs/decisions/README.md) para o log de decisões
-
-
 ## Segurança
 - Veja [SECURITY.pt-BR.md](SECURITY.pt-BR.md) para relato de vulnerabilidades
 - Veja seção "Known Security Advisories" em SECURITY.pt-BR.md para advisories resolvidos e ativos

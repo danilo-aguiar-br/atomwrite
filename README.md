@@ -625,10 +625,6 @@ atomwrite completions bash
 - See [docs/schemas/](docs/schemas/README.md) for 22 stable JSON Schema contracts for all NDJSON output
 
 
-## Contributing
-- See [docs/decisions/README.md](docs/decisions/README.md) for the decision log
-
-
 ## Security
 - See [SECURITY.md](SECURITY.md) for vulnerability reporting
 - See [SECURITY.md](#) section "Known Security Advisories" for resolved and active advisories
