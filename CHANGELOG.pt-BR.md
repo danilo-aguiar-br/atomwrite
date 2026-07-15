@@ -8,6 +8,13 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.32] - 2026-07-15
+
+### Changed
+- Removida superfície pública de contribuição/comunidade: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` (EN/PT-BR) e seções Contribuindo dos README
+- Sem arquivos de “Contribute” / Código de Conduta no community profile do repositório migrado
+
+
 ## [0.1.31] - 2026-07-15
 
 ### Changed
@@ -1070,7 +1077,8 @@
 - Perfil release com LTO, codegen unit único, stripping de símbolos e panic=abort
 
 
-[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.31...HEAD
+[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.32...HEAD
+[0.1.32]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.31...v0.1.32
 [0.1.31]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.30...v0.1.31
 [0.1.2]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.0...v0.1.1
