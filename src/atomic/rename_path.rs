@@ -2,6 +2,7 @@
 
 //! Tempfile → fsync → rename path for atomic writes.
 
+#[cfg(unix)]
 use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::Path;

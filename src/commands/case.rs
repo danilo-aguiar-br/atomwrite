@@ -172,8 +172,8 @@ pub fn cmd_case(
             match item? {
                 CaseItem::Unchanged => {}
                 CaseItem::Preview(ev) => {
+                    // Preview is dry-run: count identifiers, not disk mutations (R-002c).
                     total_identifiers += 1;
-                    files_modified += 1;
                     writer.write_event(&ev)?;
                 }
                 CaseItem::Done(ev) => {
@@ -188,7 +188,11 @@ pub fn cmd_case(
     writer.write_event(&CaseSummary {
         r#type: "summary",
         identifiers_total: total_identifiers,
-        files_modified,
+        // R-002c / R-DRY-001: dry-run never claims files_modified > 0.
+        files_modified: crate::commands::summary_metrics::files_modified_count(
+            files_modified,
+            dry_run,
+        ),
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
     Ok(())

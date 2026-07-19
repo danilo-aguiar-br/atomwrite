@@ -199,10 +199,12 @@ pub fn cmd_write(
 
     let mut risk_assessment = None;
 
-    if let Some(content_risk) = assess_content_risk(&content, original_bytes, new_bytes) {
+    if let Some(content_risk) =
+        assess_content_risk(&content, original_bytes, new_bytes, write_cfg)
+    {
         crate::runtime::warn_stderr(
             global.color_mode(),
-            &format!(
+            format!(
                 "write content risk {} (guard={})",
                 content_risk.risk_level, content_risk.guard_triggered
             ),
@@ -295,26 +297,39 @@ pub fn cmd_write(
     Ok(())
 }
 
-/// B-013: classify destructive shell-like payloads (local diagnostics, not telemetry).
+/// B-013 / R-XDG-013: classify destructive shell-like payloads (local diagnostics, not telemetry).
+///
+/// Patterns come from XDG / `.atomwrite.toml` `[write].content_risk_patterns` when set;
+/// otherwise the built-in defaults in [`crate::constants::WRITE_CONTENT_RISK_PATTERNS`].
 fn assess_content_risk(
     content: &[u8],
     original_bytes: u64,
     new_bytes: u64,
+    write_cfg: &crate::config::WriteSection,
 ) -> Option<crate::ndjson_types::WriteRiskAssessment> {
     let text = std::str::from_utf8(content).ok()?;
-    for pat in crate::constants::WRITE_CONTENT_RISK_PATTERNS {
-        if text.contains(pat) {
-            return Some(crate::ndjson_types::WriteRiskAssessment {
-                original_bytes,
-                new_bytes,
-                size_delta_pct: 0,
-                risk_level: "high",
-                guard_triggered: "content_pattern",
-            });
-        }
+    let matched = if write_cfg.content_risk_patterns.is_empty() {
+        crate::constants::WRITE_CONTENT_RISK_PATTERNS
+            .iter()
+            .any(|pat| text.contains(pat))
+    } else {
+        write_cfg
+            .content_risk_patterns
+            .iter()
+            .any(|pat| !pat.is_empty() && text.contains(pat.as_str()))
+    };
+    if matched {
+        return Some(crate::ndjson_types::WriteRiskAssessment {
+            original_bytes,
+            new_bytes,
+            size_delta_pct: 0,
+            risk_level: "high",
+            guard_triggered: "content_pattern",
+        });
     }
     // curl|sh style without requiring both tokens adjacent in the constant list.
-    if text.contains("curl") && (text.contains("| sh") || text.contains("|sh") || text.contains("| bash"))
+    if text.contains("curl")
+        && (text.contains("| sh") || text.contains("|sh") || text.contains("| bash"))
     {
         return Some(crate::ndjson_types::WriteRiskAssessment {
             original_bytes,

@@ -44,6 +44,8 @@ pub(crate) fn push_backup_excludes(exclude: &mut Vec<String>) {
     }
 }
 
+/// DRY dry-run / plan summary counters (R-DRY-001).
+pub mod summary_metrics;
 /// v0.1.29
 pub mod agent_surface;
 /// Full clap command tree as JSON (`atomwrite commands`).

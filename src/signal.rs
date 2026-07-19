@@ -4,6 +4,7 @@
 
 #![allow(unsafe_code)]
 
+#[cfg(unix)]
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::OnceLock;

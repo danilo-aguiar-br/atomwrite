@@ -32,6 +32,13 @@ pub struct WatchArgs {
     /// Maximum events before exit (0 = unlimited until signal).
     #[arg(long, default_value_t = 0)]
     pub max_events: u64,
+    /// Idle exit after N milliseconds with zero events (R-XDG-007).
+    ///
+    /// Default: XDG / `.atomwrite.toml` `[watch].idle_exit_ms`, else
+    /// `constants::DEFAULT_WATCH_IDLE_EXIT_MS`. `0` disables idle-exit
+    /// (still requires `--max-events` and/or global `--timeout-secs`).
+    #[arg(long, value_name = "MS")]
+    pub idle_exit_ms: Option<u64>,
     /// Include BLAKE3 checksum of the file when the path is a regular file.
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub checksum: bool,
@@ -50,6 +57,7 @@ pub fn cmd_watch(
     writer: &mut NdjsonWriter<impl Write>,
     shutdown: &ShutdownSignal,
     _defaults: &crate::config::DefaultsSection,
+    watch_cfg: &crate::config::WatchSection,
 ) -> Result<()> {
     use std::collections::HashMap;
     use std::sync::mpsc::channel;
@@ -77,8 +85,10 @@ pub fn cmd_watch(
     watcher.watch(&root, RecursiveMode::Recursive)?;
 
     let debounce = Duration::from_millis(args.debounce_ms.max(1));
-    // B-007: exit if no events arrive within idle window (one-shot bound).
-    let idle_exit = Duration::from_millis(crate::constants::DEFAULT_WATCH_IDLE_EXIT_MS);
+    // B-007 / R-XDG-007: CLI flag > XDG `[watch].idle_exit_ms` > constants default.
+    let idle_ms = args.idle_exit_ms.unwrap_or(watch_cfg.idle_exit_ms);
+    let idle_exit = Duration::from_millis(idle_ms);
+    let idle_enabled = idle_ms > 0;
     let watch_started = Instant::now();
     let mut saw_any_event = false;
     // path -> (last_seen, last_kind)
@@ -147,12 +157,13 @@ pub fn cmd_watch(
         if args.max_events > 0 && count >= args.max_events {
             return Ok(());
         }
-        // Idle exit: no events at all within DEFAULT_WATCH_IDLE_EXIT_MS.
-        if !saw_any_event && pending.is_empty() && watch_started.elapsed() >= idle_exit {
-            tracing::debug!(
-                idle_ms = crate::constants::DEFAULT_WATCH_IDLE_EXIT_MS,
-                "watch idle-exit (no filesystem events)"
-            );
+        // Idle exit: no events at all within idle window (CLI/XDG/constants).
+        if idle_enabled
+            && !saw_any_event
+            && pending.is_empty()
+            && watch_started.elapsed() >= idle_exit
+        {
+            tracing::debug!(idle_ms, "watch idle-exit (no filesystem events)");
             return Ok(());
         }
     }
@@ -247,6 +258,7 @@ pub fn cmd_watch(
     _writer: &mut NdjsonWriter<impl Write>,
     _shutdown: &ShutdownSignal,
     _defaults: &crate::config::DefaultsSection,
+    _watch_cfg: &crate::config::WatchSection,
 ) -> Result<()> {
     Err(crate::error::AtomwriteError::ConfigInvalid {
         reason: "watch requires rebuild: cargo install atomwrite --features watch (or cargo build --features watch)".into(),

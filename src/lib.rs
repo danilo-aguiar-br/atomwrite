@@ -280,6 +280,7 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
     crate::config::validate_search_section(&config.search)?;
     let defaults = &config.defaults;
     let write_cfg = &config.write;
+    let watch_cfg = &config.watch;
     let fuzzy_cfg = &config.fuzzy;
     let search_cfg = &config.search;
 
@@ -486,9 +487,14 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
             &shutdown,
             defaults,
         ),
-        Commands::Watch(args) => {
-            commands::watch::cmd_watch(args, &cli.global, &mut writer, &shutdown, defaults)
-        }
+        Commands::Watch(args) => commands::watch::cmd_watch(
+            args,
+            &cli.global,
+            &mut writer,
+            &shutdown,
+            defaults,
+            watch_cfg,
+        ),
         Commands::Codemod(args) => {
             commands::codemod::cmd_codemod(args, &cli.global, &mut writer, &shutdown, defaults)
         }

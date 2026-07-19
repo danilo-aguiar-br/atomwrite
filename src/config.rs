@@ -18,12 +18,30 @@ pub struct AtomwriteConfig {
     pub defaults: DefaultsSection,
     /// Write guard policy (confirm / shrink / auto-rotate) — G-028.
     pub write: WriteSection,
+    /// Watch one-shot bounds (B-007 / R-XDG-007).
+    pub watch: WatchSection,
     /// Fuzzy matching defaults for edit operations.
     pub fuzzy: FuzzySection,
     /// Search defaults.
     pub search: SearchSection,
     /// Storage paths (XDG home override).
     pub storage: StorageSection,
+}
+
+/// Watch policy loaded from XDG / `.atomwrite.toml` `[watch]` (R-XDG-007).
+#[derive(Debug, serde::Deserialize)]
+#[serde(default)]
+pub struct WatchSection {
+    /// Exit after this many idle milliseconds with zero filesystem events (0 = disable idle-exit).
+    pub idle_exit_ms: u64,
+}
+
+impl Default for WatchSection {
+    fn default() -> Self {
+        Self {
+            idle_exit_ms: crate::constants::DEFAULT_WATCH_IDLE_EXIT_MS,
+        }
+    }
 }
 
 /// Write-guard policy loaded from XDG / `.atomwrite.toml` `[write]` (G-028).
@@ -36,6 +54,13 @@ pub struct WriteSection {
     pub shrink_block_percent: u8,
     /// Auto-rotate backup window for recently modified files (seconds).
     pub auto_rotate_max_age_secs: u64,
+    /// Substrings that elevate write content risk (B-013 / R-XDG-013).
+    ///
+    /// Empty list means “use built-in defaults” from
+    /// [`crate::constants::WRITE_CONTENT_RISK_PATTERNS`]. Non-empty replaces the
+    /// default list entirely (agent/XDG policy override — no hardcode lock-in).
+    #[serde(default)]
+    pub content_risk_patterns: Vec<String>,
 }
 
 impl Default for WriteSection {
@@ -44,6 +69,7 @@ impl Default for WriteSection {
             confirm_large_bytes: crate::constants::CONFIRM_LARGE_FILE_BYTES,
             shrink_block_percent: crate::constants::SHRINK_BLOCK_PERCENT,
             auto_rotate_max_age_secs: crate::constants::AUTO_ROTATE_MAX_AGE_SECS,
+            content_risk_patterns: Vec::new(),
         }
     }
 }

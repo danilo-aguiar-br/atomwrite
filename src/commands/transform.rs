@@ -338,8 +338,9 @@ pub fn cmd_transform(
 
     let total_repl = total_replacements.load(Ordering::Relaxed);
     let matched = files_transformed.load(Ordering::Relaxed);
-    // B-002: dry-run must not claim disk mutations (files_modified=0).
-    let files_modified = if dry_run { Some(0) } else { Some(matched) };
+    // B-002 / R-DRY-001: dry-run must not claim disk mutations.
+    let files_modified =
+        crate::commands::summary_metrics::files_modified_for_summary(matched, dry_run);
 
     writer.write_event(&Summary {
         r#type: "summary",
