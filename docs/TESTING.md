@@ -4,7 +4,14 @@
 [Leia em Português](TESTING.pt-BR.md)
 
 
-## What's New in v0.1.34 (Current)
+## What's New in v0.1.35 (Current)
+
+- Residual A-* closed: suite green without `delete --yes`; large overwrite **default-deny** (`--ack-overwrite`); `watch` always emits `watch_summary`; semantic-merge conflict markers default ON; monólitos `include!` splits
+- Local DoD (no GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
+- Contract suite: `cargo test --test cli_e2e_v0135`
+- See gaps.md §20
+
+## What's New in v0.1.34
 
 - Suite `tests/cli_v0133_oneshot_fuzzy.rs` locks the one-shot fuzzy + timeout contract (code fix logged as 0.1.33; docs-complete publish **0.1.34**)
 - Covers: expand-section hang when NEW embeds OLD finishes in **under 2 seconds**; embeds force single apply via `apply_fuzzy_one_pass`; hard ceiling **10_000** applies; global timeout default 120 / exit **124**; cooperative cancel mid-cascade / exit **143**

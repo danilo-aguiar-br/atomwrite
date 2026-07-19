@@ -28,18 +28,21 @@ pub struct AtomwriteConfig {
     pub storage: StorageSection,
 }
 
-/// Watch policy loaded from XDG / `.atomwrite.toml` `[watch]` (R-XDG-007).
+/// Watch policy loaded from XDG / `.atomwrite.toml` `[watch]` (R-XDG-007 / A-XDG-002).
 #[derive(Debug, serde::Deserialize)]
 #[serde(default)]
 pub struct WatchSection {
     /// Exit after this many idle milliseconds with zero filesystem events (0 = disable idle-exit).
     pub idle_exit_ms: u64,
+    /// Debounce coalesce window in milliseconds (A-XDG-002).
+    pub debounce_ms: u64,
 }
 
 impl Default for WatchSection {
     fn default() -> Self {
         Self {
             idle_exit_ms: crate::constants::DEFAULT_WATCH_IDLE_EXIT_MS,
+            debounce_ms: crate::constants::DEFAULT_WATCH_DEBOUNCE_MS,
         }
     }
 }
@@ -48,7 +51,7 @@ impl Default for WatchSection {
 #[derive(Debug, serde::Deserialize)]
 #[serde(default)]
 pub struct WriteSection {
-    /// Bytes above which `--confirm` requires `--ack-overwrite`.
+    /// Bytes above which overwriting an existing target requires `--ack-overwrite` (A-WRITE-001 default-deny).
     pub confirm_large_bytes: u64,
     /// Block writes that shrink the target by more than this percent (1–99).
     pub shrink_block_percent: u8,

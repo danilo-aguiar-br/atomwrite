@@ -303,7 +303,8 @@ fn set_json_trailing_newline() {
 }
 
 #[test]
-fn write_confirm_requires_ack_overwrite() {
+fn write_large_default_deny_requires_ack_overwrite() {
+    // A-WRITE-001: large overwrite is default-deny (no --confirm required to trigger).
     let dir = tempdir().unwrap();
     let path = dir.path().join("big.txt");
     // >100KB
@@ -313,18 +314,21 @@ fn write_confirm_requires_ack_overwrite() {
             "--workspace",
             dir.path().to_str().unwrap(),
             "write",
-            "--confirm",
             path.to_str().unwrap(),
         ])
         .write_stdin("new payload\n")
         .assert()
-        .failure();
+        .failure()
+        .code(65)
+        .stdout(predicate::str::contains("ack-overwrite"));
+    // A-WRITE-002: --confirm and --require-large-ack may be combined (no clap multi-use).
     bin()
         .args([
             "--workspace",
             dir.path().to_str().unwrap(),
             "write",
             "--confirm",
+            "--require-large-ack",
             "--ack-overwrite",
             "--allow-shrink",
             path.to_str().unwrap(),
@@ -428,7 +432,8 @@ fn prune_requires_policy_group() {
 }
 
 #[test]
-fn write_confirm_before_shrink_mentions_ack() {
+fn write_large_before_shrink_mentions_ack() {
+    // A-WRITE-001: ack is required even without --confirm; message before shrink path.
     let dir = tempdir().unwrap();
     let path = dir.path().join("L.bin");
     fs::write(&path, vec![b'A'; 120 * 1024]).unwrap();
@@ -438,7 +443,6 @@ fn write_confirm_before_shrink_mentions_ack() {
             dir.path().to_str().unwrap(),
             "write",
             path.to_str().unwrap(),
-            "--confirm",
             "--no-backup",
         ])
         .write_stdin("x")
@@ -446,6 +450,65 @@ fn write_confirm_before_shrink_mentions_ack() {
         .failure()
         .code(65)
         .stdout(predicate::str::contains("ack-overwrite"));
+}
+
+#[test]
+fn watch_idle_emits_watch_summary() {
+    // A-WATCH-001: idle exit must not leave stdout empty.
+    let dir = tempdir().unwrap();
+    bin()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "--timeout-secs",
+            "5",
+            "watch",
+            dir.path().to_str().unwrap(),
+            "--idle-exit-ms",
+            "100",
+            "--max-events",
+            "5",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("watch_summary"))
+        .stdout(predicate::str::contains("\"reason\":\"idle\""));
+}
+
+#[test]
+fn semantic_merge_conflict_writes_markers_by_default() {
+    // A-MERGE-001: conflict markers default ON.
+    let dir = tempdir().unwrap();
+    let base = dir.path().join("base.txt");
+    let ours = dir.path().join("ours.txt");
+    let theirs = dir.path().join("theirs.txt");
+    let out = dir.path().join("out.txt");
+    fs::write(&base, "line1\nshared\nline3\n").unwrap();
+    fs::write(&ours, "line1\nOURS\nline3\n").unwrap();
+    fs::write(&theirs, "line1\nTHEIRS\nline3\n").unwrap();
+    bin()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "semantic-merge",
+            "--base",
+            base.to_str().unwrap(),
+            "--ours",
+            ours.to_str().unwrap(),
+            "--theirs",
+            theirs.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+            "--no-backup",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("conflict"));
+    let body = fs::read_to_string(&out).unwrap();
+    assert!(
+        body.contains("<<<<<<< ours"),
+        "expected conflict markers in output, got: {body:?}"
+    );
 }
 
 #[test]

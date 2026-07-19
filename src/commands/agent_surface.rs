@@ -102,12 +102,14 @@ pub fn cmd_agent_surface(
             "recipe run NAME or recipe run --name NAME; excludes *.bak.*; semantic-search excludes *.bak.* unless --include-backups".into(),
             "search skips binary/NUL by default; pass --binary to opt in (A-008)".into(),
             "delete --plan is plan-only; delete --confirm and -y are rejected (B-005/B-015); omit flags to delete".into(),
-            "write --confirm / --require-large-ack is large-file overwrite guard (not delete) (B-014)".into(),
+            "write large overwrite is default-deny: targets above [write].confirm_large_bytes need --ack-overwrite (A-WRITE-001); --confirm/--require-large-ack are optional reminders only".into(),
             "query uses -Q/--query for S-expression; global -q is quiet (A-005)".into(),
-            "watch is feature-gated; default build includes watch when default features enabled; requires --max-events and/or --timeout-secs".into(),
+            "watch requires --max-events and/or --timeout-secs; always emits type=watch_summary on exit (A-WATCH-001); idle default 500ms (XDG [watch].idle_exit_ms)".into(),
             "semantic-search backend is offline jaccard token overlap (no embeddings, no network) (B-010)".into(),
-            "semantic-merge is line-based three-way merge (not AST/embedding) (B-010)".into(),
-            "flag glossary: --plan=delete list-only; --confirm on write=large-ack; --confirm on delete=rejected".into(),
+            "semantic-merge is line-based three-way merge (not AST/embedding); conflict markers default ON (A-MERGE-001); use --no-conflict-markers for prefer-ours".into(),
+            "flag glossary: --plan=delete list-only; write large needs --ack-overwrite; --confirm on delete=rejected".into(),
+            "anti-patterns (A-DISC-001): edit uses --old/--new not --find; search paths are positional not --path; case needs --subvert; verify is PATH CHECKSUM positional".into(),
+            "product knobs: CLI flags + XDG/config.toml only; doctor may report host env (CI/WSL) but never as product config (A-ENV-001)".into(),
         ],
     })?;
     Ok(())

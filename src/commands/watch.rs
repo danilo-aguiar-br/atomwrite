@@ -27,8 +27,11 @@ pub struct WatchArgs {
     #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub path: PathBuf,
     /// Debounce milliseconds (coalesce per-path quiet period).
-    #[arg(long, default_value_t = crate::constants::DEFAULT_WATCH_DEBOUNCE_MS)]
-    pub debounce_ms: u64,
+    ///
+    /// Default: CLI if set, else XDG `[watch].debounce_ms`, else
+    /// `constants::DEFAULT_WATCH_DEBOUNCE_MS` (A-XDG-002).
+    #[arg(long, value_name = "MS")]
+    pub debounce_ms: Option<u64>,
     /// Maximum events before exit (0 = unlimited until signal).
     #[arg(long, default_value_t = 0)]
     pub max_events: u64,
@@ -84,7 +87,12 @@ pub fn cmd_watch(
     let mut watcher = RecommendedWatcher::new(tx, Config::default())?;
     watcher.watch(&root, RecursiveMode::Recursive)?;
 
-    let debounce = Duration::from_millis(args.debounce_ms.max(1));
+    // CLI > XDG `[watch].debounce_ms` > constants (A-XDG-002).
+    let debounce_ms = args
+        .debounce_ms
+        .unwrap_or(watch_cfg.debounce_ms)
+        .max(1);
+    let debounce = Duration::from_millis(debounce_ms);
     // B-007 / R-XDG-007: CLI flag > XDG `[watch].idle_exit_ms` > constants default.
     let idle_ms = args.idle_exit_ms.unwrap_or(watch_cfg.idle_exit_ms);
     let idle_exit = Duration::from_millis(idle_ms);
@@ -104,6 +112,7 @@ pub fn cmd_watch(
     };
     let _ = git;
 
+    let exit_reason;
     loop {
         if shutdown.is_shutdown() {
             flush_pending(
@@ -116,6 +125,7 @@ pub fn cmd_watch(
                 &mut count,
                 &matcher,
             )?;
+            exit_reason = "signal";
             break;
         }
 
@@ -141,7 +151,10 @@ pub fn cmd_watch(
             }
             Ok(Err(e)) => return Err(anyhow::Error::from(e)),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                exit_reason = "complete";
+                break;
+            }
         }
 
         flush_pending(
@@ -155,7 +168,8 @@ pub fn cmd_watch(
             &matcher,
         )?;
         if args.max_events > 0 && count >= args.max_events {
-            return Ok(());
+            exit_reason = "max_events";
+            break;
         }
         // Idle exit: no events at all within idle window (CLI/XDG/constants).
         if idle_enabled
@@ -164,9 +178,21 @@ pub fn cmd_watch(
             && watch_started.elapsed() >= idle_exit
         {
             tracing::debug!(idle_ms, "watch idle-exit (no filesystem events)");
-            return Ok(());
+            exit_reason = "idle";
+            break;
         }
     }
+
+    // A-WATCH-001: always emit a terminal summary so agents never see silent idle.
+    writer.write_event(&crate::ndjson_types::WatchSummary {
+        r#type: "watch_summary",
+        events: count,
+        reason: exit_reason.into(),
+        idle_exit_ms: idle_ms,
+        debounce_ms,
+        max_events: args.max_events,
+        elapsed_ms: watch_started.elapsed().as_millis() as u64,
+    })?;
     Ok(())
 }
 

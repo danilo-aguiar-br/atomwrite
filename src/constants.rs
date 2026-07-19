@@ -137,7 +137,7 @@ pub const FUZZY_CONTEXT_SOFT_FLOOR_DELTA: f64 = 0.05;
 pub const ENSURE_TRAILING_NEWLINE_JSON: bool = true;
 
 // --- Write policy defaults (G-028: named; overridable via XDG `[write]`) ---
-/// Default size above which `--confirm` requires `--ack-overwrite` (100 KiB).
+/// Default size above which large overwrite requires `--ack-overwrite` (100 KiB; A-WRITE-001).
 pub const CONFIRM_LARGE_FILE_BYTES: u64 = 100 * 1024;
 /// Default shrink block threshold percent (block when file shrinks by more than this).
 pub const SHRINK_BLOCK_PERCENT: u8 = 50;
@@ -187,7 +187,9 @@ pub const DEFAULT_WATCH_DEBOUNCE_MS: u64 = 200;
 /// Floor for watch poll sleep when debounce is smaller (A-020).
 pub const WATCH_DEBOUNCE_FLOOR_MS: u64 = 50;
 /// Idle exit when no FS events arrive (B-007 one-shot; overridable later via XDG).
-pub const DEFAULT_WATCH_IDLE_EXIT_MS: u64 = 3_000;
+/// Default idle-exit bound for `watch` (A-ONESHOT-001: prefer short one-shot loops).
+/// Overridable via CLI `--idle-exit-ms` or XDG `[watch].idle_exit_ms`.
+pub const DEFAULT_WATCH_IDLE_EXIT_MS: u64 = 500;
 
 // --- Write content risk patterns (B-013; not product telemetry) ---
 /// Destructive shell substrings that elevate write content risk (UTF-8, case-sensitive).

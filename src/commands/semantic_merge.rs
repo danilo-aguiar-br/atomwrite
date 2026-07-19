@@ -50,9 +50,15 @@ pub struct SemanticMergeArgs {
     /// Fail with exit 65 on conflicts.
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub fail_on_conflict: bool,
-    /// Write conflict markers.
-    #[arg(long, action = clap::ArgAction::SetTrue)]
+    /// Write conflict markers into the output file (A-MERGE-001: default true).
+    ///
+    /// Pass `--write-conflict-markers false` or `--no-conflict-markers` for
+    /// prefer-ours without markers (NDJSON still lists `conflicts[]`).
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub write_conflict_markers: bool,
+    /// Prefer-ours without markers (overrides `--write-conflict-markers`).
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub no_conflict_markers: bool,
     /// Optimistic lock on output.
     #[arg(long)]
     pub expect_checksum: Option<String>,
@@ -127,6 +133,8 @@ pub fn cmd_semantic_merge(
     let co = checksum::hash_bytes(ours.as_bytes());
     let ct = checksum::hash_bytes(theirs.as_bytes());
 
+    // A-MERGE-001: markers default on unless --no-conflict-markers.
+    let markers = args.write_conflict_markers && !args.no_conflict_markers;
     // Move owned file contents into the merge result (no clone of large strings).
     let (merged, conflicts, status) = if co == ct {
         (ours, vec![], "already_equal".to_string())
@@ -135,7 +143,7 @@ pub fn cmd_semantic_merge(
     } else if cb == ct {
         (ours, vec![], "took_ours".to_string())
     } else {
-        line_merge(&base, &ours, &theirs, args.write_conflict_markers)
+        line_merge(&base, &ours, &theirs, markers)
     };
 
     if args.fail_on_conflict && !conflicts.is_empty() {

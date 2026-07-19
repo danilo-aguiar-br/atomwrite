@@ -47,7 +47,6 @@ fn config_defaults_backup_false_is_honored_without_flags() {
             "--workspace",
             dir.path().to_str().unwrap(),
             "delete",
-            "--yes",
         ])
         .arg(&path)
         .output()
@@ -73,7 +72,6 @@ fn explicit_backup_flag_overrides_config_defaults_backup_false() {
             dir.path().to_str().unwrap(),
             "delete",
             "--backup",
-            "--yes",
         ])
         .arg(&path)
         .output()
@@ -99,7 +97,6 @@ fn env_atomwrite_backup_zero_does_not_override_explicit_backup_flag() {
             dir.path().to_str().unwrap(),
             "delete",
             "--backup",
-            "--yes",
         ])
         .arg(&path)
         .output()
@@ -125,7 +122,6 @@ fn env_atomwrite_backup_nonzero_does_not_override_config_defaults_backup_false()
             "--workspace",
             dir.path().to_str().unwrap(),
             "delete",
-            "--yes",
         ])
         .arg(&path)
         .output()
@@ -154,8 +150,7 @@ fn config_defaults_retention_caps_accumulated_backups() {
                 "--workspace",
                 dir.path().to_str().unwrap(),
                 "delete",
-                "--yes",
-                "f.txt",
+                    "f.txt",
             ])
             .output()
             .expect("run");

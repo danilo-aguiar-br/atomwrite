@@ -356,6 +356,25 @@ pub struct WatchEvent {
     pub checksum: Option<String>,
 }
 
+/// Terminal NDJSON summary for `watch` (A-WATCH-001 — always emitted on exit).
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct WatchSummary {
+    /// Event type discriminator: `"watch_summary"`.
+    pub r#type: &'static str,
+    /// Number of filesystem change events emitted.
+    pub events: u64,
+    /// Exit reason: `idle`, `max_events`, `signal`, or `complete`.
+    pub reason: String,
+    /// Idle-exit bound in milliseconds (0 = disabled).
+    pub idle_exit_ms: u64,
+    /// Debounce window in milliseconds.
+    pub debounce_ms: u64,
+    /// Configured max events (0 = unlimited until other bound).
+    pub max_events: u64,
+    /// Wall time of the watch session in milliseconds.
+    pub elapsed_ms: u64,
+}
+
 /// NDJSON final summary for `semantic-search`.
 #[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct SemanticSummaryEvent {

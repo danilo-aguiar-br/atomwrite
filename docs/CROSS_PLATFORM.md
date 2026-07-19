@@ -5,6 +5,15 @@
 
 > Write once, run anywhere -- with real fsync guarantees on every platform
 
+### Verification matrix (v0.1.35 honest)
+
+| Platform | Status |
+|----------|--------|
+| Linux x86_64 | Full e2e + unit/integration suite |
+| Windows (`x86_64-pc-windows-gnu`) | `cargo check` on Linux host |
+| macOS (apple-darwin) | Source `cfg` support; cross-compile may fail without host SDK/osxcross — runtime proof on real Mac |
+| CI / GitHub Actions | **Not** shipped in this repo (local gates only) |
+
 
 ## What's New in v0.1.12
 

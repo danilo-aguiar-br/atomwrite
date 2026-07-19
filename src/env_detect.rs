@@ -6,7 +6,7 @@
 //! and exposed to diagnostics (`atomwrite doctor`) without scattering `cfg` or
 //! ad-hoc env reads through business logic.
 //!
-//! # G-035 — OS probe allowlist (not product knobs)
+//! # G-035 / A-ENV-001 — OS probe allowlist (not product knobs)
 //!
 //! This module **may** read a fixed allowlist of **host/OS** environment
 //! variables (`CI`, `GITHUB_ACTIONS`, `WSL_*`, `container`, `FLATPAK_ID`,
@@ -16,6 +16,8 @@
 //! Product configuration remains CLI flags + XDG `config.toml` only
 //! (`rules_rust_storage_xdg_cli_rust_sem_env_em_runtime`). Prefer filesystem
 //! probes (`/.dockerenv`, cgroup) when equivalent.
+//!
+//! **Never** wire these values into write/delete/watch/timeout/retry policy.
 
 use std::path::Path;
 

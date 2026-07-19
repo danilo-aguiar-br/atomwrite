@@ -192,7 +192,6 @@ fn delete_no_backup_leaves_no_bak_file() {
             dir.path().to_str().unwrap(),
             "delete",
             "--no-backup",
-            "--yes",
         ])
         .arg(&path)
         .output()
@@ -221,7 +220,6 @@ fn delete_default_backup_true_leaves_bak_file() {
             "--workspace",
             dir.path().to_str().unwrap(),
             "delete",
-            "--yes",
         ])
         .arg(&path)
         .output()
@@ -251,7 +249,6 @@ fn delete_keep_backup_emits_warning_in_envelope() {
             dir.path().to_str().unwrap(),
             "delete",
             "--keep-backup",
-            "--yes",
         ])
         .arg(&path)
         .output()

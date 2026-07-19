@@ -348,6 +348,7 @@ fn syntax_check_large_streaming_file() {
         .arg(dir.path())
         .arg("write")
         .arg("--syntax-check")
+        .arg("--ack-overwrite")
         .arg(&f)
         .write_stdin(payload)
         .output()

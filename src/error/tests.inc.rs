@@ -359,8 +359,8 @@ mod tests {
 
     #[test]
     fn gap13_workspace_jail_suggestion_when_workspace_not_provided() {
-        // English assertion: pin UI locale (host may be pt-BR).
-        crate::locale::set_locale_for_test(crate::locale::Idioma::En);
+        // English assertion: pin UI locale for whole test (host may be pt-BR).
+        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Idioma::En);
         let err = AtomwriteError::WorkspaceJail {
             path: PathBuf::from("/etc/passwd"),
             workspace: PathBuf::from("/home/user/project"),
@@ -377,7 +377,8 @@ mod tests {
 
     #[test]
     fn gap13_workspace_jail_suggestion_when_workspace_provided() {
-        crate::locale::set_locale_for_test(crate::locale::Idioma::En);
+        // Hold locale mutex for the whole assertion (parallel-test race fix).
+        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Idioma::En);
         let err = AtomwriteError::WorkspaceJail {
             path: PathBuf::from("/etc/passwd"),
             workspace: PathBuf::from("/home/user/project"),
