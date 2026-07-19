@@ -56,7 +56,7 @@ fn config_defaults_backup_false_is_honored_without_flags() {
     assert!(output.status.success());
     assert!(
         !has_bak_file(dir.path()),
-        "[defaults].backup = false deve ser honrado quando nenhuma flag de backup e passada"
+        "[defaults].backup = false must be honored when no backup flag is passed"
     );
 }
 
@@ -82,7 +82,7 @@ fn explicit_backup_flag_overrides_config_defaults_backup_false() {
     assert!(output.status.success());
     assert!(
         has_bak_file(dir.path()),
-        "--backup explicito deve vencer [defaults].backup = false"
+        "explicit --backup must override [defaults].backup = false"
     );
 }
 
@@ -112,7 +112,7 @@ fn env_atomwrite_backup_zero_overrides_explicit_backup_flag() {
     assert!(output.status.success());
     assert!(
         !has_bak_file(dir.path()),
-        "ATOMWRITE_BACKUP=0 deve vencer --backup explicito (env tem precedencia maxima)"
+        "ATOMWRITE_BACKUP=0 must override explicit --backup (env has highest precedence)"
     );
 }
 
@@ -137,7 +137,7 @@ fn env_atomwrite_backup_nonzero_overrides_config_defaults_backup_false() {
     assert!(output.status.success());
     assert!(
         has_bak_file(dir.path()),
-        "ATOMWRITE_BACKUP=1 deve vencer [defaults].backup = false mesmo sem --backup"
+        "ATOMWRITE_BACKUP=1 must override [defaults].backup = false even without --backup"
     );
 }
 
@@ -162,13 +162,13 @@ fn config_defaults_retention_caps_accumulated_backups() {
             ])
             .output()
             .expect("run");
-        assert!(output.status.success(), "delete iteracao {i} deve suceder");
+        assert!(output.status.success(), "delete iteration {i} must succeed");
     }
 
     let bak_count = count_bak_files(dir.path());
     assert!(
         bak_count <= 2,
-        "[defaults].retention = 2 deve limitar backups acumulados a no maximo 2, obteve {bak_count}"
+        "[defaults].retention = 2 must limit accumulated backups to at most 2, got {bak_count}"
     );
 }
 
@@ -191,7 +191,7 @@ fn config_present_with_retention_does_not_break_write_happy_path() {
 
     assert!(
         output.status.success(),
-        "write com .atomwrite.toml [defaults].retention presente nao deve falhar: {:?}",
+        "write with .atomwrite.toml [defaults].retention present must not fail: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

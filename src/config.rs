@@ -85,32 +85,51 @@ impl Default for SearchSection {
 }
 
 /// Load configuration from the hierarchy:
-/// 1. `{workspace}/.atomwrite.toml` (local)
-/// 2. `~/.config/atomwrite/config.toml` (XDG global)
-/// 3. Defaults
+/// 1. Explicit `--config` path (strict — missing/malformed is hard error)
+/// 2. `{workspace}/.atomwrite.toml` (local; soft-fail to defaults)
+/// 3. Global config via [`crate::storage::global_config_path`]
+///    (`ATOMWRITE_HOME/config/config.toml` or XDG/`ProjectDirs`; soft-fail)
+/// 4. Built-in defaults
 ///
-/// Parse errors emit a `tracing::warn!` and fall through to defaults.
-pub fn load_config(workspace: &Path, explicit_path: Option<&Path>) -> AtomwriteConfig {
+/// Auto-discovered configs that fail to parse emit `tracing::warn!` and fall
+/// through to defaults. An explicit `--config` path **must** exist and parse.
+pub fn load_config(
+    workspace: &Path,
+    explicit_path: Option<&Path>,
+) -> Result<AtomwriteConfig, AtomwriteError> {
     if let Some(path) = explicit_path {
-        return load_from_path(path);
+        return load_from_path_strict(path);
     }
 
     let local = workspace.join(".atomwrite.toml");
     if local.is_file() {
-        return load_from_path(&local);
+        return Ok(load_from_path_soft(&local));
     }
 
-    if let Some(proj_dirs) = directories::ProjectDirs::from("", "", "atomwrite") {
-        let global = proj_dirs.config_dir().join("config.toml");
+    if let Some(global) = crate::storage::global_config_path() {
         if global.is_file() {
-            return load_from_path(&global);
+            return Ok(load_from_path_soft(&global));
         }
     }
 
-    AtomwriteConfig::default()
+    Ok(AtomwriteConfig::default())
 }
 
-fn load_from_path(path: &Path) -> AtomwriteConfig {
+/// Strict load for `--config`: missing or malformed → [`AtomwriteError::ConfigInvalid`].
+fn load_from_path_strict(path: &Path) -> Result<AtomwriteConfig, AtomwriteError> {
+    let content = std::fs::read_to_string(path).map_err(|e| AtomwriteError::ConfigInvalid {
+        reason: format!("cannot read config {}: {e}", path.display()),
+    })?;
+    let config: AtomwriteConfig =
+        toml::from_str(&content).map_err(|e| AtomwriteError::ConfigInvalid {
+            reason: format!("malformed config {}: {e}", path.display()),
+        })?;
+    tracing::debug!(path = %path.display(), "loaded explicit config");
+    Ok(config)
+}
+
+/// Soft load for auto-discovered configs: warn and use defaults on error.
+fn load_from_path_soft(path: &Path) -> AtomwriteConfig {
     match std::fs::read_to_string(path) {
         Ok(content) => match toml::from_str(&content) {
             Ok(config) => {
@@ -210,7 +229,7 @@ mod tests {
     #[test]
     fn missing_file_returns_defaults() {
         let dir = tempdir().unwrap();
-        let config = load_config(dir.path(), None);
+        let config = load_config(dir.path(), None).unwrap();
         assert!(config.defaults.backup);
         assert_eq!(config.defaults.retention, 5);
         assert_eq!(config.fuzzy.mode, "auto");
@@ -224,7 +243,7 @@ mod tests {
             "[defaults]\nbackup = false\nretention = 3\n",
         )
         .unwrap();
-        let config = load_config(dir.path(), None);
+        let config = load_config(dir.path(), None).unwrap();
         assert!(!config.defaults.backup);
         assert_eq!(config.defaults.retention, 3);
     }
@@ -233,7 +252,7 @@ mod tests {
     fn malformed_toml_warns_uses_defaults() {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join(".atomwrite.toml"), "not valid { toml").unwrap();
-        let config = load_config(dir.path(), None);
+        let config = load_config(dir.path(), None).unwrap();
         assert!(config.defaults.backup);
     }
 
@@ -242,7 +261,18 @@ mod tests {
         let dir = tempdir().unwrap();
         let custom = dir.path().join("custom.toml");
         std::fs::write(&custom, "[fuzzy]\nthreshold = 0.95\n").unwrap();
-        let config = load_config(dir.path(), Some(&custom));
+        let config = load_config(dir.path(), Some(&custom)).unwrap();
         assert!((config.fuzzy.threshold - 0.95).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn explicit_path_missing_is_hard_error() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("nope.toml");
+        let err = load_config(dir.path(), Some(&missing)).unwrap_err();
+        assert!(
+            matches!(err, AtomwriteError::ConfigInvalid { .. }),
+            "expected ConfigInvalid, got {err:?}"
+        );
     }
 }

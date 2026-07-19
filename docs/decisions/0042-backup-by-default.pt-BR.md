@@ -14,7 +14,7 @@ _Tradução automática do ADR original em inglês. Em caso de divergência, a v
   - **+** Rede de segurança automática para TODAS as mutações de conteúdo — agentes que confundem `write` com `edit` podem recuperar via `rollback --latest`.
   - **+** ~1ms de overhead em SSD (`fs::copy` + `fs::remove_file` no caminho de sucesso). Zero overhead quando o alvo não existe (arquivo novo, backup desnecessário).
   - **+** `--no-backup` fornece opt-out explícito para pipelines com prioridade em performance.
-  - **+** `ATOMWRITE_BACKUP=0` fornece opt-out global para ambientes de CI que gerenciam sua própria estratégia de backup.
+  - **+** `ATOMWRITE_BACKUP=0` fornece opt-out global para ambientes de local automation que gerenciam sua própria estratégia de backup.
   - **+** Alinha o atomwrite com o princípio "seguro por padrão" — proteção é automática, não opt-in.
   - **-** (aceitável) A flag `--backup` se torna redundante já que backup agora é o padrão. A flag é preservada para compatibilidade retroativa e explicitude.
   - **-** (aceitável) Testes existentes que testavam `--require-backup` sem `--backup` agora precisam de `--no-backup` para disparar a guarda, porque `--require-backup` verifica se `backup` é true, e o novo default o torna sempre true.
@@ -24,7 +24,7 @@ _Tradução automática do ADR original em inglês. Em caso de divergência, a v
   2. **Alterar apenas `WriteArgs`.** Rejeitado: todos os 9 comandos que mutam conteúdo compartilham o mesmo perfil de risco. Um agente pode destruir dados via `edit --range 1:9999` ou `replace` com substituição vazia tão facilmente quanto via `write`. Cobertura parcial cria falsa sensação de segurança.
   3. **Alterar `keep_backup` para `true` (backups permanentes).** Rejeitado: backups permanentes acumulam uso de disco sem limite. O mecanismo `--retention N` já existe para usuários que desejam backups persistentes. O backup temporário (criado e deletado no mesmo caminho de syscall) fornece recuperação de crash sem acúmulo de disco.
 
-- **Gatilho para revisitar**: Se o overhead de ~1ms causar regressão mensurável em operações batch (>10.000 arquivos), adicionar um modo `--fast` que desabilita backup. Se a adoção de `ATOMWRITE_BACKUP=0` em CI exceder 50% das invocações, reconsiderar se o default deveria ser sensível ao ambiente.
+- **Gatilho para revisitar**: Se o overhead de ~1ms causar regressão mensurável em operações batch (>10.000 arquivos), adicionar um modo `--fast` que desabilita backup. Se a adoção de `ATOMWRITE_BACKUP=0` em scripts locais exceder 50% das invocações, reconsiderar se o default deveria ser sensível ao ambiente.
 
 
 ---

@@ -1,12 +1,12 @@
 # atomwrite Migration Guide
 
 
-[Leia em Portugues](MIGRATION.pt-BR.md)
+[Leia em Português](MIGRATION.pt-BR.md)
 
 
 ## What's New in v0.1.12
 
-This section summarizes the migration-relevant changes in v0.1.12. See the [v0.1.11 to v0.1.12](#v0111-to-v0112) section below for the v0.1.12 migration guide, the [v0.1.28 to v0.1.29](#v0128-to-v0129-current) section, and the [v0.1.29 to v0.1.30 (Current)](#v0129-to-v0130-current) section for the latest transition.
+This section summarizes the migration-relevant changes in v0.1.12. See the [v0.1.11 to v0.1.12](#v0111-to-v0112) section below for the v0.1.12 migration guide, the [v0.1.32 to v0.1.33](#v0132-to-v0133) section for the one-shot runtime break, and the [v0.1.33 to v0.1.34 (Current)](#v0133-to-v0134-current) section for the latest transition.
 
 ### New Subcommands (6)
 
@@ -68,22 +68,62 @@ All additive. No existing dependency removed.
 
 - Update version pin: `cargo install atomwrite --locked --version "^0.1.12"`
 - New subcommands and flags are opt-in. No code changes required for existing callers.
-- See the [v0.1.29 to v0.1.30 (Current)](#v0129-to-v0130-current) section for the latest migration steps.
+- See the [v0.1.33 to v0.1.34 (Current)](#v0133-to-v0134-current) section for the latest migration steps.
 
 ### Test Coverage
 
 - 542 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118 in v0.1.15 + 40 v0.1.16-v0.1.18 cross-platform + 21 v0.1.19 + 20 v0.1.20)
 - 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/`
-- See [docs/decisions/README.md](README.md) for architectural decisions
+- See [docs/decisions/README.md](decisions/README.md) for architectural decisions
 
 ## Current Version
-- atomwrite is at v0.1.30
-- This document covers migration from v0.1.0 through v0.1.30
+- atomwrite is at v0.1.34
+- This document covers migration from v0.1.0 through v0.1.34
 - See the sections below for additive changes and breaking changes in each version
 
 
-## v0.1.29 to v0.1.30 (Current)
+## v0.1.33 to v0.1.34 (Current)
+
+### Docs alignment (same runtime as 0.1.33 oneshot)
+
+- No new runtime behavior relative to v0.1.33. Code fix was logged as **0.1.33**; **0.1.34** is the docs-complete publish.
+- Documentation (AGENTS, HOW_TO_USE, COOKBOOK, TESTING, INSTALL, MIGRATION, ADRs) now documents:
+  - Global `--timeout-secs` / `--timeout` default **120**, `0` disables, deadline exit **124**
+  - Fuzzy multi-apply **one-pass** L→R (`apply_fuzzy_one_pass`); never re-scans inserted text
+  - Default max fuzzy applies **1**; hard ceiling **10_000**; embeds force single apply; caps and cooperative cancel mid-cascade
+- Regression suite remains `tests/cli_v0133_oneshot_fuzzy.rs`
+
+### Migration Action
+
+- Pin `^0.1.34`: `cargo install atomwrite --locked --version "^0.1.34"` or `cargo install --path . --locked --force`
+- If you already run 0.1.33, no behavioral change is required — only version pin and docs
+- Run: `cargo test --test cli_v0133_oneshot_fuzzy`
+
+
+## v0.1.32 to v0.1.33
+
+### BREAKING Changes
+
+- Global `--timeout-secs` **default is 120** (was 0 = disabled). Long monorepo jobs must pass `--timeout-secs 0` or a higher value. Deadline → exit **124**. Alias `--timeout`.
+- Fuzzy multi-apply default is **1** when `--max-replacements` is omitted (was unbounded). Explicit `--max-replacements N` still multi-hits **one-pass** (never re-scans inserted text).
+- If `replacement` contains `pattern` (fixed-string), fuzzy forces a **single** apply even with a huge `--max-replacements` (prevents infinite growth).
+- Hard ceiling on fuzzy applies: **10_000** (`FUZZY_HARD_MAX_REPLACEMENTS`), even if `--max-replacements` is larger.
+- Caps: pattern 64 KiB; lev 8192 chars; max windows 4096; growth max(4×, +16 MiB).
+
+### Fixed (critical)
+
+- `replace --fuzzy` infinite loop / multi-day CPU hang when NEW embeds OLD (agent expand-section edits).
+
+### Migration Action
+
+- Agents: keep using `replace --fuzzy auto`; hang is fixed. Prefer unique OLD blocks; NEW may embed OLD for expansions.
+- CI/scripts that relied on unlimited runtime: add `--timeout-secs 0` only if intentional.
+- Prefer pin `^0.1.34` (docs-complete); `^0.1.33` has the same runtime.
+- Regression: `cargo test --test cli_v0133_oneshot_fuzzy`
+
+
+## v0.1.29 to v0.1.30
 
 ### BREAKING Changes
 
@@ -130,13 +170,13 @@ All additive. No existing dependency removed.
 - Backup uses reflink_or_copy (never hardlink of the live file)
 - Cooperative cancel during stdin read and chunked atomic write
 - Versioned recipe docs under `recipes/*.yaml`
-- CI `size-gate` (slim core ≤ 15 MiB), `core-test`, `schema-diff`
+- Local gates: size-gate (slim core ≤ 15 MiB), core-test, schema-diff
 
 ### Changed
 
 - Strategy numbering normalized to nine named strategies
 - Skill surface documents 41 subcommands
-- Slim core release ~7.7 MiB (CI asserts ≤ 15 MiB); default/full with AST ~52 MB — PRD 5–8 MB applies to core only
+- Slim core release ~7.7 MiB (local size-gate ≤ 15 MiB); default/full with AST ~52 MB — PRD 5–8 MB applies to core only
 
 ### Migration Action
 
@@ -540,7 +580,7 @@ The misleading "use an absolute path" suggestion is now "set --workspace <root> 
 
 #### Added (Agent-First Features)
 
-- `--timeout <SECONDS>` global flag for bounded execution (0 = no timeout, default 0)
+- `--timeout <SECONDS>` global flag for bounded execution (at introduction: 0 = no timeout, default 0; **since v0.1.33 default is 120**, exit 124 on deadline)
 - `read --grep <REGEX>` filter to return only lines matching a regex
 - `completions --install` to install completion scripts to XDG data directory
 
@@ -954,7 +994,7 @@ For the complete migration guide, see `docs/MIGRATION-v0.1.21-to-v0.1.22.md`.
 ### Migration Checklist
 
 - If using `write` without `--backup`: no action needed (backup auto-deletes after success)
-- If checking for `.bak.*` file absence in CI: add `--no-backup` or set `ATOMWRITE_BACKUP=0`
+- If checking for `.bak.*` file absence in automated local runs: add `--no-backup` or set `ATOMWRITE_BACKUP=0`
 - If using `write --expect-checksum` to legitimately truncate files: add `--allow-shrink`
 - If passing values starting with `-` to `edit --old`, `search`, `replace`, `calc`, `regex`, `transform`, `read --grep`, `query --query`: the fix is automatic, no migration needed
 

@@ -1101,6 +1101,260 @@ pub struct EditLoopSummary {
     pub pair_results: Vec<EditLoopPairResult>,
 }
 
+// ============================================================================
+// Macros audit — typed NDJSON replaces ad-hoc `serde_json::json!` for stable
+// agent contracts (prefer derive Serialize/JsonSchema over free-form macros).
+// ============================================================================
+
+/// NDJSON event when `search --target files` finds a path match by name/content.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct FileMatchEvent {
+    /// Event type discriminator: `"file_match"`.
+    pub r#type: &'static str,
+    /// Absolute or display path of the matching file.
+    pub path: String,
+    /// File name component used for the match.
+    pub name: String,
+    /// Search target mode that produced this event (e.g. `"files"`).
+    pub target: &'static str,
+}
+
+/// NDJSON event for `watch` (feature-gated command).
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct WatchEvent {
+    /// Event type discriminator: `"watch"`.
+    pub r#type: &'static str,
+    /// Path that changed.
+    pub path: String,
+    /// Notify event kind (debug format of the backend kind).
+    pub kind: String,
+    /// Optional BLAKE3 hex when `--checksum` is set and path is a regular file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+}
+
+/// NDJSON ranked hit for `semantic-search`.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct SemanticMatchEvent {
+    /// Event type discriminator: `"semantic_match"`.
+    pub r#type: &'static str,
+    /// 1-based rank in the result list.
+    pub rank: usize,
+    /// Jaccard similarity score in \[0.0, 1.0\].
+    pub score: f64,
+    /// Path of the matching file.
+    pub path: String,
+    /// 1-based line number of the snippet.
+    pub line: u64,
+    /// Truncated line content.
+    pub snippet: String,
+    /// Ranking backend label (`"jaccard"` or `"inverted-index"`).
+    pub backend: &'static str,
+}
+
+/// NDJSON final summary for `semantic-search`.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct SemanticSummaryEvent {
+    /// Event type discriminator: `"semantic_summary"`.
+    pub r#type: &'static str,
+    /// Original free-text query.
+    pub query: String,
+    /// Requested top-k.
+    pub k: u64,
+    /// Number of results emitted.
+    pub results: usize,
+    /// Ranking backend label.
+    pub backend: &'static str,
+}
+
+/// Offline inverted-index token record written by `semantic-search --index-dir`.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct SemanticIndexToken {
+    /// Token text.
+    pub t: String,
+    /// Path of the source file.
+    pub p: String,
+    /// 1-based line number.
+    pub l: u64,
+    /// Truncated line snippet.
+    pub s: String,
+}
+
+/// Aggregate kind count from `query --kinds`.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct QueryKindEvent {
+    /// Event type discriminator: `"query_kind"`.
+    pub r#type: &'static str,
+    /// Source path.
+    pub path: String,
+    /// Detected or overridden language.
+    pub language: String,
+    /// tree-sitter node kind name.
+    pub kind: String,
+    /// Occurrences of this kind in the tree.
+    pub count: usize,
+}
+
+/// Single AST node hit from `query` (`--query`, `--tree`, or S-expression).
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct QueryMatchEvent {
+    /// Event type discriminator: `"query_match"`.
+    pub r#type: &'static str,
+    /// Source path.
+    pub path: String,
+    /// Detected or overridden language.
+    pub language: String,
+    /// tree-sitter node kind.
+    pub kind: String,
+    /// Whether the node is named in the grammar.
+    pub is_named: bool,
+    /// Truncated node text.
+    pub text: String,
+    /// S-expression capture name when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capture_name: Option<String>,
+    /// Byte offset start (`--positions`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_byte: Option<usize>,
+    /// Byte offset end (`--positions`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_byte: Option<usize>,
+    /// 1-based start line (`--positions`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<usize>,
+    /// 1-based start column (`--positions`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_column: Option<usize>,
+    /// 1-based end line (`--positions`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<usize>,
+    /// 1-based end column (`--positions`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<usize>,
+}
+
+/// Built-in recipe listing row (`recipe list`).
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct RecipeListEvent {
+    /// Event type discriminator: `"recipe"`.
+    pub r#type: &'static str,
+    /// Recipe name.
+    pub name: &'static str,
+    /// Always true for built-ins.
+    pub builtin: bool,
+}
+
+/// Per-step progress line during `recipe run`.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct RecipeStepEvent {
+    /// Event type discriminator: `"recipe_step"`.
+    pub r#type: &'static str,
+    /// 1-based step number.
+    pub step: u64,
+    /// Step name.
+    pub name: String,
+    /// Status string.
+    pub status: String,
+    /// Detail or error message.
+    pub detail: String,
+    /// Optional checksum from the step.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+}
+
+/// `codemod` campaign start envelope.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct CodemodStartEvent {
+    /// Event type discriminator: `"codemod"`.
+    pub r#type: &'static str,
+    /// Phase label (`"start"`).
+    pub phase: &'static str,
+    /// Rules file path.
+    pub rules: String,
+    /// Parsed rule ids from the manifest.
+    pub rule_ids: Vec<String>,
+    /// Campaign id (rules file stem).
+    pub rule_id: String,
+    /// Whether mutations are suppressed.
+    pub dry_run: bool,
+}
+
+/// Per-rule aggregate inside `codemod_summary.by_rule_id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct CodemodRuleStats {
+    /// Match / transform event count attributed to the rule.
+    pub matches: u64,
+    /// Distinct files touched by the rule.
+    pub files: u64,
+}
+
+/// Final `codemod` summary.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct CodemodSummaryEvent {
+    /// Event type discriminator: `"codemod_summary"`.
+    pub r#type: &'static str,
+    /// Rules file path.
+    pub rules: String,
+    /// Campaign id.
+    pub rule_id: String,
+    /// Dry-run flag.
+    pub dry_run: bool,
+    /// Stats keyed by rule id.
+    pub by_rule_id: std::collections::BTreeMap<String, CodemodRuleStats>,
+}
+
+/// Multi-rule transform: rule boundary marker.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct TransformRuleBegin {
+    /// Event type discriminator: `"rule_begin"`.
+    pub r#type: &'static str,
+    /// Optional rule id from YAML (null when omitted).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Language of the rule.
+    pub language: String,
+}
+
+/// Multi-rule transform: rule failure (partial success continues).
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct TransformRuleError {
+    /// Event type discriminator: `"rule_error"`.
+    pub r#type: &'static str,
+    /// Optional rule id from YAML.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Error message.
+    pub error: String,
+}
+
+/// `sparse read` per-file head content.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct SparseReadEvent {
+    /// Event type discriminator: `"sparse_read"`.
+    pub r#type: &'static str,
+    /// File path.
+    pub path: String,
+    /// Head content joined with newlines.
+    pub head: String,
+    /// Number of head lines requested.
+    pub lines: u64,
+}
+
+/// Budget telemetry for `sparse outline`.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct SparseOutlineBudget {
+    /// Event type discriminator: `"sparse_outline_budget"`.
+    pub r#type: &'static str,
+    /// Files visited under the budget.
+    pub files_seen: u64,
+    /// Outline items emitted.
+    pub items: u64,
+    /// Whether the walk stopped due to max_files.
+    pub truncated: bool,
+    /// Configured max_files.
+    pub max_files: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1633,5 +1887,175 @@ mod tests {
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_file_match_event() {
+        let val = FileMatchEvent {
+            r#type: "file_match",
+            path: "/tmp/a.rs".into(),
+            name: "a.rs".into(),
+            target: "files",
+        };
+        assert_valid_ndjson_object(&val);
+        assert_roundtrip_json(&val);
+    }
+
+    #[test]
+    fn roundtrip_watch_and_semantic_events() {
+        let watch = WatchEvent {
+            r#type: "watch",
+            path: "/tmp/w.rs".into(),
+            kind: "Modify(Data)".into(),
+            checksum: Some("abc".into()),
+        };
+        assert_valid_ndjson_object(&watch);
+        assert_roundtrip_json(&watch);
+
+        let hit = SemanticMatchEvent {
+            r#type: "semantic_match",
+            rank: 1,
+            score: 0.5,
+            path: "/tmp/s.rs".into(),
+            line: 10,
+            snippet: "fn main()".into(),
+            backend: "jaccard",
+        };
+        assert_valid_ndjson_object(&hit);
+        assert_roundtrip_json(&hit);
+
+        let summary = SemanticSummaryEvent {
+            r#type: "semantic_summary",
+            query: "main".into(),
+            k: 20,
+            results: 1,
+            backend: "jaccard",
+        };
+        assert_valid_ndjson_object(&summary);
+        assert_roundtrip_json(&summary);
+    }
+
+    #[test]
+    fn roundtrip_query_recipe_codemod_sparse_events() {
+        let kind = QueryKindEvent {
+            r#type: "query_kind",
+            path: "/t.rs".into(),
+            language: "rust".into(),
+            kind: "function_item".into(),
+            count: 3,
+        };
+        assert_valid_ndjson_object(&kind);
+        assert_roundtrip_json(&kind);
+
+        let qmatch = QueryMatchEvent {
+            r#type: "query_match",
+            path: "/t.rs".into(),
+            language: "rust".into(),
+            kind: "function_item".into(),
+            is_named: true,
+            text: "fn a() {}".into(),
+            capture_name: Some("name".into()),
+            start_byte: Some(0),
+            end_byte: Some(9),
+            start_line: Some(1),
+            start_column: Some(1),
+            end_line: Some(1),
+            end_column: Some(10),
+        };
+        assert_valid_ndjson_object(&qmatch);
+        assert_roundtrip_json(&qmatch);
+
+        let list = RecipeListEvent {
+            r#type: "recipe",
+            name: "search-replace-verify",
+            builtin: true,
+        };
+        assert_valid_ndjson_object(&list);
+        assert_roundtrip_json(&list);
+
+        let step = RecipeStepEvent {
+            r#type: "recipe_step",
+            step: 1,
+            name: "search".into(),
+            status: "ok".into(),
+            detail: "done".into(),
+            checksum: None,
+        };
+        assert_valid_ndjson_object(&step);
+        assert_roundtrip_json(&step);
+
+        let start = CodemodStartEvent {
+            r#type: "codemod",
+            phase: "start",
+            rules: "rules.yml".into(),
+            rule_ids: vec!["r1".into()],
+            rule_id: "rules".into(),
+            dry_run: true,
+        };
+        assert_valid_ndjson_object(&start);
+        assert_roundtrip_json(&start);
+
+        let mut by = std::collections::BTreeMap::new();
+        by.insert(
+            "r1".into(),
+            CodemodRuleStats {
+                matches: 2,
+                files: 1,
+            },
+        );
+        let csum = CodemodSummaryEvent {
+            r#type: "codemod_summary",
+            rules: "rules.yml".into(),
+            rule_id: "rules".into(),
+            dry_run: true,
+            by_rule_id: by,
+        };
+        assert_valid_ndjson_object(&csum);
+        assert_roundtrip_json(&csum);
+
+        let begin = TransformRuleBegin {
+            r#type: "rule_begin",
+            id: Some("r1".into()),
+            language: "rust".into(),
+        };
+        assert_valid_ndjson_object(&begin);
+        assert_roundtrip_json(&begin);
+
+        let rerr = TransformRuleError {
+            r#type: "rule_error",
+            id: None,
+            error: "boom".into(),
+        };
+        assert_valid_ndjson_object(&rerr);
+        assert_roundtrip_json(&rerr);
+
+        let sread = SparseReadEvent {
+            r#type: "sparse_read",
+            path: "/a.rs".into(),
+            head: "fn main() {}".into(),
+            lines: 50,
+        };
+        assert_valid_ndjson_object(&sread);
+        assert_roundtrip_json(&sread);
+
+        let budget = SparseOutlineBudget {
+            r#type: "sparse_outline_budget",
+            files_seen: 3,
+            items: 10,
+            truncated: false,
+            max_files: 50,
+        };
+        assert_valid_ndjson_object(&budget);
+        assert_roundtrip_json(&budget);
+
+        let tok = SemanticIndexToken {
+            t: "main".into(),
+            p: "/a.rs".into(),
+            l: 1,
+            s: "fn main".into(),
+        };
+        // Index tokens are not agent stdout envelopes (no `type`); still serialize.
+        let s = serde_json::to_string(&tok).expect("ser");
+        assert!(s.contains("\"t\":\"main\""));
     }
 }

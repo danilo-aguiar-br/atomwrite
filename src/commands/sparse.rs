@@ -1,16 +1,29 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Budgeted sparse list/read/outline for monorepo agents (v0.1.29 P1-2).
+//!
+//! Workload: I/O-bound (walk / read under hard budgets).
+//! Parallelism: `sparse list` discovery uses budgeted `WalkParallel`
+//! (`collect_mapped_parallel_budgeted` + `--threads` / `--max-concurrency`),
+//! then path-sorted emit with clamp on `max_files` and path-string `max_bytes`.
+//! `sparse read` fans out file reads with `rayon` when multiple paths remain
+//! under `max_files`. `sparse outline` stage-1 discovery uses the same budgeted
+//! walk; stage-2 read+AST uses `par_iter`, then ordered emit.
+//! Bound: process-wide rayon pool + `WalkBuilder::threads`.
 
 use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueHint};
+use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::cli::GlobalArgs;
+use crate::concurrency::{
+    apply_walk_threads, collect_mapped_parallel_budgeted, should_parallelize, sort_paths_parallel,
+};
 use crate::output::NdjsonWriter;
 use crate::path_safety::validate_path;
 use crate::signal::ShutdownSignal;
@@ -38,7 +51,7 @@ pub enum SparseAction {
 #[derive(Args, Debug)]
 pub struct SparseListArgs {
     /// Root path to walk.
-    #[arg(default_value = ".")]
+    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub path: PathBuf,
     /// Maximum files to emit.
     #[arg(long, default_value_t = 100)]
@@ -58,7 +71,7 @@ pub struct SparseListArgs {
 #[derive(Args, Debug)]
 pub struct SparseReadArgs {
     /// File containing paths (one per line).
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::FilePath)]
     pub paths_file: PathBuf,
     /// Head lines per file.
     #[arg(long, default_value_t = 50)]
@@ -72,7 +85,7 @@ pub struct SparseReadArgs {
 #[derive(Args, Debug)]
 pub struct SparseOutlineArgs {
     /// Root path to walk.
-    #[arg(default_value = ".")]
+    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub path: PathBuf,
     /// Maximum files to outline.
     #[arg(long, default_value_t = 50)]
@@ -101,6 +114,7 @@ struct SparseSummary {
 }
 
 /// Dispatch sparse actions.
+#[tracing::instrument(skip_all, fields(command = "sparse"))]
 pub fn cmd_sparse(
     args: &SparseArgs,
     global: &GlobalArgs,
@@ -130,31 +144,43 @@ fn sparse_list(
     for g in &args.exclude {
         builder.add_ignore(g);
     }
+    // Bound discovery to CLI --threads (no-op without build_parallel).
+    apply_walk_threads(&mut builder, global.threads);
+
+    // Budgeted WalkParallel: workers may overshoot slightly; clamp after sort.
+    let (mut entries, hit_budget) =
+        collect_mapped_parallel_budgeted(&builder, args.max_files, move |entry| {
+            if !entry.file_type().is_some_and(|t| t.is_file()) {
+                return None;
+            }
+            let path = entry.path().display().to_string();
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            Some((path, size))
+        });
+
+    if shutdown.is_shutdown() {
+        return Ok(());
+    }
+
+    // Deterministic NDJSON: path order (parallel walk order is not stable).
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut truncated = hit_budget || entries.len() as u64 > args.max_files;
+    if entries.len() as u64 > args.max_files {
+        entries.truncate(args.max_files as usize);
+    }
+
     let mut emitted = 0u64;
     let mut bytes = 0u64;
-    let mut truncated = false;
-    for entry in builder.build() {
+    for (path, size) in entries {
         if shutdown.is_shutdown() {
             break;
         }
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        if !entry.file_type().is_some_and(|t| t.is_file()) {
-            continue;
-        }
-        if emitted >= args.max_files {
+        let path_cost = path.len() as u64;
+        if bytes.saturating_add(path_cost) > args.max_bytes {
             truncated = true;
             break;
         }
-        let path = entry.path().display().to_string();
-        bytes += path.len() as u64;
-        if bytes > args.max_bytes {
-            truncated = true;
-            break;
-        }
-        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        bytes += path_cost;
         writer.write_event(&SparseEntry {
             r#type: "sparse_entry",
             path,
@@ -180,8 +206,9 @@ fn sparse_read(
     let start = std::time::Instant::now();
     let workspace = global.resolve_workspace()?;
     let list_path = validate_path(&args.paths_file, &workspace)?;
-    let list = std::fs::read_to_string(&list_path)?;
-    let mut emitted = 0u64;
+    let list = crate::file_io::read_file_string(&list_path, global.effective_max_filesize())?;
+    let max_size = global.effective_max_filesize();
+    let mut paths: Vec<PathBuf> = Vec::new();
     let mut truncated = false;
     for line in list.lines() {
         if shutdown.is_shutdown() {
@@ -191,23 +218,49 @@ fn sparse_read(
         if line.is_empty() {
             continue;
         }
-        if emitted >= args.max_files {
+        if paths.len() as u64 >= args.max_files {
             truncated = true;
             break;
         }
-        let path = validate_path(std::path::Path::new(line), &workspace)?;
-        let content = crate::file_io::read_file_string(&path, global.effective_max_filesize())?;
-        let head: String = content
-            .lines()
-            .take(args.head as usize)
-            .collect::<Vec<_>>()
-            .join("\n");
-        writer.write_event(&serde_json::json!({
-            "type": "sparse_read",
-            "path": path.display().to_string(),
-            "head": head,
-            "lines": args.head,
-        }))?;
+        match validate_path(std::path::Path::new(line), &workspace) {
+            Ok(p) => paths.push(p),
+            Err(_) => continue,
+        }
+    }
+
+    let head_n = args.head as usize;
+    let heads: Vec<Result<(String, String), anyhow::Error>> = if should_parallelize(paths.len()) {
+        paths
+            .par_iter()
+            .map(|path| {
+                if shutdown.is_shutdown() {
+                    return Err(crate::signal::cancelled_error("sparse read cancelled").into());
+                }
+                let content = crate::file_io::read_file_string(path, max_size)?;
+                let head: String = content.lines().take(head_n).collect::<Vec<_>>().join("\n");
+                Ok((path.display().to_string(), head))
+            })
+            .collect()
+    } else {
+        paths
+            .iter()
+            .map(|path| {
+                let content = crate::file_io::read_file_string(path, max_size)?;
+                let head: String = content.lines().take(head_n).collect::<Vec<_>>().join("\n");
+                Ok((path.display().to_string(), head))
+            })
+            .collect()
+    };
+
+    let mut emitted = 0u64;
+    for item in heads {
+        let (path, head) = item?;
+        writer.write_event(&crate::ndjson_types::SparseReadEvent {
+            r#type: "sparse_read",
+            path,
+            head,
+            lines: args.head,
+        })?;
         emitted += 1;
     }
     writer.write_event(&SparseSummary {
@@ -234,65 +287,100 @@ fn sparse_outline(
     for g in &args.exclude {
         walker.add_ignore(g);
     }
-    let mut files_seen = 0u64;
-    let mut items_emitted = 0u64;
-    let mut truncated = false;
-    for entry in walker.build() {
-        if shutdown.is_shutdown() {
-            break;
-        }
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
-            continue;
-        }
-        if files_seen >= args.max_files {
-            truncated = true;
-            break;
-        }
-        let path = entry.path();
-        if !args.include.is_empty() {
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let ok = args.include.iter().any(|pat| {
-                if let Some(suf) = pat.strip_prefix("*.") {
-                    name.ends_with(suf) || path.extension().and_then(|e| e.to_str()) == Some(suf)
-                } else {
-                    name.contains(pat) || path.to_string_lossy().contains(pat)
-                }
-            });
-            if !ok {
-                continue;
+    // Bound discovery to CLI --threads (no-op without build_parallel).
+    apply_walk_threads(&mut walker, global.threads);
+
+    // Stage 1 — budgeted parallel path collect (WalkParallel + Atomic cap).
+    // Workers may overshoot slightly; clamp after sort for a hard max_files.
+    let include = args.include.clone();
+    let _ = shutdown; // stage-2 still checks; stage-1 uses process-wide signal
+    let (mut paths, hit_budget) =
+        collect_mapped_parallel_budgeted(&walker, args.max_files, move |entry| {
+            if crate::signal::is_global_shutdown() {
+                return None;
             }
-        }
-        files_seen += 1;
-        let max = global.effective_max_filesize();
-        let content = match crate::file_io::read_file_bytes(path, max) {
-            Ok(c) => c,
-            Err(_) => match std::fs::read(path) {
-                Ok(c) if (c.len() as u64) <= max => c,
-                _ => continue,
-            },
+            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                return None;
+            }
+            let path = entry.path().to_path_buf();
+            if !include.is_empty() {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                let ok = include.iter().any(|pat| {
+                    if let Some(suf) = pat.strip_prefix("*.") {
+                        name.ends_with(suf)
+                            || path.extension().and_then(|e| e.to_str()) == Some(suf)
+                    } else {
+                        name.contains(pat) || path.to_string_lossy().contains(pat)
+                    }
+                });
+                if !ok {
+                    return None;
+                }
+            }
+            Some(path)
+        });
+    sort_paths_parallel(&mut paths);
+    let truncated = hit_budget || paths.len() as u64 > args.max_files;
+    if paths.len() as u64 > args.max_files {
+        paths.truncate(args.max_files as usize);
+    }
+
+    let files_seen = paths.len() as u64;
+    let max = global.effective_max_filesize();
+
+    // Stage 2 — independent read+AST (rayon-safe via collect_outline_for_path).
+    let outlined: Vec<(PathBuf, Vec<crate::commands::outline::OutlineItem>)> =
+        if should_parallelize(paths.len()) {
+            paths
+                .par_iter()
+                .filter_map(|path| {
+                    if shutdown.is_shutdown() {
+                        return None;
+                    }
+                    let content = crate::file_io::read_file_bytes(path, max).ok()?;
+                    let items =
+                        crate::commands::outline::collect_outline_for_path(path, &content, None);
+                    Some((path.clone(), items))
+                })
+                .collect()
+        } else {
+            paths
+                .iter()
+                .filter_map(|path| {
+                    if shutdown.is_shutdown() {
+                        return None;
+                    }
+                    let content = crate::file_io::read_file_bytes(path, max).ok()?;
+                    let items =
+                        crate::commands::outline::collect_outline_for_path(path, &content, None);
+                    Some((path.clone(), items))
+                })
+                .collect()
         };
-        match crate::commands::outline::emit_outline_for_path(path, &content, None, writer) {
-            Ok(n) => items_emitted += n as u64,
-            Err(_) => continue,
+
+    // Stage 3 — emit in path order for stable NDJSON.
+    let mut outlined = outlined;
+    outlined.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut items_emitted = 0u64;
+    for (_, items) in outlined {
+        items_emitted += items.len() as u64;
+        for item in items {
+            writer.write_event(&item)?;
         }
     }
+
     writer.write_event(&SparseSummary {
         r#type: "sparse_summary",
         emitted: items_emitted.max(files_seen),
         truncated,
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
-    // Also emit a budget line for agents.
-    writer.write_event(&serde_json::json!({
-        "type": "sparse_outline_budget",
-        "files_seen": files_seen,
-        "items": items_emitted,
-        "truncated": truncated,
-        "max_files": args.max_files,
-    }))?;
+    writer.write_event(&crate::ndjson_types::SparseOutlineBudget {
+        r#type: "sparse_outline_budget",
+        files_seen,
+        items: items_emitted,
+        truncated,
+        max_files: args.max_files,
+    })?;
     Ok(())
 }

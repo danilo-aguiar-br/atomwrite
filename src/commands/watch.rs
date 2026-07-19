@@ -1,12 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Watch paths and emit NDJSON change events (v0.1.29 P3-1, feature `watch`).
+//!
+//! Workload: I/O-bound / event-driven (notify FS events + debounce).
+//! Parallelism: single consumer loop for event coalescing (order/debounce
+//! contract). When `--checksum` is set and multiple paths flush together,
+//! BLAKE3 digests fan out via `rayon::par_iter` (CPU/I/O multi-item) then
+//! emit in path order. Bound: global rayon pool (`--threads` /
+//! `--max-concurrency`). Heavy-memory: pending map is per-run, not a
+//! process-wide singleton.
 
 use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::Args;
+use clap::{Args, ValueHint};
 
 use crate::cli::GlobalArgs;
 use crate::output::NdjsonWriter;
@@ -16,7 +24,7 @@ use crate::signal::ShutdownSignal;
 #[derive(Args, Debug)]
 pub struct WatchArgs {
     /// Path to watch.
-    #[arg(default_value = ".")]
+    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub path: PathBuf,
     /// Debounce milliseconds (coalesce per-path quiet period).
     #[arg(long, default_value_t = 200)]
@@ -25,7 +33,7 @@ pub struct WatchArgs {
     #[arg(long, default_value_t = 0)]
     pub max_events: u64,
     /// Include BLAKE3 checksum of the file when the path is a regular file.
-    #[arg(long)]
+    #[arg(long, action = clap::ArgAction::SetTrue)]
     pub checksum: bool,
     /// Respect `.gitignore` (default true).
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
@@ -34,6 +42,8 @@ pub struct WatchArgs {
 
 /// Watch filesystem events (requires `--features watch`).
 #[cfg(feature = "watch")]
+#[cfg_attr(docsrs, doc(cfg(feature = "watch")))]
+#[tracing::instrument(skip_all, fields(command = "watch"))]
 pub fn cmd_watch(
     args: &WatchArgs,
     global: &GlobalArgs,
@@ -47,7 +57,18 @@ pub fn cmd_watch(
 
     use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
+    use crate::error::AtomwriteError;
     use crate::path_safety::validate_path;
+
+    // One-shot rule: unbounded watch is daemon-shaped. Require a bound.
+    if args.max_events == 0 && global.timeout_secs == 0 {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "watch requires --max-events N and/or global --timeout-secs N \
+                     (unbounded watch is forbidden for one-shot CLI)"
+                .into(),
+        }
+        .into());
+    }
 
     let workspace = global.resolve_workspace()?;
     let root = validate_path(&args.path, &workspace)?;
@@ -145,28 +166,59 @@ fn flush_pending(
     count: &mut u64,
     _matcher: &Option<ignore::gitignore::Gitignore>,
 ) -> Result<()> {
-    let ready: Vec<PathBuf> = pending
+    use crate::concurrency::should_parallelize;
+    use rayon::prelude::*;
+
+    let mut ready: Vec<(PathBuf, String)> = pending
         .iter()
         .filter(|(_, (seen, _))| now.duration_since(*seen) >= debounce)
-        .map(|(p, _)| p.clone())
+        .map(|(p, (_, kind))| (p.clone(), kind.clone()))
         .collect();
-    for path in ready {
-        if let Some((_, kind)) = pending.remove(&path) {
-            let checksum = if args.checksum && path.is_file() {
-                crate::checksum::hash_file(&path, global.effective_max_filesize()).ok()
-            } else {
-                None
-            };
-            writer.write_event(&serde_json::json!({
-                "type": "watch",
-                "path": path.display().to_string(),
-                "kind": kind,
-                "checksum": checksum,
-            }))?;
-            *count += 1;
-            if args.max_events > 0 && *count >= args.max_events {
-                break;
-            }
+    if ready.is_empty() {
+        return Ok(());
+    }
+    // Stable emit order after parallel checksums.
+    ready.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let max_size = global.effective_max_filesize();
+    let events: Vec<(PathBuf, String, Option<String>)> =
+        if args.checksum && should_parallelize(ready.len()) {
+            ready
+                .par_iter()
+                .map(|(path, kind)| {
+                    let checksum = if path.is_file() {
+                        crate::checksum::hash_file(path, max_size).ok()
+                    } else {
+                        None
+                    };
+                    (path.clone(), kind.clone(), checksum)
+                })
+                .collect()
+        } else {
+            ready
+                .iter()
+                .map(|(path, kind)| {
+                    let checksum = if args.checksum && path.is_file() {
+                        crate::checksum::hash_file(path, max_size).ok()
+                    } else {
+                        None
+                    };
+                    (path.clone(), kind.clone(), checksum)
+                })
+                .collect()
+        };
+
+    for (path, kind, checksum) in events {
+        pending.remove(&path);
+        writer.write_event(&crate::ndjson_types::WatchEvent {
+            r#type: "watch",
+            path: path.display().to_string(),
+            kind,
+            checksum,
+        })?;
+        *count += 1;
+        if args.max_events > 0 && *count >= args.max_events {
+            break;
         }
     }
     Ok(())
@@ -174,6 +226,7 @@ fn flush_pending(
 
 /// Stub when `watch` feature is disabled.
 #[cfg(not(feature = "watch"))]
+#[tracing::instrument(skip_all, fields(command = "watch"))]
 pub fn cmd_watch(
     _args: &WatchArgs,
     _global: &GlobalArgs,

@@ -8,6 +8,29 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.34] - 2026-07-19
+
+### Changed
+- Alinhamento completo da documentação pública ao contrato one-shot fuzzy (README, llms*, AGENTS, HOW_TO_USE, COOKBOOK, TESTING, INSTALL, ARCHITECTURE, INTEGRATIONS, SECURITY, skills, ADR-0054)
+- Versão **0.1.34**
+
+### Fixed
+- Deriva de documentação: muitos arquivos ainda alegavam v0.1.30 / timeout default 0 / multi-apply fuzzy ilimitado após a correção de código da 0.1.33
+
+### Notes
+- A correção de hang one-shot no runtime permanece como descrita em [0.1.33]; 0.1.34 é a release publicável com docs completas
+
+## [0.1.33] - 2026-07-19
+
+### Fixed
+- **CRÍTICO one-shot:** `replace --fuzzy` não entra mais em loop infinito quando `replacement` contém `pattern` (footgun de agente “expandir seção”). Antes: re-scan com `max_replacements = usize::MAX` → dias a 100% CPU / multi-GB RSS.
+- Path fuzzy **one-pass** (`apply_fuzzy_one_pass`): nunca re-busca texto recém-inserido; default **1** apply; embeds força 1; teto 10_000.
+- Cancel cooperativo polled na cascade fuzzy; caps de pattern/levenshtein/janelas/crescimento.
+
+### Changed
+- Default de `--timeout-secs` é **120** (era 0). Use `0` para desligar.
+- Versão **0.1.33**.
+
 ## [0.1.32] - 2026-07-15
 
 ### Changed
@@ -939,7 +962,7 @@
 - Assinatura de `nix::fcntl::posix_fadvise` mudou de `AsRawFd` para `AsFd` em 0.31 — código adaptado adequadamente
 
 ### Adicionado (Funcionalidades Agent-First)
-- Flag global `--timeout <SECONDS>` para tempo limite de execução (0 = sem timeout, padrão 0)
+- Flag global `--timeout <SECONDS>` para tempo limite de execução (na introdução: 0 = sem timeout, padrão 0; **desde v0.1.33 o padrão é 120**, exit 124 no prazo)
 - Flag `--grep <REGEX>` em `read` para filtrar linhas retornadas por regex
 - `completions --install` para instalar scripts de completions no diretório de dados XDG (`~/.local/share/bash-completion/completions/atomwrite` para Bash, etc.)
 
@@ -1077,7 +1100,9 @@
 - Perfil release com LTO, codegen unit único, stripping de símbolos e panic=abort
 
 
-[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.32...HEAD
+[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.34...HEAD
+[0.1.34]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.33...v0.1.34
+[0.1.33]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.32...v0.1.33
 [0.1.32]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.31...v0.1.32
 [0.1.31]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.30...v0.1.31
 [0.1.2]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.1...v0.1.2

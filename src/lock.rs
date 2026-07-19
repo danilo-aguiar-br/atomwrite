@@ -2,6 +2,10 @@
 
 //! Advisory file locking for concurrent edit protection (G54).
 //!
+//! Workload: I/O-bound (flock/fcntl on one path).
+//! Parallelism: none — RAII lock serialises writers on a single target. Cross-
+//! process concurrency is the OS lock, not rayon fan-out.
+//!
 //! When two atomwrite processes (or an editor and an agent) edit the same
 //! file simultaneously, the last `rename(2)` wins and the first write is
 //! silently lost. The `--expect-checksum` flag (exit 82) detects this
@@ -35,6 +39,11 @@ use crate::error::AtomwriteError;
 /// On Unix, the lock is held via `flock(LOCK_EX)` on the sidecar file until
 /// the guard is dropped, which calls `flock(LOCK_UN)`. On Windows, the
 /// guard is a no-op.
+///
+/// Marked `#[must_use]`: dropping the guard early releases the lock; ignoring
+/// the return of [`acquire_exclusive`] would drop immediately and defeat
+/// concurrent-edit protection (ownership rules: resource-bearing types).
+#[must_use = "holding LockGuard keeps the advisory flock; dropping releases it"]
 pub struct LockGuard {
     /// File path the lock is protecting.
     target: PathBuf,
@@ -57,6 +66,9 @@ impl std::fmt::Debug for LockGuard {
     }
 }
 
+/// On Unix, release the advisory lock before the file handle drops.
+/// On non-Unix platforms there is no flock resource, so the default
+/// field-wise Drop of `LockGuard` is sufficient (no empty `impl Drop`).
 #[cfg(unix)]
 impl Drop for LockGuard {
     fn drop(&mut self) {
@@ -67,15 +79,9 @@ impl Drop for LockGuard {
         let fd = self._file.as_raw_fd();
         // Best-effort: if this fails, the process is exiting anyway and
         // the kernel will release the lock when the fd is closed.
+        // Never panic inside Drop (Rules: Drop must be short and panic-free).
         #[allow(deprecated)]
         let _ = nix::fcntl::flock(fd, nix::fcntl::FlockArg::Unlock);
-    }
-}
-
-#[cfg(not(unix))]
-impl Drop for LockGuard {
-    fn drop(&mut self) {
-        // No-op on Windows (flock semantics not available).
     }
 }
 

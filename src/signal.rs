@@ -4,18 +4,30 @@
 
 #![allow(unsafe_code)]
 
+use std::io::Write;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use anyhow::{Context, Result};
 
+/// Process-wide shutdown coordinator, installed at most once.
+///
+/// Uses `OnceLock` (not `const` / not `LazyLock`) so the value can be set
+/// from `install_handlers_early` or `install_handlers` with runtime data
+/// (`Arc<ShutdownSignal>`). Concurrent access is thread-safe: readers use
+/// `OnceLock::get`, writers use `OnceLock::set` (first wins). Interior
+/// mutability of the flag/count lives in atomics inside `ShutdownSignal`.
 static GLOBAL_SHUTDOWN: OnceLock<Arc<ShutdownSignal>> = OnceLock::new();
 
+/// Exit status for SIGINT (128 + 2).
 #[cfg_attr(not(unix), allow(dead_code))]
 const EXIT_SIGINT: i32 = 130;
+/// Exit status for SIGTERM (128 + 15).
 #[cfg_attr(not(unix), allow(dead_code))]
 const EXIT_SIGTERM: i32 = 143;
+/// GNU `timeout(1)` convention: command timed out (one-shot global deadline).
+const EXIT_TIMEOUT: u8 = 124;
 
 /// Thread-safe shutdown coordination for signal-driven graceful exit.
 pub struct ShutdownSignal {
@@ -30,20 +42,56 @@ pub fn is_global_shutdown() -> bool {
     GLOBAL_SHUTDOWN.get().is_some_and(|s| s.is_shutdown())
 }
 
+/// Exit code for cooperative cancel (SIGINT 130 / SIGTERM 143 / timeout 124).
+///
+/// Defaults to **130** when handlers are not installed yet (defensive for
+/// library callers that cancel before `install_handlers`).
+#[inline]
+pub fn current_exit_code() -> u8 {
+    GLOBAL_SHUTDOWN
+        .get()
+        .map(|s| s.exit_code())
+        .unwrap_or(130)
+}
+
+/// Build a [`crate::error::AtomwriteError::Cancelled`] with the live signal exit code.
+///
+/// Prefer this over hard-coding `exit: 143` so SIGINT and `--timeout-secs`
+/// surface the correct Unix convention (130 / 124).
+#[inline]
+pub fn cancelled_error(reason: impl Into<String>) -> crate::error::AtomwriteError {
+    crate::error::AtomwriteError::Cancelled {
+        reason: reason.into(),
+        exit: current_exit_code(),
+    }
+}
+
 impl ShutdownSignal {
     /// Return true if a shutdown signal has been received.
+    ///
+    /// Ordering: **Acquire** — pairs with the **Release** store in
+    /// [`Self::record_signal`] so observers see a consistent `signal_code`.
     #[inline]
     pub fn is_shutdown(&self) -> bool {
         self.flag.load(Ordering::Acquire)
     }
 
-    /// Return the exit code corresponding to the received signal.
+    /// Return the exit code corresponding to the received signal or timeout.
+    ///
+    /// Ordering: **Acquire** on `signal_code` (published via AcqRel CAS).
     #[inline]
     pub fn exit_code(&self) -> u8 {
         match self.signal_code.load(Ordering::Acquire) {
             143 => 143,
+            124 => EXIT_TIMEOUT,
             _ => 130,
         }
+    }
+
+    /// True when shutdown was caused by the global `--timeout-secs` deadline.
+    #[inline]
+    pub fn is_timeout(&self) -> bool {
+        self.signal_code.load(Ordering::Acquire) == EXIT_TIMEOUT
     }
 
     /// Return a clone of the shutdown flag for use in parallel closures.
@@ -52,10 +100,21 @@ impl ShutdownSignal {
         Arc::clone(&self.flag)
     }
 
+    /// Record a cooperative cancel (signal or timeout).
+    ///
+    /// Orderings (Rules Rust atomics — documented per op):
+    /// - `signal_code` **AcqRel** CAS: first writer wins; subsequent signals
+    ///   keep the original code (SIGINT vs SIGTERM vs timeout).
+    /// - `flag` **Release** store: publishes shutdown to walkers that **Acquire**.
+    /// - `count` **AcqRel** fetch_add: second hit force-exits; must observe prior.
     fn record_signal(&self, code: u8) {
         self.signal_code
             .compare_exchange(0, code, Ordering::AcqRel, Ordering::Acquire)
             .ok();
+        // Always raise the cooperative cancel flag. Signal handlers also flip
+        // the flag via `signal_hook::flag::register` on the same `Arc`, but
+        // timeout / programmatic cancel only go through this method.
+        self.flag.store(true, Ordering::Release);
 
         let prev = self.count.fetch_add(1, Ordering::AcqRel);
         if prev >= 1 {
@@ -110,8 +169,24 @@ pub fn install_handlers_early() -> Option<Arc<ShutdownSignal>> {
 
     #[cfg(unix)]
     {
-        let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&flag));
-        let _ = signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&flag));
+        // Rules graceful-shutdown: never silently ignore handler registration
+        // failure. Tracing is not ready this early — report to stderr only.
+        if let Err(e) =
+            signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&flag))
+        {
+            let _ = writeln!(
+                std::io::stderr(),
+                "atomwrite: failed to register SIGINT flag handler: {e}"
+            );
+        }
+        if let Err(e) =
+            signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&flag))
+        {
+            let _ = writeln!(
+                std::io::stderr(),
+                "atomwrite: failed to register SIGTERM flag handler: {e}"
+            );
+        }
 
         let sig_int = Arc::clone(&signal);
         // SAFETY: signal_hook::low_level::register requires unsafe because
@@ -120,18 +195,32 @@ pub fn install_handlers_early() -> Option<Arc<ShutdownSignal>> {
         // eprintln, no libc::write to the user's stderr, no Mutex — the
         // user-facing banner is emitted by the main thread after it
         // observes `is_shutdown() == true`.
-        let _ = unsafe {
+        let reg_int = unsafe {
             signal_hook::low_level::register(signal_hook::consts::SIGINT, move || {
                 sig_int.record_signal(EXIT_SIGINT as u8);
             })
         };
+        if let Err(e) = reg_int {
+            let _ = writeln!(
+                std::io::stderr(),
+                "atomwrite: failed to register SIGINT counter: {e}"
+            );
+        }
 
         let sig_term = Arc::clone(&signal);
-        let _ = unsafe {
+        // SAFETY: Same contract as SIGINT registration above — callback only
+        // performs async-signal-safe atomics via `record_signal`.
+        let reg_term = unsafe {
             signal_hook::low_level::register(signal_hook::consts::SIGTERM, move || {
                 sig_term.record_signal(EXIT_SIGTERM as u8);
             })
         };
+        if let Err(e) = reg_term {
+            let _ = writeln!(
+                std::io::stderr(),
+                "atomwrite: failed to register SIGTERM counter: {e}"
+            );
+        }
     }
 
     // Signal-handler readiness probe: when ATOMWRITE_READY_FILE is set in
@@ -186,7 +275,7 @@ pub fn reset_sigpipe() {
 /// - `EAGAIN` is retried after a `yield_now` so we never block the main thread
 ///   waiting for the consumer to drain a full pipe. In practice a 26-byte
 ///   message fits the default pipe buffer, but the loop makes the call robust
-///   to tighter `fcntl(F_SETPIPE_SZ)` limits imposed by some CI sandboxes.
+///   to tighter `fcntl(F_SETPIPE_SZ)` limits imposed by some restricted sandboxes.
 ///
 /// On non-Unix platforms this is a no-op; the Windows ctrlc handler in
 /// [`install_handlers`] emits the message inline because ctrlc callbacks run in
@@ -292,21 +381,22 @@ pub fn install_handlers() -> Result<Arc<ShutdownSignal>> {
 
     #[cfg(windows)]
     {
-        let flag_win = Arc::clone(&flag);
         let sig_win = Arc::clone(&signal);
         // On Windows, ctrlc::set_handler runs the callback in a normal thread
         // (not signal context), so eprintln! is safe to use here. We still keep
         // the Unix code path async-signal-safe for parity and to satisfy any
         // future platform that might run this in true signal context.
+        // Flag publication goes only through `record_signal` (Release store) —
+        // single path for interior mutability of the shutdown flag.
         ctrlc::set_handler(move || {
             let was_first = sig_win.count.load(Ordering::Acquire) == 0;
-            flag_win.store(true, Ordering::Release);
             sig_win.record_signal(EXIT_SIGINT as u8);
             if was_first {
                 eprintln!("\natomwrite: shutting down...");
             }
         })
         .context("failed to register Ctrl+C handler")?;
+        let _ = &flag; // flag lives inside `signal`; silence unused when only Windows
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -330,4 +420,49 @@ pub fn get_or_install_handlers() -> Result<Arc<ShutdownSignal>> {
         return Ok(Arc::clone(existing));
     }
     install_handlers()
+}
+
+/// Arm a one-shot wall-clock deadline that cooperatively cancels the process.
+///
+/// When `secs == 0`, this is a no-op (timeout disabled). Otherwise a dedicated
+/// background thread sleeps for `secs` and then sets the shared shutdown flag
+/// with exit code **124** (GNU `timeout` convention). Long-running subcommands
+/// that poll [`ShutdownSignal::is_shutdown`] (search/replace/batch/watch/…)
+/// observe the flag and exit cleanly; the main thread maps the exit code.
+///
+/// # Note
+///
+/// v0.1.33: fuzzy cascade and `apply_fuzzy_one_pass` poll this flag on each
+/// strategy / sliding window so `--timeout-secs` is effective mid-file. Callers
+/// with pure CPU work must keep polling; otherwise the deadline only fires after
+/// the next cooperative checkpoint.
+pub fn arm_global_timeout(secs: u64) {
+    if secs == 0 {
+        return;
+    }
+    let Some(sig) = GLOBAL_SHUTDOWN.get().cloned() else {
+        tracing::warn!(
+            timeout_secs = secs,
+            "arm_global_timeout called before handlers installed; deadline ignored"
+        );
+        return;
+    };
+    let builder = std::thread::Builder::new().name("atomwrite-timeout".into());
+    if let Err(e) = builder.spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(secs));
+        if !sig.is_shutdown() {
+            tracing::warn!(
+                timeout_secs = secs,
+                "global --timeout-secs deadline elapsed; cooperative cancel"
+            );
+            sig.record_signal(EXIT_TIMEOUT);
+        }
+    }) {
+        tracing::warn!(error = %e, "failed to spawn global timeout watchdog");
+    }
+}
+
+/// Emit the user-facing timeout banner to stderr (main thread only).
+pub fn write_timeout_message() {
+    eprintln!("atomwrite: global timeout elapsed (exit 124)");
 }

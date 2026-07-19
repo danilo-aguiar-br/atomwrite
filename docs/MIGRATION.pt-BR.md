@@ -6,7 +6,7 @@
 
 ## O Que Há de Novo na v0.1.12
 
-Esta seção resume as mudanças relevantes para migração em v0.1.12. Veja a seção [v0.1.11 para v0.1.12](#v0111-para-v0112) abaixo, a seção [v0.1.28 para v0.1.29](#v0128-para-v0129-atual), e a seção [v0.1.29 para v0.1.30 (Atual)](#v0129-para-v0130-atual) para a transição mais recente.
+Esta seção resume as mudanças relevantes para migração em v0.1.12. Veja a seção [v0.1.11 para v0.1.12](#v0111-para-v0112) abaixo, a seção [v0.1.32 para v0.1.33](#v0132-para-v0133) para o break de runtime one-shot, e a seção [v0.1.33 para v0.1.34 (Atual)](#v0133-para-v0134-atual) para a transição mais recente.
 
 ### Novos Subcomandos (6)
 
@@ -68,22 +68,62 @@ Todas aditivas. Nenhuma dependência existente removida.
 
 - Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.12"`
 - Novos subcomandos e flags são opt-in. Nenhuma mudança de código necessária para chamadores existentes.
-- Veja a seção [v0.1.29 para v0.1.30 (Atual)](#v0129-para-v0130-atual) para o residual atual; a seção [v0.1.28 para v0.1.29](#v0128-para-v0129-atual) cobre a superfície 0.1.29.
+- Veja a seção [v0.1.33 para v0.1.34 (Atual)](#v0133-para-v0134-atual) para a transição mais recente; a seção [v0.1.32 para v0.1.33](#v0132-para-v0133) cobre o break de runtime one-shot.
 
 ### Cobertura de Testes
 
 - 542 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118 na v0.1.15 + 40 v0.1.16-v0.1.18 cross-platform + 21 v0.1.19 + 20 v0.1.20)
 - 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/`
-- Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
+- Veja [docs/decisions/README.md](decisions/README.md) para decisões arquiteturais
 
 ## Versão Atual
-- atomwrite está na v0.1.30
-- Este documento cobre migração de v0.1.0 a v0.1.30
+- atomwrite está na v0.1.34
+- Este documento cobre migração de v0.1.0 a v0.1.34
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
 
 
-## v0.1.29 para v0.1.30 (Atual)
+## v0.1.33 para v0.1.34 (Atual)
+
+### Alinhamento de docs (mesmo runtime one-shot da 0.1.33)
+
+- Sem novo comportamento de runtime em relação à v0.1.33. O fix de código foi registrado como **0.1.33**; **0.1.34** é a publicação docs-complete.
+- A documentação (AGENTS, HOW_TO_USE, COOKBOOK, TESTING, INSTALL, MIGRATION, ADRs) agora documenta:
+  - Global `--timeout-secs` / `--timeout` padrão **120**, `0` desabilita, prazo esgotado exit **124**
+  - Multi-apply fuzzy **one-pass** E→D (`apply_fuzzy_one_pass`); nunca reescaneia texto inserido
+  - Máximo de applies fuzzy padrão **1**; teto rígido **10_000**; embeds forçam apply único; caps e cancel cooperativo no meio da cascata
+- A suíte de regressão permanece `tests/cli_v0133_oneshot_fuzzy.rs`
+
+### Ação de migração
+
+- Pin `^0.1.34`: `cargo install atomwrite --locked --version "^0.1.34"` ou `cargo install --path . --locked --force`
+- Se você já roda 0.1.33, nenhuma mudança de comportamento é necessária — só pin de versão e docs
+- Rode: `cargo test --test cli_v0133_oneshot_fuzzy`
+
+
+## v0.1.32 para v0.1.33
+
+### Mudanças BREAKING
+
+- Default de `--timeout-secs` é **120** (era 0). Jobs longos: `--timeout-secs 0` ou valor maior. Prazo esgotado → exit **124**. Alias `--timeout`.
+- Fuzzy multi default **1** apply se `--max-replacements` omitido (era ilimitado). `--max-replacements N` explícito ainda multi-hit **one-pass** (nunca reescaneia texto inserido).
+- Se `replacement` contém `pattern` (string fixa), fuzzy força apply **único** mesmo com `--max-replacements` grande (previne crescimento infinito).
+- Teto rígido de applies fuzzy: **10_000** (`FUZZY_HARD_MAX_REPLACEMENTS`), mesmo com `--max-replacements` maior.
+- Caps: pattern 64 KiB; lev 8192 chars; max windows 4096; growth max(4×, +16 MiB).
+
+### Corrigido (crítico)
+
+- Hang infinito de `replace --fuzzy` quando NEW embute OLD (expand section de agentes).
+
+### Ação de migração
+
+- Agentes: continue usando `replace --fuzzy auto`; o hang foi corrigido. Prefira blocos OLD únicos; NEW pode embutir OLD com segurança (expansões one-pass).
+- Jobs longos/CI que dependiam de runtime ilimitado: passe `--timeout-secs 0` **somente** se for intencional.
+- Prefira pin `^0.1.34` (docs-complete); `^0.1.33` tem o mesmo runtime.
+- Regressão: `cargo test --test cli_v0133_oneshot_fuzzy`
+
+
+## v0.1.29 para v0.1.30
 
 ### Mudanças BREAKING
 
@@ -130,13 +170,13 @@ Todas aditivas. Nenhuma dependência existente removida.
 - Backup usa reflink_or_copy (nunca hardlink do arquivo vivo)
 - Cancelamento cooperativo durante leitura de stdin e escrita atômica em chunks
 - Documentação versionada de recipes em `recipes/*.yaml`
-- CI `size-gate` (slim core ≤ 15 MiB), `core-test`, `schema-diff`
+- Local gates: size-gate (slim core ≤ 15 MiB), core-test, schema-diff
 
 ### Alterado
 
 - Numeração de estratégias normalizada para nove estratégias nomeadas
 - Superfície skill documenta 41 subcomandos
-- Release slim core ~7.7 MiB (CI exige ≤ 15 MiB); default/full com AST ~52 MB — PRD 5–8 MB aplica-se somente ao core
+- Release slim core ~7.7 MiB (size-gate local ≤ 15 MiB); default/full com AST ~52 MB — PRD 5–8 MB aplica-se somente ao core
 
 ### Ação de Migração
 
@@ -540,7 +580,7 @@ A sugestão enganosa "use an absolute path" agora é "set --workspace <root> or 
 
 #### Adicionado (Funcionalidades Agent-First)
 
-- Flag global `--timeout <SECONDS>` para execução com limite de tempo (0 = sem timeout, padrão 0)
+- Flag global `--timeout <SECONDS>` para execução com limite de tempo (na introdução: 0 = sem timeout, padrão 0; **desde v0.1.33 o padrão é 120**, exit 124 no prazo)
 - `read --grep <REGEX>` filtra para retornar apenas linhas que casam com regex
 - `completions --install` para instalar scripts de completions no diretório de dados XDG
 
@@ -991,7 +1031,7 @@ Esta release adiciona 2 novos sub-comandos para fechar o último GAP-2026-012 e 
 ### Checklist de Migração
 
 - Se usa `write` sem `--backup`: nenhuma ação necessária (backup auto-deleta após sucesso)
-- Se verifica ausência de arquivos `.bak.*` em CI: adicione `--no-backup` ou defina `ATOMWRITE_BACKUP=0`
+- Se verifica ausência de arquivos `.bak.*` em scripts locais: adicione `--no-backup` ou defina `ATOMWRITE_BACKUP=0`
 - Se usa `write --expect-checksum` para truncar arquivos legitimamente: adicione `--allow-shrink`
 - Se passa valores iniciando com `-` para `edit --old`, `search`, `replace`, `calc`, `regex`, `transform`, `read --grep`, `query --query`: a correção é automática, nenhuma migração necessária
 

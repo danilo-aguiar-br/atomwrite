@@ -2,6 +2,7 @@
 
 //! Apply N pairs of `old`/`new` substitutions read from NDJSON on stdin.
 //! Workload: I/O-bound (read file + iterate pairs + atomic write).
+//! Parallelism: none — single target file; pair order is compositional.
 //!
 //! ADR-0039 — `edit-loop` exists because chaining many `edit --old --new`
 //! invocations from an LLM agent is wasteful (per-call checksum verify
@@ -9,7 +10,7 @@
 //! shot, applies them sequentially in memory, then performs a single
 //! atomic write at the end.
 
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -64,44 +65,88 @@ pub fn cmd_edit_loop(
         crate::config::resolve_fuzzy(FuzzyMode::Auto, None, fuzzy_cfg)?;
 
     if !target.exists() {
-        return Err(crate::error::AtomwriteError::NotFound {
-            path: target.clone(),
-        }
-        .into());
+        return Err(crate::error::AtomwriteError::NotFound { path: target }.into());
     }
 
     let max_size = global.effective_max_filesize();
     let mut content = crate::file_io::read_file_string(&target, max_size)?;
 
     // Parse pairs from stdin. Accepts both JSON array and NDJSON (one object
-    // per line). Detection: if the first non-whitespace byte is `[`, parse
-    // as a JSON array; otherwise parse as NDJSON lines.
-    let mut buf = String::new();
-    stdin.take(max_size).read_to_string(&mut buf)?;
-    if buf.trim().is_empty() {
-        return Err(crate::error::AtomwriteError::InvalidInput {
-            reason: "stdin is empty; expected JSON array or NDJSON pairs".to_string(),
-        }
-        .into());
-    }
-    let trimmed = buf.trim_start();
-    let pairs: Vec<EditPair> = if trimmed.starts_with('[') {
-        serde_json::from_str::<Vec<EditPair>>(trimmed).map_err(|e| {
-            crate::error::AtomwriteError::InvalidInput {
-                reason: format!("failed to parse JSON array of edit pairs: {e}"),
+    // per line). Detection: peek first non-whitespace byte — if `[`, parse
+    // as a single JSON array (size-capped by max_filesize); otherwise stream
+    // NDJSON with per-line size limits (rules: limite por linha + BOM).
+    let mut reader = BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
+    let pairs: Vec<EditPair> = {
+        use std::io::BufRead;
+        // Peek past leading BOM / whitespace to choose dialect.
+        let prefix = {
+            let filled = reader.fill_buf()?;
+            let mut i = 0usize;
+            // Skip UTF-8 BOM if present at buffer start.
+            if filled.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                i = 3;
             }
-        })?
-    } else {
-        buf.lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(|l| {
-                serde_json::from_str::<EditPair>(l).map_err(|e| {
+            while i < filled.len() && (filled[i] == b' ' || filled[i] == b'\t' || filled[i] == b'\n' || filled[i] == b'\r') {
+                i += 1;
+            }
+            filled.get(i).copied()
+        };
+
+        if prefix == Some(b'[') {
+            let mut buf = String::new();
+            reader
+                .take(max_size)
+                .read_to_string(&mut buf)
+                .map_err(|e| crate::error::AtomwriteError::Io { source: e })?;
+            let trimmed = crate::output::strip_utf8_bom_str(buf.trim_start());
+            if trimmed.is_empty() {
+                return Err(crate::error::AtomwriteError::InvalidInput {
+                    reason: "stdin is empty; expected JSON array or NDJSON pairs".to_string(),
+                }
+                .into());
+            }
+            serde_json::from_str::<Vec<EditPair>>(trimmed).map_err(|e| {
+                crate::error::AtomwriteError::InvalidInput {
+                    reason: format!("failed to parse JSON array of edit pairs: {e}"),
+                }
+            })?
+        } else {
+            let mut pairs = Vec::with_capacity(8);
+            let mut line_buf = String::new();
+            let mut idx = 0usize;
+            loop {
+                let n = crate::output::read_limited_line(
+                    &mut reader,
+                    &mut line_buf,
+                    crate::constants::MAX_NDJSON_LINE_SIZE,
+                )
+                .map_err(|e| crate::error::AtomwriteError::InvalidInput {
+                    reason: format!("failed to read edit-loop NDJSON line {}: {e}", idx + 1),
+                })?;
+                if n == 0 {
+                    break;
+                }
+                let trimmed = line_buf.trim();
+                if trimmed.is_empty() {
+                    idx += 1;
+                    continue;
+                }
+                let pair: EditPair = serde_json::from_str(trimmed).map_err(|e| {
                     crate::error::AtomwriteError::InvalidInput {
-                        reason: format!("failed to parse NDJSON pair: {l}: {e}"),
+                        reason: format!("failed to parse NDJSON pair at line {}: {e}", idx + 1),
                     }
-                })
-            })
-            .collect::<std::result::Result<Vec<_>, _>>()?
+                })?;
+                pairs.push(pair);
+                idx += 1;
+            }
+            if pairs.is_empty() {
+                return Err(crate::error::AtomwriteError::InvalidInput {
+                    reason: "stdin is empty; expected JSON array or NDJSON pairs".to_string(),
+                }
+                .into());
+            }
+            pairs
+        }
     };
 
     // Apply each pair via shared fuzzy cascade (v0.1.29 P0-1).

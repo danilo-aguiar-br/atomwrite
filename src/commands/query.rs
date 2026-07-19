@@ -5,6 +5,9 @@
 //! `tree-sitter-language-pack` for parser provisioning (305 languages;
 //! downloads on first use; cache local).
 //!
+//! Workload: mixed I/O-bound + CPU-bound (file read + tree-sitter parse/walk).
+//! Parallelism: single-file AST; parser load is process-cached by language pack.
+//!
 //! ## Modes
 //!
 //! - `--query <KIND>`: emit all nodes whose `kind()` matches the given
@@ -13,19 +16,19 @@
 //! - `--tree`: emit every named node in pre-order DFS (debugging).
 //! - `--positions`: include byte offsets and start/end positions.
 //!
-//! ## Causa x Efeito
+//! ## Cause and Effect
 //!
-//! - **Causa**: Source files são apenas strings opacas para `read`/`grep`.
-//!   Buscar `fn add` retorna 12 hits (declaração + 11 chamadas), sem
-//!   distinção semântica.
-//! - **Efeito**: Agentes LLM gastam tokens disambiguando matches textuais
-//!   e falham em extrair estrutura (assinaturas, generics, lifetimes).
-//! - **Solução**: Parse via tree-sitter, expor AST como `query_match`
-//!   NDJSON com `kind`, `text`, `start_line`. DFS iterativo via
-//!   `Node::child(i)` em vez de `TreeCursor` recursivo (stack overflow
-//!   em arquivos grandes).
-//! - **Benefício**: Resposta estruturada, integrável com grafo e
-//!   downstream pipelines.
+//! - **Cause**: Source files are opaque strings to `read`/`grep`. Searching
+//!   for `fn add` can return 12 hits (declaration plus 11 call sites) with
+//!   no semantic distinction.
+//! - **Effect**: LLM agents spend tokens disambiguating textual matches and
+//!   fail to extract structure (signatures, generics, lifetimes).
+//! - **Solution**: Parse with tree-sitter and expose the AST as
+//!   `query_match` NDJSON with `kind`, `text`, and `start_line`. Use
+//!   iterative DFS via `Node::child(i)` instead of a recursive
+//!   `TreeCursor` (avoids stack overflow on large files).
+//! - **Benefit**: Structured response suitable for graphs and downstream
+//!   pipelines.
 
 use std::io::Write;
 use std::path::Path;
@@ -79,6 +82,7 @@ fn classify_pattern(pattern: &str) -> QueryType {
 /// three modes: `--kinds` (aggregate counts), `--query <KIND>` (emit
 /// nodes matching a single kind name), and `--tree` (emit every
 /// named node). A final `query_summary` line is always emitted.
+#[tracing::instrument(skip_all, fields(command = "query"))]
 pub fn cmd_query(
     args: &QueryArgs,
     global: &GlobalArgs,
@@ -90,8 +94,8 @@ pub fn cmd_query(
     if !validated.exists() {
         return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
-    let content = std::fs::read(&validated)
-        .with_context(|| format!("cannot read {}", validated.display()))?;
+    let content =
+        crate::file_io::read_file_bytes(&validated, global.effective_max_filesize())?;
 
     let lang_name = resolve_language_name(args.language.as_deref(), &validated, &content)?;
 
@@ -112,26 +116,25 @@ pub fn cmd_query(
             std::collections::BTreeMap::new();
         walk_kinds(&root, &mut kind_counts, &mut node_count);
         for (kind, count) in &kind_counts {
-            writer.write_event(&serde_json::json!({
-                "type": "query_kind",
-                "path": validated.display().to_string(),
-                "language": lang_name,
-                "kind": kind,
-                "count": count,
-            }))?;
+            writer.write_event(&crate::ndjson_types::QueryKindEvent {
+                r#type: "query_kind",
+                path: validated.display().to_string(),
+                language: lang_name.clone(),
+                kind: kind.clone(),
+                count: *count,
+            })?;
         }
         match_count = kind_counts.len();
     } else if let Some(pattern) = args.query.as_deref() {
         match classify_pattern(pattern) {
             QueryType::KindFilter => {
-                let wanted: Vec<String> = vec![pattern.to_owned()];
                 walk_kind_filter(
                     &root,
                     &content,
                     &validated,
                     &lang_name,
-                    &wanted,
-                    &show_positions,
+                    pattern,
+                    show_positions,
                     writer,
                     &mut match_count,
                     &mut node_count,
@@ -148,7 +151,7 @@ pub fn cmd_query(
                     &lang_name,
                     &lang,
                     pattern,
-                    &show_positions,
+                    show_positions,
                     writer,
                     &mut match_count,
                     &mut node_count,
@@ -161,7 +164,7 @@ pub fn cmd_query(
             &content,
             &validated,
             &lang_name,
-            &show_positions,
+            show_positions,
             writer,
             &mut match_count,
             &mut node_count,
@@ -228,54 +231,43 @@ fn node_text(source: &[u8], start: usize, end: usize) -> String {
     }
 }
 
-/// Iterative DFS over `root` using an explicit stack of
-/// `(node, child_index)` pairs. Counts each `Node::kind()` in
+/// Iterative DFS over `root`. Counts each `Node::kind()` in
 /// `kind_counts` and the total in `node_count`.
+///
+/// Ownership: stack owns each `Node` once; children from `node.child(i)`
+/// are moved onto the stack (no double-clone of the same handle).
 fn walk_kinds(
     root: &Node,
     kind_counts: &mut std::collections::BTreeMap<String, usize>,
     node_count: &mut usize,
 ) {
-    // Stack of (node, next-child-index-to-visit).
-    let mut stack: Vec<(Node, u32)> = Vec::with_capacity(64);
-    stack.push((root.clone(), 0));
-    while let Some((node, idx)) = stack.last() {
-        let (node, _idx) = (node.clone(), *idx);
-        // Pop before potentially pushing children.
-        stack.pop();
-        // Process this node.
-        *kind_counts.entry(node.kind()).or_insert(0) += 1;
+    let mut stack: Vec<Node> = Vec::with_capacity(64);
+    stack.push(root.clone());
+    while let Some(node) = stack.pop() {
+        *kind_counts.entry(node.kind().to_owned()).or_insert(0) += 1;
         *node_count += 1;
-        // Push children in reverse so we visit them in order.
         let count = node.child_count() as u32;
-        if count == 0 {
-            continue;
-        }
-        // We want to visit children in order. The simplest: push the
-        // last child first so it pops first, then second-to-last, etc.
-        // But we also need to track the "next child to visit" index.
-        // The cleanest iterative DFS: push (child[i+1], 0) BEFORE
-        // processing child[i], so when we return, we move to next.
-        // For simplicity here, push all children with index 0; they
-        // will each be processed and their own children will be pushed.
         for i in (0..count).rev() {
             if let Some(child) = node.child(i) {
-                stack.push((child, 0));
+                stack.push(child);
             }
         }
     }
 }
 
-/// Iterative DFS filtered by `wanted` kinds. Emits a `query_match`
+/// Iterative DFS filtered by a single kind name. Emits a `query_match`
 /// NDJSON line for each node whose kind matches.
+///
+/// `wanted` is `&str` (not `String` / `&[String]`): the CLI passes one
+/// kind filter; `Copy` flag `show_positions` is by value.
 #[allow(clippy::too_many_arguments)]
 fn walk_kind_filter(
     root: &Node,
     source: &[u8],
     path: &Path,
     lang_name: &str,
-    wanted: &[String],
-    show_positions: &bool,
+    wanted: &str,
+    show_positions: bool,
     writer: &mut NdjsonWriter<impl Write>,
     match_count: &mut usize,
     node_count: &mut usize,
@@ -284,26 +276,24 @@ fn walk_kind_filter(
     while let Some(node) = stack.pop() {
         *node_count += 1;
         let kind = node.kind();
-        if wanted.iter().any(|w| w == &kind) {
+        if kind == wanted {
             let start = node.start_position();
             let end = node.end_position();
-            let mut event = serde_json::json!({
-                "type": "query_match",
-                "path": path.display().to_string(),
-                "language": lang_name,
-                "kind": kind,
-                "is_named": node.is_named(),
-                "text": node_text(source, node.start_byte(), node.end_byte()),
-            });
-            if *show_positions {
-                event["start_byte"] = serde_json::json!(node.start_byte());
-                event["end_byte"] = serde_json::json!(node.end_byte());
-                event["start_line"] = serde_json::json!(start.row + 1);
-                event["start_column"] = serde_json::json!(start.column + 1);
-                event["end_line"] = serde_json::json!(end.row + 1);
-                event["end_column"] = serde_json::json!(end.column + 1);
-            }
-            writer.write_event(&event)?;
+            writer.write_event(&crate::ndjson_types::QueryMatchEvent {
+                r#type: "query_match",
+                path: path.display().to_string(),
+                language: lang_name.to_owned(),
+                kind: kind.to_owned(),
+                is_named: node.is_named(),
+                text: node_text(source, node.start_byte(), node.end_byte()),
+                capture_name: None,
+                start_byte: show_positions.then_some(node.start_byte()),
+                end_byte: show_positions.then_some(node.end_byte()),
+                start_line: show_positions.then_some(start.row + 1),
+                start_column: show_positions.then_some(start.column + 1),
+                end_line: show_positions.then_some(end.row + 1),
+                end_column: show_positions.then_some(end.column + 1),
+            })?;
             *match_count += 1;
         }
         let count = node.child_count() as u32;
@@ -334,7 +324,7 @@ fn walk_sexpr(
     lang_name: &str,
     lang: &tree_sitter::Language,
     pattern: &str,
-    show_positions: &bool,
+    show_positions: bool,
     writer: &mut NdjsonWriter<impl Write>,
     match_count: &mut usize,
     node_count: &mut usize,
@@ -365,24 +355,21 @@ fn walk_sexpr(
                 .unwrap_or("");
             let start = node.start_position();
             let end = node.end_position();
-            let mut event = serde_json::json!({
-                "type": "query_match",
-                "path": path.display().to_string(),
-                "language": lang_name,
-                "kind": node.kind(),
-                "is_named": node.is_named(),
-                "text": node_text(source, node.start_byte(), node.end_byte()),
-                "capture_name": capture_name,
-            });
-            if *show_positions {
-                event["start_byte"] = serde_json::json!(node.start_byte());
-                event["end_byte"] = serde_json::json!(node.end_byte());
-                event["start_line"] = serde_json::json!(start.row + 1);
-                event["start_column"] = serde_json::json!(start.column + 1);
-                event["end_line"] = serde_json::json!(end.row + 1);
-                event["end_column"] = serde_json::json!(end.column + 1);
-            }
-            writer.write_event(&event)?;
+            writer.write_event(&crate::ndjson_types::QueryMatchEvent {
+                r#type: "query_match",
+                path: path.display().to_string(),
+                language: lang_name.to_owned(),
+                kind: node.kind().to_owned(),
+                is_named: node.is_named(),
+                text: node_text(source, node.start_byte(), node.end_byte()),
+                capture_name: Some(capture_name.to_owned()),
+                start_byte: show_positions.then_some(node.start_byte()),
+                end_byte: show_positions.then_some(node.end_byte()),
+                start_line: show_positions.then_some(start.row + 1),
+                start_column: show_positions.then_some(start.column + 1),
+                end_line: show_positions.then_some(end.row + 1),
+                end_column: show_positions.then_some(end.column + 1),
+            })?;
             *match_count += 1;
         }
     }
@@ -396,7 +383,7 @@ fn walk_tree(
     source: &[u8],
     path: &Path,
     lang_name: &str,
-    show_positions: &bool,
+    show_positions: bool,
     writer: &mut NdjsonWriter<impl Write>,
     match_count: &mut usize,
     node_count: &mut usize,
@@ -407,23 +394,21 @@ fn walk_tree(
         if node.is_named() {
             let start = node.start_position();
             let end = node.end_position();
-            let mut event = serde_json::json!({
-                "type": "query_match",
-                "path": path.display().to_string(),
-                "language": lang_name,
-                "kind": node.kind(),
-                "is_named": true,
-                "text": node_text(source, node.start_byte(), node.end_byte()),
-            });
-            if *show_positions {
-                event["start_byte"] = serde_json::json!(node.start_byte());
-                event["end_byte"] = serde_json::json!(node.end_byte());
-                event["start_line"] = serde_json::json!(start.row + 1);
-                event["start_column"] = serde_json::json!(start.column + 1);
-                event["end_line"] = serde_json::json!(end.row + 1);
-                event["end_column"] = serde_json::json!(end.column + 1);
-            }
-            writer.write_event(&event)?;
+            writer.write_event(&crate::ndjson_types::QueryMatchEvent {
+                r#type: "query_match",
+                path: path.display().to_string(),
+                language: lang_name.to_owned(),
+                kind: node.kind().to_owned(),
+                is_named: true,
+                text: node_text(source, node.start_byte(), node.end_byte()),
+                capture_name: None,
+                start_byte: show_positions.then_some(node.start_byte()),
+                end_byte: show_positions.then_some(node.end_byte()),
+                start_line: show_positions.then_some(start.row + 1),
+                start_column: show_positions.then_some(start.column + 1),
+                end_line: show_positions.then_some(end.row + 1),
+                end_column: show_positions.then_some(end.column + 1),
+            })?;
             *match_count += 1;
         }
         let count = node.child_count() as u32;

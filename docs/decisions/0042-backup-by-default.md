@@ -10,7 +10,7 @@
   - **+** Automatic safety net for ALL content mutations — agents that confuse `write` with `edit` can recover via `rollback --latest`.
   - **+** ~1ms overhead on SSD (`fs::copy` + `fs::remove_file` in the success path). Zero overhead when target does not exist (new file, no backup needed).
   - **+** `--no-backup` provides explicit opt-out for performance-critical pipelines.
-  - **+** `ATOMWRITE_BACKUP=0` provides global opt-out for CI environments that manage their own backup strategy.
+  - **+** `ATOMWRITE_BACKUP=0` provides global opt-out for scripted environments that manage their own backup strategy.
   - **+** Aligns atomwrite with the "secure-by-default" principle — protection is automatic, not opt-in.
   - **-** (acceptable) The `--backup` flag becomes redundant since backup is now the default. The flag is preserved for backward compatibility and explicitness.
   - **-** (acceptable) Existing tests that tested `--require-backup` without `--backup` now need `--no-backup` to trigger the guard, because `--require-backup` checks whether `backup` is true, and the new default makes it always true.
@@ -20,4 +20,4 @@
   2. **Only change `WriteArgs`.** Rejected: all 9 content-mutating commands share the same risk profile. An agent can destroy data via `edit --range 1:9999` or `replace` with an empty replacement just as easily as via `write`. Partial coverage creates a false sense of safety.
   3. **Change `keep_backup` to `true` (permanent backups).** Rejected: permanent backups accumulate disk usage without bound. The `--retention N` mechanism already exists for users who want persistent backups. The temporary backup (created and deleted in the same syscall path) provides crash recovery without disk bloat.
 
-- **Trigger to revisit**: If the ~1ms overhead causes measurable regression in batch operations (>10,000 files), add a `--fast` mode that disables backup. If `ATOMWRITE_BACKUP=0` adoption in CI exceeds 50% of invocations, reconsider whether the default should be environment-aware.
+- **Trigger to revisit**: If the ~1ms overhead causes measurable regression in batch operations (>10,000 files), add a `--fast` mode that disables backup. If `ATOMWRITE_BACKUP=0` adoption in local scripts exceeds 50% of invocations, reconsider whether the default should be environment-aware.

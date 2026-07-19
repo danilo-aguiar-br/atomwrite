@@ -1,21 +1,26 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Directory listing with metadata, gitignore support, and depth control.
+//!
 //! Workload: I/O-bound (directory walk + stat per entry).
+//! Parallelism: multi-root via one `WalkBuilder` + `.add` (docs.rs);
+//! discovery via `WalkParallel` bound by `--threads` / `--max-concurrency`
+//! (`apply_walk_threads` + `collect_mapped_parallel`). Entries are
+//! materialised, sorted (`sort_parallel`), then emitted for deterministic
+//! NDJSON order. Trade-off: RAM for path+meta vectors vs monorepo readdir
+//! wall-clock (paths are small; `--long` stats fan out during the walk).
 
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::sync::LazyLock;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
 use ignore::WalkBuilder;
-use regex::Regex;
-
-static BACKUP_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\.bak\.\d{8}_\d{6}(_\d{3})?$").expect("valid backup regex"));
 
 use crate::cli::{GlobalArgs, ListArgs};
+use crate::commands::BACKUP_FILENAME_RE;
+use crate::concurrency::{apply_walk_threads, collect_mapped_parallel, sort_by_parallel};
 use crate::ndjson_types::{ListEntry, ListSummary};
 use crate::output::NdjsonWriter;
 
@@ -33,6 +38,41 @@ fn epoch_days_to_ymd(days: u64) -> (u64, u64, u64) {
     (y, m, d)
 }
 
+/// Intermediate walk record (Send) — sorted then emitted as NDJSON.
+struct ListRecord {
+    path: String,
+    kind: &'static str,
+    size: Option<u64>,
+    modified: Option<String>,
+    bytes: u64,
+    ext: Option<String>,
+}
+
+fn rel_path_for(path: &Path, workspace: &Path, roots: &[PathBuf]) -> String {
+    path.strip_prefix(workspace)
+        .ok()
+        .or_else(|| roots.iter().find_map(|r| path.strip_prefix(r).ok()))
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
+fn format_mtime(meta: &std::fs::Metadata) -> Option<String> {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| {
+            let secs = d.as_secs();
+            let days = secs / 86400;
+            let rem = secs % 86400;
+            let h = rem / 3600;
+            let m = (rem % 3600) / 60;
+            let s = rem % 60;
+            let (y, mo, da) = epoch_days_to_ymd(days);
+            format!("{y:04}-{mo:02}-{da:02}T{h:02}:{m:02}:{s:02}Z")
+        })
+}
+
 /// List project file structure with optional metadata as NDJSON.
 ///
 /// # Errors
@@ -48,22 +88,35 @@ pub fn cmd_list(
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
 
-    let root = if args.paths.is_empty() {
-        workspace.clone()
+    // Multi-root: clap accepts `paths: Vec`; previously only paths[0] was walked.
+    let roots: Vec<PathBuf> = if args.paths.is_empty() {
+        vec![workspace.clone()]
     } else {
-        crate::path_safety::validate_path(&args.paths[0], &workspace)?
+        args.paths
+            .iter()
+            .map(|p| crate::path_safety::validate_path(p, &workspace))
+            .collect::<Result<Vec<_>>>()?
     };
 
-    // GAP-110: return FILE_NOT_FOUND when directory does not exist
-    if !root.exists() {
-        return Err(crate::error::AtomwriteError::NotFound { path: root }.into());
+    // GAP-110: return FILE_NOT_FOUND when any root does not exist
+    for root in &roots {
+        if !root.exists() {
+            return Err(crate::error::AtomwriteError::NotFound {
+                path: root.clone(),
+            }
+            .into());
+        }
     }
 
-    let mut builder = WalkBuilder::new(&root);
-    builder
-        .hidden(!args.all)
-        .git_ignore(!global.no_gitignore)
-        .sort_by_file_path(|a, b| a.cmp(b));
+    // docs.rs: multi-dir → one WalkBuilder + `.add`, not N separate walks.
+    let mut builder = WalkBuilder::new(&roots[0]);
+    for root in roots.iter().skip(1) {
+        builder.add(root);
+    }
+    builder.hidden(!args.all).git_ignore(!global.no_gitignore);
+    // sort_by_file_path only applies to sequential `build()` — parallel walk
+    // materialises then sorts (PAR-035/036).
+    apply_walk_threads(&mut builder, global.threads);
 
     if let Some(depth) = args.depth {
         builder.max_depth(Some(depth));
@@ -81,11 +134,78 @@ pub fn cmd_list(
     }
 
     if !args.exclude.is_empty() {
-        let mut overrides = ignore::overrides::OverrideBuilder::new(&root);
+        let mut overrides = ignore::overrides::OverrideBuilder::new(&roots[0]);
         for pattern in &args.exclude {
             overrides.add(&format!("!{pattern}"))?;
         }
         builder.overrides(overrides.build()?);
+    }
+
+    let want_long = args.long;
+    let want_ext = args.count_by_ext;
+    let ws = workspace.clone();
+    let roots_cap = roots.clone();
+
+    let mut records: Vec<ListRecord> = collect_mapped_parallel(&builder, move |entry| {
+        let path = entry.path();
+        let rel_path = rel_path_for(path, &ws, &roots_cap);
+        if rel_path.is_empty() {
+            return None;
+        }
+
+        let ft = entry.file_type();
+        let kind: &'static str = if ft.is_some_and(|t| t.is_dir()) {
+            "dir"
+        } else if ft.is_some_and(|t| t.is_symlink()) {
+            "symlink"
+        } else {
+            "file"
+        };
+
+        let (size, modified, bytes) = if want_long {
+            match entry.metadata() {
+                Ok(meta) => {
+                    let sz = meta.len();
+                    (Some(sz), format_mtime(&meta), sz)
+                }
+                Err(_) => (None, None, 0),
+            }
+        } else {
+            let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            (None, None, bytes)
+        };
+
+        let ext = if want_ext {
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let e = if BACKUP_FILENAME_RE.is_match(file_name) {
+                "backup".to_owned()
+            } else {
+                path.extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("(none)")
+                    .to_owned()
+            };
+            Some(e)
+        } else {
+            None
+        };
+
+        Some(ListRecord {
+            path: rel_path,
+            kind,
+            size,
+            modified,
+            bytes,
+            ext,
+        })
+    });
+
+    // Deterministic NDJSON order after parallel discovery.
+    sort_by_parallel(&mut records, |a, b| a.path.cmp(&b.path));
+
+    // Same contract as `search`: on cooperative cancel, skip summary.
+    if crate::signal::is_global_shutdown() {
+        return Ok(());
     }
 
     let mut files: u64 = 0;
@@ -94,89 +214,30 @@ pub fn cmd_list(
     let mut total_bytes: u64 = 0;
     let mut by_ext: BTreeMap<String, u64> = BTreeMap::new();
 
-    for entry in builder.build() {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::warn!(error = %e, "walk error");
-                continue;
-            }
-        };
-
-        let path = entry.path();
-        let rel_path = path
-            .strip_prefix(&root)
-            .unwrap_or(path)
-            .display()
-            .to_string();
-
-        if rel_path.is_empty() {
-            continue;
+    for rec in records {
+        if crate::signal::is_global_shutdown() {
+            return Ok(());
         }
-
-        let ft = entry.file_type();
-        let kind = if ft.is_some_and(|t| t.is_dir()) {
-            dirs += 1;
-            "dir"
-        } else if ft.is_some_and(|t| t.is_symlink()) {
-            symlinks += 1;
-            "symlink"
-        } else {
-            files += 1;
-            "file"
-        };
-
-        let (size, modified) = if args.long {
-            match entry.metadata() {
-                Ok(meta) => {
-                    let sz = meta.len();
-                    total_bytes += sz;
-                    let mod_str = meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| {
-                            let secs = d.as_secs();
-                            let days = secs / 86400;
-                            let rem = secs % 86400;
-                            let h = rem / 3600;
-                            let m = (rem % 3600) / 60;
-                            let s = rem % 60;
-                            let (y, mo, da) = epoch_days_to_ymd(days);
-                            format!("{y:04}-{mo:02}-{da:02}T{h:02}:{m:02}:{s:02}Z")
-                        });
-                    (Some(sz), mod_str)
-                }
-                Err(_) => (None, None),
-            }
-        } else {
-            if let Ok(meta) = entry.metadata() {
-                total_bytes += meta.len();
-            }
-            (None, None)
-        };
-
-        if args.count_by_ext {
-            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let ext = if BACKUP_RE.is_match(file_name) {
-                "backup".to_owned()
-            } else {
-                path.extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("(none)")
-                    .to_owned()
-            };
+        match rec.kind {
+            "dir" => dirs += 1,
+            "symlink" => symlinks += 1,
+            _ => files += 1,
+        }
+        total_bytes += rec.bytes;
+        if let Some(ext) = rec.ext {
             *by_ext.entry(ext).or_default() += 1;
         }
-
-        let output = ListEntry {
+        writer.write_event(&ListEntry {
             r#type: "entry",
-            path: rel_path,
-            kind: kind.into(),
-            size,
-            modified,
-        };
-        writer.write_event(&output)?;
+            path: rec.path,
+            kind: rec.kind.into(),
+            size: rec.size,
+            modified: rec.modified,
+        })?;
+    }
+
+    if crate::signal::is_global_shutdown() {
+        return Ok(());
     }
 
     let summary = ListSummary {

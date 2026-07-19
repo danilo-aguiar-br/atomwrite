@@ -4,9 +4,9 @@
 
 atomwrite is a Rust CLI that provides 41 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
-**Latest release: v0.1.30** (2026-07-13) — Fuzzy mandatory (`auto`/`aggressive`; `--fuzzy off` exit 65); `edit --replace-all` with NDJSON `match_count` and `indent_adjusted`; escape-drift; unicode_normalized; ranked `best_candidate`/`candidates[]`; `search --target` + pagination; recipe excludes `*.bak.*` including hash; `sparse outline` real AST; `backup_method=reflink_or_copy`; live `[fuzzy]` config; semantic-merge line-based honesty; `cli_v0130_agent_contract`. 41 subcommands. See `CHANGELOG.md`.
+**Latest release: v0.1.34** — One-shot fuzzy hang fixed (NEW may embed OLD); `replace --fuzzy` is one-pass on original content, never re-scans inserted text; default max fuzzy applies = 1; embeds force 1 apply; `--timeout-secs` default **120** (0 disables; exit **124** on deadline); cancel polled mid-fuzzy; resource caps (pattern 64 KiB / lev 8192 / windows 4096 / growth); full docs aligned (ADR-0054). Pin `^0.1.34`. 41 subcommands; no telemetry. See `CHANGELOG.md` and `https://docs.rs/atomwrite`.
 
-**Previous release: v0.1.28** (2026-07-06) — BREAKING backup defaults on `delete`; unified `BackupOpts` on 15 mutating subcommands; live `.atomwrite.toml` `[defaults]`; stdin-tty guard on `edit`. 661 tests, 33 subcommands. See `CHANGELOG.md`.
+**Previous:** v0.1.33 runtime hang fix + one-pass fuzzy; v0.1.32 docs.rs `doc_cfg` / multi-target; v0.1.30 agent surface (fuzzy mandatory, `match_count`/`indent_adjusted`, `best_candidate`, recipe bak skip, `cli_v0130_agent_contract`). See `CHANGELOG.md`.
 
 ## Installation
 
@@ -29,7 +29,7 @@ Parsers for 305 languages are NOT bundled; they are downloaded on first use by `
 
 ### Search and replace
 - `search` -- search file contents in parallel (ripgrep engine). `--no-begin-end` disables anchor emission (v0.1.20)
-- `replace` -- replace text across files with atomic writes; `--fuzzy auto|aggressive` (off rejected since v0.1.30) and `--fuzzy-threshold`; reports `strategy`/`similarity`/`match_count`/`indent_adjusted`; match errors may include `best_candidate`
+- `replace` -- replace text across files with atomic writes; `--fuzzy auto|aggressive` (off rejected since v0.1.30) and `--fuzzy-threshold`; **one-pass** multi-apply on original content (never re-scans inserted text); default max applies = **1**; if replacement embeds pattern → force 1 apply; reports `strategy`/`similarity`/`match_count`/`indent_adjusted`; match errors may include `best_candidate`
 - `transform` -- AST refactoring via ast-grep (306 languages)
 
 ### Inspection
@@ -162,7 +162,7 @@ Every command outputs **NDJSON** (one JSON object per line) to stdout. The last 
 - `--syntax-check` (write, v0.1.12+) -- G72 tree-sitter REAL syntax check before commit
 - `--positions` (query, outline) -- include start_line/start_column/byte_offset in AST output
 - `--line-ending lf|crlf|cr|auto` -- normalize line endings
-- `--timeout <SECONDS>` (global) -- global operation timeout (0 = no timeout)
+- `--timeout-secs <SECONDS>` (global) -- global operation timeout; default **120**; pass `0` to disable; exit **124** on deadline
 - `--grep <REGEX>` (read) -- filter returned lines to those matching a regex
 - `--head N` / `--tail N` (read) -- read first/last N lines
 - `--lines START:END` (read) -- partial read with 1-based inclusive range
@@ -195,6 +195,7 @@ Every command outputs **NDJSON** (one JSON object per line) to stdout. The last 
 - 91: EXDEV fallback disabled (v0.1.12+)
 - 92: copy-back BLAKE3 failed (v0.1.12+)
 - 93: orphan journal detected (v0.1.12+)
+- 124: global `--timeout-secs` deadline exceeded (default 120; 0 disables)
 - 126: workspace jail violated
 - 127: symlink blocked
 - 128: file immutable

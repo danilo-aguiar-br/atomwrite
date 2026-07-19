@@ -3,9 +3,26 @@
 //! Subcommand handler implementations for all atomwrite operations.
 
 use std::io::Read as _;
+use std::sync::LazyLock;
+
+use regex::Regex;
+
+/// Matches atomwrite backup filenames like `foo.txt.bak.20260615_035515`.
+///
+/// Shared process-wide `LazyLock` (not `const`): regex compilation is one-shot
+/// and every call site must share the same compiled automaton. Used by
+/// `list` and `count` to bucket backups under a dedicated extension key
+/// rather than treating the timestamp suffix as a real extension.
+pub(crate) static BACKUP_FILENAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\.bak\.\d{8}_\d{6}(_\d{3})?$").expect("valid backup regex")
+});
 
 /// v0.1.29
 pub mod agent_surface;
+/// Full clap command tree as JSON (`atomwrite commands`).
+pub mod command_tree;
+/// Environment diagnostic for agent hosts (`atomwrite doctor`).
+pub mod doctor;
 /// Patch application from stdin (unified diff, SEARCH/REPLACE, full file).
 pub mod apply;
 /// Standalone file backup with BLAKE3 checksums.
@@ -39,10 +56,13 @@ pub mod get;
 pub mod hash;
 /// Directory listing with metadata.
 pub mod list;
+/// Diagnose / persist UI locale preference (`atomwrite locale`).
+pub mod locale_cmd;
 /// Atomic file move and rename.
 pub mod r#move;
-/// v14 Tier 3 (v0.1.12): tree-sitter S-expression query against a file.
+/// v14 Tier 3 (v0.1.12): tree-sitter outline extraction.
 #[cfg(feature = "ast")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
 pub mod outline;
 #[cfg(not(feature = "ast"))]
 #[path = "outline_stub.rs"]
@@ -53,6 +73,7 @@ pub mod path_resolution;
 pub mod prune_backups;
 /// v14 Tier 3 (v0.1.12): tree-sitter S-expression query against a file.
 #[cfg(feature = "ast")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
 pub mod query;
 #[cfg(not(feature = "ast"))]
 #[path = "query_stub.rs"]
@@ -69,6 +90,7 @@ pub mod replace;
 pub mod rollback;
 /// Grammatical scoping with AST-based actions.
 #[cfg(feature = "ast")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
 pub mod scope;
 #[cfg(not(feature = "ast"))]
 #[path = "scope_stub.rs"]
@@ -84,6 +106,7 @@ pub mod set;
 pub mod sparse;
 /// Structural AST code search and rewrite.
 #[cfg(feature = "ast")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
 pub mod transform;
 #[cfg(not(feature = "ast"))]
 #[path = "transform_stub.rs"]
@@ -156,6 +179,13 @@ pub(crate) fn read_stdin_text_guarded(
         });
     }
     let mut buf = String::new();
+    // Cap is known up-front; fallible reserve turns OOM into a domain error.
+    let reserve = usize::try_from(max_size).unwrap_or(usize::MAX);
+    buf.try_reserve(reserve).map_err(|e| {
+        crate::error::AtomwriteError::InternalError {
+            reason: format!("allocation failed for stdin buffer of {reserve} bytes: {e}"),
+        }
+    })?;
     stdin.take(max_size).read_to_string(&mut buf)?;
     Ok(buf)
 }
@@ -173,21 +203,21 @@ mod tty_guard_tests {
                 assert!(reason.contains("after-match"));
                 assert!(reason.contains("terminal"));
             }
-            other => panic!("esperava InvalidInput, obteve {other:?}"),
+            other => panic!("expected InvalidInput, got {other:?}"),
         }
     }
 
     #[test]
     fn non_tty_stdin_reads_content() {
         let content = read_stdin_text_guarded("hello\n".as_bytes(), 1024, false, "range")
-            .expect("deve ler stdin quando nao e tty");
+            .expect("should read stdin when not a tty");
         assert_eq!(content, "hello\n");
     }
 
     #[test]
     fn non_tty_stdin_respects_max_size() {
         let content = read_stdin_text_guarded("abcdef".as_bytes(), 3, false, "between")
-            .expect("deve ler ate max_size");
+            .expect("should read up to max_size");
         assert_eq!(content, "abc");
     }
 }

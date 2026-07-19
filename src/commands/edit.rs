@@ -2,6 +2,9 @@
 
 //! Surgical file editing by line number, text marker, or exact match.
 //! Workload: I/O-bound (file read + fuzzy match + atomic write).
+//! Parallelism: single target file (mutations ordered). Multi-pair
+//! `--old-file`/`--new-file` reads fan out with `rayon` when count > 1;
+//! within each pair, old∥new use `rayon::join` (two independent I/O paths).
 
 use std::io::{BufReader, Read, Write};
 use std::path::Path;
@@ -34,7 +37,11 @@ fn strip_file_trailing_newline(s: String) -> String {
     }
 }
 
-fn resolve_edit_pairs(args: &EditArgs, workspace: &Path) -> Result<(Vec<String>, Vec<String>)> {
+fn resolve_edit_pairs(
+    args: &EditArgs,
+    workspace: &Path,
+    max_size: u64,
+) -> Result<(Vec<String>, Vec<String>)> {
     if (!args.old.is_empty() && !args.new_file.is_empty())
         || (!args.old_file.is_empty() && !args.new.is_empty())
     {
@@ -56,21 +63,54 @@ fn resolve_edit_pairs(args: &EditArgs, workspace: &Path) -> Result<(Vec<String>,
             }
             .into());
         }
-        let mut olds = Vec::with_capacity(args.old_file.len());
-        let mut news = Vec::with_capacity(args.new_file.len());
-        for (of, nf) in args.old_file.iter().zip(args.new_file.iter()) {
-            let of_path = crate::path_safety::validate_path(of, workspace)?;
-            let nf_path = crate::path_safety::validate_path(nf, workspace)?;
-            let old_raw =
-                std::fs::read_to_string(&of_path).map_err(|_| AtomwriteError::NotFound {
-                    path: of_path.clone(),
-                })?;
-            let new_raw =
-                std::fs::read_to_string(&nf_path).map_err(|_| AtomwriteError::NotFound {
-                    path: nf_path.clone(),
-                })?;
-            olds.push(strip_file_trailing_newline(old_raw));
-            news.push(strip_file_trailing_newline(new_raw));
+        let pairs: Vec<(&std::path::PathBuf, &std::path::PathBuf)> = args
+            .old_file
+            .iter()
+            .zip(args.new_file.iter())
+            .collect();
+        let loaded: Vec<Result<(String, String), anyhow::Error>> =
+            if crate::concurrency::should_parallelize(pairs.len()) {
+                use rayon::prelude::*;
+                pairs
+                    .par_iter()
+                    .map(|(of, nf)| {
+                        let of_path = crate::path_safety::validate_path(of, workspace)?;
+                        let nf_path = crate::path_safety::validate_path(nf, workspace)?;
+                        // Independent dual-file I/O within each pair.
+                        let (old_raw, new_raw) = rayon::join(
+                            || crate::file_io::read_file_string(&of_path, max_size),
+                            || crate::file_io::read_file_string(&nf_path, max_size),
+                        );
+                        Ok((
+                            strip_file_trailing_newline(old_raw?),
+                            strip_file_trailing_newline(new_raw?),
+                        ))
+                    })
+                    .collect()
+            } else {
+                pairs
+                    .iter()
+                    .map(|(of, nf)| {
+                        let of_path = crate::path_safety::validate_path(of, workspace)?;
+                        let nf_path = crate::path_safety::validate_path(nf, workspace)?;
+                        // Even single-pair: dual independent reads via join.
+                        let (old_raw, new_raw) = rayon::join(
+                            || crate::file_io::read_file_string(&of_path, max_size),
+                            || crate::file_io::read_file_string(&nf_path, max_size),
+                        );
+                        Ok((
+                            strip_file_trailing_newline(old_raw?),
+                            strip_file_trailing_newline(new_raw?),
+                        ))
+                    })
+                    .collect()
+            };
+        let mut olds = Vec::with_capacity(loaded.len());
+        let mut news = Vec::with_capacity(loaded.len());
+        for item in loaded {
+            let (o, n) = item?;
+            olds.push(o);
+            news.push(n);
         }
         Ok((olds, news))
     } else {
@@ -104,7 +144,7 @@ pub fn cmd_edit(
     let resolved_backup = resolve_backup(&args.backup_opts, defaults);
 
     if !path.exists() {
-        return Err(AtomwriteError::NotFound { path: path.clone() }.into());
+        return Err(AtomwriteError::NotFound { path }.into());
     }
 
     let mode_count = [
@@ -145,7 +185,7 @@ pub fn cmd_edit(
                 );
             } else {
                 return Err(AtomwriteError::StateDrift {
-                    path: path.clone(),
+                    path,
                     expected: expected.clone(),
                     actual: checksum_before,
                 }
@@ -173,7 +213,8 @@ pub fn cmd_edit(
         );
     }
 
-    let (effective_old, effective_new) = resolve_edit_pairs(args, workspace)?;
+    let (effective_old, effective_new) =
+        resolve_edit_pairs(args, workspace, global.effective_max_filesize())?;
 
     if !effective_old.is_empty() && effective_old.len() != effective_new.len() {
         return Err(crate::error::AtomwriteError::InvalidInput {

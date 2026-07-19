@@ -4,12 +4,17 @@
 //!
 //! Despite the name, this is NOT AST or embedding merge — it aligns by line
 //! index with optional first/last-line anchoring for insert shifts.
+//!
+//! Workload: I/O-bound (three file reads + line align + optional atomic write).
+//! Parallelism: three independent file reads via nested `rayon::join`
+//! (base ∥ (ours ∥ theirs)); line merge stays sequential (shared buffers).
+//! Multi-file campaigns use `batch` / scripts, not multi-root merge.
 
 use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::Args;
+use clap::{Args, ValueHint};
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -31,22 +36,22 @@ with optional first/last-line anchoring. This is NOT AST merge and NOT embedding
 )]
 pub struct SemanticMergeArgs {
     /// Common ancestor file.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::FilePath)]
     pub base: PathBuf,
     /// Our version.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::FilePath)]
     pub ours: PathBuf,
     /// Their version.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::FilePath)]
     pub theirs: PathBuf,
     /// Output path.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::FilePath)]
     pub output: PathBuf,
     /// Fail with exit 65 on conflicts.
-    #[arg(long)]
+    #[arg(long, action = clap::ArgAction::SetTrue)]
     pub fail_on_conflict: bool,
     /// Write conflict markers.
-    #[arg(long)]
+    #[arg(long, action = clap::ArgAction::SetTrue)]
     pub write_conflict_markers: bool,
     /// Optimistic lock on output.
     #[arg(long)]
@@ -78,6 +83,7 @@ struct MergeConflict {
 }
 
 /// Run line-based three-way merge.
+#[tracing::instrument(skip_all, fields(command = "semantic-merge"))]
 pub fn cmd_semantic_merge(
     args: &SemanticMergeArgs,
     global: &GlobalArgs,
@@ -87,11 +93,9 @@ pub fn cmd_semantic_merge(
 ) -> Result<()> {
     let start = std::time::Instant::now();
     if shutdown.is_shutdown() {
-        return Err(AtomwriteError::Cancelled {
-            reason: "semantic-merge cancelled before read".into(),
-            exit: 143,
-        }
-        .into());
+        return Err(
+            crate::signal::cancelled_error("semantic-merge cancelled before read").into(),
+        );
     }
     let workspace = global.resolve_workspace()?;
     let max = global.effective_max_filesize();
@@ -100,34 +104,36 @@ pub fn cmd_semantic_merge(
     let theirs_p = validate_path(&args.theirs, &workspace)?;
     let out_p = validate_path(&args.output, &workspace)?;
 
-    let base = crate::file_io::read_file_string(&base_p, max)?;
+    // Independent I/O: nested join saturates up to 3 cores on large files.
+    let (base, (ours, theirs)) = rayon::join(
+        || crate::file_io::read_file_string(&base_p, max),
+        || {
+            rayon::join(
+                || crate::file_io::read_file_string(&ours_p, max),
+                || crate::file_io::read_file_string(&theirs_p, max),
+            )
+        },
+    );
+    let base = base?;
+    let ours = ours?;
+    let theirs = theirs?;
     if shutdown.is_shutdown() {
-        return Err(AtomwriteError::Cancelled {
-            reason: "semantic-merge cancelled after base read".into(),
-            exit: 143,
-        }
-        .into());
+        return Err(
+            crate::signal::cancelled_error("semantic-merge cancelled after parallel reads").into(),
+        );
     }
-    let ours = crate::file_io::read_file_string(&ours_p, max)?;
-    if shutdown.is_shutdown() {
-        return Err(AtomwriteError::Cancelled {
-            reason: "semantic-merge cancelled after ours read".into(),
-            exit: 143,
-        }
-        .into());
-    }
-    let theirs = crate::file_io::read_file_string(&theirs_p, max)?;
 
     let cb = checksum::hash_bytes(base.as_bytes());
     let co = checksum::hash_bytes(ours.as_bytes());
     let ct = checksum::hash_bytes(theirs.as_bytes());
 
+    // Move owned file contents into the merge result (no clone of large strings).
     let (merged, conflicts, status) = if co == ct {
-        (ours.clone(), vec![], "already_equal".to_string())
+        (ours, vec![], "already_equal".to_string())
     } else if cb == co {
-        (theirs.clone(), vec![], "took_theirs".to_string())
+        (theirs, vec![], "took_theirs".to_string())
     } else if cb == ct {
-        (ours.clone(), vec![], "took_ours".to_string())
+        (ours, vec![], "took_ours".to_string())
     } else {
         line_merge(&base, &ours, &theirs, args.write_conflict_markers)
     };
@@ -155,7 +161,7 @@ pub fn cmd_semantic_merge(
             let cur = checksum::hash_file(&out_p, max)?;
             if &cur != exp {
                 return Err(AtomwriteError::StateDrift {
-                    path: out_p.clone(),
+                    path: out_p,
                     expected: exp.clone(),
                     actual: cur,
                 }

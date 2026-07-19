@@ -1,9 +1,20 @@
 # Installation Guide
 
+[Leia em Português](INSTALL.pt-BR.md)
+
 - Complete instructions for installing atomwrite on Linux, macOS, and Windows
-- Current target version: v0.1.30 (fuzzy replace, recipes, sparse, semantic-merge, 41 subcommands; slim/full feature builds)
+- Current target version: v0.1.34 (one-shot fuzzy, timeout default 120, exit 124 on deadline, recipes, sparse, semantic-merge, 41 subcommands; slim/full feature builds)
 - Sections ordered by platform, with prerequisites and troubleshooting
 
+
+## What's New in v0.1.34
+
+- Docs-complete publish of the v0.1.33 one-shot runtime (same binary behavior)
+- Global `--timeout-secs` (alias `--timeout`) **default 120** (was 0); `0` disables; deadline → exit **124**
+- Fuzzy multi-apply is **one-pass** L→R on original content (`apply_fuzzy_one_pass`); never re-scans inserted text
+- Default max fuzzy applies = **1** if `--max-replacements` omitted; hard ceiling 10_000; embeds force single apply
+- ADR-0054; suite `cargo test --test cli_v0133_oneshot_fuzzy`
+- Pin `^0.1.34` / 41 subcommands
 
 ## What's New in v0.1.12
 
@@ -50,10 +61,10 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 
 ### Test Coverage
 
-- 683 tests listed (v0.1.30 working tree)
-- ADRs in `docs/decisions/` through 0051
+- 700+ tests listed (v0.1.34 working tree; suite `cli_v0133_oneshot_fuzzy`)
+- ADRs in `docs/decisions/` through 0054
 - 38 JSON schemas in `docs/schemas/`
-- See [docs/decisions/README.md](README.md) for architectural decisions
+- See [docs/decisions/README.md](decisions/README.md) for architectural decisions
 
 ## Linux
 
@@ -64,10 +75,10 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Install atomwrite v0.1.30 (path/source recommended until crates.io catches up)
+# Install atomwrite v0.1.34 (path/source recommended until crates.io catches up)
 cargo install --path . --locked --force
-# Or pin crates.io when 0.1.30 is published:
-# cargo install atomwrite --locked --version "^0.1.30"
+# Or pin crates.io when 0.1.34 is published:
+# cargo install atomwrite --locked --version "^0.1.34"
 
 # Verify
 atomwrite --version
@@ -79,11 +90,11 @@ atomwrite --version
 # Install build tools
 sudo dnf install rust cargo gcc
 
-# Preferred: from clone (v0.1.30)
+# Preferred: from clone (v0.1.34)
 cargo install --path . --locked --force
-# Alternative when crates.io publishes 0.1.30:
-# cargo install atomwrite --locked --version "^0.1.30"
-# Note: crates.io may still list 0.1.28
+# Alternative when crates.io publishes 0.1.34:
+# cargo install atomwrite --locked --version "^0.1.34"
+# Note: crates.io may still list an older version
 ```
 
 ### Quick Install (Arch)
@@ -91,11 +102,11 @@ cargo install --path . --locked --force
 ```bash
 sudo pacman -S rust
 
-# Preferred: from clone (v0.1.30)
+# Preferred: from clone (v0.1.34)
 cargo install --path . --locked --force
-# Alternative when crates.io publishes 0.1.30:
-# cargo install atomwrite --locked --version "^0.1.30"
-# Note: crates.io may still list 0.1.28
+# Alternative when crates.io publishes 0.1.34:
+# cargo install atomwrite --locked --version "^0.1.34"
+# Note: crates.io may still list an older version
 ```
 
 
@@ -108,11 +119,11 @@ cargo install --path . --locked --force
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Preferred: from clone (v0.1.30)
+# Preferred: from clone (v0.1.34)
 cargo install --path . --locked --force
-# Alternative when crates.io publishes 0.1.30:
-# cargo install atomwrite --locked --version "^0.1.30"
-# Note: crates.io may still list 0.1.28
+# Alternative when crates.io publishes 0.1.34:
+# cargo install atomwrite --locked --version "^0.1.34"
+# Note: crates.io may still list an older version
 
 # Allow in Gatekeeper if prompted
 xattr -d com.apple.quarantine $(which atomwrite) 2>/dev/null || true
@@ -136,15 +147,15 @@ cd atomwrite
 cargo install --path . --locked --force
 ```
 
-### Quick Install (from crates.io — when 0.1.30 is published)
+### Quick Install (from crates.io — when 0.1.34 is published)
 
 ```powershell
 # Open PowerShell 7+ or Windows Terminal
 rustup default stable
 rustup target add x86_64-pc-windows-msvc
 
-# Prefer a version pin; crates.io may still list 0.1.28
-cargo install atomwrite --locked --version "^0.1.30"
+# Prefer a version pin; crates.io may still list an older version
+cargo install atomwrite --locked --version "^0.1.34"
 
 # Verify (expect NDJSON output)
 atomwrite --version
@@ -198,11 +209,11 @@ the file in the locking application and retry.
 ## Installing Specific Versions
 
 ```bash
-# Preferred: source tree v0.1.30 (until crates.io is published)
+# Preferred: source tree v0.1.34 (until crates.io is published)
 cargo install --path . --locked --force
 
-# Pin crates.io when 0.1.30 is published
-cargo install atomwrite --locked --version "^0.1.30"
+# Pin crates.io when 0.1.34 is published
+cargo install atomwrite --locked --version "^0.1.34"
 
 # Historical pin example (0.1.28)
 cargo install atomwrite --locked --version 0.1.28
@@ -214,7 +225,7 @@ cargo install --path . --locked --force
 The `--locked` flag ensures `Cargo.lock` is honored, guaranteeing a reproducible
 build that matches what the maintainers tested.
 
-Note: crates.io may still list an older version after the tree reaches 0.1.30. Use
+Note: crates.io may still list an older version after the tree reaches 0.1.34. Use
 `cargo install --path . --locked --force` for the source tree you have checked out.
 
 
@@ -242,13 +253,13 @@ The release binary is at `target/release/atomwrite` (or `atomwrite.exe` on
 Windows).
 
 
-## Slim vs Full Feature Builds (v0.1.30)
+## Slim vs Full Feature Builds (v0.1.34)
 
-v0.1.30 exposes Cargo features so you can trade AST size for a slim agent binary.
+v0.1.34 exposes Cargo features so you can trade AST size for a slim agent binary.
 
 | Profile | Command | Approx size | Notes |
 |---|---|---|---|
-| slim (`core` only) | `cargo install --path . --locked --force --no-default-features --features core` | ~7.7 MiB | CI `size-gate` enforces ≤15 MiB |
+| slim (`core` only) | `cargo install --path . --locked --force --no-default-features --features core` | ~7.7 MiB | local size-gate ≤15 MiB |
 | default (full AST subset) | `cargo install --path . --locked --force` | ~52 MB | `core` + `ast` + `lang-rust` + `lang-ts` + `lang-py` |
 | `full` | `cargo install --path . --locked --force --features full` | ~52 MB+ | default + `lang-full` + `watch` + `semantic` |
 
@@ -265,7 +276,7 @@ v0.1.30 exposes Cargo features so you can trade AST size for a slim agent binary
 ### Examples
 
 ```bash
-# Slim agent install (CI-friendly)
+# Slim agent install (agent-friendly)
 cargo install --path . --locked --force --no-default-features --features core
 
 # Default/full install with AST
@@ -279,13 +290,13 @@ atomwrite --version
 atomwrite --help
 ```
 
-crates.io may still publish an older version until the maintainer ships 0.1.30. Prefer
+crates.io may still publish an older version until the maintainer ships 0.1.34. Prefer
 `--path . --force` for this tree.
 
 
 ## Health Check (G119)
 
-After installing v0.1.15 or later, run the WAL health commands to confirm the new subcommands are wired correctly. These are read-only or scoped-repair operations that are safe to run in CI and post-install smoke tests.
+After installing v0.1.15 or later, run the WAL health commands to confirm the new subcommands are wired correctly. These are read-only or scoped-repair operations that are safe to run in local smoke tests after install.
 
 ### Inspect WAL State (read-only)
 
@@ -310,17 +321,7 @@ The G119 L3 layer adds `wal-heal` to remove terminal journals (Committed and Abo
 atomwrite --workspace . wal-heal --threshold-secs 0
 ```
 
-Use this command in post-install smoke tests, CI pre-build hooks, or after a crash recovery sweep.
-
-### CI Recommendation
-
-Add a `wal-stats` check to your CI pipeline before `cargo test`. A non-zero `reclaimable` count signals sidecar accumulation that should be inspected or healed.
-
-```bash
-# Pre-build hygiene in CI
-atomwrite --workspace . wal-stats | jaq -e '.reclaimable == 0' || { echo "WAL drift detected"; exit 1; }
-```
-
+Use this command in post-install smoke tests or after a crash recovery sweep.
 
 ## Cross-Compile Validation (for contributors)
 
@@ -366,10 +367,10 @@ This release introduces a new safety layer called **intention guards** and renam
 
 ### Statistics
 
-- 683 tests listed (v0.1.30 working tree)
+- 700+ tests listed (v0.1.34 working tree)
 - 11 GAP-2026 closed
 - 3 Windows cross-compile targets green
-- ADRs in `docs/decisions/` through 0051; 38 JSON schemas
+- ADRs in `docs/decisions/` through 0054; 38 JSON schemas
 
 ### Migration `--lang` to `--locale`
 
@@ -383,7 +384,6 @@ fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 # Or via ruplacer
 ruplacer --subvert --lang --locale
 ```
-\n
 
 ## v0.1.21 — What Is New
 

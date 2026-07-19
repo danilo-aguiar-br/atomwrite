@@ -10,7 +10,7 @@
   - **+** Project invariant (`validate_path` BEFORE any `exists()` or read) is now uniform across all mutating AND walking commands. G118 conformance extends to search and replace.
   - **+** The `OverrideBuilder` root no longer diverges from the walker root — the `!exclude` glob and `--include` patterns are evaluated against the same tree the walker descends.
   - **-** Two callers added; both must remember to call the helper. The conformance test for `write.rs` (single occurrence of `&args.target`) does not yet cover search/replace — a follow-up could add a textual guard.
-  - **-** Three new regression tests in `tests/cli_v019_g121_search_replace_cwd.rs` plus four unit tests in `path_resolution.rs` keep CI honest about the helper's behavior.
+  - **-** Three new regression tests in `tests/cli_v019_g121_search_replace_cwd.rs` plus four unit tests in `path_resolution.rs` keep local tests honest about the helper's behavior.
 - **Alternatives considered**:
   1. Fix `replace.rs` and `search.rs` independently with one-line edits to use `validate_path`'s return value. Rejected: duplicates the G118 fix in two places and risks re-introducing the divergence if a future caller forgets to use the return value (this is exactly the bug we just fixed).
   2. Make `WalkBuilder::new` itself workspace-aware via a thin wrapper struct. Rejected: the `ignore` crate is a third-party dependency and overloading its constructor at every call site would be more invasive than a single helper.

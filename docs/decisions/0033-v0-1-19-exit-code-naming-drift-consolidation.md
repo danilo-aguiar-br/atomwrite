@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-06-14
-- **Context**: Phase D testing on 2026-06-14 ran 7 concrete binary-level probes against the v0.1.18 release and surfaced 7 places where the published docs (SKILL.md EN+PT, `error-output.schema.json`, README, CHANGELOG) diverged from the actual binary behavior. Each drift is small individually, but together they create an environment where agents and CI gates cannot reliably interpret exit codes. The drifts are:
+- **Context**: Phase D testing on 2026-06-14 ran 7 concrete binary-level probes against the v0.1.18 release and surfaced 7 places where the published docs (SKILL.md EN+PT, `error-output.schema.json`, README, CHANGELOG) diverged from the actual binary behavior. Each drift is small individually, but together they create an environment where agents and local gates cannot reliably interpret exit codes. The drifts are:
   1. `STATE_DRIFT` (82) vs `CHECKSUM_VERIFY_FAILED` (81) — the docs said `--verify-checksum` returns `CHECKSUM_VERIFY_FAILED`; the binary returns `STATE_DRIFT`. The 81-code is reserved for the `read` path's BLAKE3 mismatch on the file content. The 82-code is the optimistic-locking failure that includes the `--expect-checksum` mismatch on writes/edits and the `--verify-checksum` mismatch on reads.
   2. `SYNTAX_ERROR` vs `SYNTAX_ERROR_DETECTED` — the docs in v0.1.12 named the code `SYNTAX_ERROR`; the binary in v0.1.18 emits `SYNTAX_ERROR_DETECTED`. The rename happened in the v0.1.12 G72 tree-sitter rollout but the docs were not updated.
   3. `ORPHAN_JOURNAL` (93) is consultive, NOT auto-detected — the docs implied that any stale sidecar is detected on every invocation. The actual gate is `ATOMWRITE_WAL=1` OR `--strict-atomic`; the default `write` does not write a sidecar and therefore cannot detect orphans.
@@ -20,7 +20,7 @@
   6. **Document the clap vs runtime split** — exit 2 is clap, exit 65 is runtime. The SKILL already separates them; the drift section reinforces the distinction.
   7. **Document the CWD fallback** — `--workspace` is documented as a flag with a CWD default, not a required argument. `WORKSPACE_JAIL` semantics are tied to the effective jail (CWD when `--workspace` is omitted).
 - **Consequences**:
-  - **+** All 7 drifts have a one-line note in the v0.1.19 drift section of both SKILL files. Agents and CI gates can grep the drift section when an exit code does not match the legacy table.
+  - **+** All 7 drifts have a one-line note in the v0.1.19 drift section of both SKILL files. Agents and local gates can grep the drift section when an exit code does not match the legacy table.
   - **+** CHANGELOG v0.1.19 entry documents the consolidation in a single bullet, indexed by Phase D testing date 2026-06-14.
   - **+** ADR-0033 captures the rationale so future maintainers do not re-discover the drifts.
   - **+** No binary change required; the docs now match the binary instead of the other way around.

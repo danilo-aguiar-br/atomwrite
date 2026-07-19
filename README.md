@@ -5,9 +5,12 @@
 
 > Atomic file operations for LLM agents -- one CLI, zero corruption
 
-[![Crates.io](https://img.shields.io/crates/v/atomwrite)](https://crates.io/crates/atomwrite)
 [![docs.rs](https://img.shields.io/docsrs/atomwrite)](https://docs.rs/atomwrite)
-[![License](https://img.shields.io/crates/l/atomwrite)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/atomwrite)](https://crates.io/crates/atomwrite)
+[![License](https://img.shields.io/crates/l/atomwrite)](https://crates.io/crates/atomwrite)
+[![MSRV](https://img.shields.io/badge/MSRV-1.88-orange)](https://github.com/danilo-aguiar-br/atomwrite/blob/main/Cargo.toml)
+[![Downloads](https://img.shields.io/crates/d/atomwrite)](https://crates.io/crates/atomwrite)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-blue)](https://www.rust-lang.org)
 
 
 
@@ -19,7 +22,18 @@
 - Every file gets a BLAKE3 checksum: detect drift, verify integrity, enable optimistic locking
 
 
-## What Is New In v0.1.30 (2026-07-13)
+## What Is New In v0.1.34 (2026-07-19)
+
+- **CRITICAL one-shot fix:** `replace --fuzzy` no longer hangs when `replacement` embeds `pattern` (agent “expand section” footgun — NEW may contain OLD)
+- Fuzzy multi-apply is **one-pass** on the original content (`apply_fuzzy_one_pass`); never re-scans text just inserted
+- Default max fuzzy applies = **1** when `--max-replacements` is omitted; hard ceiling 10_000
+- If `replacement` contains `pattern` (fixed-string), forces a **single** apply even with a huge `--max-replacements`
+- Global `--timeout-secs` default is **120** (was 0); pass `0` to disable; exit **124** on deadline (GNU `timeout` convention)
+- Fuzzy cascade polls cooperative cancel mid-file so the timeout works; resource caps: pattern 64 KiB, lev 8192 chars, windows 4096, growth max(4×, +16 MiB)
+- Docs fully aligned with the runtime contract; ADR-0054; pin agents to `^0.1.34`
+- Regression: `tests/cli_v0133_oneshot_fuzzy.rs` (hang < 2s). 41 subcommands unchanged; no telemetry
+
+## What Was New In v0.1.30 (2026-07-13)
 
 - **Fuzzy mandatory**: only `auto` and `aggressive`; `--fuzzy off` rejected (exit 65) with migration note
 - **`edit --replace-all`** with uniqueness: multi-match without it fails `MATCH_AMBIGUOUS`; success NDJSON includes **`match_count`**
@@ -51,7 +65,7 @@
 - **`watch`** debounce coalesce + optional `--checksum` + gitignore (feature `watch`)
 - **`semantic-search --index-dir`** offline Jaccard inverted index (feature `semantic`)
 - **`codemod`** campaign `codemod_summary.by_rule_id`
-- CI **size-gate**: slim core release ≤ 15 MiB; measured slim ~7.7 MiB; default/full AST ~52 MB — PRD 5–8 MB applies to **core** only
+- Local **size-gate** (manual): slim core release ≤ 15 MiB; measured slim ~7.7 MiB; default/full AST ~52 MB — PRD 5–8 MB applies to **core** only
 - Default fixed-string `replace` uses fuzzy=auto after exact multi-match misses (breaking vs 0.1.28 exact-only exit 1)
 
 ## What Was New In v0.1.28 (2026-07-06)
@@ -168,8 +182,8 @@
 - **New `--partial` flag (opt-in)**: applies the matching pairs and reports the rest with `matched: false`; zero applied pairs exits 1 (`NO_MATCHES`) without writing; the default stays all-or-nothing
 - **Anti-masking recipe**: `edit ... | jaq '.edits'` hides exit 65 as `{"edits": null}` — always use `jaq -e '.edits'` or check `${PIPESTATUS[0]}`
 - **G118 fixed — `write` resolves the target against the workspace before every pre-step**: with a CWD outside the workspace, `--append`/`--prepend` truncated the file, `--expect-checksum` was silently skipped, and `--line-ending auto` lost detection (CWE-367 double path identity); checksum drift now exits 82 (`STATE_DRIFT`) and out-of-jail targets fail early with exit 126 (ADR-0027)
-- **GAP 18 fixed — Windows CI is green again**: the write snapshot now redacts `dir_fsync` as `[platform_dir_fsync]` (Windows reports `best_effort`, Unix `sync_all`)
-- **MSRV job aligned**: CI now tests the documented MSRV 1.88 (the job was previously pinned to 1.85)
+- **GAP 18 fixed — Windows snapshot tests are platform-stable again**: the write snapshot now redacts `dir_fsync` as `[platform_dir_fsync]` (Windows reports `best_effort`, Unix `sync_all`)
+- **MSRV aligned**: local checks now use the documented MSRV 1.88 (the pin was previously to 1.85)
 - **461 tests passing** (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118). 43 test suites, 0 failures
 
 ## What Was New In v0.1.12 (2026-06-07)
@@ -186,7 +200,7 @@ See `docs/HOW_TO_USE.md` for the full v0.1.12 quickstart and `docs/MIGRATION.md`
 
 
 ## What Was New In v0.1.11 (2026-06-05)
-- **`signal_test::shutdown_message_on_stderr` no longer fails on Windows CI (windows-2025-vs2026)** — `libc::write(STDERR_FILENO, ...)` was moved from `src/main.rs` to `src/signal.rs` and gated by `#[cfg(unix)]`. The Windows `ctrlc` path was kept as-is. Also added an `EAGAIN` and `EINTR` retry loop to make the write robust against interrupted syscalls and tight pipe buffer limits in CI sandboxes
+- **`signal_test::shutdown_message_on_stderr` no longer fails on Windows when stderr is a pipe** — `libc::write(STDERR_FILENO, ...)` was moved from `src/main.rs` to `src/signal.rs` and gated by `#[cfg(unix)]`. The Windows `ctrlc` path was kept as-is. Also added an `EAGAIN` and `EINTR` retry loop to make the write robust against interrupted syscalls and tight pipe buffer limits under redirected stderr
 - **Race-free readiness detection in `signal_test`** — The test now sets `ATOMWRITE_READY_FILE` to a path under the tempdir, and atomwrite writes its PID there as soon as `install_handlers_early` returns. The test polls the file with a 10 s deadline before sending SIGINT, eliminating the microsecond window where SIGINT could race with `posix_spawn` and arrive before the kernel's `sigaction` is configured
 - **Idempotent signal-handler installation** — `install_handlers_early` and `install_handlers` now share a single `Arc<ShutdownSignal>` via `OnceCell`. Previously each function created its own instance, and only the first instance was flipped by the signal-hook chain, so the main thread's `is_shutdown()` check stayed `false` and the banner was never written
 
@@ -196,15 +210,12 @@ See `docs/HOW_TO_USE.md` for the full v0.1.12 quickstart and `docs/MIGRATION.md`
 
 
 ## What Was New In v0.1.8 (2026-06-05)
-- **`signal_test::shutdown_message_on_stderr` no longer fails on Linux CI** — `eprintln!` removed from SIGINT/SIGTERM signal handlers per POSIX.1-2017 `signal-safety(7)`. Message now emitted by main thread in `src/main.rs` after `atomwrite::run` returns
-- **`atomic::tests::create_backup_and_retention` no longer fails on Windows CI** — `platform::fsync_file_best_effort` logs a warning and continues on `ERROR_ACCESS_DENIED`
-- **CI matrix pinned to `windows-2025-vs2026`** — Replaced `windows-latest` to silence migration NOTICE
+- **`signal_test::shutdown_message_on_stderr` no longer fails when stderr is redirected on Linux** — `eprintln!` removed from SIGINT/SIGTERM signal handlers per POSIX.1-2017 `signal-safety(7)`. Message now emitted by main thread in `src/main.rs` after `atomwrite::run` returns
+- **`atomic::tests::create_backup_and_retention` no longer fails on Windows under restricted fsync** — `platform::fsync_file_best_effort` logs a warning and continues on `ERROR_ACCESS_DENIED`
 
 
 ## What Was New In v0.1.7 (2026-06-05)
-- **CI GitHub Actions fully green** — All 6 jobs (check matrix x3, deny, doc, msrv, security) pass after fixing 4 distinct failures
 - **MSRV bumped to 1.88** — Required to allow `time` 0.3.47 which resolves RUSTSEC-2026-0009
-- **GitHub Actions Node 24 ready** — `actions/checkout@v6`, `actions/cache@v5`, `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`
 - **Cross-compile Windows validated locally on macOS** — Both `x86_64-pc-windows-gnu` and `i686-pc-windows-gnu` pass `cargo check`, `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --no-run`
 
 
@@ -319,7 +330,7 @@ atomwrite --workspace . wal-heal --threshold-secs 3600
 ## Install (slim vs full)
 
 - Features: `core`, `ast`, `lang-*`, `watch`, `semantic`, `full` (default includes AST)
-- Slim (core only, ~7.7 MiB, CI size-gate ≤ 15 MiB):
+- Slim (core only, ~7.7 MiB, local size-gate ≤ 15 MiB):
   `cargo install --path . --locked --force --no-default-features --features core`
 - Full/default (AST languages, ~52 MB):
   `cargo install --path . --locked --force`
@@ -360,7 +371,8 @@ atomwrite completions fish > ~/.config/fish/completions/atomwrite.fish
 - Use `ATOMWRITE_WORKSPACE` to set the workspace root via env var
 - Use `--dry-run` before destructive operations
 - Use `--expect-checksum <HASH>` for optimistic locking
-- Use `--lang <LOCALE>` to override the display language (en, pt-BR)
+- Use `--locale <TAG>` (or `ATOMWRITE_LANG`) to override UI locale for suggestions (`en`, `pt-BR`); NDJSON codes stay English
+- Use `atomwrite locale` to diagnose the resolved locale; `locale --set` / `locale --clear` for XDG preference
 - Pipe stdin for `write` and `batch` commands
 
 
@@ -510,12 +522,18 @@ atomwrite completions bash
 
 ## Environment Variables
 - `NO_COLOR`: disable colored output when set to any value
-- `RUST_LOG`: control log verbosity (e.g., `RUST_LOG=debug`)
-- `ATOMWRITE_LANG`: override locale for translated messages (e.g., `en`, `pt-BR`)
+- `RUST_LOG`: control tracing verbosity (e.g., `RUST_LOG=debug` or `RUST_LOG=warn,atomwrite=info`)
+- `ATOMWRITE_LOG`: same syntax as `RUST_LOG`, **higher precedence** (project-specific override)
+- `ATOMWRITE_LOG_FORMAT`: `compact` (default on stderr) or `json` / `jsonl` (structured lines for aggregators)
+- `ATOMWRITE_LOG_DIR`: optional directory for a tee of diagnostics (`Rotation::NEVER`, files `atomwrite.log` / `atomwrite.jsonl`); stderr remains the agent contract
+- `ATOMWRITE_LOG_LOSSY`: default lossy non-blocking writer; set to `0`/`false`/`off` to block instead of dropping under backpressure
+- `ATOMWRITE_LANG`: override UI locale for suggestions / human stderr (`en`, `pt-BR`); same as `--locale`
+- `ATOMWRITE_HOME`: optional base directory for config/data/cache/state (overrides XDG/`ProjectDirs`; e.g. `{ATOMWRITE_HOME}/config/config.toml`)
 - `ATOMWRITE_WORKSPACE`: set the workspace root for path jail validation (alternative to `--workspace`)
 - `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS`: G119 L4 HeuristicsEngine knobs (v0.1.16+)
-- `RAYON_NUM_THREADS`: override number of parallel threads for search, replace, transform and scope
+- `RAYON_NUM_THREADS`: override rayon pool size when the global pool was not configured via `--threads` / `--max-concurrency`
 - `ATOMWRITE_BACKUP`: override the resolved backup decision for every mutating subcommand (exact value `0` disables, any other value enables) — takes precedence over CLI flags and `.atomwrite.toml` `[defaults]` (v0.1.28)
+- Specialized runtime flags (`CI`, `GITHUB_ACTIONS`, `WSL_DISTRO_NAME`, `FLATPAK_ID`, `SNAP`, `KUBERNETES_SERVICE_HOST`, Termux `PREFIX`, …) are detected for `atomwrite doctor` only — they do not change the NDJSON contract
 
 
 ## Exit Codes
@@ -541,6 +559,7 @@ atomwrite completions bash
 - `126`: workspace jail violated (path escapes workspace)
 - `127`: symlink blocked (symlink target outside workspace)
 - `128`: file immutable (cannot modify)
+- `124`: global `--timeout-secs` deadline exceeded (default 120; pass `0` to disable)
 - `130`: interrupted by SIGINT
 - `141`: broken pipe (SIGPIPE)
 - `143`: terminated by SIGTERM
@@ -571,7 +590,8 @@ atomwrite completions bash
 - Single static binary with zero runtime dependencies
 - Release builds use LTO, single codegen unit, and symbol stripping
 - Memory-mapped file reads via `memmap2` for large files
-- Parallel search via rayon and the ripgrep engine
+- Parallel multi-file work is the default modus operandi: `ignore::WalkParallel` / `collect_files_parallel` (search content + `--target files`, replace, count, transform, scope, recursive discovery) + `rayon` (hash, backup, multi-path + recursive delete/copy, case multi-path, semantic-search scoring, non-txn batch, prune multi-target, sparse read, diff dual-read)
+- Worker bound: `--threads` / `-j` / `--max-concurrency` (default = all logical CPUs, RAM-capped; see `src/concurrency.rs`)
 - Typical file operation latency: under 5 ms for small files
 
 

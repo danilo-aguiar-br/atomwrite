@@ -9,7 +9,7 @@
 - Projetado para agentes LLM que precisam de manipulação de arquivos segura e estruturada
 - Toda escrita é atômica: tempfile, fsync, rename, fsync do diretório
 - Toda resposta é NDJSON no stdout com checksums BLAKE3
-- Todos os logs vão para stderr via tracing
+- Todos os logs de diagnóstico vão para stderr via `tracing` (`init_telemetry` em `src/runtime.rs`): writer non-blocking, `EnvFilter` (`ATOMWRITE_LOG` > `RUST_LOG` > `-v`/`-q`), tee opcional em `ATOMWRITE_LOG_DIR` com `Rotation::NEVER`, JSON via `ATOMWRITE_LOG_FORMAT`. Plano de dados do agente permanece NDJSON em stdout.
 
 
 ## Mapa de Módulos
@@ -25,10 +25,12 @@
 - `src/checksum.rs` — cálculo de hash BLAKE3 para arquivos e slices de bytes (usa memmap2 para arquivos grandes)
 - `src/file_io.rs` — leitura inteligente de arquivos com memmap2 automático acima de 1 MiB
 - `src/platform.rs` — durabilidade e rename por plataforma: `Durability` full|fast|auto; Linux `renameat2` com fallback para rename; macOS `F_FULLFSYNC` em full; o write reporta no NDJSON `platform.durability` e `platform.rename_method`
-- `src/fuzzy.rs` — cascata compartilhada de 9 estratégias de match (exato, whitespace, indent, Jaro-Winkler, unicode_normalized, …) usada por edit, replace, batch, edit-loop; expõe `match_count` e `indent_adjusted` no EditOutput (residual v0.1.30)
+- `src/fuzzy.rs` — cascata compartilhada de 9 estratégias de match (exato, whitespace, indent, Jaro-Winkler, unicode_normalized, …) usada por edit, replace, batch, edit-loop; multi-apply **one-pass** (`apply_fuzzy_one_pass`) no conteúdo original (nunca reescaneia texto inserido); embeds de pattern dentro de replacement forçam apply único; default max applies = 1; teto 10_000; cancel cooperativo polled no meio da cascata; caps (pattern 64 KiB, lev 8192 chars, janelas 4096, crescimento max(4×, +16 MiB)); expõe `match_count` e `indent_adjusted` no EditOutput (residual v0.1.30; contrato one-shot v0.1.33/0.1.34)
 
 ### Segurança e Validação
-- `src/path_safety.rs` — jail do workspace: prevenção de path traversal, validação de symlinks, detecção de FIFO/device
+- `src/path_safety.rs` — jail do workspace: path traversal, symlinks, FIFO/device, nomes reservados Windows (COM0–9/LPT0–9), NFC, helper de path longo `\\?\`
+- `src/storage.rs` — config/data/cache/state via `directories::ProjectDirs` ou override `ATOMWRITE_HOME`
+- `src/env_detect.rs` — autodetecção WSL/container/K8s/CI/Termux/Flatpak/Snap/sudo para `doctor`
 - `src/signal.rs` — tratamento de SIGINT/SIGTERM via signal-hook com coordenação de shutdown gracioso
 - `src/error.rs` — enum de erro de domínio com códigos de saída, classificação de erro e flag retryable
 - `src/lock.rs` — locking de arquivo advisory via flock(2) no sidecar `.<target>.atomwrite.lock`
@@ -47,7 +49,8 @@
 ### Utilitários
 - `src/binary_detect.rs` — heurística de byte nulo para detecção de conteúdo binário
 - `src/line_endings.rs` — detecção e normalização de LF/CRLF/CR
-- `src/lang_utils.rs` — inicialização de locale e helpers i18n para rust-i18n
+- `src/lang_utils.rs` — mapas de extensão de linguagens de programação para comandos AST
+- `src/locale.rs` — locale de UI: `Idioma`, detecção sys-locale, parse unic-langid, negociação fluent-langneg, OnceLock, preferência XDG
 - `src/xattr_restore.rs` — salvar e restaurar xattrs (quarantine do macOS, selinux/capabilities do Linux)
 - `src/reflink.rs` — helper de reflink (copy-on-write) via `reflink-copy`
 
@@ -138,9 +141,15 @@ Adições v0.1.12:
 
 ### Tratamento de Signal via signal-hook
 - SIGINT e SIGTERM definem flag atômico para shutdown cooperativo
-- Segundo signal força exit imediato via process::exit
+- Segundo signal força exit imediato via `_exit` (Unix) / `process::exit` (Windows)
 - SIGPIPE resetado para disposição default para comportamento Unix padrão de pipe
-- Singleton compartilhado ShutdownSignal (v0.1.11) para que polling e main-thread is_shutdown() vejam a mesma flag
+- Singleton compartilhado `ShutdownSignal` (`OnceLock`) para que polling e main-thread `is_shutdown()` vejam a mesma flag
+- Cancel cooperativo também cobre `--timeout-secs` global (default **120**; passe `0` para desligar; exit **124** no prazo, convenção GNU `timeout`)
+- Cascata fuzzy faz poll da flag de cancel no meio do arquivo (estratégias + janelas deslizantes) para o timeout funcionar durante `replace --fuzzy` / edit / batch / edit-loop
+- `signal::cancelled_error` carimba o exit code vivo (130 / 143 / 124) — nunca hard-code SIGTERM
+- Walks longos (`search`, `replace`, `count`, `list`, `hash`, `delete`, `batch`, …) fazem poll da flag e param de aceitar trabalho novo
+- Escrita atômica cancela no meio do chunk sem renomear o tempfile (alvo permanece intacto)
+- CLI one-shot: sem Tokio `CancellationToken` / `TaskTracker` / systemd `sd_notify` (N/A)
 
 ### G72 verificação de sintaxe REAL via tree-sitter (v0.1.12)
 - Substitui a heurística de balanceamento de colchetes do v0.1.11 que tinha falsos positivos (indentação Python, template literals JS) e falsos negativos (`import` Python de módulo ausente)
@@ -190,7 +199,7 @@ Adições v0.1.12:
 - L1 rejeita 0 bytes do stdin por padrão em `read_stdin_content` com opt-out `--allow-empty-stdin`
 - L2 rejeita stdin vazio em `handle_append_prepend`
 - L3 emite warning `tracing::info!` quando `--append` + `--expect-checksum` + stdin vazio combinam ambiguamente; opt-out via `--no-checksum-when-empty`
-- L4 sempre emite `stdin_bytes_read: u64` em `WriteOutput` NDJSON para gate tardio de CI/agente
+- L4 sempre emite `stdin_bytes_read: u64` em `WriteOutput` NDJSON para gate tardio de agente
 
 ### G118 resolve-first universal + G117 casos de borda (v0.1.18, ADR-0030)
 - 10 comandos mutantes agora pré-validam paths raiz via `validate_path` antes de construir qualquer walker ou worker: `write`, `edit`, `copy`, `apply`, `move`, `rollback`, `set`, `del`, `case`, `replace`
@@ -199,13 +208,32 @@ Adições v0.1.12:
 - 1 novo teste de integração G120 L3: a combinação cross-flag `--append + --expect-checksum + --allow-empty-stdin` agora está coberta end-to-end
 
 ### Internacionalização
-- Traduções embedded em tempo de compilação via rust-i18n
-- Detecção de locale via sys-locale no startup
-- Locales suportados: en (fallback default), pt-BR
-- Override via flag `--lang` ou env var `ATOMWRITE_LANG`
-- Precedência: flag --lang, env ATOMWRITE_LANG, locale do SO, fallback en
-- stdout NDJSON NÃO é traduzido (contrato legível por máquina)
-- Apenas mensagens stderr e sugestões de erro são locale-aware
+- Traduções embutidas em compile-time via rust-i18n (`locales/en.toml`, `locales/pt-BR.toml`)
+- Detecção: `sys-locale` uma vez no startup (nunca leitura portátil crua de `LANG`)
+- Normalização BCP 47 com `unic-langid` (`_` → `-`, remove `.UTF-8`; `C`/`POSIX` não viram inglês)
+- Negociação com `fluent-langneg` (`NegotiationStrategy::Lookup`) contra locales MVP
+- Enum tipado `Idioma` (`En` | `PtBr`, `#[non_exhaustive]`) + `OnceLock<LocaleState>` imutável
+- Precedência: `--locale` / `ATOMWRITE_LANG` → preferência em `storage::config_dir()` (`ATOMWRITE_HOME` ou XDG → `…/locale`) → SO → `en`
+- Override: flag global `--locale` (value_parser clap) ou env `ATOMWRITE_LANG` (campo Rust `lang` estável; flag renomeada de `--lang` no ADR-0037)
+- Diagnóstico: `atomwrite locale` (NDJSON); `locale --set` / `locale --clear` para preferência XDG
+- **Códigos** NDJSON e mensagens **Display** de erro permanecem em inglês (contrato agent)
+- **Sugestões** de erro e avisos humanos em stderr seguem o locale resolvido via `t!`
+- Features opcionais `i18n-cjk` / `i18n-rtl` / `i18n-europe` / `i18n-full` são placeholders — binário default só embute `en` + `pt-BR` completos
+- `build.rs` com `cargo:rerun-if-changed` para `locales/` e arquivos `en` / `pt-BR`
+- Paridade de chaves: `tests/locale_parity.rs`
+
+### Política de macros (sem `macro_rules!` / crate proc-macro local)
+- **Decisão:** atomwrite tem **zero** macros declarativas ou procedurais próprias no repositório
+- Esgotar generics, traits, funções e `const` asserts antes de introduzir macro (rules_rust_macros)
+- Macros do ecossistema só onde sintaxe não pode ser função:
+  - **Derive:** `clap`, `serde`, `thiserror`, `schemars` para CLI / NDJSON / erros
+  - **Atributo:** `#[tracing::instrument]` nas entradas de comando
+  - **Function-like (externas):** `rust_i18n::i18n!`, `schemars::schema_for!`, `tracing::{info,debug,…}!`
+  - **Built-ins std:** `env!` / `option_env!` (versão), `matches!`, `vec!`, `format!`, `write!`/`writeln!`, `const _: () = assert!(…)`
+- Preferir structs **tipadas** `Serialize` + `JsonSchema` em vez de `serde_json::json!` ad-hoc para contratos NDJSON
+- **Zero** `serde_json::json!` em caminhos de produção: todos os eventos stdout/índice usam structs tipadas; re-tag de filhos usa `output::ndjson_insert_field` (sem macro livre)
+- Sem `todo!` / `unimplemented!` / `dbg!` em caminhos de produção; `panic!` só em testes
+- Sem crate local `proc-macro = true` (custo de compile `syn`/`quote` sem DSL própria)
 
 
 ## Estratégia de Erro
@@ -260,6 +288,7 @@ Adições v0.1.12:
 - 0048 — BackupOpts unificado: struct única flattened via `#[command(flatten)]` em 15 subcomandos mutantes, resolvida por um único `resolve_backup()` com precedência `ATOMWRITE_BACKUP` env > flags CLI > `.atomwrite.toml` `[defaults]` > default embutido (v0.1.28)
 - 0049 — config viva encanada: `load_config` chamado uma única vez em `lib.rs::run()`, `DefaultsSection` propagado a cada handler mutante (v0.1.28)
 - 0050 — guard de stdin-tty: `main.rs` calcula `stdin.is_terminal()` (std `IsTerminal`, Rust >= 1.70) e propaga `stdin_is_tty` até `cmd_edit`; modos consumidores de stdin falham rápido com exit 65 em vez de bloquear indefinidamente (v0.1.28)
+- 0054 — contrato one-shot fuzzy: multi-apply one-pass, embeds forçam apply único, default max applies 1, `--timeout-secs` default 120 / exit 124, cancel polled no meio do fuzzy, caps de recurso (runtime v0.1.33; docs completas v0.1.34)
 
 
 ## Arquitetura de Testes

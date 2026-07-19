@@ -130,7 +130,7 @@ fn edit_after_match_inserts_after_marker() {
     assert!(content.contains("use std::fs;\nuse std::path::Path;\n"));
 }
 
-// --- GAP 06: --old/--new múltiplos pares ---
+// --- GAP 06: --old/--new multiple pairs ---
 
 #[test]
 fn edit_multiple_pairs_without_multi() {
@@ -229,7 +229,7 @@ fn edit_multi_ndjson_stdin() {
     assert!(content.contains("line_two"));
 }
 
-// --- GAP 09: fuzzy com pontuação ---
+// --- GAP 09: fuzzy with scoring ---
 
 #[test]
 fn edit_fuzzy_punctuation_spaces() {

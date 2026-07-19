@@ -199,7 +199,7 @@ fn help_flag_still_works() {
     );
 }
 
-// --- GAP 10: caminhos relativos com workspace ---
+// --- GAP 10: relative paths with workspace ---
 
 #[test]
 fn read_relative_path_with_workspace() {
@@ -225,7 +225,7 @@ fn read_relative_path_with_workspace() {
     assert_eq!(events[0]["content"], "relative content\n");
 }
 
-// --- GAP 08: --json-schema sem argumentos obrigatórios ---
+// --- GAP 08: --json-schema without required arguments ---
 
 #[test]
 fn json_schema_write_without_args() {

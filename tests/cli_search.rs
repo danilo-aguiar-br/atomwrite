@@ -147,7 +147,7 @@ fn search_case_insensitive() {
     assert!(!matches.is_empty());
 }
 
-// --- GAP 05: --files deduplicação ---
+// --- GAP 05: --files deduplication ---
 
 #[test]
 fn search_files_dedup_multi_match() {

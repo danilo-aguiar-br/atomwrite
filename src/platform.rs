@@ -116,7 +116,7 @@ pub fn fsync_file_with_durability(file: &File, durability: Durability) -> Result
 /// `FILE_SHARE_READ` but without `FILE_SHARE_WRITE`, which causes
 /// `FlushFileBuffers` to return `ERROR_ACCESS_DENIED` (os error 5). The
 /// tempfile crate creates backup files in `%TEMP%` during tests, which is
-/// where this race was observed in CI. Logging a warning and continuing keeps
+/// where this race was observed in automated local runs. Logging a warning and continuing keeps
 /// the user-visible operation successful.
 pub fn fsync_file_best_effort(file: &File) {
     if let Err(e) = fsync_file(file) {
@@ -235,6 +235,12 @@ pub fn platform_dir_fsync_name() -> &'static str {
 /// `renameat` for overwrite semantics (man7). Falls back to `std::fs::rename`
 /// when the kernel returns `ENOSYS`.
 pub fn atomic_rename(from: &Path, to: &Path) -> Result<&'static str> {
+    // Windows long-path prefix when needed; identity on Unix.
+    let from = crate::path_safety::prepare_fs_path(from);
+    let to = crate::path_safety::prepare_fs_path(to);
+    let from = from.as_path();
+    let to = to.as_path();
+
     #[cfg(target_os = "linux")]
     {
         use std::ffi::CString;
@@ -244,7 +250,10 @@ pub fn atomic_rename(from: &Path, to: &Path) -> Result<&'static str> {
             .with_context(|| format!("invalid rename source path: {}", from.display()))?;
         let to_c = CString::new(to.as_os_str().as_bytes())
             .with_context(|| format!("invalid rename dest path: {}", to.display()))?;
-        // flags=0: same overwrite semantics as renameat/rename (not RENAME_NOREPLACE).
+        // SAFETY: `from_c`/`to_c` are NUL-terminated CStrings derived from
+        // valid OsStr paths; AT_FDCWD is a valid dirfd; flags=0 matches
+        // renameat/rename overwrite semantics (not RENAME_NOREPLACE).
+        // See renameat2(2).
         let ret = unsafe {
             libc::renameat2(
                 libc::AT_FDCWD,

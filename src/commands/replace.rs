@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Parallel text replacement across files with atomic writes.
-//! Workload: I/O-bound (file reading + regex matching + atomic write).
+//! Workload: I/O-bound (file reading + regex matching + atomic write) with
+//! optional per-file CPU fuzzy cascade (single-buffer).
+//! Parallelism: `ignore::WalkParallel` + bounded channel; worker bound via
+//! `concurrency::apply_walk_threads` (`--threads` / `--max-concurrency`).
+//! Progress precount (when enabled) also uses WalkParallel; skipped when
+//! `--no-progress` / quiet / `progress_every=0` to avoid a double-walk.
+//!
+//! v0.1.33 one-shot: fuzzy multi uses [`crate::fuzzy::apply_fuzzy_one_pass`]
+//! (never re-scans inserted replacement; default 1 apply; embeds force 1).
 
 use std::borrow::Cow;
 use std::io::Write;
@@ -55,22 +63,24 @@ pub fn cmd_replace(
     let walker = build_walker(args, &canonical_paths, global)?;
 
     // v0.1.30: pre-count eligible files so progress has total/rate/eta.
-    let mut precount = 0u64;
-    for entry in walker.build() {
-        if shutdown.is_shutdown() {
-            break;
-        }
-        if let Ok(e) = entry {
-            if e.file_type().is_some_and(|ft| ft.is_file()) {
-                precount += 1;
-            }
-        }
-    }
+    // Skip entirely when progress is off (avoids a full double-walk).
+    // When needed, use WalkParallel so --threads applies (build() ignores threads).
+    let progress_wanted =
+        args.progress_every > 0 && !global.no_progress && global.quiet == 0;
+    let precount = if progress_wanted {
+        let paths = crate::concurrency::collect_files_parallel(&walker);
+        paths.len() as u64
+    } else {
+        0
+    };
     let files_total = Arc::new(AtomicU64::new(precount));
     let walker = build_walker(args, &canonical_paths, global)?;
 
-    let (tx, rx) = crossbeam_channel::bounded::<ReplaceEvent>(1024);
+    let (tx, rx) =
+        crossbeam_channel::bounded::<ReplaceEvent>(crate::concurrency::event_channel_cap());
 
+    // Per-run counters. Ordering::Relaxed: independent tallies; final loads
+    // run after the parallel join (no data-publication barrier needed).
     let files_visited = Arc::new(AtomicU64::new(0));
     let files_modified = Arc::new(AtomicU64::new(0));
     let files_skipped = Arc::new(AtomicU64::new(0));
@@ -102,6 +112,7 @@ pub fn cmd_replace(
     let word_flag = args.word;
     let progress_every = args.progress_every;
     let quiet = global.quiet;
+    let no_progress = global.no_progress;
     let pattern_owned: Arc<str> = args.pattern.clone().into();
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
@@ -133,7 +144,11 @@ pub fn cmd_replace(
                 }
 
                 let visited = fv.fetch_add(1, Ordering::Relaxed) + 1;
-                if progress_every > 0 && visited.is_multiple_of(progress_every) && quiet == 0 {
+                if progress_every > 0
+                    && visited.is_multiple_of(progress_every)
+                    && quiet == 0
+                    && !no_progress
+                {
                     let _ = tx.send(ReplaceEvent::Progress {
                         done: visited,
                         total: ft.load(Ordering::Relaxed),
@@ -183,44 +198,41 @@ pub fn cmd_replace(
                     if exact_count > 0 {
                         (exact, exact_count)
                     } else {
+                        // v0.1.33 one-shot: never re-scan inserted replacement text.
+                        // Default max applies = 1; pat⊂rep forces 1; hard ceiling applies.
                         if word_flag {
                             word_ignored = true;
                         }
-                        let mut cur = content.clone();
-                        let mut applied = 0u64;
-                        let limit = max_replacements.unwrap_or(usize::MAX) as u64;
-                        let mut last_info: Option<crate::fuzzy::FuzzyInfo> = None;
-                        while applied < limit {
-                            match fuzzy::match_pair(
-                                &cur,
-                                pattern_owned.as_ref(),
-                                replacement.as_ref(),
-                                fuzzy_mode,
-                                fuzzy_threshold,
-                            ) {
-                                Ok((edited, info)) => {
-                                    if edited == cur {
-                                        break;
-                                    }
-                                    cur = edited;
-                                    applied += 1;
-                                    last_info = Some(info);
-                                }
-                                Err(_) => break,
-                            }
+                        if shutdown_flag.load(Ordering::Acquire) {
+                            return ignore::WalkState::Quit;
                         }
-                        if applied > 0 {
-                            if let Some(info) = last_info {
-                                fuzzy_meta = Some((
-                                    info.fuzzy,
-                                    info.strategy,
-                                    info.similarity,
-                                    info.strategies_tried,
-                                ));
+                        match fuzzy::apply_fuzzy_one_pass(
+                            &content,
+                            pattern_owned.as_ref(),
+                            replacement.as_ref(),
+                            fuzzy_mode,
+                            fuzzy_threshold,
+                            max_replacements,
+                        ) {
+                            Ok(result) => {
+                                if result.applied > 0 {
+                                    if let Some(info) = result.info {
+                                        fuzzy_meta = Some((
+                                            info.fuzzy,
+                                            info.strategy,
+                                            info.similarity,
+                                            info.strategies_tried,
+                                        ));
+                                    }
+                                    (std::borrow::Cow::Owned(result.edited), result.applied)
+                                } else {
+                                    (std::borrow::Cow::Borrowed(content.as_str()), 0)
+                                }
                             }
-                            (std::borrow::Cow::Owned(cur), applied)
-                        } else {
-                            (std::borrow::Cow::Borrowed(content.as_str()), 0)
+                            Err(e) if matches!(e, crate::error::AtomwriteError::Cancelled { .. }) => {
+                                return ignore::WalkState::Quit;
+                            }
+                            Err(_) => (std::borrow::Cow::Borrowed(content.as_str()), 0),
                         }
                     }
                 };
@@ -611,15 +623,7 @@ fn build_walker(
         .git_ignore(!global.no_gitignore)
         .follow_links(global.follow_symlinks);
 
-    if let Some(threads) = global.threads {
-        builder.threads(if threads == 0 {
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4)
-        } else {
-            threads
-        });
-    }
+    crate::concurrency::apply_walk_threads(&mut builder, global.threads);
 
     if !args.include.is_empty() || !args.exclude.is_empty() {
         let mut overrides = ignore::overrides::OverrideBuilder::new(&canonical_paths[0]);

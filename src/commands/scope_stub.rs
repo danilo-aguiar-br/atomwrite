@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::Args;
+use clap::{Args, ValueHint};
 
 use crate::cli::GlobalArgs;
 use crate::cli_args::BackupOpts;
@@ -18,7 +18,7 @@ use crate::signal::ShutdownSignal;
 #[derive(Args, Debug)]
 pub struct ScopeArgs {
     /// Paths to search within.
-    #[arg(default_value = ".")]
+    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
     /// Source language for AST parsing.
     #[arg(short = 'l', long = "language", alias = "lang", required = true)]
@@ -30,7 +30,7 @@ pub struct ScopeArgs {
     #[arg(long)]
     pub pattern: Option<String>,
     /// Delete matched content.
-    #[arg(long)]
+    #[arg(long, action = clap::ArgAction::SetTrue)]
     pub delete: bool,
     /// Action to apply.
     #[arg(long, value_enum)]
@@ -45,7 +45,7 @@ pub struct ScopeArgs {
     #[arg(long, action = clap::ArgAction::Append)]
     pub exclude: Vec<String>,
     /// Dry-run.
-    #[arg(long)]
+    #[arg(long, action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
     /// Backup flags.
     #[command(flatten)]

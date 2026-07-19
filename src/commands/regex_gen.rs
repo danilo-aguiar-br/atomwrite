@@ -2,6 +2,7 @@
 
 //! Regex pattern generation from example strings via grex.
 //! Workload: CPU-bound (regex synthesis from examples).
+//! Parallelism: none — grex synthesizes one pattern from the full example set.
 
 use std::io::{BufRead, Read, Write};
 use std::time::Instant;
@@ -40,10 +41,13 @@ pub fn cmd_regex(
         if KNOWN_FLAGS.contains(&ex.as_str())
             || matches!(ex.as_str(), "-d" | "-w" | "-s" | "-r" | "-i")
         {
-            eprintln!(
-                "\x1b[33mwarning:\x1b[0m example {:?} looks like a flag; \
-                 place flags BEFORE examples: `atomwrite regex {} \"ex1\" \"ex2\"`",
-                ex, ex
+            crate::runtime::warn_stderr(
+                false,
+                format!(
+                    "example {:?} looks like a flag; place flags BEFORE examples: \
+                     `atomwrite regex {} \"ex1\" \"ex2\"`",
+                    ex, ex
+                ),
             );
         }
     }

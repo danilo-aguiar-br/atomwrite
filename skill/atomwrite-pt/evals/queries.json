@@ -1,0 +1,25 @@
+{
+  "skill_name": "atomwrite",
+  "queries": [
+    {"query": "preciso editar um arquivo rust de forma atomica com checksum", "should_trigger": true},
+    {"query": "substitua texto em varios arquivos com fuzzy replace no monorepo", "should_trigger": true},
+    {"query": "faca write atomico via stdin no workspace atual", "should_trigger": true},
+    {"query": "busque TODO e FIXME em src com atomwrite search", "should_trigger": true},
+    {"query": "aplique transform AST para trocar unwrap por ?", "should_trigger": true},
+    {"query": "rode sparse list no monorepo com orcamento de tokens", "should_trigger": true},
+    {"query": "merge three-way multiagente com semantic-merge", "should_trigger": true},
+    {"query": "gere manifesto agent-surface sem MCP", "should_trigger": true},
+    {"query": "diagnostique o host com doctor --strict", "should_trigger": true},
+    {"query": "liste a arvore de comandos com commands --include-globals", "should_trigger": true},
+    {"query": "qual a capital do brasil", "should_trigger": false},
+    {"query": "explique teoria da relatividade", "should_trigger": false},
+    {"query": "traduza este paragrafo para frances", "should_trigger": false},
+    {"query": "calcule a raiz quadrada de 144 sem arquivo", "should_trigger": false},
+    {"query": "me conte uma piada", "should_trigger": false},
+    {"query": "qual o clima em lisboa amanha", "should_trigger": false},
+    {"query": "recomende um filme de ficcao", "should_trigger": false},
+    {"query": "como fazer bolo de chocolate", "should_trigger": false},
+    {"query": "resumo da historia medieval europeia", "should_trigger": false},
+    {"query": "escreva um poema sobre o mar", "should_trigger": false}
+  ]
+}

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "WalStatsOutput",
-  "description": "NDJSON output of the `wal-stats` subcommand (G119 L5). Read-only snapshot of the workspace's WAL sidecar state used by CI gates and agent health checks.",
+  "description": "NDJSON output of the `wal-stats` subcommand (G119 L5). Read-only snapshot of the workspace's WAL sidecar state used by local gates and agent health checks.",
   "type": "object",
   "required": [
     "total_journals",

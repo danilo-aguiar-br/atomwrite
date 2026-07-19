@@ -2,6 +2,8 @@
 
 //! Grammatical scoping: AST-based code selection and transformation.
 //! Workload: mixed I/O-bound + CPU-bound (file reading + AST traversal via ast-grep + atomic write).
+//! Parallelism: `ignore::WalkParallel` + bounded channel; bound via
+//! `concurrency::apply_walk_threads` (`--threads` / `--max-concurrency`).
 
 use std::io::Write;
 use std::sync::Arc;
@@ -13,6 +15,8 @@ use ast_grep_core::AstGrep;
 use ast_grep_core::matcher::Pattern;
 use ast_grep_language::SupportLang;
 use unicode_normalization::UnicodeNormalization;
+
+use clap::ValueHint;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
@@ -28,7 +32,7 @@ use crate::signal::ShutdownSignal;
 #[derive(clap::Args, Debug)]
 pub struct ScopeArgs {
     /// Paths to search within.
-    #[arg(default_value = ".")]
+    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub paths: Vec<std::path::PathBuf>,
 
     /// Source language for AST parsing.
@@ -58,7 +62,7 @@ pub struct ScopeArgs {
     pub pattern: Option<String>,
 
     /// Delete matched content.
-    #[arg(long, help = "Delete all matched content")]
+    #[arg(long, help = "Delete all matched content", action = clap::ArgAction::SetTrue)]
     pub delete: bool,
 
     /// Action to apply on matched content.
@@ -82,7 +86,7 @@ pub struct ScopeArgs {
     pub exclude: Vec<String>,
 
     /// Preview without writing.
-    #[arg(long, help = "Show what would be done without writing")]
+    #[arg(long, help = "Show what would be done without writing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 
     /// Shared backup flags.
@@ -149,6 +153,7 @@ pub fn cmd_scope(
         .hidden(!global.hidden)
         .git_ignore(!global.no_gitignore)
         .follow_links(global.follow_symlinks);
+    crate::concurrency::apply_walk_threads(&mut walker, global.threads);
 
     let extensions = crate::lang_utils::lang_extensions(&args.language);
     if !extensions.is_empty() {
@@ -173,8 +178,11 @@ pub fn cmd_scope(
         walker.overrides(overrides.build()?);
     }
 
-    let (tx, rx) = crossbeam_channel::bounded::<ScopeEvent>(1024);
+    let (tx, rx) =
+        crossbeam_channel::bounded::<ScopeEvent>(crate::concurrency::event_channel_cap());
 
+    // Per-run counters. Ordering::Relaxed: independent tallies; final loads
+    // run after the parallel join (no data-publication barrier needed).
     let files_visited = Arc::new(AtomicU64::new(0));
     let files_modified = Arc::new(AtomicU64::new(0));
     let files_skipped = Arc::new(AtomicU64::new(0));

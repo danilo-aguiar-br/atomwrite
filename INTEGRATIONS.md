@@ -6,12 +6,14 @@
 > atomwrite works with every LLM agent that can execute shell commands
 
 
-## Compatible Agents (v0.1.30)
+## Compatible Agents (v0.1.34)
 - atomwrite requires only `bash` access to function
 - Any agent that can run a shell command can use atomwrite
 - NDJSON output is parseable by every major LLM without custom adapters
 - No plugins, extensions, or SDKs required
-- **41 subcommands** as of v0.1.30 (surface from v0.1.29 plus residual contract fixes)
+- **41 subcommands** as of v0.1.34 (surface from v0.1.29 plus residual contract fixes through v0.1.30; one-shot fuzzy hang fixed in v0.1.33, docs-complete in v0.1.34)
+- Global `--timeout-secs` defaults to **120** (pass `0` to disable; exit **124** on deadline)
+- Fuzzy multi-apply is **one-pass** on original content; never re-scans inserted text; default max applies = 1; embeds of pattern inside replacement force a single apply (hang fixed for expand-section edits)
 - Use `agent-surface` for the tool manifesto — MCP is not provided
 - Prefer `recipe list|run` for multi-step search-replace-verify pipelines (excludes `*.bak.*` including hash)
 - Read `best_candidate` on match failures (exit 65) instead of re-reading whole files
@@ -19,6 +21,7 @@
 - Fuzzy is mandatory (`auto`/`aggressive`); `--fuzzy off` is rejected (exit 65)
 - Backup method is `reflink_or_copy` — never hardlink of the live file
 - Slim install: `cargo install --path . --locked --force --no-default-features --features core`
+- Pin agents to `^0.1.34`
 - As of v0.1.12, atomwrite runs on Windows 10/11, Linux, and macOS with identical NDJSON contract
 - The v0.1.12 release added 5 new error variants and the v0.1.20 release lands 542 tests across 47 test suites
 - The v0.1.15 release fixed G117 (multi-pair `edit` fuzzy parity, `pair_results`, `failed_pair_index`, opt-in `--partial`) and G118 (`write` resolves the target against the workspace — append/checksum are safe with a divergent CWD). v0.1.16 added G119 L1 WalPolicy and L4 HeuristicsEngine; v0.1.17 wired G119 L3 startup auto-heal; v0.1.18 added G118 universal resolve-first propagation, G120 L3 cross-flag tests, and G117 edge cases. 542 tests across 47 suites (v0.1.20)

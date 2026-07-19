@@ -6,6 +6,9 @@
 //! Currently supports TOML (via the `toml_edit` crate, which preserves
 //! trivia). JSON is a stub that errors with a clear message — full JSON
 //! edit-with-format-preservation is a future enhancement.
+//!
+//! Workload: I/O-bound (single-file read + edit + atomic write).
+//! Parallelism: none — one file; preserve-format edit is sequential.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -40,6 +43,7 @@ struct SetResult {
 /// `toml_edit`, JSON via `serde_json`), sets the value at `key_path`,
 /// and writes the result back atomically. Comments and key order are
 /// preserved in TOML; JSON is rewritten canonically.
+#[tracing::instrument(skip_all, fields(command = "set"))]
 pub fn cmd_set(
     args: &SetArgs,
     global: &GlobalArgs,
@@ -55,8 +59,8 @@ pub fn cmd_set(
         return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
 
-    let original = std::fs::read_to_string(&validated)
-        .with_context(|| format!("cannot read {}", validated.display()))?;
+    let original =
+        crate::file_io::read_file_string(&validated, global.effective_max_filesize())?;
 
     let (new_content, old_value, format) = match validated.extension().and_then(|s| s.to_str()) {
         Some("toml") => toml_set(&original, &args.key_path, &args.value)?,
@@ -169,12 +173,11 @@ fn set_toml_path(doc: &mut toml_edit::DocumentMut, key_path: &str, value: &str) 
                 .into());
             }
         };
-        if !table.contains_key(seg) {
-            table.insert(seg, toml_edit::Item::Table(toml_edit::Table::new()));
-        }
-        current = match table.get_mut(seg) {
-            Some(item) => item,
-            None => return Ok(()),
+        // Entry API: one probe — insert intermediate table or reborrow existing.
+        use toml_edit::Entry;
+        current = match table.entry(seg) {
+            Entry::Occupied(o) => o.into_mut(),
+            Entry::Vacant(v) => v.insert(toml_edit::Item::Table(toml_edit::Table::new())),
         };
     }
     Ok(())
@@ -204,28 +207,34 @@ fn json_set(
 ) -> Result<(String, Option<String>, &'static str)> {
     let mut value_json: serde_json::Value =
         serde_json::from_str(original).with_context(|| "invalid JSON in source")?;
-    let old_value = value_json
-        .pointer(&json_pointer(key_path))
-        .map(|v| match v {
-            serde_json::Value::String(s) => s.clone(),
-            other => other.to_string(),
-        });
-    // Convert key_path "a.b.c" to JSON pointer "/a/b/c"
-    apply_json_pointer(&mut value_json, &json_pointer(key_path), value);
+    if !crate::output::check_json_depth(&value_json, crate::constants::MAX_JSON_DEPTH) {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: format!(
+                "JSON nesting depth exceeds maximum of {}",
+                crate::constants::MAX_JSON_DEPTH
+            ),
+        }
+        .into());
+    }
+    let pointer = crate::output::dotted_to_json_pointer(key_path);
+    let old_value = value_json.pointer(&pointer).map(|v| match v {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    });
+    apply_json_pointer(&mut value_json, &pointer, value);
+    // Pretty-print is intentional: human-edited config files, not NDJSON stdout.
     let new_content = serde_json::to_string_pretty(&value_json)?;
     Ok((new_content, old_value, "json"))
 }
 
-fn json_pointer(path: &str) -> String {
-    format!("/{}", path.replace('.', "/"))
-}
-
 fn apply_json_pointer(root: &mut serde_json::Value, pointer: &str, value: &str) {
     use serde_json::Value;
-    let segments: Vec<&str> = pointer
+    // Split RFC 6901 pointer and unescape tokens (`~1` → `/`, `~0` → `~`).
+    let segments: Vec<String> = pointer
         .trim_start_matches('/')
         .split('/')
         .filter(|s| !s.is_empty())
+        .map(unescape_json_pointer_token)
         .collect();
     if segments.is_empty() {
         *root = parse_json_value(value);
@@ -236,7 +245,7 @@ fn apply_json_pointer(root: &mut serde_json::Value, pointer: &str, value: &str) 
         if i == segments.len() - 1 {
             match current {
                 Value::Object(map) => {
-                    map.insert((*seg).to_owned(), parse_json_value(value));
+                    map.insert(seg.clone(), parse_json_value(value));
                 }
                 Value::Array(arr) => {
                     if let Ok(idx) = seg.parse::<usize>() {
@@ -255,16 +264,12 @@ fn apply_json_pointer(root: &mut serde_json::Value, pointer: &str, value: &str) 
             return;
         }
         // Navigate into the next segment, creating containers as needed.
-        let _is_last_next = i + 1 == segments.len() - 1;
+        // Entry API: single map probe (no contains_key + get_mut double lookup).
         match current {
             Value::Object(map) => {
-                if !map.contains_key(*seg) {
-                    map.insert((*seg).to_owned(), Value::Object(serde_json::Map::new()));
-                }
-                current = match map.get_mut(*seg) {
-                    Some(v) => v,
-                    None => return,
-                };
+                current = map
+                    .entry(seg.clone())
+                    .or_insert_with(|| Value::Object(serde_json::Map::new()));
             }
             Value::Array(arr) => {
                 if let Ok(idx) = seg.parse::<usize>() {
@@ -279,6 +284,11 @@ fn apply_json_pointer(root: &mut serde_json::Value, pointer: &str, value: &str) 
             _ => return, // path traversal failed
         }
     }
+}
+
+/// RFC 6901 token unescape: `~1` → `/`, then `~0` → `~` (order matters).
+fn unescape_json_pointer_token(seg: &str) -> String {
+    seg.replace("~1", "/").replace("~0", "~")
 }
 
 fn parse_json_value(s: &str) -> serde_json::Value {

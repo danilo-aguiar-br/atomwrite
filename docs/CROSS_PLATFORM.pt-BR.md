@@ -54,12 +54,13 @@ Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
 
 ### Cobertura de Testes
 
-- 700+ testes listados (working tree v0.1.30; suíte de contrato `cli_v0130_agent_contract`)
+- 700+ testes listados (working tree v0.1.34; suítes `cli_v0133_oneshot_fuzzy`, `cli_v0130_agent_contract`)
 - Gate de cross-compile: `cargo test --test cross_compile_check -- --ignored` valida targets Windows GNU/MSVC
 - 5 testes de sinal em `tests/signal_test.rs` cobrem SIGINT/SIGTERM/SIGPIPE/batch/shutdown
-- Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
+- Veja [docs/decisions/README.md](decisions/README.md) para decisões arquiteturais
 - Para durabilidade e rename na v0.1.29, veja [v0.1.29 — Durabilidade e rename](#v0129--durabilidade-e-rename)
 - Para honestidade de backup e residual de agente na v0.1.30, veja [v0.1.30 — Backup e residual de agente](#v0130--backup-e-residual-de-agente)
+- Para fuzzy one-shot + timeout na v0.1.34, veja [v0.1.34 — Fuzzy one-shot e timeout](#v0134--fuzzy-one-shot-e-timeout)
 
 ## A Dor Que Você Já Conhece
 - Você escreve um arquivo no Linux e ele chega ao disco de forma confiável
@@ -88,7 +89,7 @@ Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
 ### Windows (Suporte Completo a partir da v0.1.4)
 - Fsync de arquivo: `FlushFileBuffers` via `sync_all()`
 - Fsync de diretório: best-effort (Windows não tem `fsync` para diretórios)
-- **Correção v0.1.15 (GAP 18)**: o teste de snapshot do write redige `platform.dir_fsync` como `[platform_dir_fsync]` porque o Windows reporta `best_effort` enquanto o Unix reporta `sync_all`; o job de CI windows-2025 voltou ao verde.
+- **Correção v0.1.15 (GAP 18)**: o teste de snapshot do write redige `platform.dir_fsync` como `[platform_dir_fsync]` porque o Windows reporta `best_effort` enquanto o Unix reporta `sync_all`; os snapshots Windows/Unix ficaram estáveis sem depender de runner remoto.
 - Rename atômico via `MoveFileExW` com `MOVEFILE_REPLACE_EXISTING`
 - NTFS fornece garantias razoáveis de durabilidade
 - **Fix v0.1.4 (GAP 14)**: `cargo install atomwrite` agora funciona no Windows 10/11. Três erros de compilação em blocos `#[cfg(windows)]` quebravam a release v0.1.3 no Windows foram resolvidos.
@@ -116,6 +117,24 @@ Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
 - Volume mounts: fsync alcança o filesystem do host através do mount
 - tmpfs: fsync é no-op mas rename ainda é atômico
 - Moves entre containers: use `--workspace` para evitar escapar do mount
+- Autodetecção de runtime (`src/env_detect.rs`): `/.dockerenv`, env `container`/`CONTAINER`, hints de cgroup docker/kubepods/containerd/libpod
+- Pods Kubernetes: `KUBERNETES_SERVICE_HOST` reportado por `atomwrite doctor`
+
+
+## Detecção de Ambiente em Runtime
+`atomwrite doctor` reporta flags especializadas do host (Rules Rust multiplataforma):
+
+| Flag | Detecção |
+|------|----------|
+| WSL1/WSL2 | `WSL_DISTRO_NAME` / `WSL_INTEROP` ou `/proc/...` contém `microsoft`/`wsl` |
+| Container | `/.dockerenv`, env `container`, hints de cgroup |
+| Kubernetes | `KUBERNETES_SERVICE_HOST` |
+| CI | `CI` ou `GITHUB_ACTIONS` |
+| Termux | `PREFIX` contém `com.termux` |
+| Flatpak / Snap | `FLATPAK_ID` / `SNAP` |
+| sudo | `SUDO_USER` |
+
+Também reporta `os` / `arch` / `family` / `target` de compilação, `config_dir` de storage e métodos de fsync/rename da plataforma.
 
 
 ## Suporte a Shell
@@ -137,6 +156,14 @@ Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
 - Gere completions: `atomwrite completions powershell > $HOME\Documents\PowerShell\Scripts\atomwrite.ps1`
 - Carregue: `. $HOME\Documents\PowerShell\Scripts\atomwrite.ps1`
 
+### Elvish
+- Gere completions: `atomwrite completions elvish`
+- Instalação automática: XDG data `elvish/lib/atomwrite.elv`
+
+### Nushell
+- A CLI roda sob Nushell com NDJSON estruturado em stdout (contrato agent-first).
+- `clap_complete` ainda não gera completions nativas de Nushell; use completion externa ou `--help` / `json-schema`.
+
 
 ## Caminhos de Arquivo e XDG
 - atomwrite usa caminhos absolutos em toda saída NDJSON
@@ -145,6 +172,12 @@ Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
 - `--workspace` é obrigatório quando definido via variável de ambiente `ATOMWRITE_WORKSPACE`
 - Arquivos de backup são armazenados ao lado do original com sufixo de timestamp, a menos que `--output-dir` seja definido
 - O comando `completions --install` escreve nos diretórios de dados XDG (`$XDG_DATA_HOME` ou `~/.local/share`)
+- **`ATOMWRITE_HOME`**: override opcional da base de config/data/cache/state (`{ATOMWRITE_HOME}/config`, …). Se ausente, usa `directories::ProjectDirs` / XDG (`src/storage.rs`)
+- Config global: `{config_dir}/config.toml`; preferência de locale: `{config_dir}/locale`
+- Paths usam apenas `PathBuf` / `Path::join` — sem separadores `/` ou `\` hardcoded na lógica
+- Normalização Unicode NFC na validação de path jail
+- Nomes reservados Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, `LPT0`–`LPT9`) rejeitados em todos os hosts para árvores portáveis
+- No Windows, caracteres ilegais e espaço/ponto final são rejeitados; paths longos recebem prefixo `\\?\` via `path_safety::prepare_fs_path` perto de `MAX_PATH`
 
 
 ## Requisitos de Build por Plataforma
@@ -297,4 +330,14 @@ Esta release é retrocompatível em Linux, macOS e Windows para flags existentes
 - Sparse outline emite kinds reais de `outline_item` AST sob orçamento
 - Help e docs de `semantic-merge` admitem merge line-based (não AST)
 - Hash recursivo de recipe exclui paths `*.bak.*`
-- Veja [gaps.md](../gaps.md) e [MIGRATION.pt-BR.md](MIGRATION.pt-BR.md#v0129-para-v0130-atual)
+- Veja [gaps.md](../gaps.md) e [MIGRATION.pt-BR.md](MIGRATION.pt-BR.md#v0129-para-v0130)
+
+## v0.1.34 — Fuzzy one-shot e timeout
+
+- Publicação docs-complete do runtime one-shot da v0.1.33 (mesmo comportamento do binário em todas as plataformas)
+- Global `--timeout-secs` / `--timeout` padrão **120**; `0` desabilita; prazo esgotado → exit **124** (cross-platform)
+- Multi-apply fuzzy é **one-pass** E→D (`apply_fuzzy_one_pass`); nunca reescaneia texto inserido
+- Máximo de applies fuzzy padrão **1**; se o replacement contém o pattern (string fixa), força apply único
+- Cancel cooperativo consultado no meio da cascata fuzzy; caps: pattern 64 KiB, lev 8192, windows 4096, growth max(4×,+16 MiB)
+- Regressão: `cargo test --test cli_v0133_oneshot_fuzzy`
+- Veja [MIGRATION.pt-BR.md](MIGRATION.pt-BR.md#v0133-para-v0134-atual) e ADR-0054

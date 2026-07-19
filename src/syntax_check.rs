@@ -2,6 +2,10 @@
 
 //! G72 — Real syntax check via `tree-sitter-language-pack`.
 //!
+//! Workload: mixed I/O + CPU (parse one buffer with tree-sitter).
+//! Parallelism: none per call — single-file AST. Multi-file campaigns use
+//! `transform`/`codemod` WalkParallel; parser packs are process-cached.
+//!
 //! ## Problem
 //!
 //! The original v0.1.12 heuristic (`syntax_heuristic_check` in
@@ -29,14 +33,14 @@
 //!   `None` (no check performed) — this matches the documented behavior
 //!   in `AtomicWriteOptions::syntax_check`.
 //!
-//! ## Causa x Efeito
+//! ## Cause and Effect
 //!
-//! - **Causa**: Brackets balanceados não detectam erros semânticos.
-//! - **Efeito**: Usuário escreve código inválido e o atomic_write
-//!   completa silenciosamente, depois o build falha minutos depois.
-//! - **Solução**: Parse via tree-sitter + scan de `is_error`/`is_missing`.
-//! - **Benefício**: Falha rápida, mensagem precisa, zero overhead para
-//!   extensões desconhecidas (no-op silencioso).
+//! - **Cause**: Balanced-bracket heuristics do not detect semantic errors.
+//! - **Effect**: Invalid code can pass `atomic_write` silently and only
+//!   fail later at build time.
+//! - **Solution**: Parse with tree-sitter and scan `is_error` / `is_missing`.
+//! - **Benefit**: Fast failure with a precise message and zero overhead for
+//!   unknown extensions (silent no-op).
 
 use std::path::Path;
 

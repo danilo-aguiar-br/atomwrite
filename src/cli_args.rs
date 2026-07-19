@@ -4,24 +4,25 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, ValueEnum};
+use clap::{Args, ValueEnum, ValueHint};
 
 /// Shared backup flags for mutating subcommands (v0.1.28, GAP-CLI-SURFACE-DRIFT).
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct BackupOpts {
     /// Create a transactional backup before writing
     /// [default: enabled via `.atomwrite.toml` `[defaults]` or built-in true]
-    #[arg(long, action = clap::ArgAction::SetTrue, conflicts_with = "no_backup")]
+    /// TRI-STATE exception (rules `Option<bool>`): None=config default, Some(true)=--backup; use no_backup to force off.
+    #[arg(long, action = clap::ArgAction::SetTrue, conflicts_with = "no_backup", help_heading = "Backup")]
     pub backup: Option<bool>,
     /// Disable backup creation
-    #[arg(long)]
+    #[arg(long, action = clap::ArgAction::SetTrue, help_heading = "Backup")]
     pub no_backup: bool,
     /// Keep the backup file after success (default: auto-remove on success)
-    #[arg(long)]
+    #[arg(long, action = clap::ArgAction::SetTrue, help_heading = "Backup")]
     pub keep_backup: bool,
     /// Number of backups to retain
     /// [default: `.atomwrite.toml` `[defaults]` retention or built-in 5]
-    #[arg(long)]
+    #[arg(long, help_heading = "Backup")]
     pub retention: Option<u8>,
 }
 
@@ -35,7 +36,8 @@ pub struct CompletionsArgs {
     /// Install completion script to XDG data directory.
     #[arg(
         long,
-        help = "Install completion script to XDG data directory (Bash: ~/.local/share/bash-completion/completions/atomwrite)"
+        help = "Install completion script to XDG data directory (Bash: ~/.local/share/bash-completion/completions/atomwrite)",
+        action = clap::ArgAction::SetTrue
     )]
     pub install: bool,
 }
@@ -60,7 +62,7 @@ pub enum ShellType {
 #[derive(Args, Debug)]
 pub struct HashArgs {
     /// File paths to hash.
-    #[arg(required_unless_present = "stdin")]
+    #[arg(required_unless_present = "stdin", value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
 
     /// Expected BLAKE3 hash for verification.
@@ -68,11 +70,11 @@ pub struct HashArgs {
     pub verify: Option<String>,
 
     /// Hash content from stdin.
-    #[arg(long, help = "Hash content from stdin instead of files")]
+    #[arg(long, help = "Hash content from stdin instead of files", action = clap::ArgAction::SetTrue)]
     pub stdin: bool,
 
     /// Recurse into directories.
-    #[arg(short, long, help = "Recurse into directories")]
+    #[arg(short, long, help = "Recurse into directories", action = clap::ArgAction::SetTrue)]
     pub recursive: bool,
 
     /// Glob patterns to exclude (e.g. `*.bak.*`). Appendable.
@@ -84,6 +86,7 @@ pub struct HashArgs {
 #[derive(Args, Debug)]
 pub struct VerifyArgs {
     /// Path to the file to verify.
+    #[arg(value_hint = ValueHint::FilePath)]
     pub path: PathBuf,
 
     /// Expected BLAKE3 checksum.
@@ -94,7 +97,7 @@ pub struct VerifyArgs {
 #[derive(Args, Debug)]
 pub struct DeleteArgs {
     /// File paths to delete.
-    #[arg(required = true)]
+    #[arg(required = true, value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
 
     /// Shared backup flags.
@@ -102,7 +105,7 @@ pub struct DeleteArgs {
     pub backup_opts: BackupOpts,
 
     /// Recurse into directories.
-    #[arg(short, long, help = "Recurse into directories")]
+    #[arg(short, long, help = "Recurse into directories", action = clap::ArgAction::SetTrue)]
     pub recursive: bool,
 
     /// Glob patterns for file inclusion.
@@ -124,16 +127,17 @@ pub struct DeleteArgs {
     #[arg(
         long,
         conflicts_with = "dry_run",
-        help = "List files then ask for confirmation"
+        help = "List files then ask for confirmation",
+        action = clap::ArgAction::SetTrue
     )]
     pub confirm: bool,
 
     /// Preview without deleting.
-    #[arg(long, help = "Show what would be done without deleting")]
+    #[arg(long, help = "Show what would be done without deleting", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 
     /// Skip confirmation prompt.
-    #[arg(short = 'y', long, help = "Skip confirmation")]
+    #[arg(short = 'y', long, help = "Skip confirmation", action = clap::ArgAction::SetTrue)]
     pub yes: bool,
 }
 
@@ -141,15 +145,15 @@ pub struct DeleteArgs {
 #[derive(Args, Debug)]
 pub struct CountArgs {
     /// Paths to count within.
-    #[arg(default_value = ".")]
+    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
 
     /// Group counts by file extension.
-    #[arg(long, help = "Group counts by file extension")]
+    #[arg(long, help = "Group counts by file extension", action = clap::ArgAction::SetTrue)]
     pub by_extension: bool,
 
     /// Sort results by file size.
-    #[arg(long, help = "Sort by file size (top N)")]
+    #[arg(long, help = "Sort by file size (top N)", action = clap::ArgAction::SetTrue)]
     pub by_size: bool,
 
     /// Number of top results to show.
@@ -169,16 +173,18 @@ pub struct CountArgs {
 #[derive(Args, Debug)]
 pub struct DiffArgs {
     /// First file to compare.
+    #[arg(value_hint = ValueHint::FilePath)]
     pub file_a: PathBuf,
     /// Second file to compare.
+    #[arg(value_hint = ValueHint::FilePath)]
     pub file_b: PathBuf,
 
     /// Output unified diff format.
-    #[arg(long, help = "Output unified diff format")]
+    #[arg(long, help = "Output unified diff format", action = clap::ArgAction::SetTrue)]
     pub unified: bool,
 
     /// Show only summary statistics.
-    #[arg(long, help = "Only show summary statistics")]
+    #[arg(long, help = "Only show summary statistics", action = clap::ArgAction::SetTrue)]
     pub stat: bool,
 
     /// Lines of context in unified diff.
@@ -210,8 +216,10 @@ pub enum DiffAlgorithm {
 #[derive(Args, Debug)]
 pub struct MoveArgs {
     /// Source file path.
+    #[arg(value_hint = ValueHint::AnyPath)]
     pub source: PathBuf,
     /// Destination file path.
+    #[arg(value_hint = ValueHint::AnyPath)]
     pub target: PathBuf,
 
     /// Shared backup flags.
@@ -219,15 +227,15 @@ pub struct MoveArgs {
     pub backup_opts: BackupOpts,
 
     /// Overwrite destination if it exists.
-    #[arg(short, long, help = "Overwrite destination if it exists")]
+    #[arg(short, long, help = "Overwrite destination if it exists", action = clap::ArgAction::SetTrue)]
     pub force: bool,
 
     /// Preview without moving.
-    #[arg(long, help = "Show what would be done without moving")]
+    #[arg(long, help = "Show what would be done without moving", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 
     /// Preserve hardlink count on move (G55).
-    #[arg(long, help = "Preserve hardlink count on move")]
+    #[arg(long, help = "Preserve hardlink count on move", action = clap::ArgAction::SetTrue)]
     pub preserve_hardlinks: bool,
 }
 
@@ -235,8 +243,10 @@ pub struct MoveArgs {
 #[derive(Args, Debug)]
 pub struct CopyArgs {
     /// Source file path.
+    #[arg(value_hint = ValueHint::AnyPath)]
     pub source: PathBuf,
     /// Destination file path.
+    #[arg(value_hint = ValueHint::AnyPath)]
     pub target: PathBuf,
 
     /// Shared backup flags.
@@ -244,27 +254,27 @@ pub struct CopyArgs {
     pub backup_opts: BackupOpts,
 
     /// Overwrite destination if it exists.
-    #[arg(short, long, help = "Overwrite destination if it exists")]
+    #[arg(short, long, help = "Overwrite destination if it exists", action = clap::ArgAction::SetTrue)]
     pub force: bool,
 
     /// Copy directories recursively.
-    #[arg(short, long, help = "Copy directories recursively")]
+    #[arg(short, long, help = "Copy directories recursively", action = clap::ArgAction::SetTrue)]
     pub recursive: bool,
 
     /// Preserve timestamps and permissions.
-    #[arg(long, help = "Preserve timestamps and permissions")]
+    #[arg(long, help = "Preserve timestamps and permissions", action = clap::ArgAction::SetTrue)]
     pub preserve: bool,
 
     /// Preview without copying.
-    #[arg(long, help = "Show what would be done without copying")]
+    #[arg(long, help = "Show what would be done without copying", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 
     /// Disable reflink (copy-on-write) optimization (G64).
-    #[arg(long, help = "Disable reflink optimization; force full byte copy")]
+    #[arg(long, help = "Disable reflink optimization; force full byte copy", action = clap::ArgAction::SetTrue)]
     pub no_reflink: bool,
 
     /// Preserve extended attributes on copy (G39).
-    #[arg(long, help = "Preserve extended attributes (xattr) on copy")]
+    #[arg(long, help = "Preserve extended attributes (xattr) on copy", action = clap::ArgAction::SetTrue)]
     pub preserve_xattr: bool,
 }
 
@@ -272,6 +282,7 @@ pub struct CopyArgs {
 #[derive(Args, Debug, Clone)]
 pub struct ReadArgs {
     /// File path to read.
+    #[arg(value_hint = ValueHint::FilePath)]
     pub path: PathBuf,
 
     /// Line range to read (1-based, e.g. "1:50").
@@ -300,7 +311,7 @@ pub struct ReadArgs {
     pub tail: Option<usize>,
 
     /// Return only metadata without content.
-    #[arg(long, help = "Return only metadata (no content)")]
+    #[arg(long, help = "Return only metadata (no content)", action = clap::ArgAction::SetTrue)]
     pub stat: bool,
 
     /// Output format selection.
@@ -333,6 +344,7 @@ pub enum OutputFormat {
 #[derive(Args, Debug)]
 pub struct WriteArgs {
     /// Target file path.
+    #[arg(value_hint = ValueHint::FilePath)]
     pub target: PathBuf,
 
     /// Shared backup flags.
@@ -347,7 +359,8 @@ pub struct WriteArgs {
     #[arg(
         long,
         conflicts_with = "prepend",
-        help = "Append content to end of existing file"
+        help = "Append content to end of existing file",
+        action = clap::ArgAction::SetTrue
     )]
     pub append: bool,
 
@@ -355,7 +368,8 @@ pub struct WriteArgs {
     #[arg(
         long,
         conflicts_with = "append",
-        help = "Prepend content to beginning of existing file"
+        help = "Prepend content to beginning of existing file",
+        action = clap::ArgAction::SetTrue
     )]
     pub prepend: bool,
 
@@ -367,7 +381,8 @@ pub struct WriteArgs {
     /// no parser available fall back to a bracket-balance heuristic.
     #[arg(
         long,
-        help = "Run tree-sitter syntax check (G72). Aborts on parse errors (exit 88)."
+        help = "Run tree-sitter syntax check (G72). Aborts on parse errors (exit 88).",
+        action = clap::ArgAction::SetTrue
     )]
     pub syntax_check: bool,
 
@@ -390,7 +405,8 @@ pub struct WriteArgs {
     /// Allow writes that shrink the file by >50% when --expect-checksum is active.
     #[arg(
         long,
-        help = "Allow writes that shrink the file by >50% when --expect-checksum is active"
+        help = "Allow writes that shrink the file by >50% when --expect-checksum is active",
+        action = clap::ArgAction::SetTrue
     )]
     pub allow_shrink: bool,
 
@@ -408,7 +424,8 @@ pub struct WriteArgs {
     /// (e.g. truncating a file to zero bytes).
     #[arg(
         long,
-        help = "Allow zero-byte stdin (G120 L1 guard; default: reject empty stdin)"
+        help = "Allow zero-byte stdin (G120 L1 guard; default: reject empty stdin)",
+        action = clap::ArgAction::SetTrue
     )]
     pub allow_empty_stdin: bool,
 
@@ -418,7 +435,8 @@ pub struct WriteArgs {
     /// is intentional (no-op append, checksum match preserved).
     #[arg(
         long,
-        help = "Allow --expect-checksum to be skipped when stdin is empty (G120 L3)"
+        help = "Allow --expect-checksum to be skipped when stdin is empty (G120 L3)",
+        action = clap::ArgAction::SetTrue
     )]
     pub no_checksum_when_empty: bool,
 
@@ -442,16 +460,18 @@ pub struct WriteArgs {
     /// Parity with edit/replace/set/del/case (which expose --preserve-timestamps).
     #[arg(
         long,
-        help = "Preserve original mtime/atime of the target file (default: update to now)"
+        help = "Preserve original mtime/atime of the target file (default: update to now)",
+        action = clap::ArgAction::SetTrue
     )]
     pub preserve_timestamps: bool,
 
     /// GAP-2026-011 L2: Require `--backup` to be set. Aborts the write with
     /// exit 65 if the target file exists and `--backup` is not provided.
-    /// Useful for CI/CD pipelines where backups are non-negotiable.
+    /// Useful for scripted agent runs where backups are non-negotiable.
     #[arg(
         long,
-        help = "Require --backup; abort if missing and target file exists (defense-in-depth L2)"
+        help = "Require --backup; abort if missing and target file exists (defense-in-depth L2)",
+        action = clap::ArgAction::SetTrue
     )]
     pub require_backup: bool,
 
@@ -460,7 +480,8 @@ pub struct WriteArgs {
     /// is not "y" or "yes".
     #[arg(
         long,
-        help = "Require interactive Y/N confirmation for large files (>100KB) (defense-in-depth L3)"
+        help = "Require interactive Y/N confirmation for large files (>100KB) (defense-in-depth L3)",
+        action = clap::ArgAction::SetTrue
     )]
     pub confirm: bool,
 
@@ -469,7 +490,8 @@ pub struct WriteArgs {
     /// the last 24 hours (heuristic: recent files need backups).
     #[arg(
         long,
-        help = "Force auto-rotation backup for recently-modified files (<24h) (defense-in-depth L5)"
+        help = "Force auto-rotation backup for recently-modified files (<24h) (defense-in-depth L5)",
+        action = clap::ArgAction::SetTrue
     )]
     pub auto_rotate: bool,
 
@@ -485,7 +507,7 @@ pub struct WriteArgs {
     pub risk_threshold: u8,
 
     /// Preview without writing.
-    #[arg(long, help = "Show what would be done without writing")]
+    #[arg(long, help = "Show what would be done without writing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 }
 
@@ -528,6 +550,7 @@ pub enum FuzzyMode {
 #[derive(Args, Debug)]
 pub struct EditArgs {
     /// File path to edit.
+    #[arg(value_hint = ValueHint::FilePath)]
     pub path: PathBuf,
 
     /// Insert stdin content after line N.
@@ -597,11 +620,13 @@ pub struct EditArgs {
     /// Path to file containing exact text to find (alternative to --old for large content).
     #[arg(long, conflicts_with = "old", action = clap::ArgAction::Append,
           help = "Read match text from file (repeatable; alternative to --old for large content)")]
+    #[arg(value_hint = ValueHint::AnyPath)]
     pub old_file: Vec<PathBuf>,
 
     /// Path to file containing replacement text (alternative to --new for large content).
     #[arg(long, conflicts_with = "new", action = clap::ArgAction::Append,
           help = "Read replacement text from file (repeatable; alternative to --new for large content)")]
+    #[arg(value_hint = ValueHint::AnyPath)]
     pub new_file: Vec<PathBuf>,
 
     /// Fuzzy matching mode for --old/--new.
@@ -617,7 +642,8 @@ pub struct EditArgs {
     #[arg(
         long,
         conflicts_with_all = ["old", "new", "old_file", "new_file"],
-        help = "Read multiple edit operations as NDJSON from stdin (inherits --fuzzy mode)"
+        help = "Read multiple edit operations as NDJSON from stdin (inherits --fuzzy mode)",
+        action = clap::ArgAction::SetTrue
     )]
     pub multi: bool,
 
@@ -635,7 +661,7 @@ pub struct EditArgs {
     pub line_ending: crate::line_endings::LineEnding,
 
     /// Preview without writing.
-    #[arg(long, help = "Show what would be done without writing")]
+    #[arg(long, help = "Show what would be done without writing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 
     /// Preserve original modification time (mtime) of the file.
@@ -644,7 +670,7 @@ pub struct EditArgs {
     /// reproducible builds that depend on stable timestamps.
     /// Note: setting true may break build systems that use mtime to
     /// detect source changes (cargo, make, cmake, gradle).
-    #[arg(long, help = "Preserve original mtime (default: update mtime to now)")]
+    #[arg(long, help = "Preserve original mtime (default: update mtime to now)", action = clap::ArgAction::SetTrue)]
     pub preserve_timestamps: bool,
 
     /// Apply only the `--old`/`--new` pairs that match instead of failing the
@@ -654,7 +680,8 @@ pub struct EditArgs {
     /// the command exits 1 (`NO_MATCHES`) without writing.
     #[arg(
         long,
-        help = "Apply matching --old/--new pairs and report the rest (default: all-or-nothing)"
+        help = "Apply matching --old/--new pairs and report the rest (default: all-or-nothing)",
+        action = clap::ArgAction::SetTrue
     )]
     pub partial: bool,
 
@@ -665,7 +692,8 @@ pub struct EditArgs {
     /// Replace every occurrence of --old (default: require unique match) (v0.1.30).
     #[arg(
         long,
-        help = "Replace all occurrences of --old (default: fail if match is not unique)"
+        help = "Replace all occurrences of --old (default: fail if match is not unique)",
+        action = clap::ArgAction::SetTrue
     )]
     pub replace_all: bool,
 
@@ -691,7 +719,8 @@ pub struct EditArgs {
     /// fail-loud `STATE_DRIFT` for true concurrency.
     #[arg(
         long,
-        help = "Accept STATE_DRIFT between sequential edits (default: reject). For agent pipelines that chain edits."
+        help = "Accept STATE_DRIFT between sequential edits (default: reject). For agent pipelines that chain edits.",
+        action = clap::ArgAction::SetTrue
     )]
     pub allow_sequential_drift: bool,
 }
@@ -699,6 +728,7 @@ pub struct EditArgs {
 /// Arguments for the `edit-loop` subcommand (ADR-0039).
 #[derive(Args, Debug)]
 pub struct EditLoopArgs {
+    #[arg(value_hint = ValueHint::FilePath)]
     /// File path to apply all pairs against.
     pub path: PathBuf,
 
@@ -708,7 +738,8 @@ pub struct EditLoopArgs {
     /// is performed at the end (no per-pair drift to validate).
     #[arg(
         long,
-        help = "Accept STATE_DRIFT (informational for edit-loop; default: reject)"
+        help = "Accept STATE_DRIFT (informational for edit-loop; default: reject)",
+        action = clap::ArgAction::SetTrue
     )]
     pub allow_sequential_drift: bool,
 
@@ -744,7 +775,7 @@ pub struct SearchArgs {
     pub pattern: String,
 
     /// Paths to search within.
-    #[arg(default_value = ".")]
+    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
 
     /// Treat pattern as regex.
@@ -752,7 +783,8 @@ pub struct SearchArgs {
         short = 'e',
         long,
         conflicts_with = "fixed",
-        help = "Treat pattern as regex (default)"
+        help = "Treat pattern as regex (default)",
+        action = clap::ArgAction::SetTrue
     )]
     pub regex: bool,
 
@@ -761,23 +793,25 @@ pub struct SearchArgs {
         short = 'F',
         long,
         conflicts_with = "regex",
-        help = "Treat pattern as fixed string"
+        help = "Treat pattern as fixed string",
+        action = clap::ArgAction::SetTrue
     )]
     pub fixed: bool,
 
     /// Match whole words only.
-    #[arg(short = 'w', long, help = "Match whole words only")]
+    #[arg(short = 'w', long, help = "Match whole words only", action = clap::ArgAction::SetTrue)]
     pub word: bool,
 
     /// Case-insensitive search.
-    #[arg(short = 'i', long, help = "Case-insensitive search")]
+    #[arg(short = 'i', long, help = "Case-insensitive search", action = clap::ArgAction::SetTrue)]
     pub case_insensitive: bool,
 
     /// Smart case: insensitive when pattern is lowercase.
     #[arg(
         short = 'S',
         long,
-        help = "Smart case: insensitive if pattern is lowercase"
+        help = "Smart case: insensitive if pattern is lowercase",
+        action = clap::ArgAction::SetTrue
     )]
     pub smart_case: bool,
 
@@ -799,11 +833,11 @@ pub struct SearchArgs {
     pub exclude: Vec<String>,
 
     /// Show only match count per file.
-    #[arg(short = 'c', long, help = "Only show match count per file")]
+    #[arg(short = 'c', long, help = "Only show match count per file", action = clap::ArgAction::SetTrue)]
     pub count: bool,
 
     /// Show only filenames with matches.
-    #[arg(short = 'l', long, help = "Only show filenames with matches")]
+    #[arg(short = 'l', long, help = "Only show filenames with matches", action = clap::ArgAction::SetTrue)]
     pub files: bool,
 
     /// Maximum matches per file.
@@ -811,11 +845,11 @@ pub struct SearchArgs {
     pub max_count: Option<u64>,
 
     /// Enable multi-line matching.
-    #[arg(short = 'U', long, help = "Enable multi-line matching")]
+    #[arg(short = 'U', long, help = "Enable multi-line matching", action = clap::ArgAction::SetTrue)]
     pub multiline: bool,
 
     /// Show non-matching lines.
-    #[arg(long, help = "Show lines that do NOT match")]
+    #[arg(long, help = "Show lines that do NOT match", action = clap::ArgAction::SetTrue)]
     pub invert: bool,
 
     /// Sort results by criterion.
@@ -826,12 +860,13 @@ pub struct SearchArgs {
     ///
     /// By default, atomwrite skips FIFOs because `open()` on a FIFO blocks
     /// indefinitely until the other end connects — this can cause atomwrite
-    /// to hang in CI / Docker environments that have FIFOs in /tmp or /var.
+    /// to hang in automated local runs / Docker environments that have FIFOs in /tmp or /var.
     /// Pass `--include-fifo` to opt back into the legacy behavior of
     /// opening FIFOs (which may hang).
     #[arg(
         long,
-        help = "Include FIFO / named pipe files (default: skip to avoid hangs)"
+        help = "Include FIFO / named pipe files (default: skip to avoid hangs)",
+        action = clap::ArgAction::SetTrue
     )]
     pub include_fifo: bool,
 
@@ -865,7 +900,8 @@ pub struct SearchArgs {
     /// file visited (back-compat).
     #[arg(
         long,
-        help = "Suppress begin/end events for files with no matches (cleaner output for empty searches)"
+        help = "Suppress begin/end events for files with no matches (cleaner output for empty searches)",
+        action = clap::ArgAction::SetTrue
     )]
     pub no_begin_end: bool,
 
@@ -874,7 +910,8 @@ pub struct SearchArgs {
     #[arg(
         short = 'P',
         long,
-        help = "Use PCRE2 regex engine (requires pcre2 feature)"
+        help = "Use PCRE2 regex engine (requires pcre2 feature)",
+        action = clap::ArgAction::SetTrue
     )]
     pub pcre2: bool,
 
@@ -931,15 +968,15 @@ pub struct ReplaceArgs {
     pub replacement: String,
 
     /// Paths to search within.
-    #[arg(default_value = ".")]
+    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
 
     /// Treat pattern as regex.
-    #[arg(long, conflicts_with = "literal", help = "Treat pattern as regex")]
+    #[arg(long, conflicts_with = "literal", help = "Treat pattern as regex", action = clap::ArgAction::SetTrue)]
     pub regex: bool,
 
     /// Match whole words only.
-    #[arg(short = 'w', long, help = "Match whole words only")]
+    #[arg(short = 'w', long, help = "Match whole words only", action = clap::ArgAction::SetTrue)]
     pub word: bool,
 
     /// Treat pattern as literal string.
@@ -947,7 +984,8 @@ pub struct ReplaceArgs {
         short = 'F',
         long,
         conflicts_with = "regex",
-        help = "Treat pattern as literal string (escape regex chars)"
+        help = "Treat pattern as literal string (escape regex chars)",
+        action = clap::ArgAction::SetTrue
     )]
     pub literal: bool,
 
@@ -964,7 +1002,7 @@ pub struct ReplaceArgs {
     pub exclude: Vec<String>,
 
     /// Show diff preview without writing.
-    #[arg(long, help = "Show diff preview without writing")]
+    #[arg(long, help = "Show diff preview without writing", action = clap::ArgAction::SetTrue)]
     pub preview: bool,
 
     /// Maximum replacements per file.
@@ -979,13 +1017,14 @@ pub struct ReplaceArgs {
     pub expect_checksum: Option<String>,
 
     /// Preview without writing.
-    #[arg(long, help = "Show what would be done without writing")]
+    #[arg(long, help = "Show what would be done without writing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 
     /// Preserve original casing during replacement (UPPER→UPPER, lower→lower, Title→Title).
     #[arg(
         long,
-        help = "Preserve original casing (UPPER→UPPER, lower→lower, Title→Title)"
+        help = "Preserve original casing (UPPER→UPPER, lower→lower, Title→Title)",
+        action = clap::ArgAction::SetTrue
     )]
     pub preserve_case: bool,
 
@@ -1022,7 +1061,7 @@ pub struct ReplaceArgs {
     /// reproducible builds that depend on stable timestamps.
     /// Note: setting true may break build systems that use mtime to
     /// detect source changes (cargo, make, cmake, gradle).
-    #[arg(long, help = "Preserve original mtime (default: update mtime to now)")]
+    #[arg(long, help = "Preserve original mtime (default: update mtime to now)", action = clap::ArgAction::SetTrue)]
     pub preserve_timestamps: bool,
 }
 
@@ -1030,7 +1069,7 @@ pub struct ReplaceArgs {
 #[derive(Args, Debug)]
 pub struct ListArgs {
     /// Paths to list.
-    #[arg(default_value = ".")]
+    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
 
     /// Maximum directory depth.
@@ -1038,15 +1077,15 @@ pub struct ListArgs {
     pub depth: Option<usize>,
 
     /// Show size and modification time.
-    #[arg(short = 'l', long, help = "Show size and modification time")]
+    #[arg(short = 'l', long, help = "Show size and modification time", action = clap::ArgAction::SetTrue)]
     pub long: bool,
 
     /// Group file counts by extension.
-    #[arg(long, help = "Group file counts by extension")]
+    #[arg(long, help = "Group file counts by extension", action = clap::ArgAction::SetTrue)]
     pub count_by_ext: bool,
 
     /// Show all files including hidden.
-    #[arg(long, help = "Show all files including hidden")]
+    #[arg(long, help = "Show all files including hidden", action = clap::ArgAction::SetTrue)]
     pub all: bool,
 
     /// Glob patterns for file inclusion.
@@ -1073,7 +1112,7 @@ pub struct ExtractArgs {
     pub delimiter: Option<String>,
 
     /// Read input from stdin.
-    #[arg(long, help = "Read input from stdin")]
+    #[arg(long, help = "Read input from stdin", action = clap::ArgAction::SetTrue)]
     pub stdin: bool,
 }
 
@@ -1085,7 +1124,7 @@ pub struct CalcArgs {
     pub expression: Option<String>,
 
     /// Read expressions from stdin.
-    #[arg(long, help = "Read expressions from stdin (one per line)")]
+    #[arg(long, help = "Read expressions from stdin (one per line)", action = clap::ArgAction::SetTrue)]
     pub stdin: bool,
 }
 
@@ -1098,31 +1137,31 @@ pub struct RegexArgs {
     pub examples: Vec<String>,
 
     /// Read examples from stdin.
-    #[arg(long, help = "Read examples from stdin (one per line)")]
+    #[arg(long, help = "Read examples from stdin (one per line)", action = clap::ArgAction::SetTrue)]
     pub stdin: bool,
 
     /// Convert digits to \\d.
-    #[arg(short = 'd', long, help = "Convert digits to \\d")]
+    #[arg(short = 'd', long, help = "Convert digits to \\d", action = clap::ArgAction::SetTrue)]
     pub digits: bool,
 
     /// Convert words to \\w.
-    #[arg(short = 'w', long, help = "Convert words to \\w")]
+    #[arg(short = 'w', long, help = "Convert words to \\w", action = clap::ArgAction::SetTrue)]
     pub words: bool,
 
     /// Convert whitespace to \\s.
-    #[arg(short = 's', long, help = "Convert whitespace to \\s")]
+    #[arg(short = 's', long, help = "Convert whitespace to \\s", action = clap::ArgAction::SetTrue)]
     pub spaces: bool,
 
     /// Detect repetitions.
-    #[arg(short = 'r', long, help = "Detect repetitions")]
+    #[arg(short = 'r', long, help = "Detect repetitions", action = clap::ArgAction::SetTrue)]
     pub repetitions: bool,
 
     /// Case-insensitive matching.
-    #[arg(short = 'i', long, help = "Case-insensitive matching")]
+    #[arg(short = 'i', long, help = "Case-insensitive matching", action = clap::ArgAction::SetTrue)]
     pub case_insensitive: bool,
 
     /// Remove anchors (^ and $).
-    #[arg(long, help = "Remove anchors (^ and $)")]
+    #[arg(long, help = "Remove anchors (^ and $)", action = clap::ArgAction::SetTrue)]
     pub no_anchors: bool,
 }
 
@@ -1130,7 +1169,7 @@ pub struct RegexArgs {
 #[derive(Args, Debug)]
 pub struct TransformArgs {
     /// Paths to search for transforms.
-    #[arg(default_value = ".")]
+    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
 
     /// AST pattern to match.
@@ -1168,11 +1207,11 @@ pub struct TransformArgs {
     pub exclude: Vec<String>,
 
     /// Preview without writing.
-    #[arg(long, help = "Show diff preview without writing")]
+    #[arg(long, help = "Show diff preview without writing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 
     /// Path to a YAML file containing multiple rules (G44).
-    #[arg(long, help = "Apply multiple rules from a YAML file")]
+    #[arg(long, help = "Apply multiple rules from a YAML file", value_hint = ValueHint::FilePath)]
     pub rules: Option<PathBuf>,
 
     /// Inline YAML rules (alternative to --rules).
@@ -1190,7 +1229,8 @@ pub struct TransformArgs {
     /// Re-parse output with tree-sitter to detect syntax errors introduced by the rewrite.
     #[arg(
         long,
-        help = "Re-parse output with tree-sitter to verify syntax (exit 88 on error)"
+        help = "Re-parse output with tree-sitter to verify syntax (exit 88 on error)",
+        action = clap::ArgAction::SetTrue
     )]
     pub verify_parse: bool,
 }
@@ -1199,22 +1239,23 @@ pub struct TransformArgs {
 #[derive(Args, Debug)]
 pub struct BatchArgs {
     /// Preview without executing.
-    #[arg(long, help = "Show what would be done without executing")]
+    #[arg(long, help = "Show what would be done without executing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 
     /// Manifest file path (default: stdin).
-    #[arg(long, help = "Read manifest from file instead of stdin")]
+    #[arg(long, help = "Read manifest from file instead of stdin", value_hint = ValueHint::FilePath)]
     pub file: Option<PathBuf>,
 
     /// Execute all operations as a transaction (all-or-nothing).
     #[arg(
         long,
-        help = "All-or-nothing: rollback all changes if any operation fails"
+        help = "All-or-nothing: rollback all changes if any operation fails",
+        action = clap::ArgAction::SetTrue
     )]
     pub transaction: bool,
 
     /// Emit JSON Schema for the NDJSON input manifest format.
-    #[arg(long, help = "Print JSON Schema for the batch input manifest")]
+    #[arg(long, help = "Print JSON Schema for the batch input manifest", action = clap::ArgAction::SetTrue)]
     pub input_schema: bool,
 
     /// Hint for NDJSON streaming: number of operations to buffer before
@@ -1239,11 +1280,11 @@ pub struct BatchArgs {
 #[derive(Args, Debug)]
 pub struct BackupArgs {
     /// File paths to back up.
-    #[arg(required = true)]
+    #[arg(required = true, value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
 
     /// Directory to store backups (default: same as source).
-    #[arg(long, help = "Directory to store backup files")]
+    #[arg(long, help = "Directory to store backup files", value_hint = ValueHint::DirPath)]
     pub output_dir: Option<PathBuf>,
 
     /// Maximum number of backups to retain per file.
@@ -1251,7 +1292,7 @@ pub struct BackupArgs {
     pub retention: u8,
 
     /// Preview without creating backups.
-    #[arg(long, help = "Show what would be done without writing")]
+    #[arg(long, help = "Show what would be done without writing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 }
 
@@ -1260,7 +1301,7 @@ pub struct BackupArgs {
 pub struct PruneBackupsArgs {
     /// Target file paths whose `.bak.YYYYMMDD_HHMMSS` siblings will be
     /// considered for pruning.
-    #[arg(required = true)]
+    #[arg(required = true, value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
 
     /// Maximum age (in seconds) of backups that survive. Backups whose
@@ -1279,13 +1320,14 @@ pub struct PruneBackupsArgs {
     pub max_count: Option<u8>,
 
     /// Preview without deleting anything.
-    #[arg(long, help = "Show what would be pruned without writing")]
+    #[arg(long, help = "Show what would be pruned without writing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 }
 
 /// Arguments for the rollback subcommand.
 #[derive(Args, Debug)]
 pub struct RollbackArgs {
+    #[arg(value_hint = ValueHint::FilePath)]
     /// File path to restore from backup.
     pub path: PathBuf,
 
@@ -1294,11 +1336,11 @@ pub struct RollbackArgs {
     pub timestamp: Option<String>,
 
     /// Restore the most recent backup.
-    #[arg(long, help = "Restore the most recent backup (default)")]
+    #[arg(long, help = "Restore the most recent backup (default)", action = clap::ArgAction::SetTrue)]
     pub latest: bool,
 
     /// Verify BLAKE3 checksum after restore.
-    #[arg(long, help = "Verify checksum after restoring")]
+    #[arg(long, help = "Verify checksum after restoring", action = clap::ArgAction::SetTrue)]
     pub verify: bool,
 
     /// Shared backup flags.
@@ -1306,7 +1348,7 @@ pub struct RollbackArgs {
     pub backup_opts: BackupOpts,
 
     /// Preview without restoring.
-    #[arg(long, help = "Show what would be done without writing")]
+    #[arg(long, help = "Show what would be done without writing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 }
 
@@ -1329,6 +1371,7 @@ pub enum PatchFormat {
 /// Arguments for the apply subcommand.
 #[derive(Args, Debug)]
 pub struct ApplyArgs {
+    #[arg(value_hint = ValueHint::FilePath)]
     /// Target file to apply the patch to.
     pub file: PathBuf,
 
@@ -1341,7 +1384,7 @@ pub struct ApplyArgs {
     pub backup_opts: BackupOpts,
 
     /// Preview without writing.
-    #[arg(long, help = "Show what would be done without writing")]
+    #[arg(long, help = "Show what would be done without writing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 }
 
@@ -1352,6 +1395,7 @@ pub struct ApplyArgs {
 /// Arguments for the `set` subcommand (v14 Tier 3).
 #[derive(Args, Debug)]
 pub struct SetArgs {
+    #[arg(value_hint = ValueHint::FilePath)]
     /// Path to the structured config file (TOML or JSON).
     pub path: PathBuf,
     /// Dotted path to the key (e.g. `package.version`).
@@ -1362,13 +1406,14 @@ pub struct SetArgs {
     #[command(flatten)]
     pub backup_opts: BackupOpts,
     /// Preserve original file timestamps.
-    #[arg(long, help = "Preserve original mtime/atime")]
+    #[arg(long, help = "Preserve original mtime/atime", action = clap::ArgAction::SetTrue)]
     pub preserve_timestamps: bool,
 }
 
 /// Arguments for the `get` subcommand (v14 Tier 3).
 #[derive(Args, Debug)]
 pub struct GetArgs {
+    #[arg(value_hint = ValueHint::FilePath)]
     /// Path to the structured config file (TOML or JSON).
     pub path: PathBuf,
     /// Dotted path to the key (e.g. `package.version`).
@@ -1378,6 +1423,7 @@ pub struct GetArgs {
 /// Arguments for the `del` subcommand (v14 Tier 3).
 #[derive(Args, Debug)]
 pub struct DelArgs {
+    #[arg(value_hint = ValueHint::FilePath)]
     /// Path to the structured config file (TOML or JSON).
     pub path: PathBuf,
     /// Dotted path to the key (e.g. `dependencies.serde`).
@@ -1386,10 +1432,10 @@ pub struct DelArgs {
     #[command(flatten)]
     pub backup_opts: BackupOpts,
     /// Preserve original file timestamps.
-    #[arg(long, help = "Preserve original mtime/atime")]
+    #[arg(long, help = "Preserve original mtime/atime", action = clap::ArgAction::SetTrue)]
     pub preserve_timestamps: bool,
     /// Treat missing key as a no-op success instead of an error.
-    #[arg(long, help = "Succeed silently if the key is already missing")]
+    #[arg(long, help = "Succeed silently if the key is already missing", action = clap::ArgAction::SetTrue)]
     pub force_missing: bool,
 }
 
@@ -1411,6 +1457,7 @@ pub enum IdentifierCase {
 /// Arguments for the `case` subcommand (v14 Tier 3).
 #[derive(Args, Debug)]
 pub struct CaseArgs {
+    #[arg(value_hint = ValueHint::AnyPath)]
     /// Target file paths to rewrite.
     pub paths: Vec<PathBuf>,
     /// Pairs of old new identifiers (must be even count).
@@ -1428,10 +1475,10 @@ pub struct CaseArgs {
     #[command(flatten)]
     pub backup_opts: BackupOpts,
     /// Preserve original file timestamps.
-    #[arg(long, help = "Preserve original mtime/atime")]
+    #[arg(long, help = "Preserve original mtime/atime", action = clap::ArgAction::SetTrue)]
     pub preserve_timestamps: bool,
     /// Preview without writing.
-    #[arg(long, help = "Show what would be changed without writing")]
+    #[arg(long, help = "Show what would be changed without writing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 }
 
@@ -1444,6 +1491,7 @@ pub struct CaseArgs {
 /// structure as a compact JSON dump for debugging.
 #[derive(Args, Debug)]
 pub struct QueryArgs {
+    #[arg(value_hint = ValueHint::FilePath)]
     /// Source file to query.
     pub path: PathBuf,
     /// Tree-sitter language override (e.g. "rust", "python"). Auto-detected
@@ -1464,15 +1512,16 @@ pub struct QueryArgs {
     )]
     pub query: Option<String>,
     /// Print the full parse tree (no S-expression matching).
-    #[arg(long, help = "Print the full tree (no S-expression matching)")]
+    #[arg(long, help = "Print the full tree (no S-expression matching)", action = clap::ArgAction::SetTrue)]
     pub tree: bool,
     /// Print all named node kinds found in the file (no S-expression matching).
-    #[arg(long, help = "Print all named node kinds in the file (counts)")]
+    #[arg(long, help = "Print all named node kinds in the file (counts)", action = clap::ArgAction::SetTrue)]
     pub kinds: bool,
     /// Show byte offsets and start positions for every match.
     #[arg(
         long,
-        help = "Include byte offsets and start positions for every match"
+        help = "Include byte offsets and start positions for every match",
+        action = clap::ArgAction::SetTrue
     )]
     pub positions: bool,
 }
@@ -1485,6 +1534,7 @@ pub struct QueryArgs {
 /// all structural items.
 #[derive(Args, Debug)]
 pub struct OutlineArgs {
+    #[arg(value_hint = ValueHint::FilePath)]
     /// Source file to outline.
     pub path: PathBuf,
     /// Tree-sitter language override.
@@ -1504,7 +1554,7 @@ pub struct OutlineArgs {
     )]
     pub kinds: Vec<String>,
     /// Show byte offsets and start positions.
-    #[arg(long, help = "Include byte offsets and start positions")]
+    #[arg(long, help = "Include byte offsets and start positions", action = clap::ArgAction::SetTrue)]
     pub positions: bool,
 }
 
@@ -1517,7 +1567,7 @@ pub struct OutlineArgs {
 #[derive(Args, Debug)]
 pub struct WalStatsArgs {
     /// Preview without scanning the workspace.
-    #[arg(long, help = "Show what would be done without scanning")]
+    #[arg(long, help = "Show what would be done without scanning", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 }
 
@@ -1548,6 +1598,6 @@ pub struct WalHealArgs {
     pub max_duration_ms: u64,
 
     /// Preview without removing any sidecar.
-    #[arg(long, help = "Show what would be removed without writing")]
+    #[arg(long, help = "Show what would be removed without writing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 }

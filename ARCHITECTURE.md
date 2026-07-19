@@ -9,7 +9,7 @@
 - Designed for LLM agents that need safe, structured file manipulation
 - Every write is atomic: tempfile, fsync, rename, fsync directory
 - Every response is NDJSON on stdout with BLAKE3 checksums
-- All logs go to stderr via tracing
+- All diagnostic logs go to stderr via `tracing` (`init_telemetry` in `src/runtime.rs`): non-blocking writer, `EnvFilter` (`ATOMWRITE_LOG` > `RUST_LOG` > `-v`/`-q`), optional `ATOMWRITE_LOG_DIR` tee with `Rotation::NEVER`, JSON via `ATOMWRITE_LOG_FORMAT`. Agent data plane remains NDJSON on stdout.
 
 
 ## Module Map
@@ -25,10 +25,12 @@
 - `src/checksum.rs` — BLAKE3 hash computation for files and byte slices (uses memmap2 for large files)
 - `src/file_io.rs` — smart file reading with automatic memmap2 above 1 MiB threshold
 - `src/platform.rs` — platform durability and rename: `Durability` full|fast|auto; Linux `renameat2` with rename fallback; macOS `F_FULLFSYNC` on full; write NDJSON reports `platform.durability` and `platform.rename_method`
-- `src/fuzzy.rs` — shared 9-strategy match cascade (exact, whitespace, indent, Jaro-Winkler, unicode_normalized, …) used by edit, replace, batch, edit-loop; exposes `match_count` and `indent_adjusted` into EditOutput (v0.1.30 residual)
+- `src/fuzzy.rs` — shared 9-strategy match cascade (exact, whitespace, indent, Jaro-Winkler, unicode_normalized, …) used by edit, replace, batch, edit-loop; **one-pass** multi-apply (`apply_fuzzy_one_pass`) on original content (never re-scans inserted text); embeds of pattern inside replacement force a single apply; default max applies = 1; hard ceiling 10_000; cooperative cancel polled mid-cascade; caps (pattern 64 KiB, lev 8192 chars, windows 4096, growth max(4×, +16 MiB)); exposes `match_count` and `indent_adjusted` into EditOutput (v0.1.30 residual; one-shot contract v0.1.33/0.1.34)
 
 ### Safety and Validation
-- `src/path_safety.rs` — workspace jail: path traversal prevention, symlink validation, FIFO/device detection
+- `src/path_safety.rs` — workspace jail: path traversal prevention, symlink validation, FIFO/device detection, Windows reserved names (COM0–9/LPT0–9), NFC, long-path `\\?\` helper
+- `src/storage.rs` — config/data/cache/state via `directories::ProjectDirs` or `ATOMWRITE_HOME` override
+- `src/env_detect.rs` — WSL/container/K8s/CI/Termux/Flatpak/Snap/sudo autodetection for `doctor`
 - `src/signal.rs` — SIGINT/SIGTERM handling via signal-hook with graceful shutdown coordination
 - `src/error.rs` — domain error enum with exit codes, error classification, and retryable flag
 - `src/lock.rs` — advisory file locking via flock(2) on `.<target>.atomwrite.lock` sidecar
@@ -49,7 +51,8 @@
 ### Utilities
 - `src/binary_detect.rs` — null-byte heuristic for binary content detection
 - `src/line_endings.rs` — LF/CRLF/CR detection and normalization
-- `src/lang_utils.rs` — locale initialization and i18n helpers for rust-i18n
+- `src/lang_utils.rs` — programming-language extension maps for AST commands
+- `src/locale.rs` — UI locale: `Idioma`, sys-locale detect, unic-langid parse, fluent-langneg negotiate, OnceLock, XDG preference
 - `src/xattr_restore.rs` — save and restore xattrs (macOS quarantine, Linux selinux/capabilities)
 - `src/reflink.rs` — reflink (copy-on-write) helper via `reflink-copy`
 
@@ -151,9 +154,15 @@ v0.1.18 additions (G118 universal resolve-first):
 
 ### Signal Handling via signal-hook
 - SIGINT and SIGTERM set atomic flag for cooperative shutdown
-- Second signal forces immediate exit via process::exit
+- Second signal forces immediate exit via `_exit` (Unix) / `process::exit` (Windows)
 - SIGPIPE reset to default disposition for standard Unix pipe behavior
-- Shared singleton ShutdownSignal (v0.1.11) so polling and main-thread is_shutdown() see the same flag
+- Shared singleton `ShutdownSignal` (`OnceLock`) so polling and main-thread `is_shutdown()` see the same flag
+- Cooperative cancel also covers global `--timeout-secs` (default **120**; pass `0` to disable; exit **124** on deadline, GNU `timeout` convention)
+- Fuzzy cascade polls the cancel flag mid-file (strategies + sliding windows) so the timeout works during `replace --fuzzy` / edit / batch / edit-loop
+- `signal::cancelled_error` stamps the live exit code (130 / 143 / 124) — never hard-code SIGTERM
+- Long walks (`search`, `replace`, `count`, `list`, `hash`, `delete`, `batch`, …) poll the flag and stop accepting new work
+- Atomic writes cancel mid-chunk without renaming the tempfile (target stays intact)
+- One-shot CLI: no Tokio `CancellationToken` / `TaskTracker` / systemd `sd_notify` (N/A)
 
 ### G72 REAL tree-sitter syntax check (v0.1.12)
 - Replaces v0.1.11 bracket-balance heuristic that had false positives (Python indentation, JS template literals) and false negatives (Python `import` of missing module)
@@ -192,7 +201,7 @@ v0.1.18 additions (G118 universal resolve-first):
 - L1 rejects 0 bytes from stdin by default in `read_stdin_content` with opt-out `--allow-empty-stdin`
 - L2 rejects empty stdin in `handle_append_prepend`
 - L3 emits `tracing::info!` warning when `--append` + `--expect-checksum` + empty stdin combine ambiguously; opt-out via `--no-checksum-when-empty`
-- L4 always emits `stdin_bytes_read: u64` on `WriteOutput` NDJSON for late CI/agent gating
+- L4 always emits `stdin_bytes_read: u64` on `WriteOutput` NDJSON for late agent gating
 
 ### G118 universal resolve-first + G117 edge cases (v0.1.18, ADR-0030)
 - 10 mutating commands now pre-validate root paths via `validate_path` before constructing any walker or worker: `write`, `edit`, `copy`, `apply`, `move`, `rollback`, `set`, `del`, `case`, `replace`
@@ -201,13 +210,32 @@ v0.1.18 additions (G118 universal resolve-first):
 - 1 new G120 L3 integration test: `--append + --expect-checksum + --allow-empty-stdin` cross-flag combination is now covered end-to-end
 
 ### Internationalization
-- Translations embedded at compile time via rust-i18n
-- Locale detection via sys-locale on startup
-- Supported locales: en (default fallback), pt-BR
-- Override via `--lang` flag or `ATOMWRITE_LANG` environment variable
-- Precedence: --lang flag, ATOMWRITE_LANG env, OS locale, en fallback
-- NDJSON stdout is NOT translated (machine-readable contract)
-- Only stderr messages and error suggestions are locale-aware
+- Translations embedded at compile time via rust-i18n (`locales/en.toml`, `locales/pt-BR.toml`)
+- Detection: `sys-locale` once at startup (never raw portable `LANG` reads)
+- Normalize raw tags with `unic-langid` (underscore → hyphen, strip `.UTF-8`; reject `C`/`POSIX` as English)
+- Negotiate against available MVP locales with `fluent-langneg` (`NegotiationStrategy::Lookup`)
+- Typed `Idioma` enum (`En` | `PtBr`, `#[non_exhaustive]`) + immutable `OnceLock<LocaleState>`
+- Precedence: `--locale` / `ATOMWRITE_LANG` → preference under `storage::config_dir()` (`ATOMWRITE_HOME` or XDG → `…/locale`) → OS → `en`
+- Override: global `--locale` (clap `value_parser`) or env `ATOMWRITE_LANG` (field name `lang` kept for API stability; flag renamed from `--lang` in ADR-0037)
+- Diagnostics: `atomwrite locale` NDJSON report; `locale --set` / `locale --clear` for XDG preference
+- NDJSON **codes** and error **Display** messages stay English (agent machine contract)
+- Error **suggestions** and selected human stderr warnings follow the resolved locale via `t!`
+- Optional Cargo features `i18n-cjk` / `i18n-rtl` / `i18n-europe` / `i18n-full` are placeholders — default binary ships only complete `en` + `pt-BR`
+- `build.rs` declares `cargo:rerun-if-changed` for `locales/`, `locales/en.toml`, and `locales/pt-BR.toml`
+- Key parity tests: `tests/locale_parity.rs`
+
+### Macros policy (no project-local `macro_rules!` / proc-macro crate)
+- **Decision:** atomwrite has **zero** custom declarative or procedural macros in-tree
+- Exhaust generics, traits, functions, and `const` asserts before introducing a macro (rules_rust_macros)
+- Ecosystem macros only where syntax cannot be a function:
+  - **Derive:** `clap`, `serde`, `thiserror`, `schemars` for CLI / NDJSON / errors
+  - **Attribute:** `#[tracing::instrument]` on command entry points
+  - **Function-like (external):** `rust_i18n::i18n!`, `schemars::schema_for!`, `tracing::{info,debug,…}!`
+  - **std built-ins:** `env!` / `option_env!` (version), `matches!`, `vec!`, `format!`, `write!`/`writeln!`, `const _: () = assert!(…)`
+- Prefer **typed** `Serialize` + `JsonSchema` structs over ad-hoc `serde_json::json!` for agent NDJSON contracts
+- **Zero** `serde_json::json!` in production code paths: all stdout/index events use typed structs; child re-tagging uses `output::ndjson_insert_field` (no free-form macro)
+- No `todo!` / `unimplemented!` / `dbg!` in production paths; `panic!` only in tests
+- No local `proc-macro = true` crate (would force `syn`/`quote` compile cost for a CLI that does not need a DSL)
 
 
 ## Error Strategy
@@ -262,6 +290,7 @@ v0.1.18 additions (G118 universal resolve-first):
 - 0048 — unified BackupOpts: single struct flattened via `#[command(flatten)]` into 15 mutating subcommands, resolved by a single `resolve_backup()` with precedence `ATOMWRITE_BACKUP` env > CLI flags > `.atomwrite.toml` `[defaults]` > built-in default (v0.1.28)
 - 0049 — live config plumbing: `load_config` called once in `lib.rs::run()`, `DefaultsSection` propagated to every mutating handler (v0.1.28)
 - 0050 — stdin-tty guard: `main.rs` computes `stdin.is_terminal()` (std `IsTerminal`, Rust >= 1.70) and propagates `stdin_is_tty` down to `cmd_edit`; stdin-consuming modes fail fast with exit 65 instead of blocking indefinitely (v0.1.28)
+- 0054 — one-shot fuzzy contract: one-pass multi-apply, embeds force single apply, default max applies 1, `--timeout-secs` default 120 / exit 124, cancel polled mid-fuzzy, resource caps (v0.1.33 runtime; v0.1.34 docs-complete)
 
 
 ## Test Architecture

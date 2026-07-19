@@ -2,6 +2,9 @@
 
 //! v14 Tier 3 subcommand: `del` — remove a key at a dotted path in a
 //! structured config file (TOML or JSON) while preserving formatting.
+//!
+//! Workload: I/O-bound (single-file read + edit + atomic write).
+//! Parallelism: none — one file.
 
 use std::io::Write;
 use std::time::Instant;
@@ -30,6 +33,7 @@ struct DelResult {
 /// Removes the key at `key_path` from the target structured config file
 /// (TOML or JSON) and writes the result back atomically. Comments and
 /// key order are preserved in TOML.
+#[tracing::instrument(skip_all, fields(command = "del"))]
 pub fn cmd_del(
     args: &DelArgs,
     global: &GlobalArgs,
@@ -43,8 +47,8 @@ pub fn cmd_del(
     if !validated.exists() {
         return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
-    let original = std::fs::read_to_string(&validated)
-        .with_context(|| format!("cannot read {}", validated.display()))?;
+    let original =
+        crate::file_io::read_file_string(&validated, global.effective_max_filesize())?;
 
     let (new_content, removed_value, existed, format) =
         match validated.extension().and_then(|s| s.to_str()) {
@@ -58,13 +62,23 @@ pub fn cmd_del(
             Some("json") => {
                 let mut v: serde_json::Value =
                     serde_json::from_str(&original).with_context(|| "invalid JSON in source")?;
-                let pointer = format!("/{}", args.key_path.replace('.', "/"));
+                if !crate::output::check_json_depth(&v, crate::constants::MAX_JSON_DEPTH) {
+                    return Err(crate::error::AtomwriteError::InvalidInput {
+                        reason: format!(
+                            "JSON nesting depth exceeds maximum of {}",
+                            crate::constants::MAX_JSON_DEPTH
+                        ),
+                    }
+                    .into());
+                }
+                let pointer = crate::output::dotted_to_json_pointer(&args.key_path);
                 let removed = v.pointer(&pointer).map(|x| match x {
                     serde_json::Value::String(s) => s.clone(),
                     other => other.to_string(),
                 });
                 let existed = removed.is_some();
                 remove_json_pointer(&mut v, &pointer);
+                // Pretty-print is intentional: human-edited config files, not NDJSON stdout.
                 let new_content = serde_json::to_string_pretty(&v)?;
                 (new_content, removed, existed, "json")
             }
@@ -134,10 +148,11 @@ pub fn cmd_del(
 
 fn remove_json_pointer(root: &mut serde_json::Value, pointer: &str) {
     use serde_json::Value;
-    let segments: Vec<&str> = pointer
+    let segments: Vec<String> = pointer
         .trim_start_matches('/')
         .split('/')
         .filter(|s| !s.is_empty())
+        .map(|s| s.replace("~1", "/").replace("~0", "~"))
         .collect();
     if segments.is_empty() {
         return;
@@ -145,7 +160,7 @@ fn remove_json_pointer(root: &mut serde_json::Value, pointer: &str) {
     let mut current = root;
     for seg in &segments[..segments.len() - 1] {
         match current {
-            Value::Object(map) => match map.get_mut(*seg) {
+            Value::Object(map) => match map.get_mut(seg) {
                 Some(v) => current = v,
                 None => return,
             },
@@ -163,10 +178,10 @@ fn remove_json_pointer(root: &mut serde_json::Value, pointer: &str) {
             _ => return,
         }
     }
-    let last = segments[segments.len() - 1];
+    let last = &segments[segments.len() - 1];
     match current {
         Value::Object(map) => {
-            map.remove::<str>(last);
+            map.remove(last);
         }
         Value::Array(arr) => {
             if let Ok(idx) = last.parse::<usize>() {

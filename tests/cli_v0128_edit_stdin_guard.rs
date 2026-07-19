@@ -44,7 +44,7 @@ fn after_match_with_piped_stdin_succeeds_end_to_end() {
 
     assert!(
         output.status.success(),
-        "edit --after-match com stdin via pipe deve suceder: {:?}",
+        "edit --after-match with stdin via pipe must succeed: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
     let content = std::fs::read_to_string(&path).unwrap();
@@ -74,11 +74,11 @@ fn between_mode_with_closed_stdin_completes_quickly_without_hanging() {
 
     assert!(
         elapsed < Duration::from_secs(5),
-        "edit com stdin fechado (nao-tty) nao deve travar; levou {elapsed:?}"
+        "edit with closed stdin (non-tty) must not hang; took {elapsed:?}"
     );
     assert!(
         output.status.success(),
-        "stdin fechado (EOF imediato) e nao-tty: deve suceder com conteudo vazio, nao travar"
+        "closed stdin (immediate EOF) and non-tty: must succeed with empty content, not hang"
     );
 }
 
@@ -104,7 +104,7 @@ fn range_mode_with_closed_stdin_completes_quickly_without_hanging() {
 
     assert!(
         elapsed < Duration::from_secs(5),
-        "edit --range com stdin fechado nao deve travar; levou {elapsed:?}"
+        "edit --range with closed stdin must not hang; took {elapsed:?}"
     );
     assert!(output.status.success());
 }

@@ -5,11 +5,11 @@ mod common;
 use std::sync::Mutex;
 
 /// Tests for G119 (WAL cleanup) and G120 (empty-stdin guard).
-/// Uses `serial_test::serial` to avoid clobbering shared env vars across
-/// parallel test workers.
-/// Per-test workspace guard so concurrent tests do not stomp on the
-/// `ATOMWRITE_WAL` env var or the working tree's `.atomwrite.journal.*`
-/// state.
+///
+/// Process-wide test isolation for `ATOMWRITE_WAL` and journal sidecars.
+/// Uses `static Mutex` with the const constructor (`Mutex::new` since 1.63),
+/// not `LazyLock` / `lazy_static!`. Poisoning is treated as fatal via
+/// `.expect` so a panicking test does not silently skip isolation.
 static WAL_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn journal_path_for(target: &std::path::Path) -> std::path::PathBuf {
@@ -31,14 +31,14 @@ fn journal_path_for(target: &std::path::Path) -> std::path::PathBuf {
 fn g119_l2_write_with_wal_leaves_no_sidecar_on_success() {
     let _guard = WAL_ENV_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
-    let target = dir.path().join("alvo.txt");
+    let target = dir.path().join("target.txt");
     std::fs::write(&target, "seed").expect("seed");
 
     let output = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "write"])
         .arg(&target)
         .env("ATOMWRITE_WAL", "1")
-        .write_stdin("novo conteudo")
+        .write_stdin("new content")
         .output()
         .expect("run");
     assert!(output.status.success(), "exit: {:?}", output.status);
@@ -57,7 +57,7 @@ fn g119_l2_write_with_wal_leaves_no_sidecar_on_success() {
 fn g119_l2_write_failure_keeps_sidecar_for_recovery() {
     let _guard = WAL_ENV_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
-    let target = dir.path().join("alvo.txt");
+    let target = dir.path().join("target.txt");
     std::fs::write(&target, "seed").expect("seed");
 
     // Make the directory read-only so atomic_write fails on rename.
@@ -73,7 +73,7 @@ fn g119_l2_write_failure_keeps_sidecar_for_recovery() {
         .args(["--workspace", dir.path().to_str().unwrap(), "write"])
         .arg(&target)
         .env("ATOMWRITE_WAL", "1")
-        .write_stdin("novo conteudo")
+        .write_stdin("new content")
         .output()
         .expect("run");
 
@@ -107,7 +107,7 @@ fn g119_l2_write_failure_keeps_sidecar_for_recovery() {
 fn g119_l5_wal_stats_reports_journal_state() {
     let _guard = WAL_ENV_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
-    let target = dir.path().join("alvo.txt");
+    let target = dir.path().join("target.txt");
     std::fs::write(&target, "seed").expect("seed");
 
     // Run a write with WAL to create one Committed sidecar (which L2
@@ -183,7 +183,7 @@ fn g119_l5_wal_stats_reports_zeros_on_empty_workspace() {
 fn g119_l3_startup_auto_heal_reaps_stale_committed() {
     let _guard = WAL_ENV_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
-    let target = dir.path().join("alvo.txt");
+    let target = dir.path().join("target.txt");
     std::fs::write(&target, "seed").expect("seed");
     let sidecar = journal_path_for(&target);
     // Committed_at_unix = 1 (1970-01-01) — trivially older than any
@@ -219,7 +219,7 @@ fn g119_l3_startup_auto_heal_reaps_stale_committed() {
 fn g119_l3_no_auto_heal_preserves_stale_committed() {
     let _guard = WAL_ENV_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
-    let target = dir.path().join("alvo.txt");
+    let target = dir.path().join("target.txt");
     std::fs::write(&target, "seed").expect("seed");
     let sidecar = journal_path_for(&target);
     std::fs::write(
@@ -272,7 +272,7 @@ fn g119_l4_sentinel_preserves_sidecar_on_successful_write() {
             "always",
         ])
         .arg(&target)
-        .write_stdin("novo conteudo")
+        .write_stdin("new content")
         .output()
         .expect("run");
     assert!(

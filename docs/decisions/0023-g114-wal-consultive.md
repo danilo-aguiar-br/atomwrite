@@ -3,7 +3,7 @@
 - **Status**: Accepted
 - **Date**: 2026-06-07
 - **Context**: When a process is killed between `Started` and `Committed`, the WAL sidecar has a dangling `Started` entry. The naive fix is to auto-replay or auto-rollback the write on next start. We chose to expose `recover_orphan_journals(dir)` as a public function that returns a report without touching the filesystem.
-- **Decision**: Recovery is consultative. `recover_orphan_journals(dir)` reads all `.atomwrite.journal.<basename>.atomwrite.journal.json` files in a directory and returns `OrphanJournalReport { entries: Vec<JournalEntry>, target, op_id, started_at_unix, pid, age_secs }`. The caller (a CI hook, a developer, a future `atomwrite wal-recover` CLI) decides what to do.
+- **Decision**: Recovery is consultative. `recover_orphan_journals(dir)` reads all `.atomwrite.journal.<basename>.atomwrite.journal.json` files in a directory and returns `OrphanJournalReport { entries: Vec<JournalEntry>, target, op_id, started_at_unix, pid, age_secs }`. The caller (a local hook, a developer, a future `atomwrite wal-recover` CLI) decides what to do.
 - **Consequences**:
   - **+** Zero risk of "helpful" auto-recovery making a wrong decision (e.g. replaying a write that the user already manually fixed).
   - **+** Library users can wire the report into their own UI / log / metrics.

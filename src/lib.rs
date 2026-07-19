@@ -1,11 +1,60 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Atomic file operations CLI library for LLM agents.
+//!
+//! Provides the library surface used by the `atomwrite` binary: atomic
+//! write pipeline, NDJSON output types, fuzzy matching, path safety, and
+//! subcommand handlers for agent-first file operations.
+//!
+//! # Features
+//!
+//! - `core` — baseline library surface (always on via `default`)
+//! - `ast` — tree-sitter / ast-grep based query, outline, transform, syntax check
+//! - `lang-rust` / `lang-ts` / `lang-py` / `lang-go` — language markers for AST features
+//! - `lang-full` — enables all language markers
+//! - `watch` — filesystem watch subcommand (`notify`)
+//! - `semantic` — semantic search/merge experimental surface
+//! - `full` — convenience meta-feature (`default` + `lang-full` + `watch` + `semantic`)
+//! - `slow-tests` — opt-in longer property tests
+//!
+//! Feature-gated items are auto-tagged on docs.rs via `doc_cfg` (see `# Safety`).
+//!
+//! # Safety
+//!
+//! This crate denies `unsafe` in library code (`#![deny(unsafe_code)]`).
+//!
+//! **docs.rs / rustdoc nightly:** docs.rs builds with nightly and passes
+//! `--cfg docsrs`. Under that cfg this crate enables
+//! `#![feature(doc_cfg)]` so feature/platform gates appear as badges in HTML.
+//! `doc_auto_cfg` was **removed** (merged into `doc_cfg` in October 2025;
+//! rust-lang/rust#138907). Do not reintroduce `feature(doc_auto_cfg)`.
+//! Local validation:
+//!
+//! ```text
+//! RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --no-deps --all-features
+//! cargo +stable doc --no-deps
+//! ```
+//!
+//! Architecture diagrams for humans live in `ARCHITECTURE.md` (not rustdoc Mermaid).
 
+// docs.rs nightly: doc_cfg replaces removed doc_auto_cfg (Oct 2025).
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
+// Const/static hygiene: never allow interior-mutable `const` (would clone cells
+// per use site) and never allow taking references to `static mut` (edition 2024).
+#![deny(static_mut_refs)]
+#![deny(clippy::declare_interior_mutable_const)]
+#![deny(clippy::borrow_interior_mutable_const)]
+// Ownership / borrowing hygiene (rules_rust_ownership_borrowing_lifetimes):
+// refuse redundant clones, `&Vec`/`&String` params, and needless borrows.
+#![deny(clippy::redundant_clone)]
+#![deny(clippy::ptr_arg)]
+#![deny(clippy::needless_borrow)]
+#![deny(clippy::cloned_instead_of_copied)]
 #![warn(rustdoc::private_intra_doc_links)]
+#![warn(rustdoc::invalid_html_tags)]
 #![warn(clippy::doc_markdown)]
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::needless_return)]
@@ -13,6 +62,7 @@
 rust_i18n::i18n!("locales", fallback = "en");
 
 /// Atomic file write pipeline.
+pub mod concurrency;
 pub mod atomic;
 /// Binary content detection heuristics.
 pub mod binary_detect;
@@ -30,12 +80,16 @@ pub mod config;
 pub mod constants;
 /// Domain-specific error types.
 pub mod error;
+/// Runtime environment autodetection (WSL, container, CI, Termux, …).
+pub mod env_detect;
 /// Smart file reading with memmap2 for large files.
 pub mod file_io;
 /// Shared 9-strategy fuzzy match cascade (edit/replace/batch/edit-loop).
 pub mod fuzzy;
 /// Shared language utilities for AST commands.
 pub mod lang_utils;
+/// UI locale detection, negotiation, and resolved language state.
+pub mod locale;
 /// Line ending detection and normalization.
 pub mod line_endings;
 /// Advisory file locking for concurrent edit protection (G54).
@@ -50,8 +104,13 @@ pub mod path_safety;
 pub mod platform;
 /// Graceful shutdown signal handling.
 pub mod signal;
+/// Cross-platform storage paths (`ATOMWRITE_HOME` / XDG / ProjectDirs).
+pub mod storage;
+/// Binary startup helpers (tracing, locale, clap error mapping).
+pub mod runtime;
 /// G72 — Real syntax check via `tree-sitter-language-pack` (v0.1.12).
 #[cfg(feature = "ast")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
 pub mod syntax_check;
 #[cfg(not(feature = "ast"))]
 #[path = "syntax_check_stub.rs"]
@@ -116,6 +175,9 @@ fn emit_json_schema(command: &Commands, mut out: impl Write) -> Result<()> {
         Commands::Watch(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
         Commands::Codemod(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
         Commands::SemanticSearch(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
+        Commands::Doctor(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
+        Commands::Locale(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
+        Commands::CommandsTree(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
         Commands::Completions(_) => schemars::schema_for!(ndjson_types::CalcOutput),
     };
     serde_json::to_writer_pretty(&mut out, &schema)?;
@@ -168,7 +230,8 @@ pub fn emit_schema_by_name(name: &str, mut out: impl Write) -> Result<bool> {
         "error" => schemars::schema_for!(crate::error::ErrorJson),
         "best-candidate" => schemars::schema_for!(ndjson_types::BestCandidate),
         "cancelled" => schemars::schema_for!(ndjson_types::CancelledEvent),
-        "semantic-merge" | "sparse" | "agent-surface" | "watch" | "codemod" | "semantic-search" => {
+        "semantic-merge" | "sparse" | "agent-surface" | "watch" | "codemod" | "semantic-search"
+        | "doctor" | "locale" | "commands" => {
             schemars::schema_for!(ndjson_types::ProgressEvent)
         }
         _ => return Ok(false),
@@ -196,20 +259,17 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
         tracing::debug!("--json is a no-op; output is always NDJSON");
     }
 
-    if let Some(threads) = cli.global.threads {
-        let n = if threads == 0 { num_cpus() } else { threads };
-        if let Err(e) = rayon::ThreadPoolBuilder::new()
-            .num_threads(n)
-            .build_global()
-        {
-            tracing::warn!(error = %e, "failed to configure rayon global pool");
-        }
-    }
+    // Parallelism modus operandi: always size the process-wide rayon pool
+    // (and share the same bound with ignore WalkParallel via helpers).
+    // `--threads` / `--max-concurrency` / `0` / omit → see `concurrency::effective_threads`.
+    concurrency::configure_global_pool(cli.global.threads);
 
     let mut writer = NdjsonWriter::new(stdout);
     let shutdown = signal::get_or_install_handlers()?;
+    // Rules Rust one-shot: global wall-clock deadline (cooperative cancel).
+    signal::arm_global_timeout(cli.global.timeout_secs);
     let workspace = cli.global.resolve_workspace()?;
-    let config = crate::config::load_config(&workspace, None);
+    let config = crate::config::load_config(&workspace, cli.global.config.as_deref())?;
     crate::config::validate_fuzzy(&config.fuzzy)?;
     let defaults = &config.defaults;
     let fuzzy_cfg = &config.fuzzy;
@@ -219,7 +279,7 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
     // `threshold_secs` (default 3600s = 1h), and is bounded by a
     // 100ms wall-clock budget so the per-invocation overhead is
     // predictable. Disabled via `--no-auto-heal` or
-    // `ATOMWRITE_WAL_NO_AUTO_HEAL=1` for tight CI loops and benchmarks.
+    // `ATOMWRITE_WAL_NO_AUTO_HEAL=1` for tight local loops and benchmarks.
     // `Started` journals are NEVER removed automatically — they are the
     // orphans worth operator attention.
     if !cli.global.no_auto_heal {
@@ -406,17 +466,24 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
             &shutdown,
             defaults,
         ),
+        Commands::Doctor(args) => {
+            commands::doctor::cmd_doctor(args, &cli.global, &mut writer, &shutdown, defaults)
+        }
+        Commands::Locale(args) => {
+            commands::locale_cmd::cmd_locale(args, &cli.global, &mut writer, &shutdown, defaults)
+        }
+        Commands::CommandsTree(args) => commands::command_tree::cmd_commands_tree(
+            args,
+            &cli.global,
+            &mut writer,
+            &shutdown,
+            defaults,
+        ),
         Commands::Completions(_) => unreachable!("completions handled in prescan_json_schema"),
     };
 
     let _ = writer.flush();
     result
-}
-
-fn num_cpus() -> usize {
-    std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
 }
 
 fn generate_completions(args: &cli::CompletionsArgs, mut out: impl Write) -> Result<()> {

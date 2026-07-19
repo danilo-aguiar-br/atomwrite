@@ -239,7 +239,7 @@ fn write_expect_checksum_drift_after_external_modify() {
 fn append_with_cwd_outside_workspace_preserves_existing_content() {
     let ws = tempfile::tempdir().expect("ws");
     let cwd = tempfile::tempdir().expect("cwd");
-    std::fs::write(ws.path().join("alvo.md"), "linha1\nlinha2\n").expect("seed");
+    std::fs::write(ws.path().join("target.md"), "line1\nline2\n").expect("seed");
 
     let output = common::atomwrite()
         .current_dir(cwd.path())
@@ -248,16 +248,16 @@ fn append_with_cwd_outside_workspace_preserves_existing_content() {
             ws.path().to_str().unwrap(),
             "write",
             "--append",
-            "alvo.md",
+            "target.md",
         ])
-        .write_stdin("linha3\n")
+        .write_stdin("line3\n")
         .output()
         .expect("run");
 
     assert!(output.status.success(), "exit: {:?}", output.status);
-    let content = std::fs::read_to_string(ws.path().join("alvo.md")).expect("read");
+    let content = std::fs::read_to_string(ws.path().join("target.md")).expect("read");
     assert_eq!(
-        content, "linha1\nlinha2\nlinha3\n",
+        content, "line1\nline2\nline3\n",
         "append must preserve existing lines"
     );
 }
@@ -266,7 +266,7 @@ fn append_with_cwd_outside_workspace_preserves_existing_content() {
 fn prepend_with_cwd_outside_workspace_preserves_existing_content() {
     let ws = tempfile::tempdir().expect("ws");
     let cwd = tempfile::tempdir().expect("cwd");
-    std::fs::write(ws.path().join("alvo.md"), "linha2\nlinha3\n").expect("seed");
+    std::fs::write(ws.path().join("target.md"), "line2\nline3\n").expect("seed");
 
     let output = common::atomwrite()
         .current_dir(cwd.path())
@@ -275,16 +275,16 @@ fn prepend_with_cwd_outside_workspace_preserves_existing_content() {
             ws.path().to_str().unwrap(),
             "write",
             "--prepend",
-            "alvo.md",
+            "target.md",
         ])
-        .write_stdin("linha1\n")
+        .write_stdin("line1\n")
         .output()
         .expect("run");
 
     assert!(output.status.success(), "exit: {:?}", output.status);
-    let content = std::fs::read_to_string(ws.path().join("alvo.md")).expect("read");
+    let content = std::fs::read_to_string(ws.path().join("target.md")).expect("read");
     assert_eq!(
-        content, "linha1\nlinha2\nlinha3\n",
+        content, "line1\nline2\nline3\n",
         "prepend must preserve existing lines"
     );
 }
@@ -293,7 +293,7 @@ fn prepend_with_cwd_outside_workspace_preserves_existing_content() {
 fn expect_checksum_mismatch_with_cwd_outside_workspace_exits_82() {
     let ws = tempfile::tempdir().expect("ws");
     let cwd = tempfile::tempdir().expect("cwd");
-    std::fs::write(ws.path().join("alvo.md"), "conteudo original\n").expect("seed");
+    std::fs::write(ws.path().join("target.md"), "original content\n").expect("seed");
     let zeros = "0".repeat(64);
 
     let output = common::atomwrite()
@@ -304,16 +304,16 @@ fn expect_checksum_mismatch_with_cwd_outside_workspace_exits_82() {
             "write",
             "--expect-checksum",
             &zeros,
-            "alvo.md",
+            "target.md",
         ])
         .write_stdin("sobrescrita\n")
         .output()
         .expect("run");
 
     assert_eq!(output.status.code(), Some(82), "must fail with STATE_DRIFT");
-    let content = std::fs::read_to_string(ws.path().join("alvo.md")).expect("read");
+    let content = std::fs::read_to_string(ws.path().join("target.md")).expect("read");
     assert_eq!(
-        content, "conteudo original\n",
+        content, "original content\n",
         "file must remain intact on drift"
     );
 }
@@ -322,8 +322,8 @@ fn expect_checksum_mismatch_with_cwd_outside_workspace_exits_82() {
 fn expect_checksum_match_with_cwd_outside_workspace_succeeds() {
     let ws = tempfile::tempdir().expect("ws");
     let cwd = tempfile::tempdir().expect("cwd");
-    let seed = "conteudo original\n";
-    std::fs::write(ws.path().join("alvo.md"), seed).expect("seed");
+    let seed = "original content\n";
+    std::fs::write(ws.path().join("target.md"), seed).expect("seed");
     let checksum = blake3::hash(seed.as_bytes()).to_hex().to_string();
 
     let output = common::atomwrite()
@@ -334,22 +334,22 @@ fn expect_checksum_match_with_cwd_outside_workspace_succeeds() {
             "write",
             "--expect-checksum",
             &checksum,
-            "alvo.md",
+            "target.md",
         ])
-        .write_stdin("novo conteudo\n")
+        .write_stdin("new content\n")
         .output()
         .expect("run");
 
     assert!(output.status.success(), "exit: {:?}", output.status);
-    let content = std::fs::read_to_string(ws.path().join("alvo.md")).expect("read");
-    assert_eq!(content, "novo conteudo\n");
+    let content = std::fs::read_to_string(ws.path().join("target.md")).expect("read");
+    assert_eq!(content, "new content\n");
 }
 
 #[test]
 fn line_ending_auto_with_cwd_outside_workspace_detects_existing() {
     let ws = tempfile::tempdir().expect("ws");
     let cwd = tempfile::tempdir().expect("cwd");
-    std::fs::write(ws.path().join("alvo.txt"), "primeira\r\n").expect("seed");
+    std::fs::write(ws.path().join("target.txt"), "first\r\n").expect("seed");
 
     let output = common::atomwrite()
         .current_dir(cwd.path())
@@ -357,14 +357,14 @@ fn line_ending_auto_with_cwd_outside_workspace_detects_existing() {
             "--workspace",
             ws.path().to_str().unwrap(),
             "write",
-            "alvo.txt",
+            "target.txt",
         ])
         .write_stdin("nova linha\n")
         .output()
         .expect("run");
 
     assert!(output.status.success(), "exit: {:?}", output.status);
-    let content = std::fs::read(ws.path().join("alvo.txt")).expect("read");
+    let content = std::fs::read(ws.path().join("target.txt")).expect("read");
     assert_eq!(
         content, b"nova linha\r\n",
         "auto mode must detect CRLF from the existing file even with divergent CWD"
@@ -392,8 +392,8 @@ fn write_source_uses_resolved_path_in_pre_steps() {
 #[test]
 fn g120_empty_stdin_rejected_by_default() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let target = dir.path().join("alvo.txt");
-    std::fs::write(&target, "conteudo original\n").expect("seed");
+    let target = dir.path().join("target.txt");
+    std::fs::write(&target, "original content\n").expect("seed");
 
     let output = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "write"])
@@ -427,7 +427,7 @@ fn g120_empty_stdin_rejected_by_default() {
 
     // File must remain untouched (G120 C1 prevention: no silent data loss).
     let content = std::fs::read_to_string(&target).expect("read");
-    assert_eq!(content, "conteudo original\n");
+    assert_eq!(content, "original content\n");
 }
 
 /// G120 L1 opt-in: `--allow-empty-stdin` truncates the file to 0 bytes and
@@ -435,8 +435,8 @@ fn g120_empty_stdin_rejected_by_default() {
 #[test]
 fn g120_empty_stdin_allowed_with_flag_truncates() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let target = dir.path().join("alvo.txt");
-    std::fs::write(&target, "conteudo original\n").expect("seed");
+    let target = dir.path().join("target.txt");
+    std::fs::write(&target, "original content\n").expect("seed");
 
     let output = common::atomwrite()
         .args([
@@ -471,7 +471,7 @@ fn g120_empty_stdin_allowed_with_flag_truncates() {
 #[test]
 fn g120_append_empty_stdin_rejected_with_existing_file() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let target = dir.path().join("alvo.txt");
+    let target = dir.path().join("target.txt");
     std::fs::write(&target, "linha 1\nlinha 2\n").expect("seed");
 
     let output = common::atomwrite()
@@ -514,7 +514,7 @@ fn g120_append_empty_stdin_rejected_with_existing_file() {
 #[test]
 fn g120_stdin_bytes_read_reflects_input() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let target = dir.path().join("alvo.txt");
+    let target = dir.path().join("target.txt");
 
     let payload = "hello, world\n"; // 13 bytes
     let output = common::atomwrite()

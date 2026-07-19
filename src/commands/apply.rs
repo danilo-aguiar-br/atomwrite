@@ -2,6 +2,7 @@
 
 //! Patch application from stdin: unified diff, SEARCH/REPLACE, full file.
 //! Workload: I/O-bound (stdin read + patch parse + atomic write).
+//! Parallelism: none — single-file / sequential-by-contract (coordination cost ≥ work).
 
 use std::io::{Read, Write};
 use std::time::Instant;
@@ -39,6 +40,10 @@ pub fn cmd_apply(
 
     let max_stdin = global.effective_max_filesize();
     let mut patch = String::new();
+    let reserve = usize::try_from(max_stdin).unwrap_or(usize::MAX);
+    patch.try_reserve(reserve).map_err(|e| AtomwriteError::InternalError {
+        reason: format!("allocation failed for patch buffer of {reserve} bytes: {e}"),
+    })?;
     stdin
         .take(max_stdin)
         .read_to_string(&mut patch)
@@ -54,10 +59,7 @@ pub fn cmd_apply(
     } else if matches!(format, PatchFormat::Full) {
         String::new()
     } else {
-        return Err(AtomwriteError::NotFound {
-            path: target.clone(),
-        }
-        .into());
+        return Err(AtomwriteError::NotFound { path: target }.into());
     };
 
     let checksum_before = checksum::hash_bytes(original.as_bytes());

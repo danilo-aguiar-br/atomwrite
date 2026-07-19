@@ -5,6 +5,9 @@
 //! RULES SUPREMAS forbid MCP servers. This command emits a machine-readable
 //! inventory of subcommands, flags, and exit codes so hosts wire Bash/argv
 //! tools instead of JSON-RPC.
+//!
+//! Workload: CPU-bound (clap CommandFactory schema walk) — tiny one-shot.
+//! Parallelism: none — single process inventory; coordination cost ≫ work.
 
 use std::io::Write;
 
@@ -44,6 +47,7 @@ struct SurfaceManifest {
 }
 
 /// Emit the agent tool surface manifesto.
+#[tracing::instrument(skip_all, fields(command = "agent-surface"))]
 pub fn cmd_agent_surface(
     _args: &AgentSurfaceArgs,
     _global: &GlobalArgs,

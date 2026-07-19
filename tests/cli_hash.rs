@@ -110,3 +110,40 @@ fn hash_no_include_exclude_flags() {
         "--include should be rejected by Clap with exit code 2"
     );
 }
+
+/// Multi-file without `--verify` uses the parallel path; NDJSON order stays
+/// sorted by path (stable agent contract).
+#[test]
+fn hash_multi_file_sorted_parallel() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ws = dir.path().to_str().unwrap();
+    let p_b = common::create_test_file(dir.path(), "b.txt", "b\n");
+    let p_a = common::create_test_file(dir.path(), "a.txt", "a\n");
+    let p_c = common::create_test_file(dir.path(), "c.txt", "c\n");
+
+    let output = common::atomwrite()
+        .args(["--workspace", ws, "hash"])
+        .arg(&p_b)
+        .arg(&p_a)
+        .arg(&p_c)
+        .output()
+        .expect("run");
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let events = common::parse_ndjson(&output.stdout);
+    assert_eq!(events.len(), 3);
+    let paths: Vec<&str> = events
+        .iter()
+        .map(|e| e["path"].as_str().expect("path"))
+        .collect();
+    // Sorted lexicographically by full path → a, b, c filenames.
+    assert!(paths[0].ends_with("a.txt"), "got {paths:?}");
+    assert!(paths[1].ends_with("b.txt"), "got {paths:?}");
+    assert!(paths[2].ends_with("c.txt"), "got {paths:?}");
+    for e in &events {
+        assert_eq!(e["type"], "hash");
+        assert_eq!(e["algorithm"], "blake3");
+        assert!(e["checksum"].is_string());
+        assert_eq!(e["bytes"], 2);
+    }
+}

@@ -230,3 +230,47 @@ fn case_odd_subvert_count_fails() {
         "single subvert value should fail at parse"
     );
 }
+
+#[test]
+fn case_multi_file_parallel_rewrites_all() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let workspace = dir.path().to_str().unwrap();
+    let mut paths = Vec::new();
+    for i in 0..8 {
+        paths.push(write_file(
+            dir.path(),
+            &format!("m_{i}.rs"),
+            "let HTTPRequest = 1;\n",
+        ));
+    }
+
+    let mut cmd = common::atomwrite();
+    cmd.args(["--workspace", workspace, "--threads", "4", "case"]);
+    for p in &paths {
+        cmd.arg(p);
+    }
+    cmd.args(["--subvert", "HTTPRequest", "http_request", "--to", "snake"]);
+    let output = cmd.output().expect("case multi");
+    assert!(
+        output.status.success(),
+        "case multi failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    for p in &paths {
+        let content = std::fs::read_to_string(p).expect("read");
+        assert!(
+            content.contains("let http_request = 1;"),
+            "expected rewrite in {}: {content}",
+            p.display()
+        );
+    }
+
+    let events = common::parse_ndjson(&output.stdout);
+    let summary = events
+        .iter()
+        .find(|e| e["type"] == "summary")
+        .expect("summary");
+    assert_eq!(summary["files_modified"].as_u64().unwrap(), 8);
+    assert_eq!(summary["identifiers_total"].as_u64().unwrap(), 8);
+}

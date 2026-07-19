@@ -1,7 +1,7 @@
 # atomwrite Cross-Platform Support
 
 
-[Leia em Portugues](CROSS_PLATFORM.pt-BR.md)
+[Leia em Português](CROSS_PLATFORM.pt-BR.md)
 
 > Write once, run anywhere -- with real fsync guarantees on every platform
 
@@ -54,12 +54,13 @@ This section summarizes cross-platform-relevant changes in v0.1.12.
 
 ### Test Coverage
 
-- 700+ tests listed (v0.1.30 working tree; contract suite `cli_v0130_agent_contract`)
+- 700+ tests listed (v0.1.34 working tree; suites `cli_v0133_oneshot_fuzzy`, `cli_v0130_agent_contract`)
 - Cross-compile gate: `cargo test --test cross_compile_check -- --ignored` validates Windows GNU/MSVC targets
 - 5 signal tests in `tests/signal_test.rs` cover SIGINT/SIGTERM/SIGPIPE/batch/shutdown
-- See [docs/decisions/README.md](README.md) for architectural decisions
+- See [docs/decisions/README.md](decisions/README.md) for architectural decisions
 - For v0.1.29 durability and rename, see [v0.1.29 — Durability and rename](#v0129--durability-and-rename)
 - For v0.1.30 backup honesty and residual contract, see [v0.1.30 — Backup and agent residual](#v0130--backup-and-agent-residual)
+- For v0.1.34 one-shot fuzzy + timeout, see [v0.1.34 — One-shot fuzzy and timeout](#v0134--one-shot-fuzzy-and-timeout)
 
 ## The Pain You Already Know
 - You write a file on Linux and it reaches disk reliably
@@ -88,7 +89,7 @@ This section summarizes cross-platform-relevant changes in v0.1.12.
 ### Windows (Full Support as of v0.1.4)
 - File fsync: `FlushFileBuffers` via `sync_all()`
 - Directory fsync: best-effort (Windows has no `fsync` for directories)
-- **v0.1.15 fix (GAP 18)**: the write snapshot test redacts `platform.dir_fsync` as `[platform_dir_fsync]` because Windows reports `best_effort` while Unix reports `sync_all`; the windows-2025 CI job is green again.
+- **v0.1.15 fix (GAP 18)**: the write snapshot test redacts `platform.dir_fsync` as `[platform_dir_fsync]` because Windows reports `best_effort` while Unix reports `sync_all`; the windows-2025 local gate is green again.
 - Atomic rename via `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`
 - NTFS provides reasonable durability guarantees
 - **v0.1.4 fix (GAP 14)**: `cargo install atomwrite` now succeeds on Windows 10/11. Three compilation errors in `#[cfg(windows)]` blocks that broke the v0.1.3 release on Windows are resolved.
@@ -116,6 +117,24 @@ This section summarizes cross-platform-relevant changes in v0.1.12.
 - Volume mounts: fsync reaches the host filesystem through the mount
 - tmpfs: fsync is a no-op but rename is still atomic
 - Cross-container moves: use `--workspace` to prevent escaping the mount
+- Runtime autodetection (`src/env_detect.rs`): `/.dockerenv`, `container`/`CONTAINER` env, cgroup docker/kubepods/containerd/libpod hints
+- Kubernetes pods: `KUBERNETES_SERVICE_HOST` reported by `atomwrite doctor`
+
+
+## Runtime Environment Detection
+`atomwrite doctor` reports specialized host flags (Rules Rust multiplataforma):
+
+| Flag | Detection |
+|------|-----------|
+| WSL1/WSL2 | `WSL_DISTRO_NAME` / `WSL_INTEROP` or `/proc/...` contains `microsoft`/`wsl` |
+| Container | `/.dockerenv`, `container` env, cgroup hints |
+| Kubernetes | `KUBERNETES_SERVICE_HOST` |
+| CI | `CI` or `GITHUB_ACTIONS` |
+| Termux | `PREFIX` contains `com.termux` |
+| Flatpak / Snap | `FLATPAK_ID` / `SNAP` |
+| sudo | `SUDO_USER` |
+
+Also reports `os` / `arch` / `family` / compile `target`, storage `config_dir`, and platform fsync/rename methods.
 
 
 ## Shell Support
@@ -137,6 +156,14 @@ This section summarizes cross-platform-relevant changes in v0.1.12.
 - Generate completions: `atomwrite completions powershell > $HOME\Documents\PowerShell\Scripts\atomwrite.ps1`
 - Source: `. $HOME\Documents\PowerShell\Scripts\atomwrite.ps1`
 
+### Elvish
+- Generate completions: `atomwrite completions elvish`
+- Auto-install path: XDG data `elvish/lib/atomwrite.elv`
+
+### Nushell
+- The CLI runs under Nushell with structured NDJSON on stdout (agent contract).
+- `clap_complete` does not ship a Nushell generator yet; use external completion or parse `--help` / `json-schema`.
+
 
 ## File Paths and XDG
 - atomwrite uses absolute paths in all NDJSON output
@@ -145,6 +172,12 @@ This section summarizes cross-platform-relevant changes in v0.1.12.
 - `--workspace` is required when set via the `ATOMWRITE_WORKSPACE` environment variable
 - Backup files are stored alongside the original with a timestamp suffix, unless `--output-dir` is set
 - The `completions --install` command writes to XDG data directories (`$XDG_DATA_HOME` or `~/.local/share`)
+- **`ATOMWRITE_HOME`**: optional base directory override for config/data/cache/state (`{ATOMWRITE_HOME}/config`, …). When unset, `directories::ProjectDirs` / XDG is used (`src/storage.rs`)
+- Global config: `{config_dir}/config.toml`; locale preference: `{config_dir}/locale`
+- Paths use `PathBuf` / `Path::join` only — no hardcoded `/` or `\` separators in application logic
+- Unicode NFC normalization applied during path jail validation
+- Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, `LPT0`–`LPT9`) rejected on all hosts for portable agent trees
+- On Windows, illegal filename characters and trailing space/dot are rejected; long paths get the `\\?\` prefix via `path_safety::prepare_fs_path` when near `MAX_PATH`
 
 
 ## Build Requirements per Platform
@@ -179,7 +212,7 @@ This section summarizes cross-platform-relevant changes in v0.1.12.
 - v0.1.4 prerequisite: Windows Terminal or PowerShell 7+ for proper UTF-8 output
 
 ### x86_64-pc-windows-gnu (cross-compile from Linux)
-- Cross-compile target for contributors and CI verification
+- Cross-compile target for contributors and local cross-compile verification
 - Requires mingw-w64 toolchain on the build host (`mingw64-gcc` on Fedora, `mingw-w64` on Ubuntu)
 - v0.1.4 enables validation via `cargo test --test cross_compile_check -- --ignored`
 
@@ -297,4 +330,14 @@ This release is fully backward-compatible across Linux, macOS, and Windows for e
 - Sparse outline emits real AST `outline_item` kinds under budget
 - `semantic-merge` help and docs state line-based merge (not AST)
 - Recipe recursive hash excludes `*.bak.*` paths
-- See [gaps.md](../gaps.md) and [MIGRATION.md](MIGRATION.md#v0129-to-v0130-current)
+- See [gaps.md](../gaps.md) and [MIGRATION.md](MIGRATION.md#v0129-to-v0130)
+
+## v0.1.34 — One-shot fuzzy and timeout
+
+- Docs-complete publish of the v0.1.33 one-shot runtime (same binary behavior on all platforms)
+- Global `--timeout-secs` / `--timeout` default **120**; `0` disables; deadline → exit **124** (cross-platform)
+- Fuzzy multi-apply is **one-pass** L→R (`apply_fuzzy_one_pass`); never re-scans inserted text
+- Default max fuzzy applies **1**; if replacement contains pattern (fixed-string), force single apply
+- Cooperative cancel polled mid-fuzzy cascade; caps: pattern 64 KiB, lev 8192, windows 4096, growth max(4×,+16 MiB)
+- Regression: `cargo test --test cli_v0133_oneshot_fuzzy`
+- See [MIGRATION.md](MIGRATION.md#v0133-to-v0134-current) and ADR-0054

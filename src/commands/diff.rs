@@ -2,6 +2,9 @@
 
 //! File comparison with unified, stat, or changes-only output.
 //! Workload: CPU-bound (text diff algorithm + I/O).
+//! Parallelism: dual-file reads via `rayon::join` (two independent I/O paths);
+//! diff algorithm itself is single-threaded (similar crate). Bound: global
+//! rayon pool (`--threads` / `--max-concurrency`).
 
 use std::io::Write;
 use std::time::Instant;
@@ -31,8 +34,13 @@ pub fn cmd_diff(
     let workspace = global.resolve_workspace()?;
     let resolved_a = crate::path_safety::validate_path(&args.file_a, &workspace)?;
     let resolved_b = crate::path_safety::validate_path(&args.file_b, &workspace)?;
-    let content_a = crate::file_io::read_file_string(&resolved_a, max_size)?;
-    let content_b = crate::file_io::read_file_string(&resolved_b, max_size)?;
+    // Independent reads — fan out on the process-wide rayon pool.
+    let (content_a, content_b) = rayon::join(
+        || crate::file_io::read_file_string(&resolved_a, max_size),
+        || crate::file_io::read_file_string(&resolved_b, max_size),
+    );
+    let content_a = content_a?;
+    let content_b = content_b?;
 
     let algo = match args.algorithm {
         DiffAlgorithm::Myers => Algorithm::Myers,

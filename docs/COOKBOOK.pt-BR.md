@@ -6,9 +6,14 @@
 > Receitas práticas que você pode copiar e colar nos seus workflows de agente
 
 
-## O Que Há de Novo na v0.1.30
+## O Que Há de Novo na v0.1.34
 
-A v0.1.30 (2026-07-13) residual de contrato de agente: fuzzy obrigatório (off rejeitado), match_count e indent_adjusted no NDJSON do EditOutput, recipe hash pula *.bak.*, config [fuzzy] ao vivo, sparse outline AST real, backup_method reflink_or_copy, semantic-merge line-based. **41 subcomandos**.
+A v0.1.34 (2026-07-19) é a publicação docs-complete do runtime one-shot da v0.1.33: multi-apply fuzzy é **one-pass** E→D (`apply_fuzzy_one_pass`); máximo de applies padrão **1**; embeds forçam apply único; global `--timeout-secs` / `--timeout` **padrão 120** (`0` desabilita, prazo esgotado exit **124**). **41 subcomandos**.
+
+### Novas Receitas (v0.1.34)
+
+- **Como Expandir uma Seção com Fuzzy Replace com Segurança** -- NEW contém OLD; one-pass, sem hang
+- Timeout global padrão 120s — jobs longos em monorepo usam `--timeout-secs 0` ou um valor maior
 
 ### Novas Receitas (superfície v0.1.29 + residual v0.1.30)
 
@@ -28,11 +33,33 @@ A v0.1.30 (2026-07-13) residual de contrato de agente: fuzzy obrigatório (off r
 - **Como Rodar uma Campanha Codemod** -- `codemod --dry-run`, `by_rule_id`
 - **Como Observar Progresso de Batch** -- heartbeats de batch + `--progress-every` no replace
 
+## Como Expandir uma Seção com Fuzzy Replace com Segurança
+
+- Edições de expand-section de agentes frequentemente produzem NEW que **contém** OLD (o bloco original mais linhas)
+- Antes da v0.1.33, reescanear texto inserido podia hangar por dias; one-pass E→D nunca reescaneia texto inserido
+- Quando o replacement contém o pattern (string fixa), atomwrite força apply **único** mesmo com `--max-replacements` enorme
+- Máximo de applies fuzzy padrão é **1** quando `--max-replacements` é omitido (teto rígido **10_000**)
+- Global `--timeout-secs` tem padrão **120** (exit **124** no prazo); passe `0` só se quiser runtime ilimitado de propósito
+
+```bash
+# NEW embute OLD — seguro, termina em um passe (sem hang)
+atomwrite --workspace . replace --fuzzy auto \
+  $'## Setup\n\nInstall deps.' \
+  $'## Setup\n\nInstall deps.\n\n### Extra\nAlso run migrations.' \
+  docs/README.md
+
+# Multi-hit explícito ainda é one-pass no conteúdo original
+atomwrite --workspace . replace --fuzzy auto --max-replacements 3 \
+  'TODO' 'DONE' src/
+```
+
 ## Como Fazer Replace Fuzzy em um Monorepo
 
 - Use replace fuzzy quando indentação ou whitespace diverge entre pacotes
 - NÃO passe `--fuzzy off` (rejeitado desde v0.1.30); use auto ou aggressive
 - Emita progresso NDJSON em árvores grandes com `--progress-every`
+- Lembre: timeout global padrão é **120s** (exit 124); use `--timeout-secs 0` para varreduras ilimitadas de monorepo
+- Teto rígido de applies fuzzy é **10_000**; o padrão permanece **1** quando `--max-replacements` é omitido
 
 ```bash
 # Prévia primeiro
@@ -84,17 +111,17 @@ atomwrite --workspace . semantic-merge \
 ## Como Escolher Durability no write
 
 - `full` para configs e estado durável
-- `fast` para artefatos efêmeros de CI
+- `fast` para artefatos efêmeros
 - `auto` para resolução de política padrão
 
 ```bash
 echo critical | atomwrite --workspace . write --durability full config.toml
-echo scratch | atomwrite --workspace . write --durability fast /tmp/ci-out.txt
+echo scratch | atomwrite --workspace . write --durability fast /tmp/ephemeral-out.txt
 ```
 
 ## Como Instalar Slim vs Full
 
-- Slim (~7.7 MiB, CI ≤15 MiB): só core, sem stack AST
+- Slim (~7.7 MiB, local size-gate ≤15 MiB): só core, sem stack AST
 - Default/full (~52 MB): linguagens AST incluídas
 
 ```bash
@@ -131,8 +158,8 @@ atomwrite --workspace . replace --fuzzy auto \
 echo payload | atomwrite --workspace . write --durability full config.toml \
   | jaq '{durability: .platform.durability, rename_method: .platform.rename_method, backup_method: .platform.backup_method, fsync: .platform.fsync}'
 
-# Caminho rápido para saída efêmera de CI
-echo scratch | atomwrite --workspace . write --durability fast /tmp/ci-out.txt \
+# Caminho rápido para saída efêmera
+echo scratch | atomwrite --workspace . write --durability fast /tmp/ephemeral-out.txt \
   | jaq -r '.platform | "\(.durability) \(.rename_method)"'
 ```
 
@@ -290,7 +317,7 @@ Esta seção resume as mudanças relevantes para receitas em v0.1.12. A release 
 - 661+ testes passando (v0.1.28)
 - 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/`
-- Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
+- Veja [docs/decisions/README.md](decisions/README.md) para decisões arquiteturais
 
 ## Nota de Latência
 - Todas as operações executam localmente com overhead sub-milissegundo
@@ -306,6 +333,8 @@ Esta seção resume as mudanças relevantes para receitas em v0.1.12. A release 
 - `--workspace` padrão é o diretório de trabalho atual
 - `diff --context` padrão é 3 linhas
 - `diff --algorithm` padrão é `patience`
+- Global `--timeout-secs` / `--timeout` → **120** (`0` desabilita; prazo exit **124**)
+- Máximo de applies fuzzy quando `--max-replacements` omitido → **1** (teto rígido **10_000**); multi-apply é one-pass no conteúdo original; embeds forçam 1
 
 
 ## Como Escrever um Arquivo Atomicamente
@@ -873,8 +902,9 @@ EOF
 ### Limite de Tempo em Busca Longa
 
 ```bash
-# Aborta após 60s se a busca não terminar; emite erro NDJSON com error_class=transient
-atomwrite --workspace . --timeout 60 search 'TODO' src/
+# Padrão global é 120s (exit 124 no prazo); 0 desabilita
+# Sobrescreva para 60s se a busca não terminar; emite erro NDJSON com error_class=transient
+atomwrite --workspace . --timeout-secs 60 search 'TODO' src/
 ```
 
 ### Ler Apenas Linhas que Casam com Regex
@@ -1094,8 +1124,8 @@ A flag `--wal-policy` (G119 L1) em `write` e `edit` controla quando o journal si
 - `never` -- nunca escreve o journal sidecar (caminho mais rápido, sem metadados de recovery)
 
 ```bash
-# Builds de CI: pula overhead de journal, sidecars não têm consumidor lá
-atomwrite --workspace . write --wal-policy never ci-config.toml < config.toml
+# Builds efêmeros: pula overhead de journal, sidecars não têm consumidor lá
+atomwrite --workspace . write --wal-policy never ephemeral-config.toml < config.toml
 
 # Deploys de produção: trilha de auditoria importa, força o sidecar
 atomwrite --workspace . write --wal-policy always /etc/myapp/config.toml < prod.toml
@@ -1106,7 +1136,7 @@ atomwrite --workspace . write src/lib.rs < new_lib.rs
 
 ### Como Inspecionar Saúde dos Journals
 
-O subcomando `wal-stats` (G119 L5) emite telemetria read-only sobre o estado atual do WAL. Combine-o com `jaq` para gatear CI ou scripts pós-build.
+O subcomando `wal-stats` (G119 L5) emite telemetria read-only sobre o estado atual do WAL. Combine-o com `jaq` para gatear scripts locais ou scripts pós-build.
 
 ```bash
 # Telemetria completa como NDJSON
@@ -1260,7 +1290,7 @@ atomwrite --workspace . prune-backups --max-age-secs 86400 --dry-run false .
 # Mantém apenas os 3 backups mais recentes por diretório
 atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
 
-# Pipeline CI: afirma zero backups órfãos após limpeza
+# Local gate: afirma zero backups órfãos após limpeza
 atomwrite --workspace . prune-backups --max-age-secs 0 --dry-run false . \
   && fd '*.bak.*' . | wc -l | jaq -e '. == 0'
 ```

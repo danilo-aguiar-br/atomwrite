@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Parallel file content search powered by the ripgrep engine.
+//!
 //! Workload: I/O-bound (file reading + regex matching via ripgrep engine).
+//! Parallelism: content search uses `ignore::WalkParallel` + bounded
+//! `crossbeam-channel` (`concurrency::EVENT_CHANNEL_CAP`). `--target files`
+//! collects via `collect_files_parallel` (honors `--threads`), sorts, then
+//! emits stable NDJSON. Bound via `--threads`/`--max-concurrency`.
 
 use std::io::Write;
 use std::sync::Arc;
@@ -49,84 +54,107 @@ pub fn cmd_search(
         crate::commands::path_resolution::resolve_paths_against_workspace(&args.paths, &workspace)?;
 
     use crate::cli_args::SearchTarget;
-    let mut file_hits_emitted = 0u64;
     if matches!(args.target, SearchTarget::Files | SearchTarget::Both) {
         let pat = if args.case_insensitive || args.smart_case {
             args.pattern.to_ascii_lowercase()
         } else {
             args.pattern.clone()
         };
-        let mut walker = ignore::WalkBuilder::new(&canonical_paths[0]);
-        for p in canonical_paths.iter().skip(1) {
-            walker.add(p);
-        }
-        walker.standard_filters(true);
-        let mut skipped = 0u64;
-        for entry in walker.build() {
-            if shutdown.is_shutdown() {
-                break;
-            }
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy();
-            let hay = if args.case_insensitive || args.smart_case {
-                name.to_ascii_lowercase()
+        // WalkParallel collect + parallel name filter; sort for stable NDJSON.
+        let walker = build_walker(args, &canonical_paths, global)?;
+        let files = crate::concurrency::collect_files_parallel(&walker);
+        let casefold = args.case_insensitive || args.smart_case;
+        let mut matches: Vec<(String, String)> =
+            if crate::concurrency::should_parallelize(files.len()) {
+                use rayon::prelude::*;
+                files
+                    .par_iter()
+                    .filter_map(|path| {
+                        if shutdown.is_shutdown() {
+                            return None;
+                        }
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        let hay = if casefold {
+                            name.to_ascii_lowercase()
+                        } else {
+                            name.clone()
+                        };
+                        if hay.contains(&pat) {
+                            Some((path.display().to_string(), name))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
             } else {
-                name.to_string()
+                files
+                    .iter()
+                    .filter_map(|path| {
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        let hay = if casefold {
+                            name.to_ascii_lowercase()
+                        } else {
+                            name.clone()
+                        };
+                        if hay.contains(&pat) {
+                            Some((path.display().to_string(), name))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
             };
-            let ok = if args.fixed || !args.regex {
-                hay.contains(&pat)
-            } else {
-                hay.contains(&pat)
-            };
-            if ok {
-                if file_hits_emitted < args.offset {
-                    skipped += 1;
-                    file_hits_emitted += 1;
-                    continue;
-                }
-                if let Some(lim) = args.limit {
-                    if file_hits_emitted.saturating_sub(args.offset) >= lim {
-                        break;
-                    }
-                }
-                writer.write_event(&serde_json::json!({
-                    "type": "file_match",
-                    "path": entry.path().display().to_string(),
-                    "name": name,
-                    "target": "files",
-                }))?;
-                file_hits_emitted += 1;
-            }
+        crate::concurrency::sort_parallel(&mut matches);
+
+        let total_name_hits = matches.len() as u64;
+        let start_idx = args.offset.min(total_name_hits) as usize;
+        let end_idx = match args.limit {
+            Some(lim) => start_idx.saturating_add(lim as usize).min(matches.len()),
+            None => matches.len(),
+        };
+        for (path, name) in &matches[start_idx..end_idx] {
+            writer.write_event(&crate::ndjson_types::FileMatchEvent {
+                r#type: "file_match",
+                path: path.clone(),
+                name: name.clone(),
+                target: "files",
+            })?;
         }
+        let matched_emitted = (end_idx - start_idx) as u64;
+
         if matches!(args.target, SearchTarget::Files) {
-            let matched = file_hits_emitted.saturating_sub(args.offset.min(file_hits_emitted));
             writer.write_event(&Summary {
                 r#type: "summary",
-                files_visited: file_hits_emitted,
-                files_matched: matched,
+                // files_visited = all name hits (including those skipped by offset).
+                files_visited: total_name_hits,
+                files_matched: matched_emitted,
                 files_modified: None,
                 files_skipped: None,
-                total_matches: Some(matched),
+                total_matches: Some(matched_emitted),
                 total_replacements: None,
                 elapsed_ms: start.elapsed().as_millis() as u64,
             })?;
             return Ok(());
         }
-        let _ = skipped;
+        let _ = matched_emitted;
     }
 
     let matcher = build_matcher(args)?;
 
     let walker = build_walker(args, &canonical_paths, global)?;
 
-    let (tx, rx) = crossbeam_channel::bounded::<SearchEvent>(1024);
+    let (tx, rx) =
+        crossbeam_channel::bounded::<SearchEvent>(crate::concurrency::event_channel_cap());
 
+    // Per-run counters (not process-wide statics). Ordering::Relaxed is enough:
+    // each atomic is an independent tally; final loads happen after the
+    // parallel walker thread joins, so no cross-field data publication is required.
     let files_visited = Arc::new(AtomicU64::new(0));
     let files_matched = Arc::new(AtomicU64::new(0));
     let total_matches = Arc::new(AtomicU64::new(0));
@@ -180,7 +208,7 @@ pub fn cmd_search(
                 // G56: skip FIFO/named pipe files unless --include-fifo is set.
                 // `open()` on a FIFO blocks indefinitely until the other end
                 // connects, which can cause atomwrite to hang in environments
-                // that have FIFOs in /tmp or /var (CI, Docker, system dirs).
+                // that have FIFOs in /tmp or /var (Docker, restricted, system dirs).
                 if !include_fifo {
                     if let Some(ft) = entry.file_type() {
                         #[cfg(unix)]
@@ -289,7 +317,7 @@ pub fn cmd_search(
                     if let Some(events) = buffer.remove(&path_buf) {
                         open_paths.remove(&path_buf);
                         for ev in events {
-                            emit_search_event(&ev, writer, args, &mut has_matches)?;
+                            emit_search_event(ev, writer, args, &mut has_matches)?;
                         }
                     }
                 }
@@ -307,7 +335,7 @@ pub fn cmd_search(
     // here and BTreeMap emits them in sorted path order.
     for (_, events) in buffer {
         for ev in events {
-            emit_search_event(&ev, writer, args, &mut has_matches)?;
+            emit_search_event(ev, writer, args, &mut has_matches)?;
         }
     }
 
@@ -374,10 +402,11 @@ enum SearchEvent {
 
 /// Emit a single search event to the NDJSON writer.
 ///
-/// Centralizes the dispatch logic so the main consumer loop can buffer events
-/// per path and emit them contiguously regardless of parallel walker order.
+/// Takes ownership of `SearchEvent` so match/context line buffers and
+/// submatch vectors move into the NDJSON payload (no intermediate clone).
+/// Callers drain the per-path buffer after the walker finishes each file.
 fn emit_search_event(
-    event: &SearchEvent,
+    event: SearchEvent,
     writer: &mut NdjsonWriter<impl Write>,
     args: &crate::cli::SearchArgs,
     has_matches: &mut bool,
@@ -392,7 +421,7 @@ fn emit_search_event(
             }
         }
         SearchEvent::Match {
-            path: _path,
+            path,
             line_number,
             lines,
             byte_offset,
@@ -402,27 +431,26 @@ fn emit_search_event(
             if args.count || args.files {
                 return Ok(());
             }
-            let path_str = _path.display().to_string();
             writer.write_event(&SearchMatch {
                 r#type: "match",
-                path: path_str,
-                line_number: *line_number,
-                lines: lines.clone(),
-                byte_offset: *byte_offset,
-                submatches: submatches.clone(),
+                path: path.display().to_string(),
+                line_number,
+                lines,
+                byte_offset,
+                submatches,
             })?;
         }
         SearchEvent::Context {
-            path: _path,
+            path,
             line_number,
             lines,
         } => {
             if !args.count && !args.files {
                 writer.write_event(&SearchContext {
                     r#type: "context",
-                    path: _path.display().to_string(),
-                    line_number: *line_number,
-                    lines: lines.clone(),
+                    path: path.display().to_string(),
+                    line_number,
+                    lines,
                 })?;
             }
         }
@@ -432,26 +460,26 @@ fn emit_search_event(
             lines_searched,
         } => {
             let path_str = path.display().to_string();
-            if args.files && *matches > 0 {
+            if args.files && matches > 0 {
                 writer.write_event(&SearchFile {
                     r#type: "file",
                     path: path_str.clone(),
                 })?;
             }
-            if args.count && *matches > 0 {
+            if args.count && matches > 0 {
                 writer.write_event(&SearchCount {
                     r#type: "count",
                     path: path_str.clone(),
-                    count: *matches,
+                    count: matches,
                 })?;
             }
-            if !args.count && !args.files && *matches > 0 {
+            if !args.count && !args.files && matches > 0 {
                 writer.write_event(&SearchEnd {
                     r#type: "end",
                     path: path_str,
                     stats: FileStats {
-                        matches: *matches,
-                        lines_searched: *lines_searched,
+                        matches,
+                        lines_searched,
                     },
                 })?;
             }
@@ -581,9 +609,8 @@ fn build_walker(
         .git_ignore(!global.no_gitignore)
         .follow_links(global.follow_symlinks);
 
-    if let Some(threads) = global.threads {
-        builder.threads(if threads == 0 { num_cpus() } else { threads });
-    }
+    // Always apply the shared bound (default = all cores, RAM-capped).
+    crate::concurrency::apply_walk_threads(&mut builder, global.threads);
 
     if !args.include.is_empty() || !args.exclude.is_empty() {
         let mut overrides = ignore::overrides::OverrideBuilder::new(&canonical_paths[0]);
@@ -617,8 +644,4 @@ fn extract_submatches(matcher: &grep_regex::RegexMatcher, line: &str) -> Vec<Sub
     subs
 }
 
-fn num_cpus() -> usize {
-    std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-}
+

@@ -1,0 +1,11 @@
+# cargo-audit configuration (https://github.com/rustsec/rustsec)
+# Used by: cargo audit --deny warnings
+
+[advisories]
+# Ignore list is empty by default; prefer fixing or upgrading over ignore.
+ignore = []
+informational-warnings = ["unmaintained", "unsound", "notice"]
+
+[output]
+deny = ["unmaintained", "unsound"]
+quiet = false

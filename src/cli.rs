@@ -5,21 +5,28 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueHint};
 
 pub use crate::cli_args::*;
 
+/// Build-time version line for clap (`env!` / `option_env!` — compile-time macros).
+///
+/// `ATOMWRITE_GIT_SHA` and `TARGET` are injected by `build.rs` via
+/// `cargo:rustc-env`. When git is unavailable the SHA falls back to `"unknown"`.
 fn version_string() -> String {
-    let version = env!("CARGO_PKG_VERSION");
-    let git_sha = option_env!("ATOMWRITE_GIT_SHA").unwrap_or("unknown");
-    let target = env!("TARGET");
-    format!("{version} ({git_sha}) {target}")
+    format!(
+        "{} ({}) {}",
+        env!("CARGO_PKG_VERSION"),
+        option_env!("ATOMWRITE_GIT_SHA").unwrap_or("unknown"),
+        env!("TARGET"),
+    )
 }
 
 #[derive(Parser, Debug)]
 #[command(
     name = "atomwrite",
     version = version_string(),
+    author = env!("CARGO_PKG_AUTHORS"),
     about = "Atomic file operations CLI for LLM agents",
     long_about = "A single, self-contained Rust CLI that gives LLM agents superpowers \
                   for file operations. Every write is atomic (tempfile → fsync → rename), \
@@ -49,36 +56,63 @@ pub struct GlobalArgs {
     pub quiet: u8,
 
     /// Workspace root for path jail validation.
-    #[arg(long, global = true, help = "Workspace root for path jail validation")]
+    #[arg(
+        long,
+        global = true,
+        value_hint = ValueHint::DirPath,
+        help = "Workspace root for path jail validation"
+    )]
     pub workspace: Option<PathBuf>,
+
+    /// Explicit config file path (overrides workspace `.atomwrite.toml` and XDG config).
+    #[arg(
+        long,
+        global = true,
+        value_hint = ValueHint::FilePath,
+        help = "Path to .atomwrite.toml (explicit override; fails if missing/malformed)"
+    )]
+    pub config: Option<PathBuf>,
 
     /// Color output mode.
     #[arg(long, global = true, value_enum, default_value_t = ColorChoice::Auto, help = "Control colored output")]
     pub color: ColorChoice,
 
     /// Disable colored output (equivalent to --color never).
-    #[arg(long, global = true, help = "Disable colored output")]
+    #[arg(long, global = true, help = "Disable colored output", action = clap::ArgAction::SetTrue)]
     pub no_color: bool,
 
     /// Disable .gitignore filtering.
-    #[arg(long, global = true, help = "Do not respect .gitignore files")]
+    #[arg(long, global = true, help = "Do not respect .gitignore files", action = clap::ArgAction::SetTrue)]
     pub no_gitignore: bool,
 
     /// Include hidden files and directories.
-    #[arg(long, global = true, help = "Include hidden files and directories")]
+    #[arg(long, global = true, help = "Include hidden files and directories", action = clap::ArgAction::SetTrue)]
     pub hidden: bool,
 
     /// Follow symbolic links during traversal.
-    #[arg(long, global = true, help = "Follow symbolic links")]
+    #[arg(long, global = true, help = "Follow symbolic links", action = clap::ArgAction::SetTrue)]
     pub follow_symlinks: bool,
 
-    /// Number of parallel threads (0 = all cores). Env: `RAYON_NUM_THREADS`.
-    // rayon respects RAYON_NUM_THREADS natively when --threads is not passed.
+    /// Parallel worker bound for multi-file / multi-path commands.
+    ///
+    /// Sets both `ignore::WalkBuilder::threads` (directory fan-out) and the
+    /// process-wide rayon pool (CPU-bound `par_iter` helpers: hash, backup,
+    /// recursive delete/copy, semantic-search scoring, non-txn batch, …).
+    ///
+    /// * omitted → all logical CPUs, RAM-capped (`concurrency` module formula)
+    /// * `0` → same as omitted (explicit “use all cores”)
+    /// * `N` → exactly N workers (deterministic tests / constrained hosts)
+    ///
+    /// Alias: `--max-concurrency` (Rules Rust bounded-concurrency surface).
+    /// Env: `RAYON_NUM_THREADS` is still honored by rayon if the pool was not
+    /// configured via this flag path first.
     #[arg(
         short = 'j',
-        long,
+        long = "threads",
+        visible_alias = "max-concurrency",
         global = true,
-        help = "Number of parallel threads (0 = all cores). Env: RAYON_NUM_THREADS"
+        value_name = "N",
+        help = "Max concurrent workers for walks + rayon (0 = all cores; default = all cores, RAM-capped). Alias: --max-concurrency"
     )]
     pub threads: Option<usize>,
 
@@ -90,28 +124,43 @@ pub struct GlobalArgs {
     )]
     pub max_filesize: Option<u64>,
 
-    /// Global operation timeout in seconds. 0 disables timeout.
+    /// Global operation timeout in seconds. **Default 120** (v0.1.33/0.1.34 one-shot).
+    ///
+    /// When non-zero, a watchdog sets the cooperative cancel flag after N
+    /// seconds (exit 124). Alias: `--timeout`. Pass `0` to disable (not
+    /// recommended for agents — pure CPU sections must poll the flag).
+    #[arg(
+        long = "timeout-secs",
+        visible_alias = "timeout",
+        global = true,
+        default_value_t = 120u64,
+        help = "Global operation timeout in seconds (default: 120; 0 = disable; exit 124 on deadline)"
+    )]
+    pub timeout_secs: u64,
+
+    /// Suppress NDJSON `progress` heartbeats (batch/replace).
     #[arg(
         long,
         global = true,
-        default_value_t = 0u64,
-        help = "Global operation timeout in seconds (0 = no timeout, default: 0)"
+        help = "Disable NDJSON progress events on long operations",
+        action = clap::ArgAction::SetTrue
     )]
-    pub timeout_secs: u64,
+    pub no_progress: bool,
 
     /// Emit JSON Schema for subcommand output and exit.
     #[arg(
         long,
         global = true,
-        help = "Emit JSON Schema for the subcommand output and exit"
+        help = "Emit JSON Schema for the subcommand output and exit",
+        action = clap::ArgAction::SetTrue
     )]
     pub json_schema: bool,
 
     /// Accepted for compatibility but ignored — output is always NDJSON.
-    #[arg(long, global = true, hide = true)]
+    #[arg(long, global = true, hide = true, action = clap::ArgAction::SetTrue)]
     pub json: bool,
 
-    /// Override locale for translated messages (e.g. en, pt-BR).
+    /// Override locale for translated suggestions / human stderr (e.g. en, pt-BR).
     ///
     /// ADR-0037: long flag renamed `--lang` → `--locale` in v0.1.20 to
     /// free the `--lang` namespace for subcommand-level use (e.g.
@@ -121,10 +170,15 @@ pub struct GlobalArgs {
     /// programmatic API users. Existing `--lang` flag invocations
     /// will fail loudly with `unknown argument` — this is a deliberate
     /// breaking change in CLI surface, documented in CHANGELOG v0.1.20.
+    ///
+    /// Precedence (Rules Rust i18n): `--locale` / `ATOMWRITE_LANG` → XDG
+    /// preference → OS via `sys-locale` → `en`. NDJSON error **codes** and
+    /// Display **messages** stay English; **suggestions** follow the locale.
     #[arg(
         long = "locale",
         global = true,
         env = "ATOMWRITE_LANG",
+        value_parser = crate::locale::parse_cli_locale,
         help = "Override locale (en, pt-BR); renamed from --lang in v0.1.20"
     )]
     pub lang: Option<String>,
@@ -132,13 +186,14 @@ pub struct GlobalArgs {
     /// Skip the on-startup `wal-heal` pass (G119 L3). Default: every
     /// invocation walks the workspace and reaps stale `Committed`/
     /// `Aborted` sidecars older than 3600s within a 100ms wall-clock
-    /// budget. Set this flag in tight CI loops or in benchmarks that
+    /// budget. Set this flag in tight local loops or in benchmarks that
     /// measure the subcommand cost in isolation.
     #[arg(
         long,
         global = true,
         env = "ATOMWRITE_WAL_NO_AUTO_HEAL",
-        help = "Skip startup wal-heal pass (G119 L3); default: run with 3600s threshold and 100ms budget"
+        help = "Skip startup wal-heal pass (G119 L3); default: run with 3600s threshold and 100ms budget",
+        action = clap::ArgAction::SetTrue
     )]
     pub no_auto_heal: bool,
 }
@@ -284,6 +339,16 @@ pub enum Commands {
     Codemod(crate::commands::codemod::CodemodArgs),
     /// Offline token Jaccard search (v0.1.29 P3-2).
     SemanticSearch(crate::commands::semantic_search::SemanticSearchArgs),
+    /// Diagnose environment and dependencies (agent host readiness)
+    Doctor(crate::commands::doctor::DoctorArgs),
+
+    /// Show resolved UI locale / persist preference (XDG)
+    Locale(crate::commands::locale_cmd::LocaleArgs),
+
+    /// Emit full command tree as JSON for agent discovery
+    #[command(name = "commands")]
+    CommandsTree(crate::commands::command_tree::CommandsTreeArgs),
+
     /// Generate shell completions for bash, zsh, fish, or powershell
     Completions(CompletionsArgs),
 

@@ -2,6 +2,13 @@
 
 //! G114 — Write-Ahead Log (WAL) sidecar for crash-safe atomic writes.
 //!
+//! Workload: I/O-bound (sidecar JSON append + multi-journal scan for heal/stats).
+//! Parallelism: hot write path stays ordered (journal before mutate — single
+//! target). Multi-journal discovery uses `ignore::WalkParallel` (hidden
+//! sidecars) bound by the process-wide thread pool; parse/classify/unlink of
+//! independent journals fan out via `rayon::par_iter` (stats, heal, recover).
+//! Auto-heal still respects a wall-clock budget between parallel chunks.
+//!
 //! ## Problem
 //!
 //! The `atomic_write` pipeline has 13 steps. If the process is killed
@@ -30,17 +37,17 @@
 //! `expected_new_checksum`, and the recorded `op_id` for the caller to
 //! decide whether to replay or abort.
 //!
-//! ## Causa x Efeito
+//! ## Cause and Effect
 //!
-//! - **Causa**: `atomic_write` é uma sequência de 13 passos; crash entre
-//!   qualquer par pode deixar o arquivo em estado inconsistente.
-//! - **Efeito**: Sem WAL, recovery exige intervenção manual via
-//!   `git checkout`, `cp` do backup mais recente, ou heurística ad-hoc.
-//! - **Solução**: Sidecar journal append-only + recovery idempotente via
-//!   `op_id`; recovery é puramente consultivo (não toca o filesystem).
-//! - **Benefício**: Operador recebe `wal_recovery` NDJSON estruturado com
-//!   `target`, `expected_new_checksum`, `op_id` para replay manual ou
-//!   script de recovery.
+//! - **Cause**: `atomic_write` is a 13-step sequence; a crash between any
+//!   two steps can leave the target file in an inconsistent state.
+//! - **Effect**: Without a WAL, recovery requires manual intervention via
+//!   `git checkout`, restoring the latest backup, or ad-hoc heuristics.
+//! - **Solution**: Append-only sidecar journal plus idempotent recovery via
+//!   `op_id`; recovery is advisory only (it does not mutate the filesystem).
+//! - **Benefit**: Operators receive structured `wal_recovery` NDJSON with
+//!   `target`, `expected_new_checksum`, and `op_id` for manual replay or
+//!   a recovery script.
 
 use std::fs;
 use std::io::Write;
@@ -50,6 +57,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use blake3::Hash;
+use ignore::WalkBuilder;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// Threshold above which a target file is considered "large" for the L1
@@ -280,7 +289,16 @@ pub mod heuristics {
         if max_per_min == 0 {
             return false;
         }
-        // Coarse 1-minute window via timestamp + counter.
+        // Process-local rate window. Function-local `static` (not `const`) so
+        // every call shares one address — interior-mutable atomics must never
+        // live in `const` (each use site would get a fresh counter).
+        //
+        // Ordering::Relaxed is intentional: this is a best-effort throttle for
+        // agent floods, not a data-publication barrier. Concurrent threads may
+        // briefly overshoot the cap; absolute accuracy is not required.
+        // Window reset uses compare_exchange so two threads that both observe
+        // an expired window do not clobber each other's start/count with plain
+        // stores (still Relaxed — no cross-field happens-before needed).
         static WINDOW_START: AtomicU64 = AtomicU64::new(0);
         static WINDOW_COUNT: AtomicU64 = AtomicU64::new(0);
         let now = SystemTime::now()
@@ -289,9 +307,16 @@ pub mod heuristics {
             .unwrap_or(0);
         let start = WINDOW_START.load(Ordering::Relaxed);
         if now.saturating_sub(start) >= 60 {
-            WINDOW_START.store(now, Ordering::Relaxed);
-            WINDOW_COUNT.store(1, Ordering::Relaxed);
-            return false;
+            match WINDOW_START.compare_exchange(start, now, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => {
+                    WINDOW_COUNT.store(1, Ordering::Relaxed);
+                    return false;
+                }
+                Err(_) => {
+                    // Another thread already opened a new window; fall through
+                    // to increment the shared count under the new start.
+                }
+            }
         }
         let count = WINDOW_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
         count > max_per_min
@@ -443,9 +468,11 @@ fn append_entry(target: &Path, entry: &JournalEntry) -> Result<()> {
         .append(true)
         .open(&path)
         .with_context(|| format!("failed to open journal {}", path.display()))?;
-    let json = serde_json::to_string(entry)
-        .with_context(|| format!("failed to serialize journal entry for {}", target.display()))?;
-    writeln!(file, "{}", json)
+    // Stream serialize (to_writer) rather than String intermediate — NDJSON rules.
+    serde_json::to_writer(&mut file, entry).with_context(|| {
+        format!("failed to serialize journal entry for {}", target.display())
+    })?;
+    file.write_all(b"\n")
         .with_context(|| format!("failed to write journal entry to {}", path.display()))?;
     file.sync_data()
         .with_context(|| format!("failed to fsync journal {}", path.display()))?;
@@ -478,6 +505,12 @@ fn append_entry(target: &Path, entry: &JournalEntry) -> Result<()> {
 /// the per-file Drop context has no cheap way to know the global
 /// committed count; a workspace-wide sweep is the right place for that
 /// (see `wal-heal` and `auto_heal_on_startup`).
+/// RAII journal sidecar guard.
+///
+/// `#[must_use]`: the guard owns the decision to keep or remove the journal
+/// on drop (`keep` / `release`). Ignoring it would drop immediately and may
+/// delete a sidecar before the write pipeline finishes (resource ownership).
+#[must_use = "JournalGuard controls sidecar lifetime on drop; call keep()/release()"]
 #[derive(Debug)]
 pub struct JournalGuard {
     path: PathBuf,
@@ -644,8 +677,38 @@ pub struct WalDirEntry {
 
 /// Compute a snapshot of the current journal state. Read-only and safe
 /// to call from any context. Used by the `wal-stats` subcommand (G119 L5).
+///
+/// Discovery is WalkParallel; per-journal parse fans out with `par_iter`
+/// when more than one sidecar is present (independent I/O).
 pub fn compute_wal_stats(workspace: &Path) -> Result<WalStats> {
     use std::collections::BTreeMap;
+
+    let paths = walk_journal_paths(workspace)?;
+    let workspace = workspace.to_path_buf();
+
+    // Independent read+parse per journal → parallel when multi-item.
+    let rows: Vec<(PathBuf, u64, &'static str, u64)> =
+        if crate::concurrency::should_parallelize(paths.len()) {
+            paths
+                .par_iter()
+                .map(|path| {
+                    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                    let (state, last_unix) =
+                        parse_journal_state(path).unwrap_or(("malformed", 0));
+                    (path.clone(), size, state, last_unix)
+                })
+                .collect()
+        } else {
+            paths
+                .iter()
+                .map(|path| {
+                    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                    let (state, last_unix) =
+                        parse_journal_state(path).unwrap_or(("malformed", 0));
+                    (path.clone(), size, state, last_unix)
+                })
+                .collect()
+        };
 
     let mut total: u64 = 0;
     let mut by_state = WalStateBreakdown::default();
@@ -653,19 +716,17 @@ pub fn compute_wal_stats(workspace: &Path) -> Result<WalStats> {
     let mut total_size: u64 = 0;
     let mut by_dir: BTreeMap<String, u64> = BTreeMap::new();
 
-    for path in walk_journal_paths(workspace)? {
-        let meta = std::fs::metadata(&path).ok();
+    for (path, size, state, last_unix) in rows {
         total += 1;
-        total_size += meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        total_size += size;
 
         let rel_dir = path
             .parent()
-            .and_then(|p| p.strip_prefix(workspace).ok())
+            .and_then(|p| p.strip_prefix(&workspace).ok())
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| ".".to_string());
         *by_dir.entry(rel_dir).or_insert(0) += 1;
 
-        let (state, last_unix) = parse_journal_state(&path).unwrap_or(("malformed", 0));
         match state {
             "Committed" => by_state.committed += 1,
             "Aborted" => by_state.aborted += 1,
@@ -711,25 +772,30 @@ pub fn compute_wal_stats(workspace: &Path) -> Result<WalStats> {
 
 /// Recursively walk a directory and yield all `*.atomwrite.journal.json`
 /// sidecar paths. Returns an empty Vec if the workspace does not exist.
+///
+/// Uses `WalkParallel` (hidden sidecars included) so discovery scales on
+/// monorepos; paths are sorted for stable stats/heal order.
 pub fn walk_journal_paths(workspace: &Path) -> Result<Vec<PathBuf>> {
     if !workspace.exists() {
         return Ok(Vec::new());
     }
-    let mut out = Vec::new();
-    for entry in walkdir::WalkDir::new(workspace)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
+    let mut builder = WalkBuilder::new(workspace);
+    // Journals are hidden-name sidecars (`.atomwrite.journal.*`).
+    builder.hidden(false).git_ignore(false);
+    // Bound by process-wide pool (configured in run via --threads).
+    crate::concurrency::apply_walk_threads(&mut builder, None);
+    let mut out = crate::concurrency::collect_mapped_parallel(&builder, |entry| {
+        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+            return None;
         }
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.ends_with(JOURNAL_EXT) {
-                out.push(path.to_path_buf());
-            }
+        let name = entry.file_name().to_str()?;
+        if name.ends_with(JOURNAL_EXT) {
+            Some(entry.path().to_path_buf())
+        } else {
+            None
         }
-    }
+    });
+    crate::concurrency::sort_paths_parallel(&mut out);
     Ok(out)
 }
 
@@ -805,10 +871,10 @@ pub struct AutoHealReport {
 /// are NEVER removed automatically — they may represent a real orphan
 /// that needs `recover_orphan_journals` to inspect.
 ///
-/// This function is bounded: it walks the workspace with a wall-clock
-/// budget of `max_duration_ms` (default 100ms) and stops on timeout.
-/// On a 60-journal workspace the pass completes in <5ms; on a 10k
-/// workspace the budget still ensures bounded startup cost.
+/// This function is bounded: discovery + classify fan out in parallel
+/// chunks, with a wall-clock budget of `max_duration_ms` (default 100ms)
+/// checked **between** chunks so startup cost stays bounded on 10k-journal
+/// workspaces while still using multi-core I/O when time allows.
 pub fn auto_heal_on_startup(
     workspace: &Path,
     threshold_secs: u64,
@@ -825,34 +891,74 @@ pub fn auto_heal_on_startup(
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    for path in walk_journal_paths(workspace)? {
+    let paths = walk_journal_paths(workspace)?;
+    // Chunk size ≈ pool size so each batch saturates cores once, then we
+    // re-check the wall budget (cooperative bound for startup heal).
+    let chunk = crate::concurrency::effective_threads(None).max(1) * 4;
+
+    for chunk_paths in paths.chunks(chunk) {
         if start.elapsed().as_millis() as u64 > max_duration_ms {
             break;
         }
-        let (state, last_unix) = match parse_journal_state(&path) {
-            Some(s) => s,
-            None => {
-                malformed += 1;
-                continue;
-            }
+        let actions: Vec<HealClass> = if crate::concurrency::should_parallelize(chunk_paths.len()) {
+            chunk_paths
+                .par_iter()
+                .map(|path| classify_heal(path, now, threshold_secs))
+                .collect()
+        } else {
+            chunk_paths
+                .iter()
+                .map(|path| classify_heal(path, now, threshold_secs))
+                .collect()
         };
-        match state {
-            "Committed" | "Aborted" => {
-                let age = now.saturating_sub(last_unix);
-                if age > threshold_secs {
-                    if let Ok(meta) = std::fs::metadata(&path) {
-                        bytes_reclaimed += meta.len();
-                    }
-                    match std::fs::remove_file(&path) {
-                        Ok(_) => removed += 1,
-                        Err(_) => preserved += 1,
-                    }
-                } else {
+
+        let to_remove: Vec<(PathBuf, u64)> = actions
+            .into_iter()
+            .filter_map(|a| match a {
+                HealClass::Remove { path, size } => Some((path, size)),
+                HealClass::Preserve => {
                     preserved += 1;
+                    None
                 }
+                HealClass::Malformed => {
+                    malformed += 1;
+                    None
+                }
+            })
+            .collect();
+
+        if start.elapsed().as_millis() as u64 > max_duration_ms {
+            // Budget exhausted after classify — count remaining as preserved
+            // rather than unlinking past the deadline.
+            preserved += to_remove.len() as u64;
+            break;
+        }
+
+        let outcomes: Vec<(bool, u64)> = if crate::concurrency::should_parallelize(to_remove.len())
+        {
+            to_remove
+                .par_iter()
+                .map(|(path, size)| match std::fs::remove_file(path) {
+                    Ok(()) => (true, *size),
+                    Err(_) => (false, 0),
+                })
+                .collect()
+        } else {
+            to_remove
+                .iter()
+                .map(|(path, size)| match std::fs::remove_file(path) {
+                    Ok(()) => (true, *size),
+                    Err(_) => (false, 0),
+                })
+                .collect()
+        };
+        for (ok, size) in outcomes {
+            if ok {
+                removed += 1;
+                bytes_reclaimed += size;
+            } else {
+                preserved += 1;
             }
-            "Started" => preserved += 1,
-            _ => malformed += 1,
         }
     }
 
@@ -864,6 +970,36 @@ pub fn auto_heal_on_startup(
         bytes_reclaimed,
         threshold_secs,
     })
+}
+
+/// Classification of one journal for auto-heal (Send for rayon).
+enum HealClass {
+    Remove { path: PathBuf, size: u64 },
+    Preserve,
+    Malformed,
+}
+
+fn classify_heal(path: &Path, now: u64, threshold_secs: u64) -> HealClass {
+    let (state, last_unix) = match parse_journal_state(path) {
+        Some(s) => s,
+        None => return HealClass::Malformed,
+    };
+    match state {
+        "Committed" | "Aborted" => {
+            let age = now.saturating_sub(last_unix);
+            if age > threshold_secs {
+                let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                HealClass::Remove {
+                    path: path.to_path_buf(),
+                    size,
+                }
+            } else {
+                HealClass::Preserve
+            }
+        }
+        "Started" => HealClass::Preserve,
+        _ => HealClass::Malformed,
+    }
 }
 
 /// Per-sidecar recovery report emitted by `recover_orphan_journals`.
@@ -901,28 +1037,39 @@ pub struct OrphanJournalReport {
 /// sidecars. The caller is responsible for deciding what to do with the
 /// orphan (replay, abort, or ignore).
 pub fn recover_orphan_journals(dir: &Path) -> Result<Vec<OrphanJournalReport>> {
-    let mut reports = Vec::new();
     if !dir.exists() {
-        return Ok(reports);
+        return Ok(Vec::new());
     }
     let entries =
         fs::read_dir(dir).with_context(|| format!("failed to read dir {}", dir.display()))?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
+    let journal_paths: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with(".atomwrite.journal.") && name.ends_with(JOURNAL_EXT)
+                    })
+        })
+        .collect();
+
+    // Independent parse per journal → parallel when multi-item.
+    let parsed: Vec<Result<Option<OrphanJournalReport>>> =
+        if crate::concurrency::should_parallelize(journal_paths.len()) {
+            journal_paths.par_iter().map(|path| parse_orphan(path)).collect()
+        } else {
+            journal_paths.iter().map(|path| parse_orphan(path)).collect()
         };
-        if !name.starts_with(".atomwrite.journal.") || !name.ends_with(JOURNAL_EXT) {
-            continue;
-        }
-        match parse_orphan(&path) {
+
+    let mut reports = Vec::new();
+    for (path, result) in journal_paths.iter().zip(parsed) {
+        match result {
             Ok(Some(report)) => reports.push(report),
             Ok(None) => {
                 // Journal is intact (last entry = Committed or Aborted).
-                // No recovery needed.
             }
             Err(e) => {
                 tracing::warn!(path = %path.display(), error = %e, "failed to parse journal");
@@ -1374,7 +1521,7 @@ mod tests {
 
     /// The 100ms wall-clock budget is honoured even on a workspace with
     /// many sidecars. We use a generous budget to keep the test stable
-    /// in CI; the contract is that the function returns within the
+    /// in automated local runs; the contract is that the function returns within the
     /// budget (it is allowed to return EARLY, never LATE).
     #[test]
     fn l3_auto_heal_respects_budget() {
@@ -1396,7 +1543,7 @@ mod tests {
         let elapsed = start.elapsed();
         assert!(
             elapsed.as_millis() < 1000,
-            "50-sidecar heal should complete in <1s (budget was 100ms, allowed slack for slow CI)"
+            "50-sidecar heal should complete in <1s (budget was 100ms, allowed slack for slow hosts)"
         );
         // All 50 are old enough (committed_at_unix=1) to be reaped.
         assert_eq!(report.removed, 50);

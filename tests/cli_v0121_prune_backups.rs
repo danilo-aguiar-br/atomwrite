@@ -57,7 +57,7 @@ fn prune_backups_dry_run_does_not_delete() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // dry-run NÃO deve deletar nada
+    // dry-run must not delete anything
     let ndjson = common::parse_ndjson(&output.stdout);
     let summary = ndjson
         .iter()
@@ -104,8 +104,8 @@ fn prune_backups_max_age_removes_only_old() {
         "stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(recent.exists(), "backup recente deve permanecer");
-    assert!(!old.exists(), "backup antigo deve ter sido removido");
+    assert!(recent.exists(), "recent backup must remain");
+    assert!(!old.exists(), "old backup must have been removed");
 }
 
 #[test]
@@ -192,9 +192,9 @@ fn prune_backups_target_not_found_emits_skipped() {
         .output()
         .expect("run");
 
-    // O binário deve completar com sucesso e emitir `skipped` para o path
-    // ausente (não é um erro fatal — o operador pode passar uma lista mista
-    // de paths existentes e ausentes).
+    // Binary must succeed and emit `skipped` for the missing path
+    // (not a fatal error — the operator may pass a mixed list of existing
+    // and missing paths).
     assert!(
         output.status.success(),
         "stderr={}",
@@ -233,7 +233,7 @@ fn prune_backups_no_filter_aborts_with_error() {
     // Should fail (exit non-zero) because no filter was specified.
     assert!(
         !output.status.success(),
-        "prune-backups sem filtro deve falhar, got exit={:?}, stderr={}",
+        "prune-backups without a filter must fail, got exit={:?}, stderr={}",
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -242,13 +242,13 @@ fn prune_backups_no_filter_aborts_with_error() {
     assert_eq!(
         count_backups(dir.path(), "file.txt.bak."),
         3,
-        "bail não deve deletar nenhum backup"
+        "bail must not delete any backup"
     );
 }
 
 #[test]
 fn prune_backups_only_targets_correct_file() {
-    // Garante que prune-backups para `file_a.txt` não toca `file_b.txt.bak.*`
+    // Ensures prune-backups for `file_a.txt` does not touch `file_b.txt.bak.*`
     let dir = tempfile::tempdir().expect("tempdir");
     let target_a = dir.path().join("file_a.txt");
     let target_b = dir.path().join("file_b.txt");
@@ -283,6 +283,6 @@ fn prune_backups_only_targets_correct_file() {
     assert_eq!(
         count_backups(dir.path(), "file_b.txt.bak."),
         2,
-        "prune-backups não deve afetar backups de outro arquivo"
+        "prune-backups must not affect backups of another file"
     );
 }

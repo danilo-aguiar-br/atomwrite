@@ -4,9 +4,9 @@
 
 atomwrite é um CLI Rust que fornece 41 subcomandos para manipulação de arquivos com garantias de escrita atômica. Toda escrita usa tempfile + fsync + rename + fsync do diretório. Toda resposta é NDJSON com checksums BLAKE3. Construído para agentes LLM que precisam de operações de arquivo confiáveis e estruturadas sem risco de corrupção.
 
-**Release mais recente: v0.1.30** (2026-07-13) — Fuzzy obrigatório (`auto`/`aggressive`; `--fuzzy off` exit 65); `edit --replace-all` com NDJSON `match_count` e `indent_adjusted`; escape-drift; unicode_normalized; `best_candidate`/`candidates[]` ranqueados; `search --target` + paginação; recipe exclui `*.bak.*` inclusive no hash; `sparse outline` AST real; `backup_method=reflink_or_copy`; config `[fuzzy]` ao vivo; semantic-merge line-based; suíte `cli_v0130_agent_contract`. 41 subcomandos. Veja `CHANGELOG.pt-BR.md`.
+**Release mais recente: v0.1.34** — Hang one-shot fuzzy corrigido (NEW pode embutir OLD); `replace --fuzzy` é one-pass no conteúdo original, nunca reescaneia texto inserido; default max applies fuzzy = 1; embeds forçam 1 apply; `--timeout-secs` default **120** (0 desliga; exit **124** no prazo); cancel polled no meio do fuzzy; caps de recurso (pattern 64 KiB / lev 8192 / janelas 4096 / crescimento); docs totalmente alinhadas (ADR-0054). Pin `^0.1.34`. 41 subcomandos; sem telemetria. Veja `CHANGELOG.pt-BR.md` e `https://docs.rs/atomwrite`.
 
-**Release anterior: v0.1.28** (2026-07-06) — BREAKING: backup default em `delete`; `BackupOpts` unificado em 15 subcomandos mutantes; `[defaults]` do `.atomwrite.toml` efetivo; guard de stdin-tty no `edit`. 661 testes, 33 subcomandos. Veja `CHANGELOG.pt-BR.md`.
+**Anteriores:** v0.1.33 correção de hang no runtime + fuzzy one-pass; v0.1.32 docs.rs `doc_cfg` / multi-target; v0.1.30 superfície de agente (fuzzy obrigatório, `match_count`/`indent_adjusted`, `best_candidate`, recipe skip bak, `cli_v0130_agent_contract`). Veja `CHANGELOG.pt-BR.md`.
 
 ## 41 Subcomandos
 
@@ -21,7 +21,7 @@ atomwrite é um CLI Rust que fornece 41 subcomandos para manipulação de arquiv
 
 ### Busca e substituição (3)
 - `search` — buscar conteúdo de arquivos em paralelo (motor ripgrep). `--no-begin-end` desabilita a emissão de âncoras
-- `replace` — substituir texto entre arquivos com escritas atômicas; `--fuzzy auto|aggressive` (off rejeitado desde v0.1.30) e `--fuzzy-threshold`; reporta `strategy`/`similarity`/`match_count`/`indent_adjusted`; erros de match podem incluir `best_candidate`
+- `replace` — substituir texto entre arquivos com escritas atômicas; `--fuzzy auto|aggressive` (off rejeitado desde v0.1.30) e `--fuzzy-threshold`; multi-apply **one-pass** no conteúdo original (nunca reescaneia texto inserido); default max applies = **1**; se replacement embute pattern → força 1 apply; reporta `strategy`/`similarity`/`match_count`/`indent_adjusted`; erros de match podem incluir `best_candidate`
 - `transform` — refatoração AST via ast-grep (306 linguagens)
 
 ### Inspeção (9)

@@ -2,6 +2,10 @@
 
 //! Binary content detection powered by the `content_inspector` crate (G41).
 //!
+//! Workload: CPU-bound (small buffer classification).
+//! Parallelism: none — pure function on `&[u8]`; multi-file fan-out lives in
+//! callers (search/replace walkers). Overhead of spawn ≫ single classify.
+//!
 //! The previous implementation used a simple null-byte heuristic, which
 //! misclassified UTF-16LE and UTF-16BE without BOM as binary (because every
 //! ASCII char in UTF-16LE is followed by a 0x00 byte). `content_inspector`

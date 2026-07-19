@@ -14,4 +14,4 @@
   1. Single global `/var/log/atomwrite.wal`. Rejected: not portable; permissions; not per-target.
   2. SQLite WAL. Rejected: requires `libsqlite3-sys` system dep, complicates cross-compile.
   3. Embed in xattr. Rejected: not all filesystems support xattr; FAT32, /tmp on overlayfs return `EOPNOTSUPP`.
-- **Trigger to revisit**: If WAL sidecar size becomes a problem in CI, add `--wal-rotate-size N` to roll the sidecar.
+- **Trigger to revisit**: If WAL sidecar size becomes a problem in local scripts, add `--wal-rotate-size N` to roll the sidecar.

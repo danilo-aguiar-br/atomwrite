@@ -2,6 +2,10 @@
 
 //! Atomic file write pipeline: tempfile, fsync, rename, fsync directory.
 //!
+//! Workload: I/O-bound (single-file durable write + optional backup/journal).
+//! Parallelism: none inside one write (ordered rename/fsync contract). Multi-file
+//! callers (`backup`, `batch`, `delete`) fan out with rayon around this module.
+//!
 //! Three write strategies are available, selected automatically:
 //!
 //! - `WriteStrategy::Rename` — classic tempfile + `rename(2)` (atomic, but
@@ -503,10 +507,12 @@ fn write_rename_path(
         while offset < content.len() {
             if crate::signal::is_global_shutdown() {
                 // Drop tempfile by not persisting — NamedTempFile cleans on drop.
-                return Err(crate::error::AtomwriteError::Cancelled {
-                    reason: format!("atomic write cancelled for {}", target.display()),
-                    exit: 143,
-                }
+                // Exit code follows the live signal/timeout (130/143/124), not a
+                // hard-coded SIGTERM — see `signal::cancelled_error`.
+                return Err(crate::signal::cancelled_error(format!(
+                    "atomic write cancelled for {}",
+                    target.display()
+                ))
                 .into());
             }
             let end = (offset + CHUNK).min(content.len());
@@ -714,44 +720,19 @@ fn strip_string_literals(text: &str) -> String {
     }
     out
 }
+/// EXDEV fallback: write the in-memory payload already produced for the
+/// tempfile pipeline. Reuses `content` (no second heap buffer / no re-read
+/// of the temp file) and performs a single truncate+write+fsync.
 #[cfg(unix)]
-fn copy_tempfile_to_target(temp: &std::fs::File, target: &Path, _content: &[u8]) -> Result<()> {
-    use std::io::{Read, Seek, Write};
-    let mut temp_handle = temp.try_clone().context("cannot clone tempfile handle")?;
-    temp_handle
-        .seek(std::io::SeekFrom::Start(0))
-        .context("cannot seek tempfile")?;
-    let mut temp = std::io::BufReader::with_capacity(crate::constants::BUF_CAPACITY, temp_handle);
-    let mut buf = Vec::new();
-    temp.read_to_end(&mut buf).with_context(|| {
-        format!(
-            "cannot read tempfile for copy fallback to {}",
-            target.display()
-        )
-    })?;
-
+fn copy_tempfile_to_target(_temp: &std::fs::File, target: &Path, content: &[u8]) -> Result<()> {
+    use std::io::Write;
     let mut target_file = fs::OpenOptions::new()
         .write(true)
         .truncate(true)
         .create(true)
         .open(target)
         .with_context(|| format!("cannot open target for copy fallback: {}", target.display()))?;
-    target_file.write_all(&buf).with_context(|| {
-        format!(
-            "cannot write target for copy fallback: {}",
-            target.display()
-        )
-    })?;
-    let _ = target_file.sync_data();
-    let _ = target_file;
-
-    let mut target_file = fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .create(true)
-        .open(target)
-        .with_context(|| format!("cannot open target for copy fallback: {}", target.display()))?;
-    target_file.write_all(&buf).with_context(|| {
+    target_file.write_all(content).with_context(|| {
         format!(
             "cannot write target for copy fallback: {}",
             target.display()

@@ -2,6 +2,7 @@
 
 //! Atomic file creation and overwrite from stdin content.
 //! Workload: I/O-bound (stdin read + atomic write).
+//! Parallelism: none — single target file.
 
 use std::io::{BufReader, Read, Write};
 use std::time::Instant;
@@ -196,9 +197,16 @@ pub fn cmd_write(
                 } else {
                     "low"
                 };
-                eprintln!(
-                    "\x1b[33mwarning:\x1b[0m write risk: {} ({}% delta, {} -> {} bytes)",
-                    level, delta_pct, original, new_bytes
+                crate::runtime::warn_stderr(
+                    global.no_color,
+                    rust_i18n::t!(
+                        "warn.write-risk",
+                        level = level,
+                        delta_pct = delta_pct,
+                        original = original,
+                        new_bytes = new_bytes
+                    )
+                    .to_string(),
                 );
                 // GAP-2026-017: block shrink when --expect-checksum is active
                 if args.expect_checksum.is_some() && !args.allow_shrink && new_bytes < original {
@@ -290,19 +298,24 @@ pub(crate) fn read_stdin_content_cancellable(
     use std::io::Read as _;
     let mut reader = BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
     let mut buf = Vec::with_capacity(crate::constants::STDIN_INITIAL_CAPACITY);
+    if let Some(max) = max_size {
+        let reserve = usize::try_from(max.min(u64::from(u32::MAX))).unwrap_or(usize::MAX);
+        // Soft pre-reserve up to the cap so growth is one-shot when the
+        // payload is near max_size; failure is non-fatal (we still grow).
+        let _ = buf.try_reserve(reserve.min(crate::constants::STDIN_INITIAL_CAPACITY * 64));
+    }
     let mut chunk = [0u8; 64 * 1024];
     loop {
         if shutdown.is_some_and(|s| s.is_shutdown()) {
-            return Err(AtomwriteError::Cancelled {
-                reason: "stdin read cancelled by signal".into(),
-                exit: 143,
-            }
-            .into());
+            return Err(crate::signal::cancelled_error("stdin read cancelled by signal").into());
         }
         let n = reader.read(&mut chunk).context("failed to read stdin")?;
         if n == 0 {
             break;
         }
+        buf.try_reserve(n).map_err(|e| AtomwriteError::InternalError {
+            reason: format!("allocation failed while reading stdin (+{n} bytes): {e}"),
+        })?;
         buf.extend_from_slice(&chunk[..n]);
         if let Some(max) = max_size {
             if buf.len() as u64 > max {
@@ -389,10 +402,10 @@ fn normalize_line_endings(
     let target_ending = match mode {
         LineEnding::Auto => {
             if target.exists() {
-                if let Ok(existing) = std::fs::read(target) {
-                    line_endings::detect(&existing)
-                } else {
-                    return content.to_vec();
+                // Only the detect window is needed — never load the whole file.
+                match read_line_ending_sample(target) {
+                    Ok(sample) => line_endings::detect(&sample),
+                    Err(_) => return content.to_vec(),
                 }
             } else {
                 return content.to_vec();
@@ -404,6 +417,16 @@ fn normalize_line_endings(
         Ok(text) => line_endings::normalize(text, target_ending).into_bytes(),
         Err(_) => content.to_vec(),
     }
+}
+
+/// Read at most `LINE_ENDING_DETECT_SIZE` bytes for Auto line-ending detect.
+fn read_line_ending_sample(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut buf = vec![0u8; crate::constants::LINE_ENDING_DETECT_SIZE];
+    let n = file.read(&mut buf)?;
+    buf.truncate(n);
+    Ok(buf)
 }
 
 fn verify_checksum(target: &std::path::Path, expected: &str, max_size: u64) -> Result<()> {
@@ -433,7 +456,7 @@ mod tests {
     /// `Auto` on a non-existent target must preserve the input bytes verbatim,
     /// regardless of the host OS. This guarantees `bytes_written` round-trips
     /// across Linux, macOS, and Windows for new files (issue: v0.1.13
-    /// `write_creates_file_with_ndjson_output` failed on windows-2025-vs2026
+    /// `write_creates_file_with_ndjson_output` failed on Windows redirected-stderr environments
     /// because the legacy fallback returned `LineEnding::CrLf` on Windows,
     /// inflating the byte count by 1).
     #[test]

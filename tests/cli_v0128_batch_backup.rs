@@ -66,7 +66,7 @@ fn batch_retention_caps_write_backups_within_single_manifest() {
 
     assert!(
         output.status.success(),
-        "batch --retention 2 --keep-backup deve suceder: {}",
+        "batch --retention 2 --keep-backup must succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
@@ -77,11 +77,11 @@ fn batch_retention_caps_write_backups_within_single_manifest() {
     let bak_count = count_bak_files_for(dir.path(), "f.txt");
     assert!(
         bak_count <= 2,
-        "batch --retention 2 deve limitar backups acumulados de f.txt a no maximo 2, obteve {bak_count}"
+        "batch --retention 2 must limit accumulated f.txt backups to at most 2, got {bak_count}"
     );
     assert!(
         bak_count >= 1,
-        "pelo menos 1 backup deveria ter sido criado (3 das 4 escritas encontram o alvo existente)"
+        "at least 1 backup should have been created (3 of 4 writes hit an existing target)"
     );
 }
 
@@ -115,14 +115,14 @@ fn batch_explicit_backup_flag_forces_backup_for_op_without_own_flag() {
 
     assert!(
         output.status.success(),
-        "batch --backup com op sem campo backup deve suceder: {}",
+        "batch --backup with op missing backup field must succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(!dir.path().join("f.txt").exists());
     assert_eq!(
         count_bak_files_for(dir.path(), "f.txt"),
         1,
-        "batch --backup explicito deve forcar backup mesmo com op.backup ausente/false"
+        "explicit batch --backup must force backup even when op.backup is absent/false"
     );
 }
 
@@ -154,14 +154,14 @@ fn batch_no_backup_overrides_op_level_backup_true() {
 
     assert!(
         output.status.success(),
-        "batch --no-backup com op.backup=true deve suceder: {}",
+        "batch --no-backup with op.backup=true must succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(!dir.path().join("f.txt").exists());
     assert_eq!(
         count_bak_files_for(dir.path(), "f.txt"),
         0,
-        "batch --no-backup deve vencer op.backup=true (regressao)"
+        "batch --no-backup must override op.backup=true (regression)"
     );
 }
 
@@ -196,7 +196,7 @@ fn batch_transaction_pre_backup_honors_retention() {
 
         assert!(
             output.status.success(),
-            "batch --transaction --retention 1 iteracao {i} deve suceder: {}",
+            "batch --transaction --retention 1 iteration {i} must succeed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -204,7 +204,7 @@ fn batch_transaction_pre_backup_honors_retention() {
     let bak_count = count_bak_files_for(dir.path(), "f.txt");
     assert!(
         bak_count <= 1,
-        "batch --transaction --retention 1 deve limitar o pre-backup transacional acumulado a no maximo 1, obteve {bak_count}"
+        "batch --transaction --retention 1 must limit accumulated transactional pre-backups to at most 1, got {bak_count}"
     );
 }
 
@@ -245,7 +245,7 @@ fn batch_delete_op_backup_honors_retention() {
 
     assert!(
         output.status.success(),
-        "ciclos write+delete com --retention 2 devem suceder: {}",
+        "write+delete cycles with --retention 2 must succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(!dir.path().join("f.txt").exists());
@@ -253,11 +253,11 @@ fn batch_delete_op_backup_honors_retention() {
     let bak_count = count_bak_files_for(dir.path(), "f.txt");
     assert!(
         bak_count <= 2,
-        "op delete com backup deve honrar --retention 2 (nao o hardcode antigo de 5), obteve {bak_count}"
+        "delete op with backup must honor --retention 2 (not the old hardcoded 5), got {bak_count}"
     );
     assert!(
         bak_count >= 1,
-        "pelo menos 1 backup de delete deveria existir"
+        "at least 1 delete backup should exist"
     );
 }
 
@@ -282,7 +282,7 @@ fn batch_backup_and_no_backup_together_is_rejected() {
     assert_eq!(
         output.status.code(),
         Some(2),
-        "batch --backup --no-backup deve ser rejeitado pelo clap com exit 2: {:?}",
+        "batch --backup --no-backup must be rejected by clap with exit 2: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

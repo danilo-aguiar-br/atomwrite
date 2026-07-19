@@ -2,6 +2,7 @@
 
 //! File reading with metadata, checksum, and optional content.
 //! Workload: I/O-bound (file read + NDJSON output).
+//! Parallelism: none — single file.
 
 use std::fs;
 use std::io::Write;
@@ -34,7 +35,7 @@ pub fn cmd_read(
     let path = crate::path_safety::validate_path(&args.path, &workspace)?;
 
     if !path.exists() {
-        return Err(AtomwriteError::NotFound { path: path.clone() }.into());
+        return Err(AtomwriteError::NotFound { path }.into());
     }
 
     let metadata =
@@ -49,7 +50,7 @@ pub fn cmd_read(
         let verified = &hash == expected;
         if !verified {
             return Err(AtomwriteError::ChecksumVerifyFailed {
-                path: path.clone(),
+                path,
                 expected: expected.clone(),
             }
             .into());

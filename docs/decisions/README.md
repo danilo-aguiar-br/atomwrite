@@ -63,3 +63,7 @@
   - [PT-BR](0050-stdin-tty-guard.pt-BR.md) — tradução automática
 - [0051 — v0.1.29 gap close and docs](0051-v0-1-29-gap-close-and-docs.md) — fecha P0–P3 e residuais: fuzzy compartilhado, best_candidate, features core/slim, recipe real, durability, renameat2, agent-surface anti-MCP, foundation P3, schemas e documentação EN/PT alinhados à 0.1.29
 - [0052 — v0.1.30 residual agent contract](0052-v0-1-30-residual-agent-contract.md) — fecha residual P17–P24: match_count, indent_adjusted, fuzzy off rejeitado, backup reflink_or_copy, recipe bak skip, sparse outline AST real, semantic-merge line-based, schema e docs
+- [0053 — clap rules audit exceptions](0053-clap-rules-audit-exceptions.md) — documented Clap audit exceptions (v0.1.32): `BackupOpts.backup: Option<bool>` tri-state; `prescan_json_schema` via `std::env::args` before Clap
+  - [PT-BR](0053-clap-rules-audit-exceptions.pt-BR.md) — translation
+- [0054 — v0.1.34 oneshot fuzzy + timeout](0054-v0-1-34-oneshot-fuzzy-timeout.md) — one-pass fuzzy; embeds force 1; timeout default 120 / exit 124; cancel mid-cascade; caps; no telemetry; docs-complete of 0.1.33
+  - [PT-BR](0054-v0-1-34-oneshot-fuzzy-timeout.pt-BR.md) — full translation

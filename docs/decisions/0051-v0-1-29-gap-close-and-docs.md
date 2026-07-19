@@ -19,7 +19,7 @@
 - Emitir best_candidate em falhas de match (exit 65)
 - Fatiar Cargo features: core, ast, lang-*, watch, semantic, full
 - Declarar meta PRD 5–8 MB como alvo do build core, não do default com AST
-- CI size-gate: slim core no máximo 15 MiB
+- Local size-gate: slim core no máximo 15 MiB
 - Implementar recipe com dispatch real search-replace-hash
 - Implementar write --durability, Linux renameat2, stat, sparse, semantic-merge
 - Foundation P3: watch com debounce/checksum/gitignore, semantic-search Jaccard offline, codemod com by_rule_id

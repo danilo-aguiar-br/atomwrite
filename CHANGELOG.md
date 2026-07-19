@@ -8,6 +8,34 @@
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.34] - 2026-07-19
+
+### Changed
+- Full public documentation alignment for one-shot fuzzy contract (README, llms*, AGENTS, HOW_TO_USE, COOKBOOK, TESTING, INSTALL, ARCHITECTURE, INTEGRATIONS, SECURITY, skills, ADR-0054)
+- Version **0.1.34**
+
+### Fixed
+- Documentation drift: many files still claimed v0.1.30 / timeout default 0 / unbounded fuzzy multi-apply after the 0.1.33 code fix
+
+### Notes
+- Runtime one-shot hang fix remains as described under [0.1.33]; 0.1.34 is the publishable docs-complete release
+
+## [0.1.33] - 2026-07-19
+
+### Fixed
+- **CRITICAL one-shot:** `replace --fuzzy` no longer infinite-loops when `replacement` contains `pattern` (agent “expand section” footgun). Was: re-scan full buffer with `max_replacements = usize::MAX` → multi-day 100% CPU / multi-GB RSS.
+- Fuzzy path uses **one-pass** apply (`apply_fuzzy_one_pass`): never re-searches text just inserted; default max applies = **1**; embeds force 1; hard ceiling 10_000.
+- Cooperative cancel polled inside fuzzy cascade (strategies + sliding windows) so `--timeout-secs` works mid-file.
+- Pattern size cap (64 KiB), levenshtein char cap (8 KiB), window budget (4096), buffer growth cap (4× / +16 MiB).
+
+### Changed
+- Global `--timeout-secs` default is **120** (was 0). Pass `0` to disable (not recommended for agents).
+- Version **0.1.33**.
+
+### Tests
+- `tests/cli_v0133_oneshot_fuzzy.rs` — hang regression wall-clock < 2s.
+- Unit: `one_pass_embeds_pattern_applies_once`.
+
 ## [0.1.32] - 2026-07-15
 
 ### Changed
@@ -946,7 +974,7 @@
 - `nix::fcntl::posix_fadvise` signature changed from `AsRawFd` to `AsFd` in 0.31 — code adapted accordingly
 
 ### Added (Agent-First Features)
-- `--timeout <SECONDS>` global flag for bounded execution time (0 = no timeout, default 0)
+- `--timeout <SECONDS>` global flag for bounded execution time (at introduction: 0 = no timeout, default 0; **since v0.1.33 default is 120**, exit 124 on deadline)
 - `--grep <REGEX>` flag on `read` to filter returned lines by regex
 - `completions --install` to install completion scripts to XDG data directory (`~/.local/share/bash-completion/completions/atomwrite` for Bash, etc.)
 
@@ -1088,7 +1116,9 @@
 - Release profile with LTO, single codegen unit, symbol stripping, and panic=abort
 
 
-[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.32...HEAD
+[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.34...HEAD
+[0.1.34]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.33...v0.1.34
+[0.1.33]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.32...v0.1.33
 [0.1.32]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.31...v0.1.32
 [0.1.31]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.30...v0.1.31
 [0.1.2]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.1...v0.1.2

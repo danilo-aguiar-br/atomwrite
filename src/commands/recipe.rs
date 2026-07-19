@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Named multi-step recipes with real handler dispatch (v0.1.29 P1-4).
+//!
+//! Workload: mixed (orchestrates I/O-bound subcommands sequentially).
+//! Parallelism: recipe steps stay ordered for deterministic agent contracts.
 
 use std::io::{Cursor, Write};
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueHint};
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -40,10 +43,10 @@ pub struct RecipeRunArgs {
     #[arg(long)]
     pub name: String,
     /// Dry-run all mutating steps.
-    #[arg(long)]
+    #[arg(long, action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
     /// Workspace-relative path root for recipe steps.
-    #[arg(long, default_value = ".")]
+    #[arg(long, default_value = ".", value_hint = ValueHint::AnyPath)]
     pub path: PathBuf,
     /// Search/replace pattern (required for search-replace-verify).
     #[arg(long)]
@@ -64,10 +67,10 @@ pub struct RecipeRunArgs {
     #[arg(long, action = clap::ArgAction::Append)]
     pub exclude: Vec<String>,
     /// NDJSON pairs file for edit-loop-syntax-check.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::FilePath)]
     pub pairs_file: Option<PathBuf>,
     /// Target file for edit-loop-syntax-check.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::AnyPath)]
     pub target: Option<PathBuf>,
     /// Language for syntax-check step (requires feature ast).
     #[arg(long)]
@@ -109,6 +112,7 @@ pub struct RecipeResult {
 }
 
 /// Dispatch recipe actions.
+#[tracing::instrument(skip_all, fields(command = "recipe"))]
 pub fn cmd_recipe(
     args: &RecipeArgs,
     global: &GlobalArgs,
@@ -120,11 +124,11 @@ pub fn cmd_recipe(
     match &args.action {
         RecipeAction::List => {
             for name in ["search-replace-verify", "edit-loop-syntax-check"] {
-                writer.write_event(&serde_json::json!({
-                    "type": "recipe",
-                    "name": name,
-                    "builtin": true,
-                }))?;
+                writer.write_event(&crate::ndjson_types::RecipeListEvent {
+                    r#type: "recipe",
+                    name,
+                    builtin: true,
+                })?;
             }
             Ok(())
         }
@@ -233,15 +237,12 @@ fn run_search_replace_verify(
             let mut inner = NdjsonWriter::new(&mut buf);
             crate::commands::search::cmd_search(&search_args, global, &mut inner, shutdown)
         };
-        // Forward child events tagged with step.
+        // Forward child events tagged with step (no json! — typed insert helper).
         for line in String::from_utf8_lossy(&buf).lines() {
             if line.trim().is_empty() {
                 continue;
             }
-            if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(line) {
-                if let Some(obj) = v.as_object_mut() {
-                    obj.insert("step".into(), serde_json::json!(1));
-                }
+            if let Some(v) = crate::output::ndjson_insert_field(line, "step", 1.into()) {
                 writer.write_event(&v)?;
             }
         }
@@ -381,10 +382,7 @@ fn run_search_replace_verify(
                 if line.trim().is_empty() {
                     continue;
                 }
-                if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(line) {
-                    if let Some(obj) = v.as_object_mut() {
-                        obj.insert("step".into(), serde_json::json!(3));
-                    }
+                if let Some(v) = crate::output::ndjson_insert_field(line, "step", 3.into()) {
                     writer.write_event(&v)?;
                 }
             }
@@ -439,7 +437,8 @@ fn run_edit_loop_syntax_check(
         return cancelled(1);
     }
 
-    let pairs_bytes = std::fs::read(pairs_file).map_err(|e| AtomwriteError::Io { source: e })?;
+    let pairs_bytes =
+        crate::file_io::read_file_bytes(pairs_file, global.effective_max_filesize())?;
     let edit_args = EditLoopArgs {
         path: target.clone(),
         allow_sequential_drift: true,
@@ -475,10 +474,7 @@ fn run_edit_loop_syntax_check(
                     if line.trim().is_empty() {
                         continue;
                     }
-                    if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(line) {
-                        if let Some(obj) = v.as_object_mut() {
-                            obj.insert("step".into(), serde_json::json!(1));
-                        }
+                    if let Some(v) = crate::output::ndjson_insert_field(line, "step", 1.into()) {
                         writer.write_event(&v)?;
                     }
                 }
@@ -553,14 +549,14 @@ fn emit_child(
     step: u64,
     s: &RecipeStepResult,
 ) -> Result<()> {
-    writer.write_event(&serde_json::json!({
-        "type": "recipe_step",
-        "step": step,
-        "name": s.name,
-        "status": s.status,
-        "detail": s.detail,
-        "checksum": s.checksum,
-    }))?;
+    writer.write_event(&crate::ndjson_types::RecipeStepEvent {
+        r#type: "recipe_step",
+        step,
+        name: s.name.clone(),
+        status: s.status.clone(),
+        detail: s.detail.clone(),
+        checksum: s.checksum.clone(),
+    })?;
     Ok(())
 }
 
@@ -587,11 +583,7 @@ fn finish_recipe(
 }
 
 fn cancelled(step: u64) -> Result<()> {
-    Err(AtomwriteError::Cancelled {
-        reason: format!("recipe cancelled at step {step}"),
-        exit: 143,
-    }
-    .into())
+    Err(crate::signal::cancelled_error(format!("recipe cancelled at step {step}")).into())
 }
 
 fn extract_field(buf: &[u8], field: &str) -> Option<String> {

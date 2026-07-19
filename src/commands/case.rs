@@ -2,18 +2,27 @@
 
 //! v14 Tier 3 subcommand: `case` — convert identifier case (snake_case,
 //! camelCase, PascalCase, kebab-case, SCREAMING_SNAKE_CASE) in source files.
+//!
+//! Workload: I/O-bound (read + token rewrite + atomic write).
+//! Parallelism: multi-file `paths` fan-out via `rayon::par_iter` (independent
+//! atomic writes per file). Subvert pairs stay sequential so renames on the
+//! same file compose in declaration order. Bound: process-wide rayon pool
+//! (`--threads` / `--max-concurrency`). Single-file stays sequential
+//! (coordination cost > work).
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use heck::{ToKebabCase, ToLowerCamelCase, ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
+use rayon::prelude::*;
 use serde::Serialize;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::cli::{CaseArgs, GlobalArgs, IdentifierCase};
 use crate::commands::resolve_backup;
+use crate::concurrency::should_parallelize;
 use crate::output::NdjsonWriter;
 
 #[derive(Debug, Serialize)]
@@ -36,12 +45,19 @@ struct CaseSummary {
     elapsed_ms: u64,
 }
 
+enum CaseItem {
+    Unchanged,
+    Preview(CaseResult),
+    Done(CaseResult),
+}
+
 /// Execute the `case` subcommand.
 ///
 /// Renames identifiers in source files by computing the new identifier
 /// in the requested case style (`snake_case`, `camelCase`, `PascalCase`,
 /// `kebab-case`, `SCREAMING_SNAKE_CASE`) via the `heck` crate and
 /// replacing occurrences in each target file.
+#[tracing::instrument(skip_all, fields(command = "case"))]
 pub fn cmd_case(
     args: &CaseArgs,
     global: &GlobalArgs,
@@ -52,6 +68,9 @@ pub fn cmd_case(
     let workspace = global.resolve_workspace()?;
     let dry_run = args.dry_run;
     let resolved = resolve_backup(&args.backup_opts, defaults);
+    let max_size = global.effective_max_filesize();
+    let to_style = case_style_name(&args.to);
+    let preserve_timestamps = args.preserve_timestamps;
 
     if args.subvert.is_empty() {
         return Err(crate::error::AtomwriteError::InvalidInput {
@@ -64,9 +83,8 @@ pub fn cmd_case(
         .into());
     }
 
-    let mut total_identifiers = 0u64;
-    let mut files_modified = 0u64;
-
+    // Validate pairs first so odd-count fails before any I/O.
+    let mut pairs: Vec<(String, String)> = Vec::new();
     for pair in args.subvert.chunks(2) {
         if pair.len() != 2 {
             return Err(crate::error::AtomwriteError::InvalidInput {
@@ -76,10 +94,8 @@ pub fn cmd_case(
             }
             .into());
         }
-        let from = &pair[0];
-        let to = &pair[1];
-
-        // Compute the new identifier in every requested target style.
+        let from = pair[0].clone();
+        let to = pair[1].clone();
         let converted = match args.to {
             IdentifierCase::Snake => to.to_snake_case(),
             IdentifierCase::Camel => to.to_lower_camel_case(),
@@ -87,62 +103,85 @@ pub fn cmd_case(
             IdentifierCase::Kebab => to.to_kebab_case(),
             IdentifierCase::ScreamingSnake => to.to_shouty_snake_case(),
         };
+        pairs.push((from, converted));
+    }
 
-        for path in &args.paths {
-            let validated = crate::path_safety::validate_path(path, &workspace)?;
-            if !validated.is_file() {
-                continue;
+    // Validate paths once; skip non-files (same contract as before).
+    let mut files: Vec<PathBuf> = Vec::with_capacity(args.paths.len());
+    for path in &args.paths {
+        let validated = crate::path_safety::validate_path(path, &workspace)?;
+        if validated.is_file() {
+            files.push(validated);
+        }
+    }
+
+    let mut total_identifiers = 0u64;
+    let mut files_modified = 0u64;
+
+    // Pairs are sequential (compose renames on the same file). Paths fan out.
+    for (from, converted) in &pairs {
+        if crate::signal::is_global_shutdown() {
+            break;
+        }
+        let from_style = detect_case_style(from);
+        let items: Vec<Result<CaseItem, anyhow::Error>> = if should_parallelize(files.len()) {
+            files
+                .par_iter()
+                .map(|path| {
+                    process_one_case(
+                        path,
+                        &workspace,
+                        from,
+                        converted,
+                        &from_style,
+                        &to_style,
+                        dry_run,
+                        max_size,
+                        resolved.backup,
+                        resolved.retention,
+                        resolved.keep,
+                        preserve_timestamps,
+                        start,
+                    )
+                })
+                .collect()
+        } else {
+            files
+                .iter()
+                .map(|path| {
+                    process_one_case(
+                        path,
+                        &workspace,
+                        from,
+                        converted,
+                        &from_style,
+                        &to_style,
+                        dry_run,
+                        max_size,
+                        resolved.backup,
+                        resolved.retention,
+                        resolved.keep,
+                        preserve_timestamps,
+                        start,
+                    )
+                })
+                .collect()
+        };
+
+        for item in items {
+            match item? {
+                CaseItem::Unchanged => {}
+                CaseItem::Preview(ev) => {
+                    total_identifiers += 1;
+                    files_modified += 1;
+                    writer.write_event(&ev)?;
+                }
+                CaseItem::Done(ev) => {
+                    total_identifiers += 1;
+                    files_modified += 1;
+                    writer.write_event(&ev)?;
+                }
             }
-            let content = std::fs::read_to_string(&validated)
-                .with_context(|| format!("cannot read {}", validated.display()))?;
-            // Word-boundary replace of the from identifier with `converted`.
-            // Use plain `replace` for now (case-sensitive, no word boundary
-            // for camel/Pascal); a smarter word-boundary matcher is a
-            // future enhancement.
-            let new_content = content.replace(from, &converted);
-            if new_content == content {
-                continue;
-            }
-            let before = from.clone();
-            let after = converted.clone();
-            total_identifiers += 1;
-            files_modified += 1;
-            if dry_run {
-                writer.write_event(&CaseResult {
-                    r#type: "case_preview",
-                    path: validated.display().to_string(),
-                    identifier: format!("{from} -> {converted}"),
-                    from_style: detect_case_style(from),
-                    to_style: case_style_name(&args.to),
-                    before,
-                    after,
-                    elapsed_ms: 0,
-                })?;
-                continue;
-            }
-            let opts = AtomicWriteOptions {
-                backup: resolved.backup,
-                syntax_check: false,
-                retention: resolved.retention,
-                preserve_timestamps: args.preserve_timestamps,
-                backup_output_dir: None,
-                strategy: None,
-                strict_atomic: false,
-                wal_policy: crate::wal::WalPolicy::Auto,
-                keep_backup: resolved.keep,
-                durability: crate::platform::Durability::Auto,
-            };
-            let _ = atomic_write(&validated, new_content.as_bytes(), &opts, &workspace)?;
-            writer.write_event(&CaseResult {
-                r#type: "case",
-                path: validated.display().to_string(),
-                identifier: format!("{from} -> {converted}"),
-                from_style: detect_case_style(from),
-                to_style: case_style_name(&args.to),
-                before,
-                after,
-                elapsed_ms: start.elapsed().as_millis() as u64,
-            })?;
         }
     }
 
@@ -153,6 +192,73 @@ pub fn cmd_case(
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_one_case(
+    path: &Path,
+    workspace: &Path,
+    from: &str,
+    converted: &str,
+    from_style: &str,
+    to_style: &str,
+    dry_run: bool,
+    max_size: u64,
+    backup: bool,
+    retention: u8,
+    keep_backup: bool,
+    preserve_timestamps: bool,
+    start: Instant,
+) -> Result<CaseItem> {
+    if crate::signal::is_global_shutdown() {
+        return Ok(CaseItem::Unchanged);
+    }
+    let content = crate::file_io::read_file_string(path, max_size)?;
+    // Word-boundary replace of the from identifier with `converted`.
+    // Use plain `replace` for now (case-sensitive, no word boundary
+    // for camel/Pascal); a smarter word-boundary matcher is a
+    // future enhancement.
+    let new_content = content.replace(from, converted);
+    if new_content == content {
+        return Ok(CaseItem::Unchanged);
+    }
+    let path_str = path.display().to_string();
+    let identifier = format!("{from} -> {converted}");
+    if dry_run {
+        return Ok(CaseItem::Preview(CaseResult {
+            r#type: "case_preview",
+            path: path_str,
+            identifier,
+            from_style: from_style.to_string(),
+            to_style: to_style.to_string(),
+            before: from.to_string(),
+            after: converted.to_string(),
+            elapsed_ms: 0,
+        }));
+    }
+    let opts = AtomicWriteOptions {
+        backup,
+        syntax_check: false,
+        retention,
+        preserve_timestamps,
+        backup_output_dir: None,
+        strategy: None,
+        strict_atomic: false,
+        wal_policy: crate::wal::WalPolicy::Auto,
+        keep_backup,
+        durability: crate::platform::Durability::Auto,
+    };
+    let _ = atomic_write(path, new_content.as_bytes(), &opts, workspace)?;
+    Ok(CaseItem::Done(CaseResult {
+        r#type: "case",
+        path: path_str,
+        identifier,
+        from_style: from_style.to_string(),
+        to_style: to_style.to_string(),
+        before: from.to_string(),
+        after: converted.to_string(),
+        elapsed_ms: start.elapsed().as_millis() as u64,
+    }))
 }
 
 fn case_style_name(style: &IdentifierCase) -> String {

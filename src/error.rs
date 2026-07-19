@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Domain-specific error types with exit codes and error classification.
+//!
+//! Workload: mixed (error construction is CPU-light; NotFound suggestions
+//! walk the workspace for similar basenames).
+//! Parallelism: `similar_paths_for` uses budgeted-depth `WalkParallel` bound
+//! by the process-wide thread pool, then ranks with jaro-winkler (top-5).
+//! Sequential alternative rejected for monorepo NotFound paths where depth-6
+//! serial walk dominates agent retry latency.
 
 use std::path::PathBuf;
 
+use rust_i18n::t;
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -540,6 +548,8 @@ impl ErrorJson {
             }
             _ => None,
         };
+        // Cold error path: clone out of `Box` / `Option` fields for the
+        // public JSON surface. Source remains borrowed (`&AtomwriteError`).
         let (failed_pair_index, pairs_total, pair_results) = match err {
             AtomwriteError::EditPairFailed {
                 index,
@@ -554,14 +564,10 @@ impl ErrorJson {
             _ => (None, None, None),
         };
         let best_candidate = match err {
-            AtomwriteError::MatchFailed { best_candidate, .. } => {
-                best_candidate.as_ref().map(|b| (**b).clone())
-            }
-            AtomwriteError::MatchAmbiguous { best_candidate, .. } => {
-                best_candidate.as_ref().map(|b| (**b).clone())
-            }
-            AtomwriteError::EditPairFailed { best_candidate, .. } => {
-                best_candidate.as_ref().map(|b| (**b).clone())
+            AtomwriteError::MatchFailed { best_candidate, .. }
+            | AtomwriteError::MatchAmbiguous { best_candidate, .. }
+            | AtomwriteError::EditPairFailed { best_candidate, .. } => {
+                best_candidate.as_deref().cloned()
             }
             _ => None,
         };
@@ -595,6 +601,9 @@ impl ErrorJson {
 }
 
 /// Suggest similar basenames under workspace when a path is missing (v0.1.30).
+///
+/// Discovery fans out via `WalkParallel` (depth ≤ 6) so monorepo NotFound
+/// paths do not walk single-core. Bound: process-wide `--threads` pool.
 fn similar_paths_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<Vec<String>> {
     let path = match err {
         AtomwriteError::NotFound { path } => path,
@@ -605,18 +614,23 @@ fn similar_paths_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<Vec<Str
         return None;
     }
     let root = ctx.workspace.as_ref()?;
-    let mut scored: Vec<(f64, String)> = Vec::new();
-    let walker = ignore::WalkBuilder::new(root).max_depth(Some(6)).build();
-    for entry in walker.flatten() {
-        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy();
-        let score = strsim::jaro_winkler(&wanted, &name);
-        if score >= 0.75 {
-            scored.push((score, entry.path().display().to_string()));
-        }
-    }
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder.max_depth(Some(6));
+    crate::concurrency::apply_walk_threads(&mut builder, None);
+    let wanted_c = wanted.clone();
+    let mut scored: Vec<(f64, String)> =
+        crate::concurrency::collect_mapped_parallel(&builder, move |entry| {
+            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                return None;
+            }
+            let name = entry.file_name().to_string_lossy();
+            let score = strsim::jaro_winkler(&wanted_c, &name);
+            if score >= 0.75 {
+                Some((score, entry.path().display().to_string()))
+            } else {
+                None
+            }
+        });
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(5);
     if scored.is_empty() {
@@ -647,110 +661,109 @@ pub struct ErrorContext {
 
 #[cold]
 fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
+    // Locale-aware human suggestions via rust-i18n (`locales/{en,pt-BR}.toml`).
+    // Error codes and Display messages stay English (agent machine contract).
     match err {
-        AtomwriteError::NotFound { .. } => Some("verify the file path exists".into()),
-        AtomwriteError::EditPairFailed { index, .. } => Some(format!(
-            "pair {index} did not match; fix that pair, retry with --fuzzy aggressive, or pass --partial to apply the matching pairs and report the rest"
-        )),
-        AtomwriteError::InvalidInput { reason } => Some(format!(
-            "review the {reason}; check arguments and input content for syntax errors"
-        )),
-        AtomwriteError::PermissionDenied { .. } => Some("check file permissions".into()),
-        AtomwriteError::DiskFull { .. } => Some("free disk space and retry".into()),
-        AtomwriteError::QuotaExceeded { .. } => Some("check disk quota and free space".into()),
-        AtomwriteError::CrossDevice { .. } => {
-            Some("ensure source and destination are on the same filesystem".into())
+        AtomwriteError::NotFound { .. } => Some(t!("suggestion.not-found").to_string()),
+        AtomwriteError::EditPairFailed { index, .. } => Some(
+            t!("suggestion.edit-pair-failed", index = index).to_string(),
+        ),
+        AtomwriteError::InvalidInput { reason } => Some(
+            t!("suggestion.invalid-input", reason = reason.as_str()).to_string(),
+        ),
+        AtomwriteError::PermissionDenied { .. } => {
+            Some(t!("suggestion.permission-denied").to_string())
         }
+        AtomwriteError::DiskFull { .. } => Some(t!("suggestion.disk-full").to_string()),
+        AtomwriteError::QuotaExceeded { .. } => {
+            Some(t!("suggestion.quota-exceeded").to_string())
+        }
+        AtomwriteError::CrossDevice { .. } => Some(t!("suggestion.cross-device").to_string()),
         AtomwriteError::Io { source } => {
-            Some(format!("inspect the underlying I/O error: {source}"))
+            Some(t!("suggestion.io", source = source.to_string()).to_string())
         }
-        AtomwriteError::ConfigInvalid { reason } => {
-            Some(format!("fix the configuration: {reason}"))
-        }
-        AtomwriteError::StateDrift { .. } => {
-            Some("re-read the file to get current checksum, then retry".into())
-        }
+        AtomwriteError::ConfigInvalid { reason } => Some(
+            t!("suggestion.config-invalid", reason = reason.as_str()).to_string(),
+        ),
+        AtomwriteError::StateDrift { .. } => Some(t!("suggestion.state-drift").to_string()),
         AtomwriteError::ChecksumVerifyFailed { .. } => {
-            Some("re-read the file to get current checksum".into())
+            Some(t!("suggestion.checksum-verify").to_string())
         }
-        AtomwriteError::FileTooLarge { .. } => {
-            Some("use --max-filesize to increase the limit or process smaller files".into())
-        }
+        AtomwriteError::FileTooLarge { .. } => Some(t!("suggestion.file-too-large").to_string()),
         AtomwriteError::WorkspaceJail { workspace, .. } => {
             if ctx.workspace_provided {
-                Some(format!(
-                    "use a path inside the workspace ({})",
-                    workspace.display()
-                ))
+                Some(
+                    t!(
+                        "suggestion.workspace-jail-inside",
+                        workspace = workspace.display().to_string()
+                    )
+                    .to_string(),
+                )
             } else {
-                Some("set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>".into())
+                Some(t!("suggestion.workspace-jail-set").to_string())
             }
         }
         AtomwriteError::SymlinkBlocked { .. } => {
-            Some("use --follow-symlinks to allow symbolic links".into())
+            Some(t!("suggestion.symlink-blocked").to_string())
         }
-        AtomwriteError::FileImmutable { path } => Some(format!(
-            "remove the immutable attribute (chattr -i on Unix, fsutil on Windows) from {}",
-            path.display()
-        )),
-        AtomwriteError::BinaryFile { .. } => Some(
-            "binary content detected; use read --stat for metadata only \
-             or use read --format raw to emit raw bytes without JSON envelope"
-                .into(),
+        AtomwriteError::FileImmutable { path } => Some(
+            t!(
+                "suggestion.immutable-path",
+                path = path.display().to_string()
+            )
+            .to_string(),
         ),
-        AtomwriteError::FifoDetected { .. } => {
-            Some("skip this file or use stdin redirection instead".into())
-        }
-        AtomwriteError::DeviceFile { .. } => {
-            Some("skip this file or use stdin redirection instead".into())
-        }
-        AtomwriteError::NoMatches => Some(
-            "broaden the search pattern; check --include / --exclude filters; \
-             verify the file content"
-                .into(),
-        ),
+        AtomwriteError::BinaryFile { .. } => Some(t!("suggestion.binary-file").to_string()),
+        AtomwriteError::FifoDetected { .. } => Some(t!("suggestion.skip-special").to_string()),
+        AtomwriteError::DeviceFile { .. } => Some(t!("suggestion.skip-special").to_string()),
+        AtomwriteError::NoMatches => Some(t!("suggestion.no-matches").to_string()),
         AtomwriteError::BrokenPipe => None,
-        AtomwriteError::MatchAmbiguous { .. } => Some(
-            "narrow --old with more surrounding context or pass --replace-all".into(),
+        AtomwriteError::MatchAmbiguous { .. } => {
+            Some(t!("suggestion.match-ambiguous").to_string())
+        }
+        AtomwriteError::MatchFailed { .. } => Some(t!("suggestion.match-failed").to_string()),
+        AtomwriteError::Cancelled { .. } => Some(t!("suggestion.cancelled").to_string()),
+        AtomwriteError::InternalError { reason } => Some(
+            t!("suggestion.internal-error", reason = reason.as_str()).to_string(),
         ),
-        AtomwriteError::MatchFailed { .. } => Some(
-            "inspect best_candidate in the error NDJSON and adjust --old, or lower --fuzzy-threshold".into(),
+        AtomwriteError::LockTimeout { path, timeout_ms } => Some(
+            t!(
+                "suggestion.lock-timeout",
+                path = path.display().to_string(),
+                timeout_ms = timeout_ms
+            )
+            .to_string(),
         ),
-        AtomwriteError::Cancelled { .. } => Some(
-            "operation cancelled by signal; retry after inspecting journal/temp cleanup".into(),
+        AtomwriteError::SyntaxError { path, count } => Some(
+            t!(
+                "suggestion.syntax-error",
+                path = path.display().to_string(),
+                count = count
+            )
+            .to_string(),
         ),
-        AtomwriteError::InternalError { reason } => Some(format!(
-            "this is a bug; please report it with the {reason} context"
-        )),
-        AtomwriteError::LockTimeout { path, timeout_ms } => Some(format!(
-            "another process is editing {}; wait, kill the holder, or raise --lock-timeout above {} ms",
-            path.display(),
-            timeout_ms
-        )),
-        AtomwriteError::SyntaxError { path, count } => Some(format!(
-            "post-write syntax check found {count} syntax error(s) in {}; \
-             inspect the content (or remove --syntax-check) and retry",
-            path.display()
-        )),
-        AtomwriteError::ExdevFallbackDisabled { path } => Some(format!(
-            "rename across filesystems failed for {} and --strict-atomic was set; \
-             either unset --strict-atomic to enable copy-fallback, or move source/destination \
-             to the same filesystem",
-            path.display()
-        )),
-        AtomwriteError::CopyBackBlake3Failed { path } => Some(format!(
-            "BLAKE3 verification after in-place write failed for {}; the on-disk file \
-             may be partially written. Inspect manually before retrying.",
-            path.display()
-        )),
-        AtomwriteError::OrphanJournal { journal, reason } => Some(format!(
-            "a previous atomwrite run crashed and left journal {} ({}). \
-             Manually inspect the target file and the journal, then delete {} \
-             once the file is in the expected state",
-            journal.display(),
-            reason,
-            journal.display()
-        )),
+        AtomwriteError::ExdevFallbackDisabled { path } => Some(
+            t!(
+                "suggestion.exdev-fallback-disabled",
+                path = path.display().to_string()
+            )
+            .to_string(),
+        ),
+        AtomwriteError::CopyBackBlake3Failed { path } => Some(
+            t!(
+                "suggestion.copy-back-blake3-failed",
+                path = path.display().to_string()
+            )
+            .to_string(),
+        ),
+        AtomwriteError::OrphanJournal { journal, reason } => Some(
+            t!(
+                "suggestion.orphan-journal",
+                journal = journal.display().to_string(),
+                reason = reason.as_str()
+            )
+            .to_string(),
+        ),
     }
 }
 
@@ -1115,6 +1128,8 @@ mod tests {
 
     #[test]
     fn gap13_workspace_jail_suggestion_when_workspace_not_provided() {
+        // English assertion: pin UI locale (host may be pt-BR).
+        crate::locale::set_locale_for_test(crate::locale::Idioma::En);
         let err = AtomwriteError::WorkspaceJail {
             path: PathBuf::from("/etc/passwd"),
             workspace: PathBuf::from("/home/user/project"),
@@ -1131,6 +1146,7 @@ mod tests {
 
     #[test]
     fn gap13_workspace_jail_suggestion_when_workspace_provided() {
+        crate::locale::set_locale_for_test(crate::locale::Idioma::En);
         let err = AtomwriteError::WorkspaceJail {
             path: PathBuf::from("/etc/passwd"),
             workspace: PathBuf::from("/home/user/project"),
@@ -1292,15 +1308,32 @@ mod tests {
 
     #[test]
     fn gap13_error_context_default_matches_legacy_behavior() {
-        // The default ErrorContext must yield the same suggestions as the
-        // pre-GAP-13 behavior for the variant set covered before.
+        // Default ErrorContext + default locale (`en`) must yield the English
+        // suggestion from `locales/en.toml` (locale-aware suggestions).
+        crate::locale::set_locale_for_test(crate::locale::Idioma::En);
         let err = AtomwriteError::NotFound {
             path: PathBuf::from("/x"),
         };
         let json = ErrorJson::from_error(&err);
         assert_eq!(
             json.suggestion.as_deref(),
-            Some("verify the file path exists")
+            Some("verify the file path exists and is spelled correctly")
         );
+    }
+
+    #[test]
+    fn suggestion_follows_pt_br_locale() {
+        crate::locale::set_locale_for_test(crate::locale::Idioma::PtBr);
+        let err = AtomwriteError::NotFound {
+            path: PathBuf::from("/x"),
+        };
+        let json = ErrorJson::from_error(&err);
+        let s = json.suggestion.expect("suggestion");
+        assert!(
+            s.contains("arquivo") || s.contains("caminho"),
+            "pt-BR suggestion expected, got: {s}"
+        );
+        // Restore English so other tests in the same process stay stable.
+        crate::locale::set_locale_for_test(crate::locale::Idioma::En);
     }
 }

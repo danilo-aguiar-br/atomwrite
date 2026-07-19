@@ -4,7 +4,20 @@
 [Leia em Português](AGENTS.pt-BR.md)
 
 
-## What's New in v0.1.30
+## What's New in v0.1.34
+
+- Docs-complete publish of the v0.1.33 one-shot runtime (same binary behavior)
+- Global `--timeout-secs` (alias `--timeout`) **default 120** (was 0); `0` disables; deadline → exit **124**
+- Fuzzy multi-apply is **one-pass** L→R on original content (`apply_fuzzy_one_pass`); never re-scans inserted text
+- Default max fuzzy applies = **1** if `--max-replacements` omitted; hard ceiling 10_000
+- If replacement **contains** pattern (fixed-string), force single apply (safe section expansion)
+- Cooperative cancel polled mid-fuzzy cascade; caps: pattern 64 KiB, lev 8192 chars, max windows 4096, growth max(4×,+16 MiB)
+- Fuzzy caps (constants in `src/constants.rs`): `FUZZY_MAX_PATTERN_BYTES` (64 KiB), `FUZZY_MAX_LEVENSHTEIN_CHARS` (8192), `FUZZY_MAX_WINDOWS` (4096), `FUZZY_MAX_BUFFER_GROWTH_FACTOR`/`FUZZY_MAX_BUFFER_GROWTH_BYTES` (max 4× / +16 MiB), hard ceiling `FUZZY_HARD_MAX_REPLACEMENTS` (10_000)
+- Regression suite: `tests/cli_v0133_oneshot_fuzzy.rs` — hang < 2s, embeds, timeout
+- 41 subcommands; fuzzy still only `auto|aggressive` (`off` rejected exit 65)
+- See [ADR-0054](decisions/0054-v0-1-34-oneshot-fuzzy-timeout.md) for one-shot fuzzy + timeout contract (exit 124 vs 143)
+
+## What Was New in v0.1.30
 
 - BREAKING residual: `--fuzzy off` is rejected (exit 65); only `auto` and `aggressive`
 - Edit success NDJSON includes `match_count` and optional `indent_adjusted`
@@ -188,7 +201,7 @@ G39 xattr, G41 binary detect (content_inspector), G54 advisory lock, G56 FIFO sk
 - **542 tests passing** (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 cross-platform/WAL/audit increments v0.1.16-v0.1.18)
 - 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/` (set, get, del, case, query, outline, wal-recovery)
-- See [docs/decisions/README.md](README.md) for architectural decisions
+- See [docs/decisions/README.md](decisions/README.md) for architectural decisions
 
 ## Why atomwrite
 - Your agent makes dozens of tool calls to read, write, search, and replace files
@@ -247,7 +260,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `write` -- creates or overwrites files atomically via stdin; `--syntax-check` valida com tree-sitter após escrita (G72, exit 88)
 - `edit` -- edits surgically by line number, text marker, or exact match; `--fuzzy auto|aggressive` for fuzzy matching (off rejected exit 65 since v0.1.30); success NDJSON may include `match_count` and `indent_adjusted`; `--multi` for NDJSON multi-edit
 - `search` -- searches file content in parallel (ripgrep engine); supports `--context N`, `--max-count N`, `--invert`, `--sort path`, `--fixed`, `--word`, `--case-insensitive`, `--include`, `--exclude`
-- `replace` -- replaces text across multiple files with atomic writes; `--fuzzy auto|aggressive` (off rejected exit 65), `--fuzzy-threshold`, `--progress-every`; match failures may emit `best_candidate`
+- `replace` -- replaces text across multiple files with atomic writes; `--fuzzy auto|aggressive` (off rejected exit 65), `--fuzzy-threshold`, `--progress-every`; fuzzy multi-apply is **one-pass** L→R (`apply_fuzzy_one_pass`, never re-scans inserted text); default max applies **1** if `--max-replacements` omitted (hard ceiling 10_000); if replacement **contains** pattern (fixed-string), force single apply; match failures may emit `best_candidate`
 - `hash` -- computes BLAKE3 checksums
 - `delete` -- deletes files with optional backup
 - `count` -- counts lines, files by extension
@@ -395,6 +408,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - 91: EXDEV fallback disabled (`--strict-atomic` opts out of G90 Docker/NFS fallback)
 - 92: copy-back BLAKE3 failed (G114 in-place write lost checksum integrity)
 - 93: orphan journal recovered (G114 WAL sidecar left by crash)
+- 124: global operation timeout exceeded (`--timeout-secs` / `--timeout` deadline; default 120)
 - 126: workspace jail violation
 - 127: symlink blocked
 - 128: immutable file
@@ -465,9 +479,9 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `--follow-symlinks` -- follows symbolic links
 - `--threads <N>` / `-j <N>` -- parallel threads (0 = all cores)
 - `--max-filesize <BYTES>` -- ignores files larger than the limit
-- `--timeout <SECONDS>` -- global operation timeout (0 = no timeout, default 0). Use to bound long searches, batches, and replace operations
+- `--timeout-secs <SECONDS>` (alias `--timeout`) -- global operation timeout; **default 120**; `0` disables; deadline → exit **124**. Use to bound long searches, batches, and replace operations
 - `--json-schema` -- emits the JSON schema for the subcommand's output
-- `--lang <LOCALE>` -- overrides the display locale (en, pt-BR) via env `ATOMWRITE_LANG`
+- `--locale <en|pt-BR>` -- overrides the display locale (en, pt-BR); env `ATOMWRITE_LANG` still accepted (historical name; flag renamed from `--lang` in v0.1.20)
 
 
 ## PROHIBITED -- Common Pitfalls

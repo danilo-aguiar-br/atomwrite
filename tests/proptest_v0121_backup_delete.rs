@@ -174,7 +174,7 @@ fn allow_sequential_drift_accepts_any_sequence() {
                 .expect("run");
             prop_assert!(
                 output.status.success(),
-                "edit {i} deve passar com --allow-sequential-drift, stderr={}",
+                "edit {i} must succeed with --allow-sequential-drift, stderr={}",
                 String::from_utf8_lossy(&output.stderr)
             );
         }
@@ -220,7 +220,7 @@ fn keep_backup_preserves_across_n_writes() {
                 .expect("write");
             prop_assert!(
                 output.status.success(),
-                "write {i} falhou: stderr={}",
+                "write {i} failed: stderr={}",
                 String::from_utf8_lossy(&output.stderr)
             );
             // Sleep >1s to guarantee the next backup filename differs.
@@ -240,7 +240,7 @@ fn keep_backup_preserves_across_n_writes() {
         prop_assert_eq!(
             count,
             expected,
-            "esperava {} backups preservados, got {}",
+            "expected {} preserved backups, got {}",
             expected,
             count
         );

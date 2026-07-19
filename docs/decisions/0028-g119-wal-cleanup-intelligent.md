@@ -12,7 +12,7 @@
 
 - **Consequences**:
   - **+** L1 previne 60-80% de sidecars para workloads típicos de agente LLM (writes pequenos em diretórios versionados): a raiz da poluição.
-  - **+** L4 dá flexibilidade operacional: `ATOMWRITE_WAL_KEEP_SECS=60` em CI, `ATOMWRITE_WAL_MAX_COUNT=50` em workspaces densos, sentinela local em `target/.atomwrite_no_wal` para desabilitar.
+  - **+** L4 dá flexibilidade operacional: `ATOMWRITE_WAL_KEEP_SECS=60` em scripts locais, `ATOMWRITE_WAL_MAX_COUNT=50` em workspaces densos, sentinela local em `target/.atomwrite_no_wal` para desabilitar.
   - **+** H3 (rate limit) protege contra agentes em loop que geram 1000 sidecars/min.
   - **+** H5 (archive) preserva histórico de auditoria sem poluir a árvore ativa.
   - **+** Default `Auto` é seguro: sidecars continuam existindo para operações não-triviais (arquivo > 1 MiB, edit, replace, dir não-versionado).
@@ -33,14 +33,14 @@
 
 A v0.1.16 entregou L1 + L4 como código de biblioteca, mas ambas estavam **desconectadas** dos pontos onde o sidecar é criado e removido. A v0.1.17 fecha a fiação:
 
-- **L3 wired em `lib.rs::run`**: após `resolve_workspace()` e ANTES de despachar o subcommand, chamar `auto_heal_on_startup(&workspace, threshold_secs=3600, max_duration_ms=100)`. Threshold de 1h é o padrão operacional; budget de 100ms mantém custo de startup determinístico. O sidecar `Started` (potencial órfão) NUNCA é reaped automaticamente — é o sinal que merece atenção do operador. A flag global `--no-auto-heal` (ou env `ATOMWRITE_WAL_NO_AUTO_HEAL=1`) desabilita para CI de alta cadência e benchmarks.
+- **L3 wired em `lib.rs::run`**: após `resolve_workspace()` e ANTES de despachar o subcommand, chamar `auto_heal_on_startup(&workspace, threshold_secs=3600, max_duration_ms=100)`. Threshold de 1h é o padrão operacional; budget de 100ms mantém custo de startup determinístico. O sidecar `Started` (potencial órfão) NUNCA é reaped automaticamente — é o sinal que merece atenção do operador. A flag global `--no-auto-heal` (ou env `ATOMWRITE_WAL_NO_AUTO_HEAL=1`) desabilita para loops locais de alta cadência e benchmarks.
 - **L4 wired em `JournalGuard::drop`**: o `Drop` agora consulta `heuristics_should_preserve` antes de remover. Como o contexto do Drop não conhece o `workspace_committed_count` (varredura cara), passamos `u64::MAX` para forçar `h2_lru_within_cap` a retornar `false`. O OR-composição garante que `h1_ttl`, `h3_rate_limit`, `h4_sentinel`, `h5_archive` continuam votando livremente. Custo: O(1) por sidecar (apenas `metadata` da env + checagem de sentinel).
 - **Novo campo `committed_at_unix: Option<u64>` em `JournalGuard`**: `release()` carimba o timestamp Unix atual; `drop()` lê o valor para alimentar H1 (TTL) e H5 (archive). Sem timestamp, essas duas heurísticas ficavam permanentemente desabilitadas no caminho do Drop.
 - **Compatibilidade com testes existentes**: 2 testes em `tests/cli_v012_wal.rs` e 1 em `tests/cli_wal.rs` foram ajustados para passar `--no-auto-heal` quando o setup pré-condiciona sidecars stale. Sem o flag, o L3 reapa os seeds antes do subcommand rodar.
 
 ### Consequências da fiação
 - **+** Cada invocação agora começa com working tree limpo: sidecars Committed/Aborted com mais de 1h morrem no startup. Em workspace com 60 sidecars stale, o primeiro comando apaga 60 sem custo perceptível (~5ms em `walk_journal_paths`).
-- **+** A flag `--no-auto-heal` dá escape para ambientes sensíveis (CI paralelo, benchmarks, dry-run chains) sem código custom.
+- **+** A flag `--no-auto-heal` dá escape para ambientes sensíveis (automação local paralela, benchmarks, dry-run chains) sem código custom.
 - **+** L4 no Drop é a primeira camada que consulta heurísticas POR-EVENTO (h4_sentinel, h3_rate_limit) em vez de por-batch. Operador pode desabilitar sidecar em diretórios sensíveis com `.atomwrite_no_wal`.
 - **-** Adicionar `--no-auto-heal` em testes manuais é necessário para inspeção forense de sidecars stale (ver 0027/0030).
 - **-** Custo de startup sobe ~5-10ms em workspaces com >100 sidecars (budget de 100ms protege contra regressão).

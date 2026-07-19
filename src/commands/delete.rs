@@ -1,16 +1,27 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! File deletion with optional backup before removal.
-//! Workload: I/O-bound (unlink syscall + fsync).
+//!
+//! Workload: I/O-bound (stat + optional hash + unlink + fsync).
+//! Parallelism: **all** roots (multi-path files + recursive dirs) expand into
+//! one path list via `collect_files_parallel`, then a single `rayon::par_iter`.
+//! Empty-dir cleanup discovers candidates via WalkParallel (bottom-up remove
+//! stays ordered).
+//! (hash/backup/unlink independent per file). NDJSON emits in path-sorted
+//! order after the join. Single-file stays sequential (coordination cost >
+//! work). Bound: `--threads` / `--max-concurrency` (WalkParallel + rayon).
 
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result};
+use rayon::prelude::*;
 
 use crate::checksum;
 use crate::cli::{DeleteArgs, GlobalArgs};
 use crate::commands::resolve_backup;
+use crate::concurrency::should_parallelize;
 use crate::error::AtomwriteError;
 use crate::ndjson_types::{DeleteOutput, DryRunPlan, Summary};
 use crate::output::NdjsonWriter;
@@ -62,6 +73,21 @@ fn parse_human_duration(s: &str) -> std::result::Result<Duration, AtomwriteError
     Ok(Duration::from_secs(total_secs))
 }
 
+/// Outcome of processing one delete candidate (for ordered NDJSON emit).
+enum DeleteItem {
+    SkippedAge,
+    Plan {
+        path: String,
+        size: u64,
+    },
+    Deleted {
+        path: String,
+        size: u64,
+        hash: String,
+    },
+    Err(anyhow::Error),
+}
+
 /// Delete files with optional backup and dry-run support.
 ///
 /// # Errors
@@ -100,8 +126,21 @@ pub fn cmd_delete(
     };
 
     let mut visited = 0u64;
+    let max_size = global.effective_max_filesize();
+    let dry_or_confirm = args.dry_run || args.confirm;
+    let do_backup = resolved.backup;
+    let retention = resolved.retention;
+
+    // Phase 1 — expand every root into one file list (fail-fast NotFound).
+    // Multi-root dirs use one WalkBuilder + `.add` (docs.rs), then one par_iter.
+    let mut files_to_delete: Vec<PathBuf> = Vec::new();
+    let mut dir_roots: Vec<PathBuf> = Vec::new();
 
     for path in &args.paths {
+        if crate::signal::is_global_shutdown() {
+            break;
+        }
+
         let path = crate::path_safety::validate_path(path, &workspace)?;
 
         if !path.exists() {
@@ -115,56 +154,91 @@ pub fn cmd_delete(
             .into());
         }
 
-        let files_to_delete: Vec<std::path::PathBuf> = if path.is_dir() {
-            let mut files = Vec::new();
-            let mut walker_builder = ignore::WalkBuilder::new(&path);
-            walker_builder
-                .hidden(!global.hidden)
-                .git_ignore(!global.no_gitignore)
-                .follow_links(global.follow_symlinks);
-
-            if !args.include.is_empty() || !args.exclude.is_empty() {
-                let mut overrides = ignore::overrides::OverrideBuilder::new(&path);
-                for pat in &args.include {
-                    overrides.add(pat)?;
-                }
-                for pat in &args.exclude {
-                    overrides.add(&format!("!{pat}"))?;
-                }
-                walker_builder.overrides(overrides.build()?);
-            }
-
-            for entry in walker_builder.build().flatten() {
-                if entry.file_type().is_some_and(|ft| ft.is_file()) {
-                    files.push(entry.into_path());
-                }
-            }
-            files
+        if path.is_dir() {
+            dir_roots.push(path);
         } else {
-            vec![path.clone()]
-        };
+            files_to_delete.push(path);
+        }
+    }
 
-        for file_path in &files_to_delete {
-            visited += 1;
-            let path_str = file_path.display().to_string();
-            let meta =
-                std::fs::metadata(file_path).with_context(|| format!("cannot stat {path_str}"))?;
+    if !dir_roots.is_empty() && !crate::signal::is_global_shutdown() {
+        let mut walker_builder = ignore::WalkBuilder::new(&dir_roots[0]);
+        for d in dir_roots.iter().skip(1) {
+            walker_builder.add(d);
+        }
+        walker_builder
+            .hidden(!global.hidden)
+            .git_ignore(!global.no_gitignore)
+            .follow_links(global.follow_symlinks);
+        crate::concurrency::apply_walk_threads(&mut walker_builder, global.threads);
 
-            if let Some(threshold) = age_threshold {
-                let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                let age = SystemTime::now()
-                    .duration_since(modified)
-                    .unwrap_or(Duration::ZERO);
-                if age < threshold {
-                    skipped += 1;
-                    continue;
-                }
+        if !args.include.is_empty() || !args.exclude.is_empty() {
+            let mut overrides = ignore::overrides::OverrideBuilder::new(&dir_roots[0]);
+            for pat in &args.include {
+                overrides.add(pat)?;
             }
+            for pat in &args.exclude {
+                overrides.add(&format!("!{pat}"))?;
+            }
+            walker_builder.overrides(overrides.build()?);
+        }
 
-            let hash = checksum::hash_file(file_path, global.effective_max_filesize())?;
-            let size = meta.len();
+        files_to_delete.extend(crate::concurrency::collect_files_parallel(&walker_builder));
+    }
 
-            if args.dry_run || args.confirm {
+    crate::concurrency::sort_paths_parallel(&mut files_to_delete);
+    files_to_delete.dedup();
+
+    if crate::signal::is_global_shutdown() {
+        return Ok(());
+    }
+
+    // Phase 2 — fan-out mutations (or sequential when a single file).
+    let items: Vec<DeleteItem> = if should_parallelize(files_to_delete.len()) {
+        files_to_delete
+            .par_iter()
+            .map(|file_path| {
+                process_one_delete(
+                    file_path,
+                    age_threshold,
+                    max_size,
+                    dry_or_confirm,
+                    do_backup,
+                    retention,
+                )
+            })
+            .collect()
+    } else {
+        files_to_delete
+            .iter()
+            .map(|file_path| {
+                process_one_delete(
+                    file_path,
+                    age_threshold,
+                    max_size,
+                    dry_or_confirm,
+                    do_backup,
+                    retention,
+                )
+            })
+            .collect()
+    };
+
+    for item in items {
+        if crate::signal::is_global_shutdown() {
+            tracing::info!(visited, deleted, "delete interrupted by signal");
+            break;
+        }
+        match item {
+            DeleteItem::SkippedAge => {
+                visited += 1;
+                skipped += 1;
+            }
+            DeleteItem::Plan {
+                path: path_str,
+                size,
+            } => {
+                visited += 1;
                 writer.write_event(&DryRunPlan {
                     r#type: "plan",
                     operation: "delete".into(),
@@ -174,57 +248,50 @@ pub fn cmd_delete(
                 })?;
                 deleted += 1;
                 _bytes_freed += size;
-                continue;
             }
-
-            if resolved.backup {
-                crate::atomic::create_backup(file_path, resolved.retention)?;
-            }
-
-            std::fs::remove_file(file_path)
-                .with_context(|| format!("cannot delete {}", file_path.display()))?;
-
-            if let Some(parent) = file_path.parent() {
-                if let Err(e) = platform::fsync_dir(parent) {
-                    tracing::warn!(
-                        path = %parent.display(),
-                        error = %e,
-                        "fsync_dir after delete failed"
-                    );
-                }
-            }
-
-            deleted += 1;
-            _bytes_freed += size;
-
-            writer.write_event(&DeleteOutput {
-                r#type: "deleted",
+            DeleteItem::Deleted {
                 path: path_str,
-                bytes: size,
-                checksum_before: hash,
-                elapsed_ms: start.elapsed().as_millis() as u64,
-                warnings: warnings.clone(),
-            })?;
+                size,
+                hash,
+            } => {
+                visited += 1;
+                deleted += 1;
+                _bytes_freed += size;
+                writer.write_event(&DeleteOutput {
+                    r#type: "deleted",
+                    path: path_str,
+                    bytes: size,
+                    checksum_before: hash,
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    warnings: warnings.clone(),
+                })?;
+            }
+            DeleteItem::Err(e) => return Err(e),
         }
+    }
 
-        if path.is_dir() && !args.dry_run && files_to_delete.is_empty() {
-            std::fs::remove_dir_all(&path)
-                .with_context(|| format!("cannot remove directory {}", path.display()))?;
-        } else if path.is_dir() && !args.dry_run {
-            let mut dirs_to_remove = Vec::new();
-            for entry in walkdir::WalkDir::new(&path)
-                .contents_first(true)
-                .into_iter()
-                .flatten()
-            {
-                if entry.file_type().is_dir() {
-                    dirs_to_remove.push(entry.into_path());
-                }
-            }
-            for dir in &dirs_to_remove {
-                let _ = std::fs::remove_dir(dir);
-            }
+    // Phase 3 — remove emptied directory trees (independent roots fan out).
+    if !args.dry_run && !crate::signal::is_global_shutdown() {
+        let cleanup: Vec<Result<(), anyhow::Error>> = if should_parallelize(dir_roots.len()) {
+            dir_roots
+                .par_iter()
+                .map(|path| cleanup_dir_root(path, &files_to_delete))
+                .collect()
+        } else {
+            dir_roots
+                .iter()
+                .map(|path| cleanup_dir_root(path, &files_to_delete))
+                .collect()
+        };
+        for r in cleanup {
+            r?;
         }
+    }
+
+    // On cooperative cancel, skip summary so main can emit the shutdown
+    // banner + signal exit code (same contract as search/list/count).
+    if crate::signal::is_global_shutdown() {
+        return Ok(());
     }
 
     writer.write_event(&Summary {
@@ -239,4 +306,110 @@ pub fn cmd_delete(
     })?;
 
     Ok(())
+}
+
+fn cleanup_dir_root(path: &Path, files_to_delete: &[PathBuf]) -> Result<()> {
+    let files_under = files_to_delete.iter().any(|f| f.starts_with(path));
+    if !files_under {
+        std::fs::remove_dir_all(path)
+            .with_context(|| format!("cannot remove directory {}", path.display()))?;
+    } else {
+        // Parallel discovery of empty-candidate dirs; bottom-up remove stays
+        // sequential (parent depends on children being gone first).
+        let mut builder = ignore::WalkBuilder::new(path);
+        builder.hidden(true).git_ignore(false);
+        crate::concurrency::apply_walk_threads(&mut builder, None);
+        let mut dirs_to_remove: Vec<PathBuf> =
+            crate::concurrency::collect_mapped_parallel(&builder, |entry| {
+                if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+                    Some(entry.path().to_path_buf())
+                } else {
+                    None
+                }
+            });
+        // Deepest paths first ≈ contents_first semantics for remove_dir.
+        dirs_to_remove.sort_by(|a, b| {
+            let da = a.components().count();
+            let db = b.components().count();
+            db.cmp(&da).then_with(|| b.cmp(a))
+        });
+        for dir in &dirs_to_remove {
+            let _ = std::fs::remove_dir(dir);
+        }
+    }
+    Ok(())
+}
+
+fn process_one_delete(
+    file_path: &Path,
+    age_threshold: Option<Duration>,
+    max_size: u64,
+    dry_or_confirm: bool,
+    do_backup: bool,
+    retention: u8,
+) -> DeleteItem {
+    if crate::signal::is_global_shutdown() {
+        return DeleteItem::Err(crate::signal::cancelled_error("delete cancelled by signal").into());
+    }
+
+    let path_str = file_path.display().to_string();
+    let meta = match std::fs::metadata(file_path) {
+        Ok(m) => m,
+        Err(e) => {
+            return DeleteItem::Err(
+                anyhow::Error::new(e).context(format!("cannot stat {path_str}")),
+            );
+        }
+    };
+
+    if let Some(threshold) = age_threshold {
+        let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        let age = SystemTime::now()
+            .duration_since(modified)
+            .unwrap_or(Duration::ZERO);
+        if age < threshold {
+            return DeleteItem::SkippedAge;
+        }
+    }
+
+    let hash = match checksum::hash_file(file_path, max_size) {
+        Ok(h) => h,
+        Err(e) => return DeleteItem::Err(e),
+    };
+    let size = meta.len();
+
+    if dry_or_confirm {
+        return DeleteItem::Plan {
+            path: path_str,
+            size,
+        };
+    }
+
+    if do_backup {
+        if let Err(e) = crate::atomic::create_backup(file_path, retention) {
+            return DeleteItem::Err(e);
+        }
+    }
+
+    if let Err(e) = std::fs::remove_file(file_path) {
+        return DeleteItem::Err(
+            anyhow::Error::new(e).context(format!("cannot delete {}", file_path.display())),
+        );
+    }
+
+    if let Some(parent) = file_path.parent() {
+        if let Err(e) = platform::fsync_dir(parent) {
+            tracing::warn!(
+                path = %parent.display(),
+                error = %e,
+                "fsync_dir after delete failed"
+            );
+        }
+    }
+
+    DeleteItem::Deleted {
+        path: path_str,
+        size,
+        hash,
+    }
 }

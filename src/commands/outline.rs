@@ -5,17 +5,20 @@
 //! traits, modules, top-level consts) as NDJSON. Uses
 //! `tree-sitter-language-pack`.
 //!
-//! ## Causa x Efeito
+//! Workload: mixed I/O-bound + CPU-bound (file read + tree-sitter outline walk).
+//! Parallelism: single-file; no multi-file fan-out in this subcommand.
 //!
-//! - **Causa**: `read` devolve texto cru. Agentes LLM gastam tokens
-//!   lendo 500 linhas para descobrir que só 12 são assinaturas.
-//! - **Efeito**: Contexto desperdiçado, latência alta, alucinações
-//!   sobre escopo (achar que função X existe mas X está em módulo Y).
-//! - **Solução**: Parse via tree-sitter + walk pelos node kinds
-//!   "top-level structural" + emit cada um como `outline_item` NDJSON
-//!   com `kind`, `name`, `signature`, `start_line`.
-//! - **Benefício**: Contexto compacto (10 itens = 2KB vs 50KB do source),
-//!   preciso, navegável.
+//! ## Cause and Effect
+//!
+//! - **Cause**: `read` returns raw text. LLM agents spend tokens reading
+//!   500 lines only to learn that 12 of them are signatures.
+//! - **Effect**: Wasted context, high latency, and scope hallucinations
+//!   (assuming function X exists when X lives in module Y).
+//! - **Solution**: Parse with tree-sitter, walk top-level structural node
+//!   kinds, and emit each as `outline_item` NDJSON with `kind`, `name`,
+//!   `signature`, and `start_line`.
+//! - **Benefit**: Compact, precise, navigable context (10 items ≈ 2 KB vs
+//!   50 KB of full source).
 
 use std::io::Write;
 use std::time::Instant;
@@ -26,25 +29,37 @@ use serde::Serialize;
 use crate::cli::{GlobalArgs, OutlineArgs};
 use crate::output::NdjsonWriter;
 
-#[derive(Debug, Serialize)]
-struct OutlineItem {
-    r#type: &'static str,
-    path: String,
-    language: String,
-    kind: String,
-    name: String,
-    signature: String,
-    start_line: usize,
-    end_line: usize,
-    // GAP-109: byte offsets emitted when --positions is active
+/// One structural outline item (NDJSON `outline_item`).
+#[derive(Debug, Clone, Serialize)]
+pub struct OutlineItem {
+    /// Event type discriminator (`outline_item`).
+    pub r#type: &'static str,
+    /// Source file path.
+    pub path: String,
+    /// Detected/selected language id.
+    pub language: String,
+    /// Structural node kind (function, class, …).
+    pub kind: String,
+    /// Extracted symbol name.
+    pub name: String,
+    /// Compact signature snippet.
+    pub signature: String,
+    /// 1-based start line.
+    pub start_line: usize,
+    /// 1-based end line.
+    pub end_line: usize,
+    /// Optional byte offset start (`--positions`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    start_byte: Option<usize>,
+    pub start_byte: Option<usize>,
+    /// Optional byte offset end (`--positions`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    end_byte: Option<usize>,
+    pub end_byte: Option<usize>,
+    /// Optional start column (`--positions`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    start_column: Option<usize>,
+    pub start_column: Option<usize>,
+    /// Optional end column (`--positions`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    end_column: Option<usize>,
+    pub end_column: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -94,6 +109,7 @@ const STRUCTURAL_NODE_KINDS: &[&str] = &[
 /// classes, structs, etc.), and emits each as an `outline_item`
 /// NDJSON line. After the tree is exhausted, a final
 /// `outline_summary` line is emitted with the total count.
+#[tracing::instrument(skip_all, fields(command = "outline"))]
 pub fn cmd_outline(
     args: &OutlineArgs,
     global: &GlobalArgs,
@@ -105,8 +121,8 @@ pub fn cmd_outline(
     if !validated.exists() {
         return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
-    let content = std::fs::read(&validated)
-        .with_context(|| format!("cannot read {}", validated.display()))?;
+    let content =
+        crate::file_io::read_file_bytes(&validated, global.effective_max_filesize())?;
 
     let lang_name = crate::commands::query::resolve_language_name(
         args.language.as_deref(),
@@ -127,17 +143,20 @@ pub fn cmd_outline(
         .with_context(|| format!("parser returned no tree for {lang_name}"))?;
     let root = tree.root_node();
 
-    let mut items = 0usize;
-    walk_outline(
+    let mut collected = Vec::new();
+    walk_outline_collect(
         &root,
         &content,
         &validated,
         &lang_name,
         &kind_filter,
         args.positions,
-        writer,
-        &mut items,
-    )?;
+        &mut collected,
+    );
+    let items = collected.len();
+    for item in collected {
+        writer.write_event(&item)?;
+    }
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
     writer.write_event(&OutlineSummary {
@@ -150,6 +169,35 @@ pub fn cmd_outline(
     Ok(())
 }
 
+/// Collect structural outline items for one file (no I/O writer — rayon-safe).
+///
+/// Parse failures return an empty vec so budgeted callers can skip quietly.
+pub fn collect_outline_for_path(
+    path: &std::path::Path,
+    content: &[u8],
+    language: Option<&str>,
+) -> Vec<OutlineItem> {
+    let lang_name = match crate::commands::query::resolve_language_name(language, path, content) {
+        Ok(l) => l,
+        Err(_) => return Vec::new(),
+    };
+    let mut parser = match tree_sitter_language_pack::get_parser(&lang_name) {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+    let tree = match parser
+        .parse(std::str::from_utf8(content).unwrap_or(""))
+        .or_else(|| parser.parse_bytes(content))
+    {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+    let root = tree.root_node();
+    let mut out = Vec::new();
+    walk_outline_collect(&root, content, path, &lang_name, &None, false, &mut out);
+    out
+}
+
 /// Emit structural outline items for one file (used by `outline` and `sparse outline`).
 ///
 /// Returns the number of items emitted. Parse failures return `Ok(0)` so callers
@@ -160,47 +208,24 @@ pub fn emit_outline_for_path(
     language: Option<&str>,
     writer: &mut NdjsonWriter<impl Write>,
 ) -> Result<usize> {
-    let lang_name = match crate::commands::query::resolve_language_name(language, path, content) {
-        Ok(l) => l,
-        Err(_) => return Ok(0),
-    };
-    let mut parser = match tree_sitter_language_pack::get_parser(&lang_name) {
-        Ok(p) => p,
-        Err(_) => return Ok(0),
-    };
-    let tree = match parser
-        .parse(std::str::from_utf8(content).unwrap_or(""))
-        .or_else(|| parser.parse_bytes(content))
-    {
-        Some(t) => t,
-        None => return Ok(0),
-    };
-    let root = tree.root_node();
-    let mut items = 0usize;
-    walk_outline(
-        &root,
-        content,
-        path,
-        &lang_name,
-        &None,
-        false,
-        writer,
-        &mut items,
-    )?;
-    Ok(items)
+    let items = collect_outline_for_path(path, content, language);
+    let n = items.len();
+    for item in items {
+        writer.write_event(&item)?;
+    }
+    Ok(n)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn walk_outline(
+fn walk_outline_collect(
     root: &tree_sitter_language_pack::Node,
     source: &[u8],
     path: &std::path::Path,
     lang_name: &str,
     kind_filter: &Option<Vec<String>>,
     show_positions: bool,
-    writer: &mut NdjsonWriter<impl Write>,
-    items: &mut usize,
-) -> Result<()> {
+    out: &mut Vec<OutlineItem>,
+) {
     let mut stack: Vec<tree_sitter_language_pack::Node> = vec![root.clone()];
     while let Some(node) = stack.pop() {
         let kind = node.kind();
@@ -215,7 +240,7 @@ fn walk_outline(
                 let signature = extract_signature(&node, source);
                 let start = node.start_position();
                 let end = node.end_position();
-                writer.write_event(&OutlineItem {
+                out.push(OutlineItem {
                     r#type: "outline_item",
                     path: path.display().to_string(),
                     language: lang_name.to_string(),
@@ -224,7 +249,6 @@ fn walk_outline(
                     signature,
                     start_line: start.row + 1,
                     end_line: end.row + 1,
-                    // GAP-109: include byte offsets when --positions is set
                     start_byte: if show_positions {
                         Some(node.start_byte())
                     } else {
@@ -245,8 +269,7 @@ fn walk_outline(
                     } else {
                         None
                     },
-                })?;
-                *items += 1;
+                });
             }
         }
         let count = node.child_count() as u32;
@@ -256,7 +279,6 @@ fn walk_outline(
             }
         }
     }
-    Ok(())
 }
 
 fn extract_name(node: &tree_sitter_language_pack::Node, source: &[u8]) -> String {

@@ -4,43 +4,16 @@
 [Read in English](TESTING.md)
 
 
-## O Que Há de Novo na v0.1.12
+## O Que Há de Novo na v0.1.34 (Atual)
 
-Esta seção resume as mudanças relevantes para testes em v0.1.12. A release adicionou 96 novos testes (eram 320 baseline) para um total de **445 testes em 43 suítes**. A v0.1.15 eleva o total para **542 testes** (+2 testes unitários na v0.1.14, +8 do G117 em `tests/cli_edit.rs`, +6 do G118 em `tests/cli_write.rs`).
+- A suíte `tests/cli_v0133_oneshot_fuzzy.rs` trava o contrato one-shot fuzzy + timeout (fix de código registrado como 0.1.33; publicação docs-complete **0.1.34**)
+- Cobre: hang de expand-section quando NEW embute OLD termina em **menos de 2 segundos**; embeds forçam apply único via `apply_fuzzy_one_pass`; teto rígido **10_000** applies; timeout global padrão 120 / exit **124**; cancel cooperativo no meio da cascata / exit **143**
+- Contrato explícito sob teste: `apply_fuzzy_one_pass` one-pass E→D (nunca reescaneia texto inserido); NEW embutindo OLD não pode hangar
+- Rode: `cargo test --test cli_v0133_oneshot_fuzzy`
+- Mantenha as suítes mais antigas listadas abaixo
+- Veja [ADR-0054](decisions/0054-v0-1-34-oneshot-fuzzy-timeout.pt-BR.md)
 
-### Novos Arquivos de Teste (10 Adicionados em v0.1.11+v0.1.12)
-
-- `tests/cli_v012_regressions.rs` -- 11 testes para regressões v0.1.2 a v0.1.4
-- `tests/cli_v012_audit_regressions.rs` -- 27 testes para auditoria G72/G114 de v0.1.12
-- `tests/cli_v012_batch4_regressions.rs` -- 23 testes para o batch final de v0.1.12
-- `tests/cli_v012_syntax_check.rs` -- 5 testes para validação G72 tree-sitter
-- `tests/cli_v012_wal.rs` -- 8 testes para G114 sidecar WAL
-- `tests/cli_v012_xattr_reflink.rs` -- 3 testes para G39 xattr + G64 reflink
-- `tests/cli_set.rs` -- 6 testes para subcomando set v14 Tier 3
-- `tests/cli_get_del.rs` -- 5 testes para subcomandos get/del v14 Tier 3
-- `tests/cli_query.rs` -- 5 testes para subcomando query v14 Tier 3
-- `tests/cli_outline.rs` -- 5 testes para subcomando outline v14 Tier 3
-- `tests/cli_case.rs` -- 3 testes para subcomando case v14 Tier 3
-
-### Novos Testes em Arquivos Existentes
-
-- 12 testes em `src/binary_detect.rs::tests` (G41 content_inspector)
-- 16 testes em `src/syntax_check.rs::tests` (G72 tree-sitter)
-- 8 testes em `src/wal.rs::tests` (G114 WAL)
-- 3 testes em `src/xattr_restore.rs::tests` (G39 xattr)
-- 3 testes em `src/lock.rs::tests` (G54 advisory lock)
-- 3 testes em `src/atomic.rs::tests` (WriteStrategy: rename/inplace/copyback)
-
-### Organização das Suítes de Teste
-
-- Total: 43 suítes (eram 34 em v0.1.10)
-- Testes unitários em `src/`
-- Testes de integração em `tests/cli_*.rs`
-- Testes property-based em `tests/proptest_*.rs`
-- Testes de snapshot via `insta`
-- Testes de sinal (SIGINT, SIGTERM, SIGPIPE)
-
-## O Que Há de Novo na v0.1.30 (Atual)
+## O Que Há de Novo na v0.1.30
 
 - A suíte `tests/cli_v0130_agent_contract.rs` cobre o contrato residual: match_count, indent_adjusted, fuzzy off rejeitado, config fuzzy off rejeitado, recipe bak skip, sparse outline kind, semantic-merge help line-based, unicidade replace-all
 - A suíte `tests/cli_v0129_fuzzy_replace.rs` cobre a superfície 0.1.29: replace fuzzy, `best_candidate`, durability, recipe, sparse, semantic-merge, stat, agent-surface, semantic-search, `platform.rename_method`
@@ -50,8 +23,8 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 - O NDJSON do write reporta `platform.rename_method` (`renameat2` ou `rename`)
 - `write --durability full|fast|auto` para trade-off de custo de fsync
 - Novos subcomandos: `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch` (feature), `codemod`, `semantic-search` — **41 subcomandos** no total
-- Matriz de features: slim `core` (~7.7 MiB, CI ≤15 MiB) vs default/full AST (~52 MB)
-- Jobs de CI: `size-gate` (slim ≤15 MiB), `core-test` (`--no-default-features --features core`), `schema-diff` (drift de regen em `docs/schemas`)
+- Matriz de features: slim `core` (~7.7 MiB, local size-gate ≤15 MiB) vs default/full AST (~52 MB)
+- Gates **locais** (manuais; sem scripts locais remoto): size-gate slim ≤15 MiB; core-test; schema-diff em `docs/schemas`
 - Rode a suíte de contrato 0.1.30: `cargo test --test cli_v0130_agent_contract`
 - Rode a suíte 0.1.29: `cargo test --test cli_v0129_fuzzy_replace`
 
@@ -106,7 +79,7 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 
 ## O Que Há de Novo na v0.1.23
 
-- 609 testes passando (575 baseline v0.1.22 + 12 GAP-2026-015 + 7 GAP-2026-016 + 4 GAP-2026-017 + 8 GAP-2026-018 + 3 de [Unreleased] CI Windows)
+- 609 testes passando (575 baseline v0.1.22 + 12 GAP-2026-015 + 7 GAP-2026-016 + 4 GAP-2026-017 + 8 GAP-2026-018 + 3 de [Unreleased] Windows)
 - 33 subcomandos (32 da v0.1.22 + `verify` da v0.1.25)
 - 26 ADRs em docs/decisions/ (0019-0044)
 - GAP-2026-015 (allow_hyphen_values) fechado; 15 campos CLI em 8 structs agora aceitam valores iniciando com `-`
@@ -138,6 +111,42 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 - ADR-0040 criado documentando o design de `prune-backups`
 - Novos testes: `tests/cli_v0121_edit_loop.rs` (4), `tests/cli_v0121_prune_backups.rs` (3)
 
+## O Que Há de Novo na v0.1.12 (histórico)
+
+Esta seção resume as mudanças relevantes para testes em v0.1.12. A release adicionou 96 novos testes (eram 320 baseline) para um total de **445 testes em 43 suítes**. A v0.1.15 eleva o total para **542 testes** (+2 testes unitários na v0.1.14, +8 do G117 em `tests/cli_edit.rs`, +6 do G118 em `tests/cli_write.rs`).
+
+### Novos Arquivos de Teste (10 Adicionados em v0.1.11+v0.1.12)
+
+- `tests/cli_v012_regressions.rs` -- 11 testes para regressões v0.1.2 a v0.1.4
+- `tests/cli_v012_audit_regressions.rs` -- 27 testes para auditoria G72/G114 de v0.1.12
+- `tests/cli_v012_batch4_regressions.rs` -- 23 testes para o batch final de v0.1.12
+- `tests/cli_v012_syntax_check.rs` -- 5 testes para validação G72 tree-sitter
+- `tests/cli_v012_wal.rs` -- 8 testes para G114 sidecar WAL
+- `tests/cli_v012_xattr_reflink.rs` -- 3 testes para G39 xattr + G64 reflink
+- `tests/cli_set.rs` -- 6 testes para subcomando set v14 Tier 3
+- `tests/cli_get_del.rs` -- 5 testes para subcomandos get/del v14 Tier 3
+- `tests/cli_query.rs` -- 5 testes para subcomando query v14 Tier 3
+- `tests/cli_outline.rs` -- 5 testes para subcomando outline v14 Tier 3
+- `tests/cli_case.rs` -- 3 testes para subcomando case v14 Tier 3
+
+### Novos Testes em Arquivos Existentes
+
+- 12 testes em `src/binary_detect.rs::tests` (G41 content_inspector)
+- 16 testes em `src/syntax_check.rs::tests` (G72 tree-sitter)
+- 8 testes em `src/wal.rs::tests` (G114 WAL)
+- 3 testes em `src/xattr_restore.rs::tests` (G39 xattr)
+- 3 testes em `src/lock.rs::tests` (G54 advisory lock)
+- 3 testes em `src/atomic.rs::tests` (WriteStrategy: rename/inplace/copyback)
+
+### Organização das Suítes de Teste
+
+- Total: 43 suítes (eram 34 em v0.1.10)
+- Testes unitários em `src/`
+- Testes de integração em `tests/cli_*.rs`
+- Testes property-based em `tests/proptest_*.rs`
+- Testes de snapshot via `insta`
+- Testes de sinal (SIGINT, SIGTERM, SIGPIPE)
+
 
 ### Como Executar
 
@@ -145,6 +154,8 @@ Esta seção resume as mudanças relevantes para testes em v0.1.12. A release ad
 # Executar todos os testes
 cargo test
 
+# Executar a suíte one-shot fuzzy + timeout v0.1.33/v0.1.34
+cargo test --test cli_v0133_oneshot_fuzzy
 # Executar a suíte de contrato residual v0.1.30
 cargo test --test cli_v0130_agent_contract
 # Executar a suíte v0.1.29 (replace fuzzy + nova superfície)
@@ -155,7 +166,7 @@ cargo test --test cli_v012_regressions
 cargo test --test cli_v012_audit_regressions
 cargo test --test cli_v012_batch4_regressions
 
-# Somente core (bate com o job CI core-test)
+# Somente core (bate com o gate local core-test)
 cargo test --no-default-features --features core
 
 # Executar com output visível para debug
@@ -180,7 +191,7 @@ cargo test --test cross_compile_check -- --ignored
 
 - 29 ADRs em `docs/decisions/` (0019-0047) explicam as decisões arquiteturais por trás das features v0.1.12 a v0.1.27
 - 29 schemas JSON em `docs/schemas/` (índice completo em `docs/schemas/README.md`); v0.1.22 adicionou `edit-loop-output` e `prune-backups-output`
-- Veja [docs/decisions/README.md](README.md) para a lista completa de ADRs
+- Veja [docs/decisions/README.md](decisions/README.md) para a lista completa de ADRs
 
 ## Por Que Testes Categorizados
 - Cada categoria de teste valida uma camada diferente do sistema
@@ -193,7 +204,7 @@ cargo test --test cross_compile_check -- --ignored
 
 ## Estatísticas Atuais
 - 70+ arquivos Rust em `src/` e `tests/`
-- **700+ testes listados (working tree v0.1.30) em 63+ suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência)
+- **700+ testes listados (working tree v0.1.34) em 63+ suítes** (unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência); inclui `cli_v0133_oneshot_fuzzy`
 - **96 novos testes adicionados em v0.1.11+v0.1.12**:
   - 11 testes em `tests/cli_v012_regressions.rs` (fixes GAP 13, GAP 14, GAP 18)
   - 27 testes em `tests/cli_v012_audit_regressions.rs` (auditoria v0.1.12 G72/G114)
@@ -302,7 +313,7 @@ cargo test --test cross_compile_check -- --ignored
 - Localizados em `tests/ndjson_valid_test.rs` -- 17 testes
 - Validam estrutura de saída NDJSON para 20 de 21 comandos
 - Incluem testes de interoperabilidade `jaq` verificando parsing de JSON via pipe
-- Incluem teste i18n confirmando que `--lang` não altera saída JSON
+- Incluem teste i18n confirmando que `--locale` não altera saída JSON
 
 ### Testes de Concorrência
 - Localizados em `tests/cli_concurrency.rs`
@@ -378,14 +389,14 @@ cargo insta review
 ```
 
 
-## Perfis de CI
+## Perfis de teste local
 ### Rápido (Desenvolvimento)
 - Execute `cargo test` com configurações padrão
 - Pule testes property longos com `PROPTEST_CASES=10`
 - Adequado para hooks de pre-commit
 - Tempo total: abaixo de 30 segundos
 
-### Completo (Pipeline CI)
+### Completo (pré-release local)
 - Execute `cargo test` com todas as features
 - Execute `cargo clippy -- -D warnings` para linting
 - Execute `cargo fmt -- --check` para formatação
@@ -400,23 +411,47 @@ cargo insta review
 - Execute `cargo test --test proptest_backup` com `PROPTEST_CASES=1000`
 - Verifique que todos os snapshots estão atualizados com `cargo insta test`
 
-### Jobs de CI (referência histórica — GitHub Actions removido na v0.1.31)
-- `size-gate` — binário slim core ≤15 MiB (`15728640` bytes)
-  - `cargo build --release --no-default-features --features core`
-  - `test "$(stat -c%s target/release/atomwrite)" -le 15728640`
-- `core-test` — clippy e testes só com core
-  - `cargo clippy --no-default-features --features core -- -D warnings`
-  - `cargo test --no-default-features --features core`
-- `schema-diff` — drift de regen em `docs/schemas`
-  - `cargo build`
-  - `bash scripts/regen-schemas.sh`
-  - `git diff --exit-code docs/schemas`
+### Performance (somente local — sem CI)
+Rules Rust eficiência + latência: medir **antes** de otimizar; nunca comparar
+debug com release; preferir **percentis de cauda** (P50/P99/P999/P9999) à média.
 
+```bash
+# Microbenchmarks Criterion (hash + read/mmap). Profile herda release (LTO fat, CGU=1).
+# Cada bench também imprime `latency_hist … P50=…ns P99=…ns P999=…ns P9999=…ns` no stderr.
+cargo bench --bench hash_benchmark
+cargo bench --bench read_benchmark
+
+# Binário opcional focado em tamanho (mesmo LTO/strip do release, opt-level = "z")
+cargo build --profile min-size
+
+# Binário com CPU do host só para profiling local (não publicar):
+RUSTFLAGS='-C target-cpu=native' cargo build --release
+
+# Profile de hot path (instale samply ou cargo-flamegraph à parte):
+# samply record ./target/release/atomwrite search PATTERN --path .
+# cargo flamegraph --bin atomwrite -- search PATTERN --path .
+```
+
+**Notas de orçamento de latência (CLI one-shot, não HFT):**
+
+| Path | Dominado por | Notas |
+|------|----------------|-------|
+| `hash` multi-arquivo | BLAKE3 + FS | Digests em paralelo (rayon), NDJSON ordenado |
+| `hash`/`read` arquivo grande | mmap + page cache | `posix_fadvise(SEQUENTIAL)` no Linux |
+| stdout NDJSON | serialização + flush | Flush por linha é intencional (TTFB do agente) |
+| PGO/BOLT / isolcpus / mlockall | — | N/A para CLI multi-host de vida curta |
+
+Knobs de release em `Cargo.toml` (`[profile.release]`, `[profile.bench]`,
+`[profile.min-size]`) e linker mold em `.cargo/config.toml` (Linux x86_64).
+**Sem GitHub Actions / gates de benchmark em CI** (política do projeto).
 
 ## Variáveis de Ambiente
 - `PROPTEST_CASES` -- número de cases de testes property (padrão: 256)
-- `RUST_LOG` -- nível de tracing para saída debug durante testes
-- `ATOMWRITE_LOG` -- define nível de tracing para debug de testes (ex: `debug`, `trace`)
+- `RUST_LOG` -- diretiva EnvFilter de tracing para debug em testes
+- `ATOMWRITE_LOG` -- mesma sintaxe EnvFilter; **sobrescreve** `RUST_LOG` quando definida (`init_telemetry` do binário)
+- `ATOMWRITE_LOG_FORMAT` -- `compact` ou `json`/`jsonl` para logs estruturados em stderr
+- `ATOMWRITE_LOG_DIR` -- diretório opcional de tee (`Rotation::NEVER`); formato padrão vira JSON quando definido
+- `ATOMWRITE_LOG_LOSSY` -- `0`/`false` para writer non_blocking não-lossy
 - `INSTA_UPDATE` -- defina como `always` para atualizar snapshots automaticamente
 - `RUST_TEST_THREADS` -- limita execução paralela de testes (útil para testes de I/O)
 - `CARGO_TARGET_DIR` -- sobrescreve diretório target para builds de teste

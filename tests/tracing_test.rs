@@ -21,12 +21,10 @@ fn structured_error_emits_error_field() {
 
 #[traced_test]
 #[test]
-#[cfg_attr(
-    not(debug_assertions),
-    ignore = "release build strips debug-level tracing via release_max_level_info feature (Cargo.toml)"
-)]
-fn debug_level_includes_filter_info() {
-    tracing::debug!(filter = "debug", "tracing initialized");
+fn info_level_includes_filter_info() {
+    // init_telemetry emits this at info (visible with -v; not stripped by
+    // release_max_level_info which only drops debug/trace).
+    tracing::info!(filter = "warn", "tracing initialized");
     assert!(logs_contain("tracing initialized"));
     assert!(logs_contain("filter"));
 }

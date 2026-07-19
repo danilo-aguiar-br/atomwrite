@@ -2,6 +2,7 @@
 
 //! File restoration from a previous timestamped backup.
 //! Workload: I/O-bound (backup read + atomic write).
+//! Parallelism: none — single target restore.
 
 use std::fs;
 use std::io::Write;
@@ -79,7 +80,7 @@ pub fn cmd_rollback(
                 path: target.clone(),
             })?
     } else {
-        // SAFETY: backups is guaranteed non-empty by the is_empty() check above.
+        // INVARIANT: `backups` is non-empty after the is_empty() check above.
         backups
             .last()
             .cloned()

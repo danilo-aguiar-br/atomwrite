@@ -48,6 +48,9 @@ graphrag.sqlite-wal
 
 # ── Local cargo config and working notes (never commit) ──
 .cargo/config.toml
+
+# ── Local tool/settings directories (never commit) ──
+.setting.cyber/
 gaps.md
 fuzz/corpus/
 .serena/

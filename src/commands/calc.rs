@@ -2,6 +2,7 @@
 
 //! Math expression evaluation and unit conversion via fend.
 //! Workload: CPU-bound (expression parsing + evaluation).
+//! Parallelism: none — single expression; coordination cost ≥ work.
 
 use std::io::{BufRead, Read, Write};
 use std::time::Instant;

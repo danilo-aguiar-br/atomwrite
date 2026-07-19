@@ -4,9 +4,9 @@
 
 atomwrite is a Rust CLI that provides 41 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
-**Latest release: v0.1.30** (2026-07-13) — Fuzzy mandatory (`auto`/`aggressive`; `--fuzzy off` exit 65); `edit --replace-all` with NDJSON `match_count` and `indent_adjusted`; escape-drift guard; unicode_normalized; ranked `best_candidate`/`candidates[]`; `search --target` + pagination; recipe excludes `*.bak.*` including hash; `sparse outline` real AST items; `platform.backup_method=reflink_or_copy`; live `[fuzzy]` config (mode off rejected); semantic-merge help is line-based honesty; contract suite `cli_v0130_agent_contract`. 41 subcommands. See `CHANGELOG.md`.
+**Latest release: v0.1.34** — One-shot fuzzy hang fixed (NEW may embed OLD); `replace --fuzzy` is one-pass on original content, never re-scans inserted text; default max fuzzy applies = 1; embeds force 1 apply; `--timeout-secs` default **120** (0 disables; exit **124** on deadline); cancel polled mid-fuzzy; resource caps (pattern 64 KiB / lev 8192 / windows 4096 / growth); full docs aligned (ADR-0054). Pin `^0.1.34`. 41 subcommands; no telemetry. See `CHANGELOG.md` and `https://docs.rs/atomwrite`.
 
-**Previous release: v0.1.29** (2026-07-13) — Agent-surface expansion: 8 new subcommands (`recipe`, `sparse`, `semantic-merge`, `agent-surface`, `watch`, `codemod`, `semantic-search`, `stat`); shared `fuzzy` cascade; durability + `renameat2`; Cargo features slim/full. 41 subcommands. See `CHANGELOG.md`.
+**Previous:** v0.1.33 runtime hang fix + one-pass fuzzy; v0.1.32 docs.rs `doc_cfg` / multi-target; v0.1.30 agent surface (fuzzy mandatory, `match_count`/`indent_adjusted`, `best_candidate`, recipe bak skip, `cli_v0130_agent_contract`). See `CHANGELOG.md`.
 
 ## 41 Subcommands
 
@@ -21,7 +21,7 @@ atomwrite is a Rust CLI that provides 41 subcommands for file manipulation with 
 
 ### Search and replace (3)
 - `search` — search file contents in parallel (ripgrep engine). `--no-begin-end` disables anchor emission
-- `replace` — replace text across files with atomic writes; `--fuzzy auto|aggressive` (off rejected since v0.1.30) and `--fuzzy-threshold`; reports `strategy`/`similarity`/`match_count`/`indent_adjusted`; match errors may include `best_candidate`
+- `replace` — replace text across files with atomic writes; `--fuzzy auto|aggressive` (off rejected since v0.1.30) and `--fuzzy-threshold`; **one-pass** multi-apply on original content (never re-scans inserted text); default max applies = **1**; if replacement embeds pattern → force 1 apply; reports `strategy`/`similarity`/`match_count`/`indent_adjusted`; match errors may include `best_candidate`
 - `transform` — AST refactoring via ast-grep (306 languages)
 
 ### Inspection (9)

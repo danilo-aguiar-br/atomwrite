@@ -1,11 +1,11 @@
 # atomwrite JSON Schemas
 
-_Last updated: 2026-07-13 (v0.1.30) — 38 schemas in index; edit-output residual fields_
+_Last updated: 2026-07-19 (v0.1.34) — 38 schemas in index; no envelope change since v0.1.30; one-shot runtime is algorithmic only_
 
 ## English
 ### Purpose
 - Each schema describes the NDJSON output of one atomwrite subcommand
-- All schemas follow JSON Schema draft/2020-12 (with the historical exception of `error-output.schema.json` which uses draft-07 for backward compatibility with pre-v0.1.12 agents)
+- All schemas follow JSON Schema draft/2020-12 (including `error-output.schema.json`)
 - Use these schemas to validate agent-consumed output programmatically
 
 ### Schema Index
@@ -45,7 +45,7 @@ _Last updated: 2026-07-13 (v0.1.30) — 38 schemas in index; edit-output residua
 - `prune-backups-output.schema.json` -- output of `atomwrite prune-backups` (v0.1.22: per-backup line + summary; `path`, `reason`, `action`, `total`, `elapsed_ms`)
 - `best-candidate.schema.json` -- nested near-miss diagnostic on match failure (v0.1.29 P0-2; also referenced by `error-output`)
 - `progress-event.schema.json` -- progress heartbeats for `replace`/`batch` (v0.1.29 P1-3)
-- `cancelled-event.schema.json` -- cooperative cancel event (v0.1.29 P0-4, exit 143)
+- `cancelled-event.schema.json` -- cooperative cancel event (v0.1.29 P0-4, process exit **143**; distinct from timeout deadline exit **124** via **error-output**)
 - `recipe-result.schema.json` -- output of `atomwrite recipe list|run` (v0.1.29 P1-4)
 
 ### v0.1.29 subcommands without dedicated schemas
@@ -58,13 +58,20 @@ _Last updated: 2026-07-13 (v0.1.30) — 38 schemas in index; edit-output residua
 - Regenerate with `scripts/regen-schemas.sh` or `atomwrite --json-schema edit` / write as needed
 - Contract suite: `cargo test --test cli_v0130_agent_contract`
 
+### v0.1.34 behavioral contract (no envelope change)
+- JSON schemas intentionally **unchanged** in v0.1.33/v0.1.34 — one-shot fuzzy + timeout are algorithmic, not new NDJSON fields
+- Fuzzy multi-apply is **one-pass** L→R on original content (`apply_fuzzy_one_pass`); never re-scans inserted text
+- Default max fuzzy applies = **1** when `--max-replacements` omitted; hard ceiling 10_000; embeds force single apply
+- Global `--timeout-secs` / `--timeout` default **120**; `0` disables; deadline → process exit **124** via **error-output** envelope (generic `exit` field)
+- Cooperative cancel (SIGINT/SIGTERM) → **cancelled-event** schema, process exit **143** — distinct from timeout **124**
+- See ADR-0054 (`docs/decisions/0054-v0-1-34-oneshot-fuzzy-timeout.md`) and `cargo test --test cli_v0133_oneshot_fuzzy`
 
 ## Português
-### Última atualização: 2026-07-13 (v0.1.30) — 38 schemas no índice; campos residuais do edit-output
+### Última atualização: 2026-07-19 (v0.1.34) — 38 schemas no índice; sem mudança de envelope desde v0.1.30; runtime one-shot é apenas algorítmico
 
 ### Objetivo
 - Cada schema descreve a saída NDJSON de um subcomando do atomwrite
-- Todos os schemas seguem JSON Schema draft/2020-12 (com a exceção histórica de `error-output.schema.json` que usa draft-07 para compatibilidade retroativa com agentes pré-v0.1.12)
+- Todos os schemas seguem JSON Schema draft/2020-12 (incluindo `error-output.schema.json`)
 - Use estes schemas para validar saída consumida por agentes de forma programática
 
 ### Índice de Schemas
@@ -104,7 +111,7 @@ _Last updated: 2026-07-13 (v0.1.30) — 38 schemas in index; edit-output residua
 - `prune-backups-output.schema.json` -- saída do `atomwrite prune-backups` (v0.1.22: linha por backup + summary; `path`, `reason`, `action`, `total`, `elapsed_ms`)
 - `best-candidate.schema.json` -- diagnóstico de near-miss em falha de match (v0.1.29 P0-2; também referenciado por `error-output`)
 - `progress-event.schema.json` -- heartbeats de progresso de `replace`/`batch` (v0.1.29 P1-3)
-- `cancelled-event.schema.json` -- evento de cancel cooperativo (v0.1.29 P0-4, exit 143)
+- `cancelled-event.schema.json` -- evento de cancel cooperativo (v0.1.29 P0-4, process exit **143**; distinto do prazo de timeout exit **124** via **error-output**)
 - `recipe-result.schema.json` -- saída do `atomwrite recipe list|run` (v0.1.29 P1-4)
 
 ### Subcomandos 0.1.29 sem schema dedicado
@@ -116,3 +123,11 @@ _Last updated: 2026-07-13 (v0.1.30) — 38 schemas in index; edit-output residua
 - `write-output.schema.json` documenta valores honestos de `platform.backup_method` (`reflink_or_copy` | `copy`)
 - Regenere com `scripts/regen-schemas.sh` ou `atomwrite --json-schema edit` / write quando preciso
 - Suíte de contrato: `cargo test --test cli_v0130_agent_contract`
+
+### Contrato comportamental v0.1.34 (sem mudança de envelope)
+- Schemas JSON intencionalmente **inalterados** em v0.1.33/v0.1.34 — fuzzy one-shot + timeout são algorítmicos, não novos campos NDJSON
+- Multi-apply fuzzy é **one-pass** E→D no conteúdo original (`apply_fuzzy_one_pass`); nunca reescaneia texto inserido
+- Máximo de applies fuzzy padrão = **1** quando `--max-replacements` omitido; teto rígido 10_000; embeds forçam apply único
+- Global `--timeout-secs` / `--timeout` padrão **120**; `0` desabilita; prazo → process exit **124** via envelope **error-output** (campo genérico `exit`)
+- Cancel cooperativo (SIGINT/SIGTERM) → schema **cancelled-event**, process exit **143** — distinto do timeout **124**
+- Ver ADR-0054 (`docs/decisions/0054-v0-1-34-oneshot-fuzzy-timeout.md`) e `cargo test --test cli_v0133_oneshot_fuzzy`

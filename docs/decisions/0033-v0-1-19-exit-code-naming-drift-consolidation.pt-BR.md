@@ -6,7 +6,7 @@ _Tradução automática do ADR original em inglês. Em caso de divergência, a v
 
 - **Status**: Aceito
 - **Data**: 2026-06-14
-- **Contexto**: Phase D testing on 2026-06-14 ran 7 concrete binary-level probes against the v0.1.18 release and surfaced 7 places where the published docs (SKILL.md EN+PT, `error-saída.schema.json`, README, CHANGELOG) diverged from the actual binary behavior. Each drift is small individually, but together they create an environment where agents and CI gates não pode reliably interpret códigos de saída. The drifts são:
+- **Contexto**: Phase D testing on 2026-06-14 ran 7 concrete binary-level probes against the v0.1.18 release and surfaced 7 places where the published docs (SKILL.md EN+PT, `error-saída.schema.json`, README, CHANGELOG) diverged from the actual binary behavior. Each drift is small individually, but together they create an environment where agents and local gates não pode reliably interpret códigos de saída. The drifts são:
   1. `STATE_DRIFT` (82) vs `CHECKSUM_VERIFY_FAILED` (81) — the docs said `--verificar-checksum` returns `CHECKSUM_VERIFY_FAILED`; the binary returns `STATE_DRIFT`. The 81-code is reserved for the `read` path's BLAKE3 mismatch on the file content. The 82-code is the optimistic-locking failure that includes the `--expect-checksum` mismatch on writes/edits and the `--verificar-checksum` mismatch on reads.
   2. `SYNTAX_ERROR` vs `SYNTAX_ERROR_DETECTED` — the docs in v0.1.12 named the code `SYNTAX_ERROR`; the binary in v0.1.18 emits `SYNTAX_ERROR_DETECTED`. The rename happened in the v0.1.12 G72 tree-sitter rollout but the docs foram not updated.
   3. `ORPHAN_JOURNAL` (93) is consultive, NOT auto-detected — the docs implied that any stale sidecar is detected on every invocation. The actual gate is `ATOMWRITE_WAL=1` OR `--strict-atomic`; the padrão `write` não write a sidecar and therefore não pode detect orphans.
@@ -24,7 +24,7 @@ _Tradução automática do ADR original em inglês. Em caso de divergência, a v
   6. **Document the clap vs runtime split** — saída 2 is clap, saída 65 is runtime. The SKILL already separates them; the drift section reinforces the distinction.
   7. **Document the CWD fallback** — `--workspace` is documented as a flag with a CWD padrão, not a obrigatório argument. `WORKSPACE_JAIL` semantics são tied to the effective jail (CWD when `--workspace` is omitted).
 - **Consequências**:
-  - **+** All 7 drifts têm a one-line note in the v0.1.19 drift section of both SKILL files. Agents and CI gates can grep the drift section when an código de saída não match the legado table.
+  - **+** All 7 drifts têm a one-line note in the v0.1.19 drift section of both SKILL files. Agents and local gates can grep the drift section when an código de saída não match the legado table.
   - **+** CHANGELOG v0.1.19 entry documents the consolidation in a single bullet, indexed by Phase D testing date 2026-06-14.
   - **+** ADR-0033 captures the rationale so future maintainers não re-discover the drifts.
   - **+** No binary change obrigatório; the docs now match the binary em vez de the other way around.

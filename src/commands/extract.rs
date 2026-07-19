@@ -2,6 +2,7 @@
 
 //! Field extraction from NDJSON input or text columns.
 //! Workload: I/O-bound (stdin streaming + field selection).
+//! Parallelism: none — streaming stdin; order preserved for agents.
 
 use std::io::{Read, Write};
 
@@ -39,6 +40,9 @@ pub fn cmd_extract(
             continue;
         }
 
+        // BOM already stripped by `read_limited_line`; keep strip for callers
+        // that feed this path with pre-buffered lines.
+        let trimmed = crate::output::strip_utf8_bom_str(trimmed);
         if trimmed.starts_with('{') {
             if let Ok(obj) = serde_json::from_str::<serde_json::Value>(trimmed) {
                 let typ = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -56,18 +60,11 @@ pub fn cmd_extract(
 }
 
 /// Check that a JSON value's nesting depth does not exceed `max`.
+///
+/// Re-exported from [`crate::output::check_json_depth`] for historical call sites.
+#[inline]
 pub fn check_depth(value: &serde_json::Value, max: usize) -> bool {
-    fn recurse(v: &serde_json::Value, remaining: usize) -> bool {
-        if remaining == 0 {
-            return false;
-        }
-        match v {
-            serde_json::Value::Array(arr) => arr.iter().all(|item| recurse(item, remaining - 1)),
-            serde_json::Value::Object(map) => map.values().all(|val| recurse(val, remaining - 1)),
-            _ => true,
-        }
-    }
-    recurse(value, max)
+    crate::output::check_json_depth(value, max)
 }
 
 fn extract_json(
@@ -77,7 +74,7 @@ fn extract_json(
 ) -> Result<()> {
     let mut parsed: serde_json::Value = serde_json::from_str(line)?;
 
-    if !check_depth(&parsed, crate::constants::MAX_JSON_DEPTH) {
+    if !crate::output::check_json_depth(&parsed, crate::constants::MAX_JSON_DEPTH) {
         return Err(crate::error::AtomwriteError::InvalidInput {
             reason: format!(
                 "JSON nesting depth exceeds maximum of {}",

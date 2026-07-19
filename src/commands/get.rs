@@ -2,6 +2,9 @@
 
 //! v14 Tier 3 subcommand: `get` — read a value at a dotted path in a
 //! structured config file (TOML or JSON).
+//!
+//! Workload: I/O-bound (single-file read + structured parse).
+//! Parallelism: none — one file, parse cost below thread overhead.
 
 use std::io::Write;
 
@@ -26,6 +29,7 @@ struct GetResult {
 ///
 /// Reads the target structured config file (TOML or JSON) and emits
 /// the value at `key_path` as a single NDJSON line.
+#[tracing::instrument(skip_all, fields(command = "get"))]
 pub fn cmd_get(
     args: &GetArgs,
     global: &GlobalArgs,
@@ -37,8 +41,8 @@ pub fn cmd_get(
     if !validated.exists() {
         return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
-    let content = std::fs::read_to_string(&validated)
-        .with_context(|| format!("cannot read {}", validated.display()))?;
+    let content =
+        crate::file_io::read_file_string(&validated, global.effective_max_filesize())?;
 
     let (value, found, format) = match validated.extension().and_then(|s| s.to_str()) {
         Some("toml") => {
@@ -50,7 +54,16 @@ pub fn cmd_get(
         Some("json") => {
             let v: serde_json::Value =
                 serde_json::from_str(&content).with_context(|| "invalid JSON in source")?;
-            let pointer = format!("/{}", args.key_path.replace('.', "/"));
+            if !crate::output::check_json_depth(&v, crate::constants::MAX_JSON_DEPTH) {
+                return Err(crate::error::AtomwriteError::InvalidInput {
+                    reason: format!(
+                        "JSON nesting depth exceeds maximum of {}",
+                        crate::constants::MAX_JSON_DEPTH
+                    ),
+                }
+                .into());
+            }
+            let pointer = crate::output::dotted_to_json_pointer(&args.key_path);
             let val = v.pointer(&pointer).map(|x| match x {
                 serde_json::Value::String(s) => s.clone(),
                 other => other.to_string(),

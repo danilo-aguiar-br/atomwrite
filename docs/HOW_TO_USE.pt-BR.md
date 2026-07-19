@@ -6,19 +6,57 @@
 > Uma CLI substitui dezenas de chamadas de ferramenta que seu agente faz hoje
 
 
-## O Que Há de Novo na v0.1.30
+## O Que Há de Novo na v0.1.34
+
+A v0.1.34 (2026-07-19) é a publicação **docs-complete** do runtime one-shot da v0.1.33. Mesmo comportamento do binário; documentação alinhada. Ainda há **41 subcomandos**.
+
+### Fuzzy one-shot + timeout padrão 120
+
+- Global `--timeout-secs` (alias `--timeout`) **padrão 120** (era 0); `0` desabilita; prazo esgotado → exit **124**
+- Multi-apply fuzzy é **one-pass** esquerda→direita no conteúdo original (`apply_fuzzy_one_pass`); **nunca** reescaneia texto inserido
+- Máximo de applies fuzzy padrão = **1** quando `--max-replacements` é omitido; teto rígido 10_000
+- Se o replacement **contém** o pattern (string fixa), atomwrite força apply **único** — seguro para expansões de seção em que NEW embute OLD
+- Cancel cooperativo é consultado no meio da cascata fuzzy
+- Caps: pattern 64 KiB; lev 8192 chars; max windows 4096; growth max(4×,+16 MiB)
+- Regressão: `cargo test --test cli_v0133_oneshot_fuzzy`
+- Fuzzy ainda só `auto|aggressive` (`off` rejeitado exit 65)
+- Veja [ADR-0054](decisions/0054-v0-1-34-oneshot-fuzzy-timeout.pt-BR.md) para one-shot fuzzy + timeout (exit 124 vs 143)
+
+```bash
+# Expandir seção com segurança — NEW contém OLD; one-pass, sem hang
+atomwrite --workspace . replace --fuzzy auto \
+  $'## Install\n\nRun cargo install.' \
+  $'## Install\n\nRun cargo install.\n\n### Notes\nSee docs.' \
+  README.md
+
+# Limitar trabalho longo em monorepo (padrão já é 120s; 0 desabilita)
+atomwrite --workspace . --timeout-secs 0 replace --fuzzy auto 'old' 'new' packages/
+```
+
+## O Que Havia de Novo na v0.1.30
 
 A v0.1.30 (2026-07-13) fecha gaps residuais de contrato de agente sobre a superfície da v0.1.29. Há **41 subcomandos**.
+
+### Fuzzy obrigatório, match_count, indent_adjusted
+
 - Fuzzy só `auto` e `aggressive` (`--fuzzy off` rejeitado exit 65)
-- Multi-ocorrência exige `--replace-all`; NDJSON de sucesso inclui `match_count` e opcional `indent_adjusted`
-- Config `[fuzzy]` é ao vivo; `mode = "off"` no TOML é rejeitado
+- Multi-ocorrência exige `--replace-all`; NDJSON de sucesso inclui `match_count`
+- Quando o delta de indent realinha o replacement, o NDJSON de sucesso inclui `indent_adjusted: true`
+- Falhas de match emitem `best_candidate`, `candidates[]` e `diff_preview` ranqueados
+- Config `[fuzzy]` é ao vivo; `mode = "off"` no `.atomwrite.toml` é rejeitado
 
-## Superfície da v0.1.29 (carry-over)
+```bash
+atomwrite --workspace . replace --fuzzy auto $'fn main() {\n  let x = 1;\n}' $'fn main() {\n    let x = 2;\n}' src/main.rs
 
-### `replace --fuzzy` e `best_candidate`
+# Edit multi-ocorrência com match_count
+atomwrite --workspace . edit src/app.rs --old 'TODO' --new 'DONE' --replace-all --fuzzy auto \
+  | jaq '{match_count, indent_adjusted, strategy}'
+```
+
+### Carry-over da v0.1.29
 
 - `replace` com string fixa usa `fuzzy=auto` depois que multi-match exato encontra zero hits
-- Modos: `auto` e `aggressive` mais `--fuzzy-threshold <0.0-1.0>` opcional (`off` rejeitado desde v0.1.30)
+- `--fuzzy-threshold <0.0-1.0>` opcional
 - Falhas de match podem emitir `best_candidate` (linha, similaridade, strategy, diff_preview) para o agente corrigir `old` sem reler o arquivo inteiro
 - Exact-only não é suportado; use auto/aggressive e erros de unicidade estruturados
 
@@ -120,7 +158,7 @@ atomwrite --workspace . watch . --debounce-ms 200 --max-events 20
 
 ### Honestidade de tamanho binário
 
-- Perfil core ~7.7 MiB (orçamento CI ≤15 MiB)
+- Perfil core ~7.7 MiB (orçamento local size-gate ≤15 MiB)
 - Build default/full ~52 MB
 - Meta PRD de 5-8 MB vale só para core
 
@@ -159,8 +197,8 @@ atomwrite --workspace . wal-heal --threshold-secs 0
 # Padrão: deixa o build decidir
 atomwrite --workspace . write src/lib.rs < new.rs
 
-# Proibir qualquer criação de sidecar (higiene de CI)
-atomwrite --workspace . write --wal-policy never ci-output.txt < data.txt
+# Proibir qualquer criação de sidecar (higiene de workspace)
+atomwrite --workspace . write --wal-policy never ephemeral-output.txt < data.txt
 ```
 
 ### Desabilitar Auto-Heal Globalmente
@@ -176,7 +214,7 @@ atomwrite --workspace . --no-auto-heal wal-stats
 | Carga de Trabalho | `--wal-policy` | Justificativa |
 |---|---|---|
 | Dev local / uso interativo | `auto` (padrão) | Otimizado para uso geral; trade-off balanceado |
-| Builds de CI e jobs efêmeros | `never` | Sidecars não têm consumidor; pula o overhead |
+| Builds efêmeros e jobs efêmeros | `never` | Sidecars não têm consumidor; pula o overhead |
 | Deploys de produção / trilha de auditoria | `always` | Metadados forenses exigidos para postmortem |
 | Migrações em massa e jobs em batch | `never` + `--no-auto-heal` | Velocidade e controle explícito do reap |
 | Análise forense / debugging | `always` + `wal-heal` manual | Mantém todos os sidecars; reap só quando você decide |
@@ -238,7 +276,7 @@ Veja a seção Comandos Avançados abaixo para documentação detalhada de cada.
 - 542 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118 na v0.1.15)
 - 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/`
-- Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
+- Veja [docs/decisions/README.md](decisions/README.md) para decisões arquiteturais
 
 ## Pré-requisitos
 - Toolchain Rust 1.88 ou superior
@@ -387,6 +425,9 @@ atomwrite replace --dry-run 'before' 'after' src/
 - Replace com string fixa usa `--fuzzy auto` por padrão após zero hits no multi-match exato (v0.1.29 BREAKING vs exit 1 só-exato)
 - Modos: `--fuzzy auto|aggressive` (off rejeitado) e `--fuzzy-threshold <0.0-1.0>` opcional
 - Cascata compartilhada de 9 estratégias (igual ao edit) depois que multi-match exato encontra zero hits
+- Multi-apply fuzzy é **one-pass** E→D no conteúdo original (`apply_fuzzy_one_pass`); nunca reescaneia texto inserido
+- Máximo de applies fuzzy padrão = **1** se `--max-replacements` omitido; teto rígido 10_000
+- Se o replacement **contém** o pattern (string fixa), força apply único (previne crescimento infinito ao expandir uma seção)
 - Exact-only não é suportado desde v0.1.30; use auto/aggressive
 - Falhas de match podem emitir `best_candidate` com linha, similaridade, strategy, diff_preview
 - Use `--progress-every N` para heartbeats NDJSON de progresso em árvores grandes
@@ -399,6 +440,12 @@ atomwrite replace --dry-run 'before' 'after' src/
 atomwrite --workspace . replace --fuzzy auto 'legacy(' 'new(' src/
 atomwrite --workspace . replace --fuzzy auto 'exato' 'novo' src/
 atomwrite --workspace . replace --progress-every 50 'old' 'new' packages/
+
+# Expansão de seção segura: NEW embute OLD — one-pass força apply único, sem hang
+atomwrite --workspace . replace --fuzzy auto \
+  $'fn setup() {\n    init();\n}' \
+  $'fn setup() {\n    init();\n    // expanded\n    configure();\n}' \
+  src/lib.rs
 ```
 
 - Retorna NDJSON por arquivo com contagem de substituições e checksums
@@ -697,8 +744,8 @@ atomwrite outline src/main.rs --positions
 - `--threads <N>` / `-j <N>` -- número de threads paralelas (0 = todos os cores)
 - `--max-filesize <BYTES>` -- ignora arquivos maiores que este limite
 - `--json-schema` -- emite JSON schema da saída do subcomando
-- `--lang <LOCALE>` -- substitui o locale de exibição (en, pt-BR)
-- `--timeout <SECONDS>` -- timeout global de operação (0 = sem timeout)
+- `--locale <en|pt-BR>` -- substitui o locale de exibição (en, pt-BR); env `ATOMWRITE_LANG` ainda aceito (flag renomeada de `--lang` na v0.1.20)
+- `--timeout-secs <SECONDS>` (alias `--timeout`) -- timeout global de operação; **padrão 120**; `0` desabilita; prazo esgotado → exit **124**
 - `--grep <REGEX>` em `read` para filtrar linhas retornadas às que casam com regex
 
 

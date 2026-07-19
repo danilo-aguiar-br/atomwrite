@@ -4,7 +4,20 @@
 [Read in English](AGENTS.md)
 
 
-## O Que Há de Novo na v0.1.30
+## O Que Há de Novo na v0.1.34
+
+- Publicação docs-complete do runtime one-shot da v0.1.33 (mesmo comportamento do binário)
+- Global `--timeout-secs` (alias `--timeout`) **padrão 120** (era 0); `0` desabilita; prazo esgotado → exit **124**
+- Multi-apply fuzzy é **one-pass** E→D no conteúdo original (`apply_fuzzy_one_pass`); nunca reescaneia texto inserido
+- Máximo de applies fuzzy padrão = **1** se `--max-replacements` omitido; teto rígido 10_000
+- Se o replacement **contém** o pattern (string fixa), força apply único (expansão segura de seção)
+- Cancel cooperativo consultado no meio da cascata fuzzy; caps: pattern 64 KiB, lev 8192 chars, max windows 4096, growth max(4×,+16 MiB)
+- Caps fuzzy (constantes em `src/constants.rs`): `FUZZY_MAX_PATTERN_BYTES` (64 KiB), `FUZZY_MAX_LEVENSHTEIN_CHARS` (8192), `FUZZY_MAX_WINDOWS` (4096), `FUZZY_MAX_BUFFER_GROWTH_FACTOR`/`FUZZY_MAX_BUFFER_GROWTH_BYTES` (max 4× / +16 MiB), teto rígido `FUZZY_HARD_MAX_REPLACEMENTS` (10_000)
+- Suíte de regressão: `tests/cli_v0133_oneshot_fuzzy.rs` — hang < 2s, embeds, timeout
+- 41 subcomandos; fuzzy ainda só `auto|aggressive` (`off` rejeitado exit 65)
+- Veja [ADR-0054](decisions/0054-v0-1-34-oneshot-fuzzy-timeout.pt-BR.md) para o contrato one-shot fuzzy + timeout (exit 124 vs 143)
+
+## O Que Havia de Novo na v0.1.30
 
 - BREAKING residual: `--fuzzy off` é rejeitado (exit 65); só `auto` e `aggressive`
 - Sucesso de edit no NDJSON inclui `match_count` e opcional `indent_adjusted`
@@ -173,7 +186,7 @@ G39 xattr, G41 binary detect (content_inspector), G54 advisory lock, G56 FIFO sk
 - **542 testes passando** (461 baseline v0.1.15 + 8 G117 edge cases v0.1.18 + 2 G118 replace pre-validation v0.1.18 + 16 incrementos cross-platform/WAL/auditoria v0.1.16-v0.1.18)
 - 9 ADRs em `docs/decisions/` (0019-0027)
 - 7 novos JSON schemas em `docs/schemas/` (set, get, del, case, query, outline, wal-recovery)
-- Veja [docs/decisions/README.md](README.md) para decisões arquiteturais
+- Veja [docs/decisions/README.md](decisions/README.md) para decisões arquiteturais
 
 ## Por Que atomwrite
 - Seu agente faz dezenas de chamadas de ferramenta para ler, escrever, buscar e substituir arquivos
@@ -232,7 +245,7 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - `write` -- cria ou sobrescreve arquivos atomicamente via stdin; `--syntax-check` valida com tree-sitter após escrita (G72, exit 88)
 - `edit` -- edita cirurgicamente por número de linha, marcador de texto ou match exato; `--fuzzy auto|aggressive` para matching fuzzy (off rejeitado exit 65 desde v0.1.30); sucesso NDJSON pode incluir `match_count` e `indent_adjusted`; `--multi` para multi-edit NDJSON
 - `search` -- busca conteúdo de arquivos em paralelo (engine ripgrep); suporta `--context N`, `--max-count N`, `--invert`, `--sort path`, `--fixed`, `--word`, `--case-insensitive`, `--include`, `--exclude`
-- `replace` -- substitui texto em múltiplos arquivos com escritas atômicas; `--fuzzy auto|aggressive` (off rejeitado exit 65), `--fuzzy-threshold`, `--progress-every`; falhas de match podem emitir `best_candidate`
+- `replace` -- substitui texto em múltiplos arquivos com escritas atômicas; `--fuzzy auto|aggressive` (off rejeitado exit 65), `--fuzzy-threshold`, `--progress-every`; multi-apply fuzzy é **one-pass** E→D (`apply_fuzzy_one_pass`, nunca reescaneia texto inserido); máximo de applies padrão **1** se `--max-replacements` omitido (teto rígido 10_000); se o replacement **contém** o pattern (string fixa), força apply único; falhas de match podem emitir `best_candidate`
 - `hash` -- calcula checksums BLAKE3
 - `delete` -- deleta arquivos com backup opcional
 - `count` -- conta linhas, arquivos por extensão
@@ -362,7 +375,7 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 
 ## OBRIGATÓRIO -- Exit Codes
 - 0: sucesso
-- 1: sem matches (search/replace não encontrou nada)
+- 1: sem matches (search/replace/transform/scope não encontrou nada)
 - 4: arquivo não encontrado
 - 13: permissão negada
 - 28: disco cheio
@@ -380,6 +393,7 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - 91: fallback EXDEV desabilitado (`--strict-atomic` opt out do fallback G90 Docker/NFS)
 - 92: copy-back BLAKE3 falhou (G114 escrita in-place perdeu integridade de checksum)
 - 93: journal órfão recuperado (G114 sidecar WAL deixado por crash)
+- 124: timeout global de operação excedido (prazo de `--timeout-secs` / `--timeout`; padrão 120)
 - 126: violação do workspace jail
 - 127: symlink bloqueado
 - 128: arquivo imutável
@@ -450,14 +464,14 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - `--follow-symlinks` -- segue links simbólicos
 - `--threads <N>` / `-j <N>` -- threads paralelas (0 = todos os cores)
 - `--max-filesize <BYTES>` -- ignora arquivos maiores que o limite
-- `--timeout <SECONDS>` -- timeout global de operação (0 = sem timeout, padrão 0). Use para limitar buscas longas, batches e operações replace
+- `--timeout-secs <SECONDS>` (alias `--timeout`) -- timeout global de operação; **padrão 120**; `0` desabilita; prazo esgotado → exit **124**. Use para limitar buscas longas, batches e operações replace
 - `--json-schema` -- emite JSON schema da saída do subcomando
-- `--lang <LOCALE>` -- substitui o locale de exibição (en, pt-BR) via env `ATOMWRITE_LANG`
+- `--locale <en|pt-BR>` -- substitui o locale de exibição (en, pt-BR); env `ATOMWRITE_LANG` ainda aceito (nome histórico; flag renomeada de `--lang` na v0.1.20)
 
 
 ## PROIBIDO -- Armadilhas Comuns
 - NUNCA interprete stderr como dados; contém apenas logs de tracing
-- NUNCA assuma que exit code 1 é erro fatal; significa zero matches em search
+- NUNCA assuma que exit code 1 é erro fatal; significa zero matches em search, replace, transform ou scope
 - NUNCA omita `--workspace` ao executar como agente
 - NUNCA omita `--dry-run` antes de operações batch destrutivas
 - NUNCA use expressões sem aspas com `calc`; o shell vai interpolar

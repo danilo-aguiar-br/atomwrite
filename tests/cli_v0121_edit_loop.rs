@@ -108,7 +108,7 @@ fn edit_loop_with_backup_keeps_backup() {
                 .is_some_and(|n| n.starts_with("file.txt.bak."))
         })
         .count();
-    assert!(count >= 1, "esperava ≥1 backup preservado, got {count}");
+    assert!(count >= 1, "expected ≥1 preserved backup, got {count}");
 
     let content = std::fs::read_to_string(&target).expect("read");
     assert_eq!(content, "modified\n");
@@ -182,7 +182,7 @@ fn edit_loop_malformed_ndjson_fails() {
     let output = run_edit_loop(dir.path(), &target, bad_input, &[]);
     assert!(
         !output.status.success(),
-        "NDJSON malformado deve falhar, got exit={:?}",
+        "malformed NDJSON must fail, got exit={:?}",
         output.status.code()
     );
 }
@@ -197,7 +197,7 @@ fn edit_loop_target_not_found_exits_nonzero() {
     let output = run_edit_loop(dir.path(), &target, ndjson, &[]);
     assert!(
         !output.status.success(),
-        "alvo ausente deve falhar, got exit={:?}",
+        "missing target must fail, got exit={:?}",
         output.status.code()
     );
 }

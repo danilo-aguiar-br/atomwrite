@@ -2,6 +2,7 @@
 
 //! Atomic file move with cross-device fallback to copy-then-delete.
 //! Workload: I/O-bound (rename syscall + fsync).
+//! Parallelism: none — single source/target pair.
 
 use std::io::Write;
 use std::time::Instant;
@@ -37,14 +38,9 @@ pub fn cmd_move(
 
     let source = crate::path_safety::validate_path(&args.source, &workspace)?;
     let target = crate::path_safety::validate_path(&args.target, &workspace)?;
-    let source_str = source.display().to_string();
-    let target_str = target.display().to_string();
 
     if !source.exists() {
-        return Err(AtomwriteError::NotFound {
-            path: source.clone(),
-        }
-        .into());
+        return Err(AtomwriteError::NotFound { path: source }.into());
     }
 
     if target.exists() {
@@ -82,8 +78,8 @@ pub fn cmd_move(
         writer.write_event(&TransferPlan {
             r#type: "plan",
             operation: "move",
-            source: source_str.clone(),
-            target: target_str.clone(),
+            source: source.display().to_string(),
+            target: target.display().to_string(),
             would_modify: true,
         })?;
         return Ok(());
@@ -106,8 +102,12 @@ pub fn cmd_move(
     let max_size = global.effective_max_filesize();
     let hash = checksum::hash_file(&source, max_size)?;
     let bytes = std::fs::metadata(&source)?.len();
+    let source_str = source.display().to_string();
+    let target_str = target.display().to_string();
 
-    match std::fs::rename(&source, &target) {
+    // Ownership: compute (cross_device, atomic) then emit once so path
+    // strings and backup_path move into the NDJSON event without clones.
+    let (cross_device, atomic) = match std::fs::rename(&source, &target) {
         Ok(()) => {
             if let Some(src_parent) = source.parent() {
                 if let Err(e) = platform::fsync_dir(src_parent) {
@@ -127,22 +127,10 @@ pub fn cmd_move(
                     );
                 }
             }
-
-            writer.write_event(&MoveOutput {
-                r#type: "moved",
-                source: source_str.clone(),
-                target: target_str.clone(),
-                bytes,
-                checksum: hash,
-                cross_device: false,
-                atomic: true,
-                backup_path: backup_path.clone(),
-                elapsed_ms: start.elapsed().as_millis() as u64,
-            })?;
+            (false, true)
         }
         Err(e) if e.raw_os_error() == Some(18) => {
-            // EXDEV = 18 on Linux
-            // Cross-device: copy + delete
+            // EXDEV = 18 on Linux — cross-device: copy + delete
             let content = crate::file_io::read_file_bytes(&source, max_size)?;
             crate::atomic::atomic_write(
                 &target,
@@ -170,25 +158,26 @@ pub fn cmd_move(
                     );
                 }
             }
-
-            writer.write_event(&MoveOutput {
-                r#type: "moved",
-                source: source_str.clone(),
-                target: target_str.clone(),
-                bytes,
-                checksum: hash,
-                cross_device: true,
-                atomic: false,
-                backup_path: backup_path.clone(),
-                elapsed_ms: start.elapsed().as_millis() as u64,
-            })?;
+            (true, false)
         }
         Err(e) => {
             return Err(e).with_context(|| {
                 format!("cannot move {} to {}", source.display(), target.display())
             });
         }
-    }
+    };
+
+    writer.write_event(&MoveOutput {
+        r#type: "moved",
+        source: source_str,
+        target: target_str,
+        bytes,
+        checksum: hash,
+        cross_device,
+        atomic,
+        backup_path,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+    })?;
 
     Ok(())
 }

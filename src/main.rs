@@ -3,47 +3,41 @@
 //! Entry point: signal setup, tracing init, and dispatch.
 
 #![deny(unsafe_code)]
+#![deny(static_mut_refs)]
+// Match lib.rs: never take refs to `static mut` / never declare interior-mutable
+// values as `const` (each use site would get a fresh cell).
+#![deny(clippy::declare_interior_mutable_const)]
+#![deny(clippy::borrow_interior_mutable_const)]
+// Ownership hygiene (aligned with lib.rs).
+#![deny(clippy::redundant_clone)]
+#![deny(clippy::ptr_arg)]
+#![deny(clippy::needless_borrow)]
+#![deny(clippy::cloned_instead_of_copied)]
 
 use std::io::{self, IsTerminal, Write};
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use tracing_subscriber::EnvFilter;
 
+/// Process-wide heap allocator (`mimalloc`).
+///
+/// Rules Rust economia + eficiência: scripts/CLIs use mimalloc as
+/// `#[global_allocator]` by default (lower fragmentation vs system allocator
+/// on multi-thread `ignore` walks). Declared as `static` (stable address
+/// required by `#[global_allocator]`), not `const` — singleton for the whole
+/// binary. Exactly one global allocator in the dependency tree (binary only).
+/// Re-validate with `dhat` / criterion if the allocation mix changes.
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
     atomwrite::signal::reset_sigpipe();
     atomwrite::platform::init_console();
-    // Install signal handlers as EARLY as possible, before any other
-    // initialization. This guarantees that if SIGINT or SIGTERM arrives
-    // during the setup phase (Cli::try_parse, init_tracing, rayon pool
-    // build, etc.), our handler still runs and sets the shutdown flag
-    // instead of the default handler terminating the process via signal.
-    // Without this, tests that send SIGINT within 100ms of spawning the
-    // child can race with the signal handler installation and the child
-    // gets killed by the default disposition with exit 128+SIGINT (130),
-    // which is a different code path than our graceful shutdown and
-    // produces no "shutting down" message on stderr.
-    //
-    // We install the FULL handler set here (not just the flag-only
-    // early-install variant) so that the main thread, the search polling
-    // inside `atomwrite::run`, and any other future consumer all share
-    // a single `Arc<ShutdownSignal>` instance. The previous design
-    // installed two separate `ShutdownSignal` instances (`install_handlers_early`
-    // returning signal A and `install_handlers` returning signal B) and
-    // the search polling observed flag A while the main-thread shutdown
-    // check observed flag B, which under signal-hook's chain-of-handlers
-    // ordering caused B to remain false in some timing windows — leading
-    // to the main thread taking the `Ok(())` branch with `is_shutdown()`
-    // returning false and the user-facing "shutting down" banner never
-    // being emitted.
+    // Full signal set early so SIGINT/SIGTERM during setup still set the flag.
     let _early_shutdown = atomwrite::signal::install_handlers_early();
     human_panic::setup_panic!();
 
-    if let Some(schema_cmd) = prescan_json_schema() {
+    if let Some(schema_cmd) = atomwrite::runtime::prescan_json_schema() {
         let mut out = io::stdout().lock();
         match atomwrite::emit_schema_by_name(&schema_cmd, &mut out) {
             Ok(true) => return ExitCode::from(0),
@@ -57,49 +51,20 @@ fn main() -> ExitCode {
 
     let cli = match atomwrite::cli::Cli::try_parse() {
         Ok(c) => c,
-        Err(clap_err) => {
-            use clap::error::ErrorKind;
-            match clap_err.kind() {
-                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
-                    clap_err.exit();
-                }
-                _ => {
-                    let msg = clap_err.to_string();
-                    let suggestion = enrich_clap_suggestion(&msg);
-                    let ej = atomwrite::error::ErrorJson {
-                        error: true,
-                        code: "ARGUMENT_PARSE_ERROR",
-                        exit: 2,
-                        message: msg,
-                        path: None,
-                        error_class: atomwrite::error::ErrorClass::Permanent.as_str(),
-                        retryable: false,
-                        suggestion,
-                        workspace: None,
-                        failed_pair_index: None,
-                        pairs_total: None,
-                        pair_results: None,
-                        best_candidate: None,
-                        candidates: None,
-                        match_count: None,
-                        similar_paths: None,
-                    };
-                    let mut out = io::stdout().lock();
-                    if let Err(e) = serde_json::to_writer(&mut out, &ej) {
-                        let _ =
-                            writeln!(io::stderr(), "atomwrite: failed to write error JSON: {e}");
-                    }
-                    let _ = out.write_all(b"\n");
-                    let _ = out.flush();
-                    return ExitCode::from(2);
-                }
-            }
-        }
+        Err(e) => return atomwrite::runtime::handle_clap_parse_error(e),
     };
 
-    init_locale(cli.global.lang.as_deref());
-    let _guard = init_tracing(cli.global.verbose, cli.global.quiet, cli.global.no_color);
-    install_panic_hook();
+    atomwrite::runtime::init_locale(cli.global.lang.as_deref());
+    // Keep WorkerGuard until end of main so non_blocking log worker flushes.
+    let _guard = atomwrite::runtime::init_telemetry(
+        cli.global.verbose,
+        cli.global.quiet,
+        cli.global.no_color,
+    );
+    // Panic hook after subscriber so panic events reach tracing (+ human_panic chain).
+    atomwrite::runtime::install_panic_hook();
+    // Observability for locale detection failure / resolved tag (after tracing).
+    atomwrite::locale::log_resolved_locale();
 
     let shutdown = atomwrite::signal::install_handlers()
         .inspect_err(|e| tracing::warn!(%e, "signal handler registration failed"))
@@ -107,312 +72,66 @@ fn main() -> ExitCode {
 
     let stdin = io::stdin();
     let stdout = io::stdout();
-    let stdin_is_tty = stdin.is_terminal();
-
-    let exit = match atomwrite::run(&cli, stdin.lock(), stdout.lock(), stdin_is_tty) {
-        Ok(()) => {
-            if let Some(ref sig) = shutdown {
-                if sig.is_shutdown() {
-                    // Emit user-facing shutdown message from the main thread.
-                    // This is the async-signal-safe equivalent of a handler-side
-                    // eprintln!. The signal handler is forbidden from calling
-                    // eprintln! per POSIX.1 signal-safety(7) because Rust's
-                    // stderr uses a global Mutex that can deadlock or lose
-                    // output if the signal arrives while another thread holds
-                    // the lock (observed on Linux/glibc; eprintln! output was
-                    // silently dropped before reaching the captured stderr pipe
-                    // in tests).
-                    //
-                    // `atomwrite::signal::write_shutdown_message` uses
-                    // `libc::write(STDERR_FILENO, ...)` which is async-signal-
-                    // safe per POSIX.1-2017 signal-safety(7) and writes directly
-                    // to fd 2 without any userspace buffering. This bypasses
-                    // Rust's stderr buffer (which is fully-buffered when stderr
-                    // is redirected to a pipe via Stdio::piped() in cargo test,
-                    // causing writeln! output to remain in the buffer and be
-                    // lost when the process exits before the buffer is flushed).
-                    // The libc::write goes straight to the kernel, guaranteeing
-                    // the bytes reach the captured pipe before the process
-                    // exits with the signal exit code.
-                    atomwrite::signal::write_shutdown_message();
-                    tracing::info!(signal = sig.exit_code(), "shutdown initiated");
-                    ExitCode::from(sig.exit_code())
+    let exit = match atomwrite::run(&cli, stdin.lock(), stdout.lock(), stdin.is_terminal()) {
+        Ok(()) => match &shutdown {
+            Some(sig) if sig.is_shutdown() => {
+                if sig.is_timeout() {
+                    atomwrite::signal::write_timeout_message();
                 } else {
-                    ExitCode::from(0)
+                    atomwrite::signal::write_shutdown_message();
                 }
-            } else {
-                ExitCode::from(0)
+                tracing::info!(exit = sig.exit_code(), "shutdown initiated");
+                ExitCode::from(sig.exit_code())
             }
-        }
-        Err(err) => {
-            if let Some(aw_err) = err.downcast_ref::<atomwrite::error::AtomwriteError>() {
-                if matches!(aw_err, atomwrite::error::AtomwriteError::BrokenPipe) {
-                    return ExitCode::from(141);
-                }
-                let mut out = io::stdout().lock();
-                let ctx = atomwrite::error::ErrorContext {
-                    workspace_provided: cli.global.workspace.is_some(),
-                    workspace: cli.global.workspace.clone(),
-                };
-                let _ =
-                    atomwrite::output::write_error_json_with_context(&mut out, aw_err, None, &ctx);
-                let _ = out.flush();
-                ExitCode::from(aw_err.exit_code())
-            } else if let Some(io_err) = find_io_error(&err) {
-                let aw_err = io_to_atomwrite_error(io_err, &err);
-                let mut out = io::stdout().lock();
-                let ctx = atomwrite::error::ErrorContext {
-                    workspace_provided: cli.global.workspace.is_some(),
-                    workspace: cli.global.workspace.clone(),
-                };
-                let _ =
-                    atomwrite::output::write_error_json_with_context(&mut out, &aw_err, None, &ctx);
-                let _ = out.flush();
-                ExitCode::from(aw_err.exit_code())
-            } else {
-                let _ = writeln!(io::stderr(), "atomwrite: {err:#}");
-                ExitCode::from(1)
-            }
-        }
+            _ => ExitCode::from(0),
+        },
+        Err(err) => map_run_error(&err, &cli),
     };
 
     tracing::info!("shutdown complete");
     exit
 }
 
-fn init_tracing(
-    verbose: u8,
-    quiet: u8,
-    cli_no_color: bool,
-) -> tracing_appender::non_blocking::WorkerGuard {
-    let level = match (verbose, quiet) {
-        (0, 0) => "warn",
-        (1, _) => "info",
-        (2, _) => "debug",
-        (3.., _) => "trace",
-        (_, 1) => "error",
-        (_, 2..) => "off",
-    };
-
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
-
-    let ansi = if no_color() || cli_no_color {
-        false
-    } else if force_color() {
-        true
-    } else {
-        std::io::IsTerminal::is_terminal(&std::io::stderr())
-    };
-
-    let show_source = matches!(level, "debug" | "trace");
-    let (non_blocking, guard) = tracing_appender::non_blocking(io::stderr());
-
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_writer(non_blocking)
-        .with_target(false)
-        .with_ansi(ansi)
-        .with_thread_ids(true)
-        .with_file(show_source)
-        .with_line_number(show_source)
-        .compact();
-
-    use tracing_subscriber::prelude::*;
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt_layer)
-        .with(tracing_error::ErrorLayer::default())
-        .init();
-
-    tracing::debug!(filter = %level, "tracing initialized");
-
-    guard
-}
-
-fn install_panic_hook() {
-    let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
-            (*s).to_string()
-        } else if let Some(s) = info.payload().downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "unknown panic".to_string()
-        };
-
-        let location = info
-            .location()
-            .map(|l| format!("{}:{}", l.file(), l.line()));
-
-        tracing::error!(
-            panic.payload = %payload,
-            panic.location = location.as_deref().unwrap_or("unknown"),
-            "process panicked"
-        );
-
-        default_hook(info);
-    }));
-}
-
-fn no_color() -> bool {
-    std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
-}
-
-fn force_color() -> bool {
-    std::env::var_os("CLICOLOR_FORCE").is_some_and(|v| v == "1")
-}
-
-fn extract_clap_tip(msg: &str) -> Option<String> {
-    for line in msg.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("tip:") {
-            return Some(rest.trim().to_string());
+fn map_run_error(err: &anyhow::Error, cli: &atomwrite::cli::Cli) -> ExitCode {
+    if let Some(aw_err) = err.downcast_ref::<atomwrite::error::AtomwriteError>() {
+        if matches!(aw_err, atomwrite::error::AtomwriteError::BrokenPipe) {
+            return ExitCode::from(141);
         }
-    }
-    None
-}
-
-fn enrich_clap_suggestion(msg: &str) -> Option<String> {
-    let clap_tip = extract_clap_tip(msg);
-    let msg_lower = msg.to_ascii_lowercase();
-
-    let mentions_edit_args = msg_lower.contains("--old")
-        || msg_lower.contains("--new")
-        || msg_lower.contains("--after-match")
-        || msg_lower.contains("--before-match")
-        || msg_lower.contains("--between");
-
-    let is_edit_subcommand =
-        msg.contains("Usage: atomwrite edit") || msg.contains("atomwrite edit ");
-
-    let hyphen_value_error = msg.contains("wasn't expected")
-        || msg.contains("unexpected argument")
-        || (msg.contains("tip:") && msg.contains("'--'"));
-
-    if mentions_edit_args || (hyphen_value_error && is_edit_subcommand) {
-        let base = "For content with special characters (hyphens, quotes, shell metacharacters), \
-                    use --old-file <PATH> and --new-file <PATH> to read content from files \
-                    instead of CLI arguments. This bypasses shell expansion and argument \
-                    parsing entirely.";
-        return Some(match clap_tip {
-            Some(tip) => format!("{base} (original clap tip: {tip})"),
-            None => base.to_string(),
-        });
-    }
-
-    clap_tip
-}
-
-fn prescan_json_schema() -> Option<String> {
-    let args: Vec<String> = std::env::args().collect();
-    if !args.iter().any(|a| a == "--json-schema") {
-        return None;
-    }
-    const SUBCOMMANDS: &[&str] = &[
-        "read",
-        "write",
-        "edit",
-        "search",
-        "replace",
-        "hash",
-        "delete",
-        "count",
-        "diff",
-        "move",
-        "copy",
-        "list",
-        "extract",
-        "calc",
-        "regex",
-        "transform",
-        "scope",
-        "batch",
-        "backup",
-        "rollback",
-        "apply",
-        "completions",
-        "prune-backups",
-        "edit-loop",
-        "get",
-        "set",
-        "del",
-        "outline",
-        "query",
-        "case",
-        // v0.1.29 surface + schema aliases
-        "semantic-merge",
-        "sparse",
-        "recipe",
-        "stat",
-        "agent-surface",
-        "watch",
-        "codemod",
-        "semantic-search",
-        "verify",
-        "wal-stats",
-        "wal-heal",
-        "progress",
-        "error",
-        "best-candidate",
-        "cancelled",
-    ];
-    for arg in &args[1..] {
-        if SUBCOMMANDS.contains(&arg.as_str()) {
-            return Some(arg.clone());
-        }
-    }
-    None
-}
-
-fn init_locale(lang_override: Option<&str>) {
-    let locale = if let Some(lang) = lang_override {
-        lang.to_owned()
-    } else {
-        sys_locale::get_locale().unwrap_or_else(|| "en".to_string())
-    };
-
-    let resolved = if locale.starts_with("pt") {
-        "pt-BR"
-    } else {
-        "en"
-    };
-
-    rust_i18n::set_locale(resolved);
-}
-
-fn find_io_error(err: &anyhow::Error) -> Option<std::io::ErrorKind> {
-    for cause in err.chain() {
-        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
-            return Some(io_err.kind());
-        }
-    }
-    None
-}
-
-fn io_to_atomwrite_error(
-    kind: std::io::ErrorKind,
-    err: &anyhow::Error,
-) -> atomwrite::error::AtomwriteError {
-    let msg = format!("{err:#}");
-    match kind {
-        std::io::ErrorKind::PermissionDenied => {
-            atomwrite::error::AtomwriteError::PermissionDenied {
-                path: extract_path_from_message(&msg),
+        // Cooperative cancel: prefer the live signal/timeout exit and the
+        // human banner on stderr (same path as Ok + is_shutdown), not only
+        // a CANCELLED NDJSON line — agents still get the envelope when we
+        // emit it below for non-signal programmatic cancels.
+        if let atomwrite::error::AtomwriteError::Cancelled { exit, .. } = aw_err {
+            if atomwrite::signal::is_global_shutdown() {
+                if *exit == 124 {
+                    atomwrite::signal::write_timeout_message();
+                } else {
+                    atomwrite::signal::write_shutdown_message();
+                }
+                tracing::info!(exit = *exit, "shutdown via Cancelled");
+                return ExitCode::from(*exit);
             }
         }
-        std::io::ErrorKind::NotFound => atomwrite::error::AtomwriteError::NotFound {
-            path: extract_path_from_message(&msg),
-        },
-        _ => atomwrite::error::AtomwriteError::Io {
-            source: std::io::Error::new(kind, msg),
-        },
+        let mut out = io::stdout().lock();
+        let ctx = atomwrite::error::ErrorContext {
+            workspace_provided: cli.global.workspace.is_some(),
+            workspace: cli.global.workspace.clone(),
+        };
+        let _ = atomwrite::output::write_error_json_with_context(&mut out, aw_err, None, &ctx);
+        let _ = out.flush();
+        return ExitCode::from(aw_err.exit_code());
     }
-}
-
-fn extract_path_from_message(msg: &str) -> PathBuf {
-    if let Some(start) = msg.find('/') {
-        let rest = &msg[start..];
-        let end = rest.find(':').unwrap_or(rest.len());
-        return PathBuf::from(&rest[..end]);
+    if let Some(io_err) = atomwrite::runtime::find_io_error(err) {
+        let aw_err = atomwrite::runtime::io_to_atomwrite_error(io_err, err);
+        let mut out = io::stdout().lock();
+        let ctx = atomwrite::error::ErrorContext {
+            workspace_provided: cli.global.workspace.is_some(),
+            workspace: cli.global.workspace.clone(),
+        };
+        let _ = atomwrite::output::write_error_json_with_context(&mut out, &aw_err, None, &ctx);
+        let _ = out.flush();
+        return ExitCode::from(aw_err.exit_code());
     }
-    PathBuf::from("unknown")
+    let _ = writeln!(io::stderr(), "atomwrite: {err:#}");
+    ExitCode::from(1)
 }

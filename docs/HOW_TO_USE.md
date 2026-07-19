@@ -1,12 +1,39 @@
 # How to Use atomwrite
 
 
-[Leia em Portugues](HOW_TO_USE.pt-BR.md)
+[Leia em Português](HOW_TO_USE.pt-BR.md)
 
 > One CLI replaces dozens of file-manipulation tool calls your agent makes today
 
 
-## What's New in v0.1.30
+## What's New in v0.1.34
+
+v0.1.34 (2026-07-19) is the **docs-complete** publish of the v0.1.33 one-shot runtime. Same binary behavior; documentation aligned. There are still **41 subcommands**.
+
+### One-shot fuzzy + timeout default 120
+
+- Global `--timeout-secs` (alias `--timeout`) **default 120** (was 0); `0` disables; deadline → exit **124**
+- Fuzzy multi-apply is **one-pass** left-to-right on the original content (`apply_fuzzy_one_pass`); it **never** re-scans inserted text
+- Default max fuzzy applies = **1** when `--max-replacements` is omitted; hard ceiling 10_000
+- If the replacement **contains** the pattern (fixed-string), atomwrite forces a **single** apply — safe for expand-section edits where NEW embeds OLD
+- Cooperative cancel is polled mid-fuzzy cascade
+- Caps: pattern 64 KiB; lev 8192 chars; max windows 4096; growth max(4×,+16 MiB)
+- Regression: `cargo test --test cli_v0133_oneshot_fuzzy`
+- Fuzzy still only `auto|aggressive` (`off` rejected exit 65)
+- See [ADR-0054](decisions/0054-v0-1-34-oneshot-fuzzy-timeout.md) for one-shot fuzzy + timeout (exit 124 vs 143)
+
+```bash
+# Expand a section safely — NEW contains OLD; one-pass, no hang
+atomwrite --workspace . replace --fuzzy auto \
+  $'## Install\n\nRun cargo install.' \
+  $'## Install\n\nRun cargo install.\n\n### Notes\nSee docs.' \
+  README.md
+
+# Bound long monorepo work (default is already 120s; 0 disables)
+atomwrite --workspace . --timeout-secs 0 replace --fuzzy auto 'old' 'new' packages/
+```
+
+## What Was New in v0.1.30
 
 v0.1.30 (2026-07-13) closes residual agent-contract gaps on top of the v0.1.29 surface. There are **41 subcommands**.
 
@@ -122,7 +149,7 @@ atomwrite --workspace . watch . --debounce-ms 200 --max-events 20
 
 ### Binary size honesty
 
-- Core profile ~7.7 MiB (CI budget ≤15 MiB)
+- Core profile ~7.7 MiB (local size-gate ≤15 MiB)
 - Default/full build ~52 MB
 - PRD 5-8 MB target applies to core only
 
@@ -161,8 +188,8 @@ atomwrite --workspace . wal-heal --threshold-secs 0
 # Default: let the build decide
 atomwrite --workspace . write src/lib.rs < new.rs
 
-# Forbid any sidecar creation (CI hygiene)
-atomwrite --workspace . write --wal-policy never ci-output.txt < data.txt
+# Forbid any sidecar creation (workspace hygiene)
+atomwrite --workspace . write --wal-policy never ephemeral-output.txt < data.txt
 ```
 
 ### Disable Auto-Heal Globally
@@ -178,7 +205,7 @@ atomwrite --workspace . --no-auto-heal wal-stats
 | Workload | `--wal-policy` | Rationale |
 |---|---|---|
 | Local dev / interactive use | `auto` (default) | Optimized for general use; balanced trade-off |
-| CI builds and ephemeral jobs | `never` | Sidecars have no consumer; skip the overhead |
+| ephemeral builds and ephemeral jobs | `never` | Sidecars have no consumer; skip the overhead |
 | Production deploys / audit trails | `always` | Forensic metadata required for postmortem |
 | Bulk migrations and batch jobs | `never` + `--no-auto-heal` | Speed and explicit control of reaping |
 | Forensic analysis / debugging | `always` + manual `wal-heal` | Keep all sidecars; reap only when you decide |
@@ -240,7 +267,7 @@ See the Advanced Commands section below for detailed documentation of each.
 - 542 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118 in v0.1.15)
 - 9 ADRs in `docs/decisions/` (0019-0027)
 - 7 new JSON schemas in `docs/schemas/`
-- See [docs/decisions/README.md](README.md) for architectural decisions
+- See [docs/decisions/README.md](decisions/README.md) for architectural decisions
 
 ## Prerequisites
 - Rust toolchain 1.88 or later
@@ -389,6 +416,9 @@ atomwrite replace --dry-run 'before' 'after' src/
 - Fixed-string replace defaults to `--fuzzy auto` after zero exact multi-match hits (v0.1.29 BREAKING vs exact-only exit 1)
 - Modes: `--fuzzy auto|aggressive` (off rejected) and optional `--fuzzy-threshold <0.0-1.0>`
 - Shared 9-strategy cascade (same as edit) after exact multi-match finds zero hits
+- Fuzzy multi-apply is **one-pass** L→R on original content (`apply_fuzzy_one_pass`); never re-scans inserted text
+- Default max fuzzy applies = **1** if `--max-replacements` omitted; hard ceiling 10_000
+- If replacement **contains** pattern (fixed-string), force single apply (prevents infinite growth when expanding a section)
 - Exact-only is not supported; use auto/aggressive and structured uniqueness errors
 - Match failures may emit `best_candidate` with line, similarity, strategy, diff_preview
 - Use `--progress-every N` for NDJSON progress heartbeats on large trees
@@ -401,6 +431,12 @@ atomwrite replace --dry-run 'before' 'after' src/
 # --fuzzy off rejected since v0.1.30; use auto or aggressive
 # off rejected: use --fuzzy auto or --fuzzy aggressive
 atomwrite --workspace . replace --progress-every 50 'old' 'new' packages/
+
+# Expand-section safe: NEW embeds OLD — one-pass forces single apply, no hang
+atomwrite --workspace . replace --fuzzy auto \
+  $'fn setup() {\n    init();\n}' \
+  $'fn setup() {\n    init();\n    // expanded\n    configure();\n}' \
+  src/lib.rs
 ```
 
 - Returns per-file NDJSON with replacement count and checksums
@@ -698,8 +734,8 @@ atomwrite outline src/main.rs --positions
 - `--threads <N>` / `-j <N>` -- number of parallel threads (0 = all cores)
 - `--max-filesize <BYTES>` -- skip files larger than this limit
 - `--json-schema` -- emit JSON schema for the subcommand output
-- `--lang <LOCALE>` -- override display locale (en, pt-BR)
-- `--timeout <SECONDS>` -- global operation timeout (0 = no timeout)
+- `--locale <en|pt-BR>` -- override display locale (en, pt-BR); env `ATOMWRITE_LANG` still accepted (flag renamed from `--lang` in v0.1.20)
+- `--timeout-secs <SECONDS>` (alias `--timeout`) -- global operation timeout; **default 120**; `0` disables; deadline → exit **124**
 - `--grep <REGEX>` on `read` to filter returned lines to those matching a regex
 
 

@@ -1,18 +1,27 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Batch execution of multiple operations from an NDJSON manifest.
+//!
 //! Workload: I/O-bound (NDJSON parse + multi-file atomic writes).
+//! Parallelism: non-transactional batches with unique target paths fan out
+//! via `rayon::par_iter` (independent mutations). Transaction **ops** stay
+//! sequential so rollback order stays correct; transaction **pre-backup**
+//! snapshots fan out with `par_iter` (independent I/O). Bound: process-wide
+//! rayon pool.
 
+use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 use crate::cli::GlobalArgs;
+use crate::concurrency::should_parallelize;
 use crate::ndjson_types::{BatchOpResult, BatchSummary, ProgressEvent};
 use crate::output::NdjsonWriter;
 use crate::signal::ShutdownSignal;
@@ -115,7 +124,7 @@ pub fn cmd_batch(
             })?;
         if !validated_manifest.is_file() {
             return Err(crate::error::AtomwriteError::NotFound {
-                path: validated_manifest.clone(),
+                path: validated_manifest,
             }
             .into());
         }
@@ -171,15 +180,30 @@ pub fn cmd_batch(
     }
 
     // In transaction mode, snapshot all existing files before any mutation.
+    // Paths are unique (collect_target_paths dedup); independent I/O → par_iter.
+    // Ops + rollback stay sequential (ordered side-effects / reverse restore).
     let backups: Vec<(PathBuf, PathBuf)> = if transaction && !dry_run {
         let paths = collect_target_paths(&ops, &workspace);
-        let mut pairs = Vec::with_capacity(paths.len());
-        for path in paths {
-            let backup = crate::atomic::create_backup(&path, retention)
-                .with_context(|| format!("transaction pre-backup failed for {}", path.display()))?;
-            pairs.push((path, backup));
+        if should_parallelize(paths.len()) {
+            paths
+                .par_iter()
+                .map(|path| {
+                    let backup = crate::atomic::create_backup(path, retention).with_context(|| {
+                        format!("transaction pre-backup failed for {}", path.display())
+                    })?;
+                    Ok::<_, anyhow::Error>((path.clone(), backup))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            let mut pairs = Vec::with_capacity(paths.len());
+            for path in paths {
+                let backup = crate::atomic::create_backup(&path, retention).with_context(|| {
+                    format!("transaction pre-backup failed for {}", path.display())
+                })?;
+                pairs.push((path, backup));
+            }
+            pairs
         }
-        pairs
     } else {
         Vec::new()
     };
@@ -199,151 +223,227 @@ pub fn cmd_batch(
         (total_ops / 20).clamp(1, 50)
     };
 
-    for (idx, op) in ops.iter().enumerate() {
-        if shutdown.is_shutdown() {
-            tracing::info!(
-                completed = idx,
-                total = ops.len(),
-                "batch interrupted by signal"
-            );
-            break;
-        }
-        if progress_every > 0
-            && idx > 0
-            && (idx as u64).is_multiple_of(progress_every)
-            && global.quiet == 0
-        {
-            let done = idx as u64;
-            let elapsed = start.elapsed().as_secs_f64().max(0.001);
-            let rate = done as f64 / elapsed;
-            let remaining = total_ops.saturating_sub(done);
-            let eta_ms = if rate > 0.0 {
-                Some(((remaining as f64 / rate) * 1000.0) as u64)
-            } else {
-                None
-            };
-            writer.write_event(&ProgressEvent {
-                r#type: "progress",
-                done,
-                total: total_ops,
-                rate_per_s: Some(rate),
-                eta_ms,
-                phase: "batch".into(),
-            })?;
-        }
+    // Parallel path: non-transactional + unique targets + multi-op.
+    // Transaction / overlapping targets stay sequential for rollback + safety.
+    let parallel_ok = !transaction
+        && should_parallelize(ops.len())
+        && batch_targets_unique(&ops);
 
-        let op_start = Instant::now();
-        // Pre-snapshot existence so we know if the op created a new file at target.
-        let creates_target = matches!(op.op.as_str(), "write" | "move" | "copy");
-        let was_new_file = if transaction && !dry_run && creates_target {
-            op.resolve_file_path()
-                .ok()
-                .map(std::path::Path::new)
-                .and_then(|p| crate::path_safety::validate_path(p, &workspace).ok())
-                .map(|p| !p.exists())
-                .unwrap_or(false)
-        } else {
-            false
-        };
-        let result = execute_op(
-            op,
-            idx,
-            &workspace,
-            global,
-            dry_run,
-            keep_backup,
-            no_backup,
-            backup_explicit,
-            retention,
-            batch_fuzzy_mode,
-            batch_fuzzy_threshold,
+    if parallel_ok {
+        tracing::debug!(
+            ops = ops.len(),
+            "batch: parallel non-transactional fan-out"
         );
+        let results: Vec<(usize, Result<String, String>, u64)> = ops
+            .par_iter()
+            .enumerate()
+            .map(|(idx, op)| {
+                if shutdown.is_shutdown() {
+                    return (
+                        idx,
+                        Err("batch cancelled by signal".to_string()),
+                        0,
+                    );
+                }
+                let op_start = Instant::now();
+                let result = execute_op(
+                    op,
+                    idx,
+                    &workspace,
+                    global,
+                    dry_run,
+                    keep_backup,
+                    no_backup,
+                    backup_explicit,
+                    retention,
+                    batch_fuzzy_mode,
+                    batch_fuzzy_threshold,
+                )
+                .map_err(|e| format!("{e:#}"));
+                (idx, result, op_start.elapsed().as_millis() as u64)
+            })
+            .collect();
 
-        match result {
-            Ok(details) => {
-                succeeded += 1;
-                if transaction && !dry_run && was_new_file {
-                    if let Some(target) = op
-                        .resolve_file_path()
-                        .ok()
-                        .map(std::path::Path::new)
-                        .and_then(|p| crate::path_safety::validate_path(p, &workspace).ok())
-                    {
-                        created_files.push(target);
-                    }
+        // Emit in original manifest order (stable agent contract).
+        let mut ordered = results;
+        ordered.sort_by_key(|(idx, _, _)| *idx);
+        for (idx, result, elapsed_ms) in ordered {
+            let op = &ops[idx];
+            match result {
+                Ok(details) => {
+                    succeeded += 1;
+                    writer.write_event(&BatchOpResult {
+                        r#type: "batch_op",
+                        index: idx as u64,
+                        op: &op.op,
+                        status: "ok",
+                        details: Some(details),
+                        error: None,
+                        elapsed_ms,
+                    })?;
                 }
-                if transaction && !dry_run && op.op == "move" {
-                    if let (Some(src), Some(tgt)) = (
-                        op.source.as_deref().or(op.path.as_deref()),
-                        op.target.as_deref(),
-                    ) {
-                        if let (Ok(s), Ok(t)) = (
-                            crate::path_safety::validate_path(
-                                std::path::Path::new(src),
-                                &workspace,
-                            ),
-                            crate::path_safety::validate_path(
-                                std::path::Path::new(tgt),
-                                &workspace,
-                            ),
-                        ) {
-                            tracing::debug!(source = %s.display(), target = %t.display(), "recorded move for rollback");
-                            moves_to_reverse.push((s, t));
-                        }
-                    }
+                Err(e) => {
+                    failed += 1;
+                    writer.write_event(&BatchOpResult {
+                        r#type: "batch_op",
+                        index: idx as u64,
+                        op: &op.op,
+                        status: "failed",
+                        details: None,
+                        error: Some(e),
+                        elapsed_ms,
+                    })?;
                 }
-                let event = BatchOpResult {
-                    r#type: "batch_op",
-                    index: idx as u64,
-                    op: &op.op,
-                    status: "ok",
-                    details: Some(details),
-                    error: None,
-                    elapsed_ms: op_start.elapsed().as_millis() as u64,
-                };
-                writer.write_event(&event)?;
             }
-            Err(e) => {
-                failed += 1;
-                let event = BatchOpResult {
-                    r#type: "batch_op",
-                    index: idx as u64,
-                    op: &op.op,
-                    status: "failed",
-                    details: None,
-                    error: Some(format!("{e:#}")),
-                    elapsed_ms: op_start.elapsed().as_millis() as u64,
+        }
+    } else {
+        for (idx, op) in ops.iter().enumerate() {
+            if shutdown.is_shutdown() {
+                tracing::info!(
+                    completed = idx,
+                    total = ops.len(),
+                    "batch interrupted by signal"
+                );
+                break;
+            }
+            if progress_every > 0
+                && idx > 0
+                && (idx as u64).is_multiple_of(progress_every)
+                && global.quiet == 0
+                && !global.no_progress
+            {
+                let done = idx as u64;
+                let elapsed = start.elapsed().as_secs_f64().max(0.001);
+                let rate = done as f64 / elapsed;
+                let remaining = total_ops.saturating_sub(done);
+                let eta_ms = if rate > 0.0 {
+                    Some(((remaining as f64 / rate) * 1000.0) as u64)
+                } else {
+                    None
                 };
-                writer.write_event(&event)?;
+                writer.write_event(&ProgressEvent {
+                    r#type: "progress",
+                    done,
+                    total: total_ops,
+                    rate_per_s: Some(rate),
+                    eta_ms,
+                    phase: "batch".into(),
+                })?;
+            }
 
-                if transaction {
-                    match rollback_transaction(
-                        &backups,
-                        &created_files,
-                        &moves_to_reverse,
-                        &workspace,
-                    ) {
-                        Ok((restored, removed)) => {
-                            let rollback_event = RollbackEvent {
-                                r#type: "rollback",
-                                files_restored: restored,
-                                files_removed: removed,
-                                total_reverted: restored + removed,
-                            };
-                            writer.write_event(&rollback_event)?;
-                            return Err(crate::error::AtomwriteError::InvalidInput {
-                                reason: format!(
-                                    "transaction rolled back after failure at operation {idx}: {e:#}"
-                                ),
-                            }
-                            .into());
+            let op_start = Instant::now();
+            // Pre-snapshot existence so we know if the op created a new file at target.
+            let creates_target = matches!(op.op.as_str(), "write" | "move" | "copy");
+            let was_new_file = if transaction && !dry_run && creates_target {
+                op.resolve_file_path()
+                    .ok()
+                    .map(std::path::Path::new)
+                    .and_then(|p| crate::path_safety::validate_path(p, &workspace).ok())
+                    .map(|p| !p.exists())
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            let result = execute_op(
+                op,
+                idx,
+                &workspace,
+                global,
+                dry_run,
+                keep_backup,
+                no_backup,
+                backup_explicit,
+                retention,
+                batch_fuzzy_mode,
+                batch_fuzzy_threshold,
+            );
+
+            match result {
+                Ok(details) => {
+                    succeeded += 1;
+                    if transaction && !dry_run && was_new_file {
+                        if let Some(target) = op
+                            .resolve_file_path()
+                            .ok()
+                            .map(std::path::Path::new)
+                            .and_then(|p| crate::path_safety::validate_path(p, &workspace).ok())
+                        {
+                            created_files.push(target);
                         }
-                        Err(rb_err) => {
-                            tracing::error!(error = %rb_err, "rollback failed");
-                            return Err(crate::error::AtomwriteError::InvalidInput {
-                                reason: format!("transaction rollback failed: {rb_err:#}"),
+                    }
+                    if transaction && !dry_run && op.op == "move" {
+                        if let (Some(src), Some(tgt)) = (
+                            op.source.as_deref().or(op.path.as_deref()),
+                            op.target.as_deref(),
+                        ) {
+                            if let (Ok(s), Ok(t)) = (
+                                crate::path_safety::validate_path(
+                                    std::path::Path::new(src),
+                                    &workspace,
+                                ),
+                                crate::path_safety::validate_path(
+                                    std::path::Path::new(tgt),
+                                    &workspace,
+                                ),
+                            ) {
+                                tracing::debug!(source = %s.display(), target = %t.display(), "recorded move for rollback");
+                                moves_to_reverse.push((s, t));
                             }
-                            .into());
+                        }
+                    }
+                    let event = BatchOpResult {
+                        r#type: "batch_op",
+                        index: idx as u64,
+                        op: &op.op,
+                        status: "ok",
+                        details: Some(details),
+                        error: None,
+                        elapsed_ms: op_start.elapsed().as_millis() as u64,
+                    };
+                    writer.write_event(&event)?;
+                }
+                Err(e) => {
+                    failed += 1;
+                    let event = BatchOpResult {
+                        r#type: "batch_op",
+                        index: idx as u64,
+                        op: &op.op,
+                        status: "failed",
+                        details: None,
+                        error: Some(format!("{e:#}")),
+                        elapsed_ms: op_start.elapsed().as_millis() as u64,
+                    };
+                    writer.write_event(&event)?;
+
+                    if transaction {
+                        match rollback_transaction(
+                            &backups,
+                            &created_files,
+                            &moves_to_reverse,
+                            &workspace,
+                        ) {
+                            Ok((restored, removed)) => {
+                                let rollback_event = RollbackEvent {
+                                    r#type: "rollback",
+                                    files_restored: restored,
+                                    files_removed: removed,
+                                    total_reverted: restored + removed,
+                                };
+                                writer.write_event(&rollback_event)?;
+                                return Err(crate::error::AtomwriteError::InvalidInput {
+                                    reason: format!(
+                                        "transaction rolled back after failure at operation {idx}: {e:#}"
+                                    ),
+                                }
+                                .into());
+                            }
+                            Err(rb_err) => {
+                                tracing::error!(error = %rb_err, "rollback failed");
+                                return Err(crate::error::AtomwriteError::InvalidInput {
+                                    reason: format!("transaction rollback failed: {rb_err:#}"),
+                                }
+                                .into());
+                            }
                         }
                     }
                 }
@@ -372,6 +472,34 @@ pub fn cmd_batch(
     }
 
     Ok(())
+}
+
+/// True when every op has a distinct primary path key (safe for parallel mutate).
+fn batch_targets_unique(ops: &[BatchOp]) -> bool {
+    let mut seen = HashSet::with_capacity(ops.len());
+    for op in ops {
+        let key = op
+            .target
+            .as_deref()
+            .or(op.path.as_deref())
+            .or(op.source.as_deref())
+            .unwrap_or("");
+        if key.is_empty() {
+            return false;
+        }
+        if !seen.insert(key.to_string()) {
+            return false;
+        }
+        // Moves/copies also touch source — treat as second key when present.
+        if matches!(op.op.as_str(), "move" | "copy") {
+            if let Some(src) = op.source.as_deref().or(op.path.as_deref()) {
+                if !seen.insert(src.to_string()) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 /// Collect validated paths of existing files that operations will mutate.
@@ -425,8 +553,13 @@ fn rollback_transaction(
 
     for (original, backup) in backups {
         if backup.exists() {
-            let content = std::fs::read(backup)
-                .with_context(|| format!("cannot read backup {}", backup.display()))?;
+            // Backups were produced by atomwrite under max_filesize; still
+            // route through the fallible reader so OOM is recoverable.
+            let content = crate::file_io::read_file_bytes(
+                backup,
+                crate::constants::DEFAULT_MAX_FILESIZE,
+            )
+            .with_context(|| format!("cannot read backup {}", backup.display()))?;
             let opts = AtomicWriteOptions::default();
             atomic_write(original, &content, &opts, workspace)
                 .with_context(|| format!("cannot restore {}", original.display()))?;
@@ -654,10 +787,7 @@ fn execute_delete(
     let validated = crate::path_safety::validate_path(path, workspace)?;
 
     if !validated.exists() {
-        return Err(crate::error::AtomwriteError::NotFound {
-            path: validated.clone(),
-        }
-        .into());
+        return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
 
     if dry_run {

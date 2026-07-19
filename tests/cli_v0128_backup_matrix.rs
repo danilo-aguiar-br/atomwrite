@@ -49,7 +49,7 @@ fn parse(base: &[&str], extra: &[&str]) -> Result<Cli, clap::Error> {
 fn all_15_subcommands_accept_backup_flag() {
     for (name, base) in subcommands_with_backup_opts() {
         let result = parse(&base, &["--backup"]);
-        assert!(result.is_ok(), "{name} deve aceitar --backup: {result:?}");
+        assert!(result.is_ok(), "{name} must accept --backup: {result:?}");
     }
 }
 
@@ -59,7 +59,7 @@ fn all_15_subcommands_accept_no_backup_flag() {
         let result = parse(&base, &["--no-backup"]);
         assert!(
             result.is_ok(),
-            "{name} deve aceitar --no-backup: {result:?}"
+            "{name} must accept --no-backup: {result:?}"
         );
     }
 }
@@ -70,7 +70,7 @@ fn all_15_subcommands_accept_keep_backup_flag() {
         let result = parse(&base, &["--keep-backup"]);
         assert!(
             result.is_ok(),
-            "{name} deve aceitar --keep-backup: {result:?}"
+            "{name} must accept --keep-backup: {result:?}"
         );
     }
 }
@@ -81,7 +81,7 @@ fn all_15_subcommands_accept_retention_flag() {
         let result = parse(&base, &["--retention", "3"]);
         assert!(
             result.is_ok(),
-            "{name} deve aceitar --retention 3: {result:?}"
+            "{name} must accept --retention 3: {result:?}"
         );
     }
 }
@@ -92,7 +92,7 @@ fn all_15_subcommands_reject_backup_and_no_backup_together() {
         let result = parse(&base, &["--backup", "--no-backup"]);
         assert!(
             result.is_err(),
-            "{name} deve rejeitar --backup junto de --no-backup"
+            "{name} must reject --backup together with --no-backup"
         );
     }
 }
@@ -110,7 +110,7 @@ fn edit_after_match_conflicts_with_new() {
     ]);
     assert!(
         result.is_err(),
-        "--after-match e --new devem ser conflitantes no parse"
+        "--after-match and --new must conflict at parse time"
     );
 }
 
@@ -140,13 +140,13 @@ fn backup_opts_flags_do_not_collide_with_global_flags() {
     for flag in backup_opts_long_flags {
         assert!(
             !global_long_flags.contains(&flag.to_owned()),
-            "flag global colide com BackupOpts::{flag}"
+            "global flag collides with BackupOpts::{flag}"
         );
     }
     // BackupOpts declares no short flags; guard against future drift.
     assert!(
         !global_short_flags.contains(&'b'),
-        "flag global de short -b colidiria com uma futura short flag de backup"
+        "global short flag -b would collide with a future backup short flag"
     );
 }
 
@@ -173,7 +173,7 @@ fn replace_with_retention_succeeds_on_real_match() {
     assert_eq!(
         output.status.code(),
         Some(0),
-        "replace com --retention 2 deve suceder quando ha match: {:?}",
+        "replace with --retention 2 must succeed when there is a match: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "baz bar baz\n");
@@ -205,7 +205,7 @@ fn delete_no_backup_leaves_no_bak_file() {
         .any(|e| e.file_name().to_string_lossy().contains(".bak."));
     assert!(
         !has_bak,
-        "delete --no-backup nao deve deixar arquivo .bak.*"
+        "delete --no-backup must not leave a .bak.* file"
     );
 }
 
@@ -234,7 +234,7 @@ fn delete_default_backup_true_leaves_bak_file() {
         .any(|e| e.file_name().to_string_lossy().contains(".bak."));
     assert!(
         has_bak,
-        "delete sem flags (default v0.1.28: backup=true) deve deixar arquivo .bak.*"
+        "delete without flags (default v0.1.28: backup=true) must leave a .bak.* file"
     );
 }
 
@@ -261,12 +261,12 @@ fn delete_keep_backup_emits_warning_in_envelope() {
     let deleted = events
         .iter()
         .find(|e| e["type"] == "deleted")
-        .expect("evento deleted");
+        .expect("deleted event");
     let warnings = deleted["warnings"]
         .as_array()
-        .expect("warnings deve ser array");
+        .expect("warnings must be an array");
     assert!(
         !warnings.is_empty(),
-        "delete --keep-backup deve emitir warnings no envelope (flag e no-op para delete)"
+        "delete --keep-backup must emit warnings in the envelope (flag is a no-op for delete)"
     );
 }

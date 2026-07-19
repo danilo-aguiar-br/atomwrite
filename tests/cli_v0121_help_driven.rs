@@ -22,7 +22,7 @@ fn edit_loop_help_flags_all_wired_to_tests() {
     assert!(output.status.success());
     let help = String::from_utf8_lossy(&output.stdout);
 
-    // Whitelist of flags that edit-loop advertises in --help.
+    // Allowlist of flags that edit-loop advertises in --help.
     let flags = [
         "--allow-sequential-drift",
         "--backup",
@@ -34,7 +34,7 @@ fn edit_loop_help_flags_all_wired_to_tests() {
     for flag in flags {
         assert!(
             help.contains(flag),
-            "flag {flag} deve aparecer em edit-loop --help"
+            "flag {flag} must appear in edit-loop --help"
         );
     }
 
@@ -48,7 +48,7 @@ fn edit_loop_help_flags_all_wired_to_tests() {
         let snake = kebab.replace('-', "_");
         assert!(
             test_content.contains(kebab) || test_content.contains(&snake),
-            "teste deve referenciar flag {flag} (procura por {kebab} ou {snake})"
+            "test must reference flag {flag} (look for {kebab} or {snake})"
         );
     }
 }
@@ -67,7 +67,7 @@ fn prune_backups_help_flags_all_wired_to_tests() {
 
     let flags = ["--max-age-secs", "--max-count", "--dry-run"];
     for flag in flags {
-        assert!(help.contains(flag), "flag {flag} deve aparecer em --help");
+        assert!(help.contains(flag), "flag {flag} must appear in --help");
     }
 
     let test_path = std::path::Path::new("tests/cli_v0121_prune_backups.rs");
@@ -77,7 +77,7 @@ fn prune_backups_help_flags_all_wired_to_tests() {
         let snake = kebab.replace('-', "_");
         assert!(
             test_content.contains(kebab) || test_content.contains(&snake),
-            "teste deve referenciar flag {flag} (procura por {kebab} ou {snake})"
+            "test must reference flag {flag} (look for {kebab} or {snake})"
         );
     }
 }
@@ -92,10 +92,10 @@ fn new_subcommands_listed_in_top_help() {
     let help = String::from_utf8_lossy(&output.stdout);
     assert!(
         help.contains("edit-loop"),
-        "edit-loop deve aparecer em --help"
+        "edit-loop must appear in --help"
     );
     assert!(
         help.contains("prune-backups"),
-        "prune-backups deve aparecer em --help"
+        "prune-backups must appear in --help"
     );
 }

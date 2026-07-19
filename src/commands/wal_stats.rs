@@ -5,6 +5,10 @@
 //! `wal-stats` is read-only telemetry (G119 L5). `wal-heal` is the
 //! explicit operator-facing version of the auto-heal pass (G119 L3)
 //! that future releases will run on startup.
+//!
+//! Workload: I/O-bound (WalkParallel discovery + multi-journal parse).
+//! Parallelism: inherits `wal::walk_journal_paths` (WalkParallel) and
+//! `par_iter` parse/classify/unlink in stats/heal. Bound: process-wide pool.
 
 use anyhow::Result;
 
@@ -13,9 +17,10 @@ use crate::output::NdjsonWriter;
 
 /// Emit a NDJSON snapshot of the workspace's WAL sidecar state.
 ///
-/// Read-only and safe to call from any context. Used by CI gates and
+/// Read-only and safe to call from any context. Used by local gates and
 /// agent health checks to detect accumulating junk before it pollutes
 /// `git status --porcelain`.
+#[tracing::instrument(skip_all, fields(command = "wal-stats"))]
 pub fn cmd_wal_stats(
     args: &WalStatsArgs,
     global: &GlobalArgs,
@@ -46,6 +51,7 @@ pub fn cmd_wal_stats(
 /// whose last entry is older than `--threshold-secs`, and emits a
 /// NDJSON report. `Started` sidecars are NEVER removed (they are
 /// potential orphans that need `recover_orphan_journals`).
+#[tracing::instrument(skip_all, fields(command = "wal-heal"))]
 pub fn cmd_wal_heal(
     args: &WalHealArgs,
     global: &GlobalArgs,

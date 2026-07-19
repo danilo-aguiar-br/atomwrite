@@ -1,17 +1,25 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Atomic file copy with BLAKE3 checksum verification.
+//!
 //! Workload: I/O-bound (file read + atomic write).
+//! Parallelism: recursive discovery via `collect_files_parallel` (honors
+//! `--threads`); unique destination parents via `par_iter` `create_dir_all`;
+//! then `rayon::par_iter` over `(src, dest)` pairs. NDJSON emits in
+//! path-sorted order after the join. Single-file stays sequential.
 
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use rayon::prelude::*;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 use crate::cli::{CopyArgs, GlobalArgs};
 use crate::commands::{ResolvedBackup, resolve_backup};
+use crate::concurrency::should_parallelize;
 use crate::error::AtomwriteError;
 use crate::ndjson_types::{CopyOutput, TransferPlan};
 use crate::output::NdjsonWriter;
@@ -37,14 +45,9 @@ pub fn cmd_copy(
 
     let source = crate::path_safety::validate_path(&args.source, &workspace)?;
     let target = crate::path_safety::validate_path(&args.target, &workspace)?;
-    let source_str = source.display().to_string();
-    let target_str = target.display().to_string();
 
     if !source.exists() {
-        return Err(AtomwriteError::NotFound {
-            path: source.clone(),
-        }
-        .into());
+        return Err(AtomwriteError::NotFound { path: source }.into());
     }
 
     if target.exists() {
@@ -82,8 +85,8 @@ pub fn cmd_copy(
         writer.write_event(&TransferPlan {
             r#type: "plan",
             operation: "copy",
-            source: source_str.clone(),
-            target: target_str.clone(),
+            source: source.display().to_string(),
+            target: target.display().to_string(),
             would_modify: true,
         })?;
         return Ok(());
@@ -91,37 +94,71 @@ pub fn cmd_copy(
 
     let max_size = global.effective_max_filesize();
     if source.is_file() {
-        copy_file_atomic(
-            &source, &target, args, &workspace, writer, start, max_size, resolved,
-        )?;
+        let out = copy_file_atomic(&source, &target, args, &workspace, max_size, resolved)?;
+        emit_copied(writer, &out, start)?;
     } else if source.is_dir() && args.recursive {
-        for entry in ignore::WalkBuilder::new(&source)
-            .hidden(true)
-            .git_ignore(false)
-            .build()
-        {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue,
+        let mut walker = ignore::WalkBuilder::new(&source);
+        walker.hidden(true).git_ignore(false);
+        crate::concurrency::apply_walk_threads(&mut walker, global.threads);
+        let files = crate::concurrency::collect_files_parallel(&walker);
+        let mut pairs: Vec<(PathBuf, PathBuf)> = files
+            .into_iter()
+            .map(|src| {
+                let rel = src.strip_prefix(&source).unwrap_or(&src);
+                let dest = target.join(rel);
+                (src, dest)
+            })
+            .collect();
+        pairs.sort_by(|a, b| a.0.cmp(&b.0)); // small lists; large trees already sorted by collect
+
+        // Unique parents, then parallel create_dir_all (independent I/O).
+        let mut parents: Vec<PathBuf> = pairs
+            .iter()
+            .filter_map(|(_, dest)| dest.parent().map(|p| p.to_path_buf()))
+            .collect();
+        crate::concurrency::sort_paths_parallel(&mut parents);
+        parents.dedup();
+        if should_parallelize(parents.len()) {
+            parents.par_iter().try_for_each(|p| {
+                std::fs::create_dir_all(p)
+                    .with_context(|| format!("cannot create parent directory {}", p.display()))
+            })?;
+        } else {
+            for p in &parents {
+                std::fs::create_dir_all(p)
+                    .with_context(|| format!("cannot create parent directory {}", p.display()))?;
+            }
+        }
+
+        let results: Vec<Result<CopiedMeta, anyhow::Error>> =
+            if should_parallelize(pairs.len()) {
+                pairs
+                    .par_iter()
+                    .map(|(src, dest)| {
+                        if crate::signal::is_global_shutdown() {
+                            return Err(crate::signal::cancelled_error(
+                                "copy cancelled by signal",
+                            )
+                            .into());
+                        }
+                        copy_file_atomic(src, dest, args, &workspace, max_size, resolved)
+                    })
+                    .collect()
+            } else {
+                pairs
+                    .iter()
+                    .map(|(src, dest)| {
+                        copy_file_atomic(src, dest, args, &workspace, max_size, resolved)
+                    })
+                    .collect()
             };
-            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
-                continue;
-            }
-            let rel = entry.path().strip_prefix(&source).unwrap_or(entry.path());
-            let dest = target.join(rel);
-            if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            copy_file_atomic(
-                entry.path(),
-                &dest,
-                args,
-                &workspace,
-                writer,
-                start,
-                max_size,
-                resolved,
-            )?;
+
+        if crate::signal::is_global_shutdown() {
+            return Ok(());
+        }
+
+        for result in results {
+            emit_copied(writer, &result?, start)?;
         }
     } else {
         return Err(AtomwriteError::InvalidInput {
@@ -133,17 +170,38 @@ pub fn cmd_copy(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn copy_file_atomic(
-    source: &std::path::Path,
-    target: &std::path::Path,
-    args: &CopyArgs,
-    workspace: &std::path::Path,
+struct CopiedMeta {
+    source: String,
+    target: String,
+    bytes: usize,
+    checksum: String,
+}
+
+fn emit_copied(
     writer: &mut NdjsonWriter<impl Write>,
+    meta: &CopiedMeta,
     start: Instant,
+) -> Result<()> {
+    writer.write_event(&CopyOutput {
+        r#type: "copied",
+        source: meta.source.clone(),
+        target: meta.target.clone(),
+        bytes: meta.bytes,
+        checksum: meta.checksum.clone(),
+        verified: true,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+    })?;
+    Ok(())
+}
+
+fn copy_file_atomic(
+    source: &Path,
+    target: &Path,
+    args: &CopyArgs,
+    workspace: &Path,
     max_size: u64,
     resolved: ResolvedBackup,
-) -> Result<()> {
+) -> Result<CopiedMeta> {
     let content = crate::file_io::read_file_bytes(source, max_size)?;
     let source_hash = checksum::hash_bytes(&content);
 
@@ -190,15 +248,10 @@ fn copy_file_atomic(
         .into());
     }
 
-    writer.write_event(&CopyOutput {
-        r#type: "copied",
+    Ok(CopiedMeta {
         source: source.display().to_string(),
         target: target.display().to_string(),
         bytes: content.len(),
         checksum: source_hash,
-        verified: true,
-        elapsed_ms: start.elapsed().as_millis() as u64,
-    })?;
-
-    Ok(())
+    })
 }

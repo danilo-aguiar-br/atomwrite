@@ -201,7 +201,7 @@ fn batch_empty_manifest_fails() {
     assert!(!output.status.success());
 }
 
-// --- GAP 03: campo source com aliases ---
+// --- GAP 03: source field with aliases ---
 
 #[test]
 fn batch_move_with_source_target() {

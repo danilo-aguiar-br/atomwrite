@@ -2,15 +2,23 @@
 
 //! Local semantic-ish search via token Jaccard similarity (v0.1.29 P3-2).
 //! No network, no embeddings API, no telemetry — pure offline ranking.
+//!
+//! Workload: mixed I/O-bound + CPU-bound (walk + tokenize + Jaccard rank).
+//! Parallelism: collect file paths (walk), then `rayon::par_iter` over files
+//! for tokenize/score. Ranking is a final sort (stable contract). Bound:
+//! process-wide rayon pool (`--threads` / `--max-concurrency`).
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Result;
-use clap::Args;
+use clap::{Args, ValueHint};
+use rayon::prelude::*;
 
 use crate::cli::GlobalArgs;
+use crate::concurrency::should_parallelize;
 use crate::error::AtomwriteError;
 use crate::output::NdjsonWriter;
 use crate::path_safety::validate_path;
@@ -22,7 +30,7 @@ pub struct SemanticSearchArgs {
     /// Free-text query.
     pub query: String,
     /// Roots to scan.
-    #[arg(default_value = ".")]
+    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
     /// Maximum results.
     #[arg(long, default_value_t = 20)]
@@ -35,11 +43,12 @@ pub struct SemanticSearchArgs {
     /// When set, builds or loads a token→paths index under this directory
     /// (`.atomwrite/semantic-index` is the recommended path). Backend becomes
     /// `inverted-index` instead of pure line Jaccard.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::DirPath)]
     pub index_dir: Option<PathBuf>,
 }
 
 /// Rank lines by token overlap with the query (offline, no embeddings).
+#[tracing::instrument(skip_all, fields(command = "semantic-search"))]
 pub fn cmd_semantic_search(
     args: &SemanticSearchArgs,
     global: &GlobalArgs,
@@ -75,7 +84,7 @@ pub fn cmd_semantic_search(
         let _ = std::fs::create_dir_all(&idir);
         let idx_file = idir.join("tokens.ndjson");
         if idx_file.is_file() {
-            if let Ok(text) = std::fs::read_to_string(&idx_file) {
+            if let Ok(text) = crate::file_io::read_file_string(&idx_file, max_size) {
                 for line in text.lines() {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(line)
                         && let (Some(tok), Some(path), Some(ln), Some(snip)) = (
@@ -116,65 +125,65 @@ pub fn cmd_semantic_search(
             }
         }
     } else {
-        let mut built: Vec<serde_json::Value> = Vec::new();
+        // Stage 1 — multi-root collect (one WalkBuilder + `.add`; --threads honored).
+        let mut roots = Vec::with_capacity(args.paths.len());
         for root in &args.paths {
             if shutdown.is_shutdown() {
                 break;
             }
-            let root = validate_path(root, &workspace)?;
-            let mut wb = ignore::WalkBuilder::new(&root);
-            wb.git_ignore(true);
-            for entry in wb.build() {
-                if shutdown.is_shutdown() {
-                    break;
-                }
-                let entry = match entry {
-                    Ok(e) => e,
-                    Err(_) => continue,
-                };
-                if !entry.file_type().is_some_and(|t| t.is_file()) {
-                    continue;
-                }
-                let path = entry.path();
-                let content = match crate::file_io::read_file_string(path, max_size) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-                for (i, line) in content.lines().enumerate() {
-                    let tokens = tokenize(line);
-                    if tokens.is_empty() {
-                        continue;
-                    }
-                    if args.index_dir.is_some() {
-                        let snip: String = line.chars().take(200).collect();
-                        for t in &tokens {
-                            built.push(serde_json::json!({
-                                "t": t,
-                                "p": path.display().to_string(),
-                                "l": (i as u64) + 1,
-                                "s": snip,
-                            }));
-                        }
-                    }
-                    let score = jaccard(&q_tokens, &tokens);
-                    if score >= args.min_score {
-                        hits.push((
-                            score,
-                            path.display().to_string(),
-                            (i as u64) + 1,
-                            line.chars().take(200).collect(),
-                        ));
-                    }
-                }
-            }
+            roots.push(validate_path(root, &workspace)?);
         }
+        let mut files = if roots.is_empty() {
+            Vec::new()
+        } else {
+            let mut wb = ignore::WalkBuilder::new(&roots[0]);
+            for r in roots.iter().skip(1) {
+                wb.add(r);
+            }
+            wb.git_ignore(true);
+            crate::concurrency::apply_walk_threads(&mut wb, global.threads);
+            crate::concurrency::collect_files_parallel(&wb)
+        };
+        crate::concurrency::sort_paths_parallel(&mut files);
+
+        // Stage 2 — CPU: tokenize + Jaccard per file in parallel.
+        let q_tokens = Arc::new(q_tokens);
+        let min_score = args.min_score;
+        let build_index = args.index_dir.is_some();
+        let scored: Vec<(
+            Vec<(f64, String, u64, String)>,
+            Vec<crate::ndjson_types::SemanticIndexToken>,
+        )> = if should_parallelize(files.len()) {
+            files
+                .par_iter()
+                .map(|path| {
+                    score_file(path, &q_tokens, min_score, max_size, build_index, shutdown)
+                })
+                .collect()
+        } else {
+            files
+                .iter()
+                .map(|path| {
+                    score_file(path, &q_tokens, min_score, max_size, build_index, shutdown)
+                })
+                .collect()
+        };
+
+        let mut built: Vec<crate::ndjson_types::SemanticIndexToken> = Vec::new();
+        for (file_hits, file_built) in scored {
+            hits.extend(file_hits);
+            built.extend(file_built);
+        }
+
         if let Some(ref idir) = args.index_dir {
             let idir = validate_path(idir, &workspace).unwrap_or_else(|_| workspace.join(idir));
             let _ = std::fs::create_dir_all(&idir);
             let idx_file = idir.join("tokens.ndjson");
             if let Ok(mut f) = std::fs::File::create(&idx_file) {
-                for v in built {
-                    let _ = writeln!(f, "{v}");
+                for rec in &built {
+                    if let Ok(line) = serde_json::to_string(rec) {
+                        let _ = writeln!(f, "{line}");
+                    }
                 }
             }
         }
@@ -183,24 +192,74 @@ pub fn cmd_semantic_search(
     hits.truncate(args.k as usize);
     let total = hits.len();
     for (rank, (score, path, line, snippet)) in hits.into_iter().enumerate() {
-        writer.write_event(&serde_json::json!({
-            "type": "semantic_match",
-            "rank": rank + 1,
-            "score": score,
-            "path": path,
-            "line": line,
-            "snippet": snippet,
-            "backend": backend,
-        }))?;
+        writer.write_event(&crate::ndjson_types::SemanticMatchEvent {
+            r#type: "semantic_match",
+            rank: rank + 1,
+            score,
+            path,
+            line,
+            snippet,
+            backend,
+        })?;
     }
-    writer.write_event(&serde_json::json!({
-        "type": "semantic_summary",
-        "query": args.query,
-        "k": args.k,
-        "results": total,
-        "backend": backend,
-    }))?;
+    writer.write_event(&crate::ndjson_types::SemanticSummaryEvent {
+        r#type: "semantic_summary",
+        query: args.query.clone(),
+        k: args.k,
+        results: total,
+        backend,
+    })?;
     Ok(())
+}
+
+fn score_file(
+    path: &Path,
+    q_tokens: &HashSet<String>,
+    min_score: f64,
+    max_size: u64,
+    build_index: bool,
+    shutdown: &ShutdownSignal,
+) -> (
+    Vec<(f64, String, u64, String)>,
+    Vec<crate::ndjson_types::SemanticIndexToken>,
+) {
+    let mut hits = Vec::new();
+    let mut built = Vec::new();
+    if shutdown.is_shutdown() {
+        return (hits, built);
+    }
+    let content = match crate::file_io::read_file_string(path, max_size) {
+        Ok(c) => c,
+        Err(_) => return (hits, built),
+    };
+    let path_str = path.display().to_string();
+    for (i, line) in content.lines().enumerate() {
+        let tokens = tokenize(line);
+        if tokens.is_empty() {
+            continue;
+        }
+        if build_index {
+            let snip: String = line.chars().take(200).collect();
+            for t in &tokens {
+                built.push(crate::ndjson_types::SemanticIndexToken {
+                    t: t.clone(),
+                    p: path_str.clone(),
+                    l: (i as u64) + 1,
+                    s: snip.clone(),
+                });
+            }
+        }
+        let score = jaccard(q_tokens, &tokens);
+        if score >= min_score {
+            hits.push((
+                score,
+                path_str.clone(),
+                (i as u64) + 1,
+                line.chars().take(200).collect(),
+            ));
+        }
+    }
+    (hits, built)
 }
 
 fn tokenize(s: &str) -> HashSet<String> {

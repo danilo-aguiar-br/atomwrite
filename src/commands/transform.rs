@@ -2,6 +2,8 @@
 
 //! Structural AST search and rewrite via ast-grep.
 //! Workload: mixed I/O-bound + CPU-bound (file reading + AST parsing via ast-grep + atomic write).
+//! Parallelism: `ignore::WalkParallel` + bounded channel; bound via
+//! `concurrency::apply_walk_threads` (`--threads` / `--max-concurrency`).
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -116,15 +118,7 @@ pub fn cmd_transform(
         .hidden(!global.hidden)
         .git_ignore(!global.no_gitignore);
 
-    if let Some(threads) = global.threads {
-        walker.threads(if threads == 0 {
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4)
-        } else {
-            threads
-        });
-    }
+    crate::concurrency::apply_walk_threads(&mut walker, global.threads);
 
     if !extensions.is_empty() {
         let mut types_builder = ignore::types::TypesBuilder::new();
@@ -152,8 +146,11 @@ pub fn cmd_transform(
         walker.overrides(overrides_builder.build().context("build overrides")?);
     }
 
-    let (tx, rx) = crossbeam_channel::bounded::<TransformEvent>(1024);
+    let (tx, rx) =
+        crossbeam_channel::bounded::<TransformEvent>(crate::concurrency::event_channel_cap());
 
+    // Per-run counters. Ordering::Relaxed: independent tallies; final loads
+    // run after the parallel join (no data-publication barrier needed).
     let files_visited = Arc::new(AtomicU64::new(0));
     let files_transformed = Arc::new(AtomicU64::new(0));
     let files_skipped = Arc::new(AtomicU64::new(0));
@@ -394,7 +391,7 @@ fn cmd_transform_multi(
 
     // Load the YAML rules.
     let rules: Vec<YamlRule> = if let Some(path) = &args.rules {
-        let content = std::fs::read_to_string(path)
+        let content = crate::file_io::read_file_string(path, global.effective_max_filesize())
             .with_context(|| format!("cannot read rules file {}", path.display()))?;
         serde_yaml::from_str(&content)
             .with_context(|| format!("invalid YAML in rules file {}", path.display()))?
@@ -444,11 +441,11 @@ fn cmd_transform_multi(
 
         // Emit a "rule_begin" event so consumers can correlate subsequent
         // transform events with the rule that produced them.
-        writer.write_event(&serde_json::json!({
-            "type": "rule_begin",
-            "id": rule.id,
-            "language": rule.language,
-        }))?;
+        writer.write_event(&crate::ndjson_types::TransformRuleBegin {
+            r#type: "rule_begin",
+            id: rule.id.clone(),
+            language: rule.language.clone(),
+        })?;
 
         match cmd_transform(&synthetic_args, global, writer, _shutdown, defaults) {
             Ok(()) => {
@@ -456,11 +453,11 @@ fn cmd_transform_multi(
                 // The outer caller will emit a final summary below.
             }
             Err(e) => {
-                writer.write_event(&serde_json::json!({
-                    "type": "rule_error",
-                    "id": rule.id,
-                    "error": e.to_string(),
-                }))?;
+                writer.write_event(&crate::ndjson_types::TransformRuleError {
+                    r#type: "rule_error",
+                    id: rule.id.clone(),
+                    error: e.to_string(),
+                })?;
                 // Continue with the next rule — partial success is OK in
                 // multi-rule mode; the user can re-run individual rules.
             }

@@ -2,10 +2,12 @@
 
 //! Smart file reading with automatic memmap2 for large files.
 //!
-//! Files above `MMAP_THRESHOLD` are memory-mapped via the kernel page cache,
-//! then copied to a `Vec<u8>` because callers require ownership for mutation.
-//! For read-only use cases (e.g., checksumming), prefer [`crate::checksum::hash_file`]
-//! which operates directly on the mmap without copying.
+//! Workload: I/O-bound. Files above `MMAP_THRESHOLD` are memory-mapped via
+//! the kernel page cache, then copied to a `Vec<u8>` because most callers
+//! require owned bytes for mutation / UTF-8 conversion.
+//!
+//! Zero-copy path: for pure read-only hashing, prefer
+//! [`crate::checksum::hash_file`], which hashes the mmap without `to_vec()`.
 
 use std::fs;
 use std::path::Path;
@@ -17,12 +19,16 @@ use crate::error::AtomwriteError;
 
 /// Read a file as raw bytes, using mmap for files above the threshold.
 ///
-/// Files exceeding `max_size` are rejected before any allocation occurs.
+/// Files exceeding `max_size` are rejected **before** any heap allocation.
+/// When the size is known, capacity is reserved with [`Vec::try_reserve_exact`]
+/// so allocation failure becomes a recoverable domain error instead of an
+/// abort (Rules: fallible OOM / `try_reserve` for input-derived sizes).
 ///
 /// # Errors
 ///
 /// Returns `AtomwriteError::NotFound` if the file does not exist.
 /// Returns `AtomwriteError::FileTooLarge` if the file exceeds `max_size`.
+/// Returns `AtomwriteError::InternalError` if the heap reservation fails.
 /// Returns an I/O error if the file cannot be read or mmapped.
 #[allow(unsafe_code)]
 #[tracing::instrument(skip_all, fields(path = %path.display()))]
@@ -49,6 +55,8 @@ pub fn read_file_bytes(path: &Path, max_size: u64) -> Result<Vec<u8>> {
         .into());
     }
 
+    let len = meta.len() as usize;
+
     if meta.len() >= MMAP_THRESHOLD {
         let file =
             fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
@@ -65,9 +73,36 @@ pub fn read_file_bytes(path: &Path, max_size: u64) -> Result<Vec<u8>> {
         // lifetime. Concurrent modification yields a stale read, not UB.
         let mmap = unsafe { memmap2::Mmap::map(&file) }
             .with_context(|| format!("cannot mmap {}", path.display()))?;
-        Ok(mmap.to_vec())
+        let mut out = Vec::new();
+        if let Err(e) = out.try_reserve_exact(mmap.len()) {
+            return Err(AtomwriteError::InternalError {
+                reason: format!(
+                    "allocation failed for {} bytes reading {}: {e}",
+                    mmap.len(),
+                    path.display()
+                ),
+            }
+            .into());
+        }
+        out.extend_from_slice(&mmap);
+        Ok(out)
     } else {
-        fs::read(path).with_context(|| format!("cannot read {}", path.display()))
+        let mut out = Vec::new();
+        if let Err(e) = out.try_reserve_exact(len) {
+            return Err(AtomwriteError::InternalError {
+                reason: format!(
+                    "allocation failed for {len} bytes reading {}: {e}",
+                    path.display()
+                ),
+            }
+            .into());
+        }
+        let mut file =
+            fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
+        use std::io::Read;
+        file.read_to_end(&mut out)
+            .with_context(|| format!("cannot read {}", path.display()))?;
+        Ok(out)
     }
 }
 
@@ -133,5 +168,25 @@ mod tests {
     fn read_file_bytes_nonexistent() {
         let result = read_file_bytes(std::path::Path::new("/nonexistent/file.txt"), u64::MAX);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_file_bytes_rejects_over_max_before_alloc() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.txt");
+        std::fs::write(&path, vec![b'x'; 64]).unwrap();
+        let err = read_file_bytes(&path, 16).unwrap_err();
+        let ae = err.downcast_ref::<AtomwriteError>().expect("AtomwriteError");
+        assert!(
+            matches!(
+                ae,
+                AtomwriteError::FileTooLarge {
+                    size: 64,
+                    max_size: 16,
+                    ..
+                }
+            ),
+            "got {ae:?}"
+        );
     }
 }

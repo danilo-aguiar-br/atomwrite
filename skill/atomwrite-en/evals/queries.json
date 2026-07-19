@@ -1,0 +1,25 @@
+{
+  "skill_name": "atomwrite",
+  "queries": [
+    {"query": "atomically edit a rust file with optimistic locking checksum", "should_trigger": true},
+    {"query": "fuzzy replace text across many files in the monorepo", "should_trigger": true},
+    {"query": "write a file atomically via stdin in the workspace", "should_trigger": true},
+    {"query": "search TODO and FIXME under src with atomwrite", "should_trigger": true},
+    {"query": "run AST transform to rewrite unwrap to ?", "should_trigger": true},
+    {"query": "budget sparse list for monorepo token economy", "should_trigger": true},
+    {"query": "three-way multi-agent merge with semantic-merge", "should_trigger": true},
+    {"query": "emit agent-surface manifesto without MCP", "should_trigger": true},
+    {"query": "run doctor --strict for host readiness", "should_trigger": true},
+    {"query": "emit command tree with commands --include-globals", "should_trigger": true},
+    {"query": "what is the capital of france", "should_trigger": false},
+    {"query": "explain general relativity simply", "should_trigger": false},
+    {"query": "translate this paragraph into german", "should_trigger": false},
+    {"query": "compute the square root of 81 without files", "should_trigger": false},
+    {"query": "tell me a joke", "should_trigger": false},
+    {"query": "weather forecast for tokyo tomorrow", "should_trigger": false},
+    {"query": "recommend a sci-fi movie", "should_trigger": false},
+    {"query": "how do i bake chocolate cake", "should_trigger": false},
+    {"query": "summarize medieval european history", "should_trigger": false},
+    {"query": "write a poem about the ocean", "should_trigger": false}
+  ]
+}
