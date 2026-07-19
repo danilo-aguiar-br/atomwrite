@@ -6,6 +6,18 @@
 > Practical recipes you can copy-paste into your agent workflows
 
 
+
+## What's New in v0.1.35 (2026-07-19)
+
+- Residual **A-*** gaps closed (gaps.md §20): suite green without `delete --yes`; large overwrite **default-deny** (`--ack-overwrite`); `watch` always emits `watch_summary`; semantic-merge conflict markers default ON; monólitos `include!` SRP splits
+- **Write large files:** existing targets above XDG `[write].confirm_large_bytes` (default 100 KiB) require `--ack-overwrite` (agent one-shot; no interactive Y/N). `--confirm` is a legacy awareness flag; `--require-large-ack` is independent (no alias collision)
+- **Delete:** use `--plan` or `--dry-run` for plan-only; `delete --confirm` and `delete --yes`/`-y` are **rejected** (fail-closed). Run again without those flags to delete
+- **Watch:** final NDJSON `type:watch_summary` on every exit path; idle default **500 ms** (`--idle-exit-ms` / XDG `[watch].idle_exit_ms`); debounce via CLI or XDG `[watch].debounce_ms`
+- **Semantic-merge:** conflict markers written by default; opt-out `--no-conflict-markers`
+- Local DoD (no product GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
+- Contract suite: `cargo test --test cli_e2e_v0135`
+- Pin agents to `^0.1.35`. Configuration is CLI + XDG / `.atomwrite.toml` only (no product `ATOMWRITE_*` runtime knobs; no product telemetry)
+
 ## What's New in v0.1.34
 
 v0.1.34 (2026-07-19) docs-complete publish of the v0.1.33 one-shot runtime: fuzzy multi-apply is **one-pass** L→R (`apply_fuzzy_one_pass`); default max applies **1**; embeds force single apply; global `--timeout-secs` / `--timeout` **default 120** (`0` disables, deadline exit **124**). **41 subcommands**.
@@ -56,7 +68,7 @@ atomwrite --workspace . replace --fuzzy auto --max-replacements 3 \
 ## How to Fuzzy-Replace Across a Monorepo
 
 - Use fuzzy replace when indentation or whitespace diverges across packages
-- Do not pass `--fuzzy off` (rejected since v0.1.30); use auto or aggressive
+- Prefer `--fuzzy auto` (default cascade for agents); `--fuzzy off` = exact-only (G-010 CLOSED), not rejected
 - Emit progress NDJSON on large trees with `--progress-every`
 - Remember global timeout default is **120s** (exit 124); use `--timeout-secs 0` for unbounded monorepo sweeps
 - Fuzzy max applies hard ceiling is **10_000**; default remains **1** when `--max-replacements` is omitted
@@ -1308,10 +1320,10 @@ atomwrite --workspace . verify src/main.rs --checksum abc123def456
 ```bash
 # Delete files older than 7 days (duration suffixes: s/m/h/d/w)
 atomwrite --workspace . delete --older-than 7d --dry-run logs/
-atomwrite --workspace . delete --older-than 7d --yes logs/
+atomwrite --workspace . delete --older-than 7d logs/
 
-# Preview deletion plan with --confirm
-atomwrite --workspace . delete --confirm --older-than 1h tmp/
+# Preview deletion plan with --plan
+atomwrite --workspace . delete --plan --older-than 1h tmp/
 ```
 
 ### Replace with Case Preservation
@@ -1388,7 +1400,7 @@ esac
 
 ```bash
 # v0.1.24: delete --recursive actually traverses and removes
-atomwrite --workspace . delete --recursive --yes logs/
+atomwrite --workspace . delete --recursive logs/
 
 # Dry-run first to preview
 atomwrite --workspace . delete --recursive --dry-run logs/
@@ -1438,3 +1450,39 @@ atomwrite --workspace . get Cargo.toml package.version
 # Output: {"type":"result","value":"0.1.24",...}
 # NOT: {"type":"result","value":"\"0.1.24\"",...}  (old behavior)
 ```
+
+## How to Overwrite a Large File Safely (v0.1.35)
+
+- Problem: existing target above XDG `[write].confirm_large_bytes` (default 100 KiB)
+- Solution: pass `--ack-overwrite` (one-shot; no Y/N)
+
+```bash
+printf 'payload' | atomwrite --workspace . write --ack-overwrite big.txt
+```
+
+## How to Preview Deletes Without Mutating (v0.1.35)
+
+- Problem: need a plan without deleting
+- Solution: `delete --plan` (not `--confirm` / `--yes`)
+
+```bash
+atomwrite --workspace . delete --plan --older-than 7d logs/
+atomwrite --workspace . delete --older-than 7d logs/
+```
+
+## How to Consume Watch Idle Output (v0.1.35)
+
+- Problem: agents assumed empty stdout when no FS events
+- Solution: always parse final `type:watch_summary`
+
+```bash
+atomwrite --workspace . watch . --idle-exit-ms 500
+```
+
+## How to Merge With Conflict Markers (v0.1.35)
+
+```bash
+atomwrite --workspace . semantic-merge --base b --ours o --theirs t --output out.txt
+atomwrite --workspace . semantic-merge --base b --ours o --theirs t --output out.txt --no-conflict-markers
+```
+

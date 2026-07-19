@@ -6,6 +6,18 @@
 > Uma CLI substitui dezenas de chamadas de ferramenta que seu agente faz hoje
 
 
+
+## O Que Há de Novo na v0.1.35 (2026-07-19)
+
+- Gaps residuais **A-*** fechados (gaps.md §20): suite verde sem `delete --yes`; sobrescrita grande **default-deny** (`--ack-overwrite`); `watch` sempre emite `watch_summary`; markers de conflito do semantic-merge default ON; monólitos fatiados com `include!` (SRP)
+- **Write em arquivos grandes:** alvos existentes acima de XDG `[write].confirm_large_bytes` (padrão 100 KiB) exigem `--ack-overwrite` (agente one-shot; sem Y/N interativo). `--confirm` é flag legada de awareness; `--require-large-ack` é independente (sem colisão de alias)
+- **Delete:** use `--plan` ou `--dry-run` para plan-only; `delete --confirm` e `delete --yes`/`-y` são **rejeitados** (fail-closed). Execute de novo sem essas flags para apagar
+- **Watch:** NDJSON final `type:watch_summary` em todo caminho de saída; idle padrão **500 ms** (`--idle-exit-ms` / XDG `[watch].idle_exit_ms`); debounce via CLI ou XDG `[watch].debounce_ms`
+- **Semantic-merge:** markers de conflito gravados por padrão; opt-out `--no-conflict-markers`
+- DoD local (sem GitHub Actions de produto): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
+- Suite de contrato: `cargo test --test cli_e2e_v0135`
+- Pin de agentes em `^0.1.35`. Configuração somente CLI + XDG / `.atomwrite.toml` (sem knobs `ATOMWRITE_*` de produto; sem telemetria de produto)
+
 ## O Que Há de Novo na v0.1.34
 
 A v0.1.34 (2026-07-19) é a publicação **docs-complete** do runtime one-shot da v0.1.33. Mesmo comportamento do binário; documentação alinhada. Ainda há **41 subcomandos**.
@@ -39,7 +51,7 @@ A v0.1.30 (2026-07-13) fecha gaps residuais de contrato de agente sobre a superf
 
 ### Fuzzy obrigatório, match_count, indent_adjusted
 
-- Fuzzy só `auto` e `aggressive` (`--fuzzy off` rejeitado exit 65)
+- Modos fuzzy: `--fuzzy auto|aggressive|off` onde `off` = exact-only (G-010 CLOSED); padrão `auto` (cascata ainda é a política padrão para agentes)
 - Multi-ocorrência exige `--replace-all`; NDJSON de sucesso inclui `match_count`
 - Quando o delta de indent realinha o replacement, o NDJSON de sucesso inclui `indent_adjusted: true`
 - Falhas de match emitem `best_candidate`, `candidates[]` e `diff_preview` ranqueados
@@ -63,7 +75,7 @@ atomwrite --workspace . edit src/app.rs --old 'TODO' --new 'DONE' --replace-all 
 ```bash
 atomwrite --workspace . replace --fuzzy auto $'fn main() {\n  let x = 1;\n}' $'fn main() {\n    let x = 2;\n}' src/main.rs
 
-# Exact-only via --fuzzy off NÃO existe desde v0.1.30 (exit 65)
+# --fuzzy off = exact-only (G-010 CLOSED na v0.1.35); cascata auto|aggressive permanece padrão para agentes
 atomwrite --workspace . replace --fuzzy aggressive 'token-exato' 'token-novo' src/
 ```
 
@@ -140,6 +152,34 @@ atomwrite --workspace . semantic-search "atomic rename tempfile" src/ --k 10
 
 ```bash
 atomwrite --workspace . codemod --rules rules.yaml --dry-run src/
+```
+
+
+### Sobrescrita grande (v0.1.35)
+
+```bash
+printf 'novo' | atomwrite --workspace . write --ack-overwrite path/to/file.txt
+printf 'novo' | atomwrite --workspace . write --require-large-ack --ack-overwrite path/to/file.txt
+```
+
+### Delete plan-only (v0.1.35)
+
+```bash
+atomwrite --workspace . delete --plan tmp/old.txt
+atomwrite --workspace . delete tmp/old.txt
+```
+
+### Watch summary (v0.1.35)
+
+```bash
+atomwrite --workspace . watch . --idle-exit-ms 500 --max-events 10
+```
+
+### Markers do semantic-merge (v0.1.35)
+
+```bash
+atomwrite --workspace . semantic-merge --base b.txt --ours o.txt --theirs t.txt --output out.txt
+atomwrite --workspace . semantic-merge --base b.txt --ours o.txt --theirs t.txt --output out.txt --no-conflict-markers
 ```
 
 ### `watch`
@@ -367,7 +407,7 @@ echo "replacement block" | atomwrite edit src/main.rs --range 10:20
 atomwrite edit src/main.rs --old "old_text" --new "new_text"
 ```
 
-- Use `--fuzzy auto|aggressive` para matching fuzzy quando match exato falhar (off rejeitado desde v0.1.30)
+- Use `--fuzzy auto|aggressive|off` para matching fuzzy quando match exato falhar (cascata de 9 estratégias; `off` = exact-only, G-010; padrão `auto`)
 - Desde a v0.1.15 pares repetidos `--old`/`--new` também rodam a cascata fuzzy por par (G117); respostas incluem `pairs_total` e `pair_results` por par, e falhas relatam `failed_pair_index`
 - Use `--partial` (v0.1.15) para aplicar os pares que casam e relatar os demais; zero pares aplicados sai com 1 (`NO_MATCHES`) sem escrever
 - Nunca faça pipe de `edit` para `jaq` sem `-e`: o envelope de erro vai para o stdout, então `| jaq '.edits'` mascara o exit 65 como `null` — use `jaq -e '.edits'` ou `${PIPESTATUS[0]}`
@@ -423,12 +463,12 @@ atomwrite replace --dry-run 'before' 'after' src/
 - Use `--dry-run` para visualizar substituições sem modificar arquivos
 - Use `--preserve-timestamps` para manter o mtime original dos arquivos modificados (padrão: mtime é atualizado para refletir a mudança)
 - Replace com string fixa usa `--fuzzy auto` por padrão após zero hits no multi-match exato (v0.1.29 BREAKING vs exit 1 só-exato)
-- Modos: `--fuzzy auto|aggressive` (off rejeitado) e `--fuzzy-threshold <0.0-1.0>` opcional
-- Cascata compartilhada de 9 estratégias (igual ao edit) depois que multi-match exato encontra zero hits
+- Modos: `--fuzzy auto|aggressive|off` (`off` = exact-only, G-010; padrão `auto`) e `--fuzzy-threshold <0.0-1.0>` opcional
+- Cascata compartilhada de 9 estratégias (igual ao edit) depois que multi-match exato encontra zero hits (pulada com `--fuzzy off`)
 - Multi-apply fuzzy é **one-pass** E→D no conteúdo original (`apply_fuzzy_one_pass`); nunca reescaneia texto inserido
 - Máximo de applies fuzzy padrão = **1** se `--max-replacements` omitido; teto rígido 10_000
 - Se o replacement **contém** o pattern (string fixa), força apply único (previne crescimento infinito ao expandir uma seção)
-- Exact-only não é suportado desde v0.1.30; use auto/aggressive
+- Prefira `--fuzzy auto` para agentes; use `--fuzzy off` só para exact-only intencional (miss exato → `MATCH_FAILED` exit 65)
 - Falhas de match podem emitir `best_candidate` com linha, similaridade, strategy, diff_preview
 - Use `--progress-every N` para heartbeats NDJSON de progresso em árvores grandes
 - Modo regex (`--regex`) mantém o motor regex e NÃO roda cascata fuzzy
@@ -437,6 +477,7 @@ atomwrite replace --dry-run 'before' 'after' src/
 - Use `--include` e `--exclude` para filtragem por glob
 
 ```bash
+# Prefira --fuzzy auto (cascata padrão). --fuzzy off = exact-only (G-010), não rejeitado.
 atomwrite --workspace . replace --fuzzy auto 'legacy(' 'new(' src/
 atomwrite --workspace . replace --fuzzy auto 'exato' 'novo' src/
 atomwrite --workspace . replace --progress-every 50 'old' 'new' packages/
@@ -829,7 +870,7 @@ Esta release introduz uma nova camada de segurança chamada **intention guards**
 ### Intention Guards (5 flags OPT-IN)
 
 - `--require-backup <N>` — recusa a operação quando menos de `N` backups retidos existem para o alvo
-- `--confirm` — emite um prompt de confirmação listando a mutação planejada em NDJSON antes de executar
+- `--confirm` — flag legada de awareness no `write` (histórico: Y/N interativo em sobrescrita grande). **Substituído na v0.1.35:** sobrescrita grande é default-deny one-shot via `--ack-overwrite` (sem Y/N); `delete --confirm` é **rejeitado** (use `--plan`)
 - `--auto-rotate <N>` — rotaciona automaticamente o anel de backups para `N` entradas após uma escrita bem-sucedida
 - `--risk-threshold <LOW|MEDIUM|HIGH>` — bloqueia operações cujo risco classificado atinge ou excede o threshold
 - `--locale <en|pt-BR>` — renomeado de `--lang` para desambiguar do `--lang` tree-sitter
@@ -994,7 +1035,7 @@ max_filesize = 10485760
 ### Novas Flags
 
 - `delete --older-than <DURATION>` — filtrar por idade com sufixos s/m/h/d/w
-- `delete --confirm` — modo preview (emite NDJSON `type: "plan"`)
+- `delete --plan` — plan-only (emite NDJSON `type: "plan"`); `delete --confirm`/`--yes` **rejeitados** desde v0.1.35
 - `replace --preserve-case` — adapta case da substituição (UPPER/lower/Title)
 - `search --pcre2` — solicitar backend PCRE2 (exit 65 quando feature não compilada)
 - `edit --fuzzy-threshold <FLOAT>` — sobrescrever threshold de fuzzy matching

@@ -129,7 +129,7 @@ impl Default for DefaultsSection {
 #[derive(Debug, serde::Deserialize)]
 #[serde(default)]
 pub struct FuzzySection {
-    /// Default fuzzy mode: auto or aggressive (off rejected since v0.1.30).
+    /// Default fuzzy mode: `auto`, `aggressive`, or `off` (exact-only, G-010).
     pub mode: String,
     /// Default similarity threshold (0.0–1.0) for Auto block/dual-gate.
     pub threshold: f64,

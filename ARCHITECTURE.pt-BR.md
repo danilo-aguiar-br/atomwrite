@@ -9,7 +9,7 @@
 - Projetado para agentes LLM que precisam de manipulação de arquivos segura e estruturada
 - Toda escrita é atômica: tempfile, fsync, rename, fsync do diretório
 - Toda resposta é NDJSON no stdout com checksums BLAKE3
-- Todos os logs de diagnóstico vão para stderr via `tracing` (`init_telemetry` em `src/runtime.rs`): writer non-blocking, `EnvFilter` (`ATOMWRITE_LOG` > `RUST_LOG` > `-v`/`-q`), tee opcional em `ATOMWRITE_LOG_DIR` com `Rotation::NEVER`, JSON via `ATOMWRITE_LOG_FORMAT`. Plano de dados do agente permanece NDJSON em stdout.
+- Todos os logs de diagnóstico vão para stderr via `tracing` (`init_tracing` em `src/runtime.rs`, sem telemetria de produto): writer non-blocking; filtro via CLI `-v`/`-q`; tee opcional sob XDG state (ProjectDirs); sem knobs de produto `ATOMWRITE_*`/`RUST_LOG` na v0.1.35+. Plano de dados do agente permanece NDJSON em stdout.
 
 
 ## Mapa de Módulos
@@ -29,7 +29,7 @@
 
 ### Segurança e Validação
 - `src/path_safety.rs` — jail do workspace: path traversal, symlinks, FIFO/device, nomes reservados Windows (COM0–9/LPT0–9), NFC, helper de path longo `\\?\`
-- `src/storage.rs` — config/data/cache/state via `directories::ProjectDirs` ou override `ATOMWRITE_HOME`
+- `src/storage.rs` — config/data/cache/state via `directories::ProjectDirs` (XDG); sem knob de runtime `ATOMWRITE_HOME` na v0.1.35+
 - `src/env_detect.rs` — autodetecção WSL/container/K8s/CI/Termux/Flatpak/Snap/sudo para `doctor`
 - `src/signal.rs` — tratamento de SIGINT/SIGTERM via signal-hook com coordenação de shutdown gracioso
 - `src/error.rs` — enum de erro de domínio com códigos de saída, classificação de erro e flag retryable
@@ -188,7 +188,7 @@ Adições v0.1.12:
 
 ### L1 WalPolicy + L4 HeuristicsEngine (v0.1.16, G119, ADR-0028)
 - `WalPolicy { Auto, Always, Never }` permite ao caller ajustar quando o sidecar WAL é escrito; `Auto` pula para escritas triviais (tamanho sob 1 MiB, não-Edit/Replace, diretório sob Git, escrita sob 4 KiB)
-- `crate::wal::heuristics` agrega 5 funções componíveis via `heuristics_should_preserve(target, committed_at_unix, count, rank)`; env vars `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS` ajustam cada alavanca
+- `crate::wal::heuristics` agrega 5 funções componíveis via `heuristics_should_preserve(target, committed_at_unix, count, rank)`; alavancas usam constantes + configuração XDG/CLI na v0.1.35+ (sem knobs de produto `ATOMWRITE_WAL_*` em env)
 - Campo `wal_policy` em `WriteOutput` NDJSON expõe a decisão por chamada
 
 ### L3 auto-heal no startup (v0.1.17, G119, ADR-0028)
@@ -213,8 +213,8 @@ Adições v0.1.12:
 - Normalização BCP 47 com `unic-langid` (`_` → `-`, remove `.UTF-8`; `C`/`POSIX` não viram inglês)
 - Negociação com `fluent-langneg` (`NegotiationStrategy::Lookup`) contra locales MVP
 - Enum tipado `Idioma` (`En` | `PtBr`, `#[non_exhaustive]`) + `OnceLock<LocaleState>` imutável
-- Precedência: `--locale` / `ATOMWRITE_LANG` → preferência em `storage::config_dir()` (`ATOMWRITE_HOME` ou XDG → `…/locale`) → SO → `en`
-- Override: flag global `--locale` (value_parser clap) ou env `ATOMWRITE_LANG` (campo Rust `lang` estável; flag renomeada de `--lang` no ADR-0037)
+- Precedência: CLI `--locale` → preferência em `storage::config_dir()` (XDG → locale) → SO → `en` (sem knobs env de produto)
+- Override: flag global `--locale` (value_parser clap; campo Rust `lang` estável). Sem knob de produto `ATOMWRITE_LANG` na v0.1.35+
 - Diagnóstico: `atomwrite locale` (NDJSON); `locale --set` / `locale --clear` para preferência XDG
 - **Códigos** NDJSON e mensagens **Display** de erro permanecem em inglês (contrato agent)
 - **Sugestões** de erro e avisos humanos em stderr seguem o locale resolvido via `t!`
@@ -245,7 +245,7 @@ Adições v0.1.12:
 - Campo `suggestion` em `ErrorJson` fornece orientação de recuperação acionável para cada variante de erro
 - Struct `ErrorContext` (adicionado em v0.1.4) carrega `workspace_provided: bool` e `workspace: Option<PathBuf>` do parser CLI para a saída de erro
 - `ErrorJson::from_error_with_context(err, &ErrorContext)` produz sugestões context-aware
-- Sugestão de `WorkspaceJail` se adapta com base em se o usuário forneceu `--workspace` ou `ATOMWRITE_WORKSPACE`
+- Sugestão de `WorkspaceJail` se adapta com base em se o usuário forneceu `--workspace` (somente CLI/XDG na v0.1.35+)
 - Legacy `ErrorJson::from_error(err)` delega para `from_error_with_context` com `ErrorContext::default()` (compatibilidade retroativa)
 - 25 variantes de erro no total (20 baseline de v0.1.4 + 5 adicionadas em v0.1.12: `LockTimeout` 83, `SyntaxError` 88, `ExdevFallbackDisabled` 91, `CopyBackBlake3Failed` 92, `OrphanJournal` 93)
 - v0.1.24 auditoria de erros tipados: TODOS os `anyhow::bail!()` voltados ao usuário convertidos para variantes `AtomwriteError`; nenhum caminho de erro retorna exit 1 genérico sem envelope JSON
@@ -285,7 +285,7 @@ Adições v0.1.12:
 - 0045 — suggestion acionável para erros de parsing do clap (v0.1.24)
 - 0046 — retrofit diff resolve-first (v0.1.24)
 - 0047 — correção do modo read-only do scope (v0.1.24)
-- 0048 — BackupOpts unificado: struct única flattened via `#[command(flatten)]` em 15 subcomandos mutantes, resolvida por um único `resolve_backup()` com precedência `ATOMWRITE_BACKUP` env > flags CLI > `.atomwrite.toml` `[defaults]` > default embutido (v0.1.28)
+- 0048 — BackupOpts unificado: struct única flattened via `#[command(flatten)]` em 15 subcomandos mutantes, resolvida por um único `resolve_backup()` com precedência flags CLI > `.atomwrite.toml` `[defaults]` / XDG > default embutido (knobs env removidos na v0.1.35)
 - 0049 — config viva encanada: `load_config` chamado uma única vez em `lib.rs::run()`, `DefaultsSection` propagado a cada handler mutante (v0.1.28)
 - 0050 — guard de stdin-tty: `main.rs` calcula `stdin.is_terminal()` (std `IsTerminal`, Rust >= 1.70) e propaga `stdin_is_tty` até `cmd_edit`; modos consumidores de stdin falham rápido com exit 65 em vez de bloquear indefinidamente (v0.1.28)
 - 0054 — contrato one-shot fuzzy: multi-apply one-pass, embeds forçam apply único, default max applies 1, `--timeout-secs` default 120 / exit 124, cancel polled no meio do fuzzy, caps de recurso (runtime v0.1.33; docs completas v0.1.34)
@@ -298,3 +298,14 @@ Adições v0.1.12:
 - Testes property-based via `proptest` para checksum e backup
 - Gate de cross-compile via `tests/cross_compile_check.rs`
 - Testes de snapshot via `insta` para saída NDJSON estável
+
+## Contratos residuais v0.1.35 (notas de arquitetura)
+
+- Guarda de write grande: default-deny quando o alvo existente excede XDG `[write].confirm_large_bytes`; exige `--ack-overwrite` (one-shot). `--require-large-ack` é independente.
+- Superfície delete: `--plan` / `--dry-run` plan-only; `--confirm` e `--yes`/`-y` rejeitados fail-closed.
+- Watch: sempre emite NDJSON terminal `type:watch_summary`; idle padrão 500 ms.
+- Semantic-merge: markers de conflito default ON; opt-out `--no-conflict-markers`.
+- SRP: monólitos secundários fatiados via `include!`.
+- Observabilidade: somente `init_tracing` — diagnósticos locais em stderr; sem telemetria de produto.
+- Config: knobs de produto só CLI + XDG / `.atomwrite.toml`.
+

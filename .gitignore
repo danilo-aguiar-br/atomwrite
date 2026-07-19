@@ -36,15 +36,17 @@ AGENTS.pt-BR.md
 **/.atomwrite.journal*.json
 
 # ── sqlite-graphrag runtime artifacts (local databases and queues) ──
-graphrag.sqlite
-graphrag.sqlite-shm
-graphrag.sqlite-wal
-.enrich-queue.sqlite
-.enrich-queue.sqlite-shm
-.enrich-queue.sqlite-wal
-.ingest-queue.sqlite
-.ingest-queue.sqlite-shm
-.ingest-queue.sqlite-wal
+# Match at repository root OR any nested directory (**/).
+# Covers main DB + SQLite sidecars (-shm/-wal) for graphrag, enrich-queue, ingest-queue.
+**/graphrag.sqlite
+**/graphrag.sqlite-shm
+**/graphrag.sqlite-wal
+**/.enrich-queue.sqlite
+**/.enrich-queue.sqlite-shm
+**/.enrich-queue.sqlite-wal
+**/.ingest-queue.sqlite
+**/.ingest-queue.sqlite-shm
+**/.ingest-queue.sqlite-wal
 
 # ── Local cargo config and working notes (never commit) ──
 .cargo/config.toml

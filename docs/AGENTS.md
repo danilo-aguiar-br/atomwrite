@@ -4,6 +4,18 @@
 [Leia em Português](AGENTS.pt-BR.md)
 
 
+
+## What's New in v0.1.35 (2026-07-19)
+
+- Residual **A-*** gaps closed (gaps.md §20): suite green without `delete --yes`; large overwrite **default-deny** (`--ack-overwrite`); `watch` always emits `watch_summary`; semantic-merge conflict markers default ON; monólitos `include!` SRP splits
+- **Write large files:** existing targets above XDG `[write].confirm_large_bytes` (default 100 KiB) require `--ack-overwrite` (agent one-shot; no interactive Y/N). `--confirm` is a legacy awareness flag; `--require-large-ack` is independent (no alias collision)
+- **Delete:** use `--plan` or `--dry-run` for plan-only; `delete --confirm` and `delete --yes`/`-y` are **rejected** (fail-closed). Run again without those flags to delete
+- **Watch:** final NDJSON `type:watch_summary` on every exit path; idle default **500 ms** (`--idle-exit-ms` / XDG `[watch].idle_exit_ms`); debounce via CLI or XDG `[watch].debounce_ms`
+- **Semantic-merge:** conflict markers written by default; opt-out `--no-conflict-markers`
+- Local DoD (no product GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
+- Contract suite: `cargo test --test cli_e2e_v0135`
+- Pin agents to `^0.1.35`. Configuration is CLI + XDG / `.atomwrite.toml` only (no product `ATOMWRITE_*` runtime knobs; no product telemetry)
+
 ## What's New in v0.1.34
 
 - Docs-complete publish of the v0.1.33 one-shot runtime (same binary behavior)
@@ -14,19 +26,19 @@
 - Cooperative cancel polled mid-fuzzy cascade; caps: pattern 64 KiB, lev 8192 chars, max windows 4096, growth max(4×,+16 MiB)
 - Fuzzy caps (constants in `src/constants.rs`): `FUZZY_MAX_PATTERN_BYTES` (64 KiB), `FUZZY_MAX_LEVENSHTEIN_CHARS` (8192), `FUZZY_MAX_WINDOWS` (4096), `FUZZY_MAX_BUFFER_GROWTH_FACTOR`/`FUZZY_MAX_BUFFER_GROWTH_BYTES` (max 4× / +16 MiB), hard ceiling `FUZZY_HARD_MAX_REPLACEMENTS` (10_000)
 - Regression suite: `tests/cli_v0133_oneshot_fuzzy.rs` — hang < 2s, embeds, timeout
-- 41 subcommands; fuzzy still only `auto|aggressive` (`off` rejected exit 65)
+- 41 subcommands; fuzzy still only `auto|aggressive` (`off` rejected exit 65). **Superseded in v0.1.35:** `off` = exact-only (G-010).
 - See [ADR-0054](decisions/0054-v0-1-34-oneshot-fuzzy-timeout.md) for one-shot fuzzy + timeout contract (exit 124 vs 143)
 
 ## What Was New in v0.1.30
 
-- BREAKING residual: `--fuzzy off` is rejected (exit 65); only `auto` and `aggressive`
+- BREAKING residual: `--fuzzy off` is rejected (exit 65); only `auto` and `aggressive`. **Superseded in v0.1.35:** Off = exact-only (G-010).
 - Edit success NDJSON includes `match_count` and optional `indent_adjusted`
 - `platform.backup_method` is `reflink_or_copy` (never hardlink of live file)
 - Recipe hash excludes `*.bak.*`; sparse outline emits real AST items
 
 ## What Was New in v0.1.29
 
-- BREAKING: `replace` default is `fuzzy=auto` after zero exact matches; as of 0.1.30 exact-only via `--fuzzy off` is rejected
+- BREAKING: `replace` default is `fuzzy=auto` after zero exact matches; as of 0.1.30 exact-only via `--fuzzy off` is rejected. **Superseded in v0.1.35:** Off = exact-only (G-010).
 - 8 new agent-facing subcommands: `recipe`, `sparse`, `semantic-merge`, `agent-surface`, `watch`, `codemod`, `semantic-search`, `stat`
 - Shared fuzzy cascade on `replace` (`--fuzzy`, `--fuzzy-threshold`); match errors may include `best_candidate`
 - `write --durability full|fast|auto`; NDJSON `platform.durability`, `platform.rename_method`, `platform.backup_method`
@@ -74,7 +86,7 @@
 - 49 gaps resolved (GAP-071 through GAP-134) in 6 rounds of end-to-end audit (~505 scenarios)
 - NEW SUBCOMMAND: `verify <PATH> --checksum <BLAKE3>` — dedicated checksum verification (33 subcommands total)
 - NEW: `.atomwrite.toml` config file — hierarchy: CLI > env > local `.atomwrite.toml` > XDG `~/.config/atomwrite/config.toml` > defaults
-- NEW FLAGS: `delete --older-than <DURATION>` (s/m/h/d/w), `delete --confirm` (preview mode), `replace --preserve-case` (UPPER/lower/Title adaptation), `search --pcre2`, `edit --fuzzy-threshold <FLOAT>`, `scope --action symbols|normalize`
+- NEW FLAGS: `delete --older-than <DURATION>` (s/m/h/d/w), `delete --plan` (plan-only; `--confirm`/`--yes` rejected since v0.1.35), `replace --preserve-case` (UPPER/lower/Title adaptation), `search --pcre2`, `edit --fuzzy-threshold <FLOAT>`, `scope --action symbols|normalize`
 - NEW FLAGS: `copy --no-reflink`, `copy --preserve-xattr`, `move --preserve-hardlinks`
 - FUZZY MATCHING: Jaro-Winkler (`context_aware_jw` strategy) added to the 9-strategy cascade; `diff_preview` field in responses when fuzzy match used
 - CRITICAL FIXES: `write --backup` no longer reports phantom `backup_path` (GAP-101), `set` no longer misroutes key into scalar TOML (GAP-102), `size_delta_pct` overflow fixed (GAP-120)
@@ -257,14 +269,14 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 
 ## 41 Subcommands
 - `read` -- reads files with metadata, checksum, optional content; `--format raw` (alias `--raw`) emits raw bytes for Unix composability (G81); `--grep <REGEX>` filters returned lines
-- `write` -- creates or overwrites files atomically via stdin; `--syntax-check` valida com tree-sitter após escrita (G72, exit 88)
-- `edit` -- edits surgically by line number, text marker, or exact match; `--fuzzy auto|aggressive` for fuzzy matching (off rejected exit 65 since v0.1.30); success NDJSON may include `match_count` and `indent_adjusted`; `--multi` for NDJSON multi-edit
+- `write` -- creates or overwrites files atomically via stdin; `--syntax-check` validates with tree-sitter after write (G72, exit 88); large existing targets require `--ack-overwrite` (default-deny above XDG `[write].confirm_large_bytes`)
+- `edit` -- edits surgically by line number, text marker, or exact match; `--fuzzy auto|aggressive|off` where `off` = exact-only (G-010); default `auto`; success NDJSON may include `match_count` and `indent_adjusted`; `--multi` for NDJSON multi-edit
 - `search` -- searches file content in parallel (ripgrep engine); supports `--context N`, `--max-count N`, `--invert`, `--sort path`, `--fixed`, `--word`, `--case-insensitive`, `--include`, `--exclude`
-- `replace` -- replaces text across multiple files with atomic writes; `--fuzzy auto|aggressive` (off rejected exit 65), `--fuzzy-threshold`, `--progress-every`; fuzzy multi-apply is **one-pass** L→R (`apply_fuzzy_one_pass`, never re-scans inserted text); default max applies **1** if `--max-replacements` omitted (hard ceiling 10_000); if replacement **contains** pattern (fixed-string), force single apply; match failures may emit `best_candidate`
+- `replace` -- replaces text across multiple files with atomic writes; `--fuzzy auto|aggressive|off` where `off` = exact-only (G-010); default `auto`; `--fuzzy-threshold`, `--progress-every`; fuzzy multi-apply is **one-pass** L→R (`apply_fuzzy_one_pass`, never re-scans inserted text); default max applies **1** if `--max-replacements` omitted (hard ceiling 10_000); if replacement **contains** pattern (fixed-string), force single apply; match failures may emit `best_candidate`
 - `hash` -- computes BLAKE3 checksums
-- `delete` -- deletes files with optional backup
+- `delete` -- deletes files with optional backup; `--plan` for plan-only listing; `delete --confirm` / `--yes` / `-y` are **rejected**
 - `count` -- counts lines, files by extension
-- `diff` -- compares two files (unified, stat, or changes)
+- `diff` -- compares two files (unified, stat, or changes); second path `-` reads stdin (G-003)
 - `move` -- moves or renames files atomically
 - `copy` -- copies files with checksum verification
 - `list` -- lists project file structure with metadata
@@ -291,9 +303,9 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `verify` -- (v0.1.25) verify a file checksum against an expected BLAKE3 hash; delegates to `hash --verify`; exit 0 on match, exit 81 on mismatch
 - `recipe` -- (v0.1.29/v0.1.30) list/run versioned multi-step pipelines; recursive hash skips `*.bak.*`
 - `sparse` -- (v0.1.29/v0.1.30) budgeted monorepo list/read/outline; outline emits real AST kinds
-- `semantic-merge` -- (v0.1.29/v0.1.30) three-way line-based merge for multi-agent conflicts (not AST)
+- `semantic-merge` -- (v0.1.29/v0.1.30) three-way line-based merge for multi-agent conflicts (not AST); conflict markers default ON; opt-out `--no-conflict-markers`
 - `agent-surface` -- (v0.1.29) clap-derived tool manifesto (CLI only; MCP forbidden)
-- `watch` -- (v0.1.29, feature `watch`) filesystem events with debounce/checksum/gitignore
+- `watch` -- (v0.1.29, feature `watch`) filesystem events with debounce/checksum/gitignore; always emits final NDJSON `type:watch_summary`
 - `codemod` -- (v0.1.29) multi-rule AST campaign with `by_rule_id` summary
 - `semantic-search` -- (v0.1.29, feature `semantic`) offline token ranking / inverted index
 - `stat` -- (v0.1.29) alias of `read --stat`
@@ -379,8 +391,16 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 
 ### Error Envelope
 
+Search/replace zero matches (exit 1):
+
 ```json
 {"error":true,"code":"NO_MATCHES","exit":1,"message":"no matches for pattern","path":"src/file.rs","error_class":"permanent","retryable":false,"suggestion":"inspect best_candidate or retry with --fuzzy aggressive and uniqueness / --replace-all","workspace":null,"best_candidate":{"text":"near miss snippet","similarity":0.82,"strategy":"jaro_winkler","line":12,"column":4,"diff_preview":null}}
+```
+
+Edit/fuzzy miss (exit 65) — inspect optional `best_candidate` and adjust `--old`:
+
+```json
+{"error":true,"code":"MATCH_FAILED","exit":65,"message":"no match for old text","path":"src/file.rs","error_class":"permanent","retryable":false,"suggestion":"inspect best_candidate in the error NDJSON and adjust --old, or lower --fuzzy-threshold","workspace":null,"best_candidate":{"text":"near miss snippet","similarity":0.82,"strategy":"jaro_winkler","line":12,"column":4,"diff_preview":null}}
 ```
 
 - The `workspace` field only appears on `WORKSPACE_JAIL` errors and reports the resolved workspace root (may be `null`)
@@ -390,12 +410,12 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 
 ## REQUIRED -- Exit Codes
 - 0: success
-- 1: no matches (search/replace/transform/scope found nothing)
+- 1: no matches (search/replace/transform/scope found nothing; often `NO_MATCHES`)
 - 4: file not found
 - 13: permission denied
 - 28: disk full
 - 30: quota exceeded
-- 65: invalid input, file too large, or binary file
+- 65: invalid input, large write without `--ack-overwrite`, `MATCH_FAILED` (edit/fuzzy miss), binary file, etc. — **not** "fuzzy off rejected"
 - 73: rename across devices
 - 74: I/O error
 - 78: invalid configuration
@@ -492,6 +512,11 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - NEVER use unquoted expressions with `calc`; the shell will interpolate them
 - NEVER ignore `checksum_before` and `checksum_after` in edit/replace responses
 - NEVER retry `permanent` or `precondition_failed` errors without fixing the cause
+- NEVER pass `delete --confirm` / `--yes` / `-y` (rejected fail-closed; use `--plan` or omit flags)
+- NEVER write large existing targets without `--ack-overwrite` (default-deny above XDG `[write].confirm_large_bytes`)
+- NEVER assume empty stdout on `watch` idle — always ends with `type:watch_summary`
+- NEVER invent product `ATOMWRITE_*` runtime knobs (CLI + XDG / `.atomwrite.toml` only in v0.1.35)
+- Prefer `--fuzzy auto` (default cascade for agents); use `--fuzzy off` only for intentional exact-only (G-010)
 
 
 ## REQUIRED -- Token Budget

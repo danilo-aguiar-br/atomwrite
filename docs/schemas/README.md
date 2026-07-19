@@ -1,6 +1,6 @@
 # atomwrite JSON Schemas
 
-_Last updated: 2026-07-19 (v0.1.34) — 38 schemas in index; no envelope change since v0.1.30; one-shot runtime is algorithmic only_
+_Last updated: 2026-07-19 (v0.1.35) — 38 schemas in index; no envelope schema change for A-* residuals; watch always ends with `watch_summary` event; `MATCH_FAILED` is error-output code for edit/fuzzy miss; one-shot runtime is algorithmic only_
 
 ## English
 ### Purpose
@@ -66,8 +66,14 @@ _Last updated: 2026-07-19 (v0.1.34) — 38 schemas in index; no envelope change 
 - Cooperative cancel (SIGINT/SIGTERM) → **cancelled-event** schema, process exit **143** — distinct from timeout **124**
 - See ADR-0054 (`docs/decisions/0054-v0-1-34-oneshot-fuzzy-timeout.md`) and `cargo test --test cli_v0133_oneshot_fuzzy`
 
+### v0.1.35 residual contract (no envelope schema change for A-*)
+- A-* residuals closed without new NDJSON schema fields: large write `--ack-overwrite`, `delete --plan` (not `--confirm`/`--yes`), semantic-merge markers default ON
+- `watch` always ends with a final NDJSON event `type:watch_summary` (even idle / zero events)
+- `MATCH_FAILED` remains the **error-output** code for edit/fuzzy miss (exit 65) with optional `best_candidate`
+- Contract suite: `cargo test --test cli_e2e_v0135`
+
 ## Português
-### Última atualização: 2026-07-19 (v0.1.34) — 38 schemas no índice; sem mudança de envelope desde v0.1.30; runtime one-shot é apenas algorítmico
+### Última atualização: 2026-07-19 (v0.1.35) — 38 schemas no índice; sem mudança de schema de envelope para residuais A-*; watch sempre termina com evento `watch_summary`; `MATCH_FAILED` é código de error-output para miss de edit/fuzzy; runtime one-shot é apenas algorítmico
 
 ### Objetivo
 - Cada schema descreve a saída NDJSON de um subcomando do atomwrite

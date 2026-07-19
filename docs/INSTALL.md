@@ -3,18 +3,18 @@
 [Leia em Português](INSTALL.pt-BR.md)
 
 - Complete instructions for installing atomwrite on Linux, macOS, and Windows
-- Current target version: v0.1.34 (one-shot fuzzy, timeout default 120, exit 124 on deadline, recipes, sparse, semantic-merge, 41 subcommands; slim/full feature builds)
+- Current target version: v0.1.35 (one-shot fuzzy, timeout default 120, exit 124 on deadline, recipes, sparse, semantic-merge, 41 subcommands; slim/full feature builds)
 - Sections ordered by platform, with prerequisites and troubleshooting
 
 
-## What's New in v0.1.34
+## What's New in v0.1.35
 
 - Docs-complete publish of the v0.1.33 one-shot runtime (same binary behavior)
 - Global `--timeout-secs` (alias `--timeout`) **default 120** (was 0); `0` disables; deadline → exit **124**
 - Fuzzy multi-apply is **one-pass** L→R on original content (`apply_fuzzy_one_pass`); never re-scans inserted text
 - Default max fuzzy applies = **1** if `--max-replacements` omitted; hard ceiling 10_000; embeds force single apply
 - ADR-0054; suite `cargo test --test cli_v0133_oneshot_fuzzy`
-- Pin `^0.1.34` / 41 subcommands
+- Pin `^0.1.35` / 41 subcommands
 
 ## What's New in v0.1.12
 
@@ -61,7 +61,7 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 
 ### Test Coverage
 
-- 700+ tests listed (v0.1.34 working tree; suite `cli_v0133_oneshot_fuzzy`)
+- 700+ tests listed (v0.1.35 working tree; suite `cli_v0133_oneshot_fuzzy`)
 - ADRs in `docs/decisions/` through 0054
 - 38 JSON schemas in `docs/schemas/`
 - See [docs/decisions/README.md](decisions/README.md) for architectural decisions
@@ -75,10 +75,10 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Install atomwrite v0.1.34 (path/source recommended until crates.io catches up)
-cargo install --path . --locked --force
-# Or pin crates.io when 0.1.34 is published:
-# cargo install atomwrite --locked --version "^0.1.34"
+# Install atomwrite v0.1.35 from crates.io
+cargo install atomwrite --locked --version "^0.1.35"
+# Or from a local clone:
+# cargo install --path . --locked --force
 
 # Verify
 atomwrite --version
@@ -90,11 +90,10 @@ atomwrite --version
 # Install build tools
 sudo dnf install rust cargo gcc
 
-# Preferred: from clone (v0.1.34)
-cargo install --path . --locked --force
-# Alternative when crates.io publishes 0.1.34:
-# cargo install atomwrite --locked --version "^0.1.34"
-# Note: crates.io may still list an older version
+# Install atomwrite v0.1.35 from crates.io
+cargo install atomwrite --locked --version "^0.1.35"
+# Or from a local clone:
+# cargo install --path . --locked --force
 ```
 
 ### Quick Install (Arch)
@@ -102,11 +101,10 @@ cargo install --path . --locked --force
 ```bash
 sudo pacman -S rust
 
-# Preferred: from clone (v0.1.34)
-cargo install --path . --locked --force
-# Alternative when crates.io publishes 0.1.34:
-# cargo install atomwrite --locked --version "^0.1.34"
-# Note: crates.io may still list an older version
+# Install atomwrite v0.1.35 from crates.io
+cargo install atomwrite --locked --version "^0.1.35"
+# Or from a local clone:
+# cargo install --path . --locked --force
 ```
 
 
@@ -119,11 +117,10 @@ cargo install --path . --locked --force
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Preferred: from clone (v0.1.34)
-cargo install --path . --locked --force
-# Alternative when crates.io publishes 0.1.34:
-# cargo install atomwrite --locked --version "^0.1.34"
-# Note: crates.io may still list an older version
+# Install atomwrite v0.1.35 from crates.io
+cargo install atomwrite --locked --version "^0.1.35"
+# Or from a local clone:
+# cargo install --path . --locked --force
 
 # Allow in Gatekeeper if prompted
 xattr -d com.apple.quarantine $(which atomwrite) 2>/dev/null || true
@@ -147,15 +144,15 @@ cd atomwrite
 cargo install --path . --locked --force
 ```
 
-### Quick Install (from crates.io — when 0.1.34 is published)
+### Quick Install (from crates.io)
 
 ```powershell
 # Open PowerShell 7+ or Windows Terminal
 rustup default stable
 rustup target add x86_64-pc-windows-msvc
 
-# Prefer a version pin; crates.io may still list an older version
-cargo install atomwrite --locked --version "^0.1.34"
+# Install atomwrite v0.1.35 from crates.io
+cargo install atomwrite --locked --version "^0.1.35"
 
 # Verify (expect NDJSON output)
 atomwrite --version
@@ -209,24 +206,21 @@ the file in the locking application and retry.
 ## Installing Specific Versions
 
 ```bash
-# Preferred: source tree v0.1.34 (until crates.io is published)
-cargo install --path . --locked --force
+# Recommended: crates.io pin for v0.1.35
+cargo install atomwrite --locked --version "^0.1.35"
 
-# Pin crates.io when 0.1.34 is published
-cargo install atomwrite --locked --version "^0.1.34"
+# From a local clone / working tree
+cargo install --path . --locked --force
 
 # Historical pin example (0.1.28)
 cargo install atomwrite --locked --version 0.1.28
 
-# Force reinstall (path or pinned version)
-cargo install --path . --locked --force
+# Force reinstall of the crates.io pin
+cargo install atomwrite --locked --version "^0.1.35" --force
 ```
 
 The `--locked` flag ensures `Cargo.lock` is honored, guaranteeing a reproducible
 build that matches what the maintainers tested.
-
-Note: crates.io may still list an older version after the tree reaches 0.1.34. Use
-`cargo install --path . --locked --force` for the source tree you have checked out.
 
 
 ## Verifying Installation
@@ -253,15 +247,15 @@ The release binary is at `target/release/atomwrite` (or `atomwrite.exe` on
 Windows).
 
 
-## Slim vs Full Feature Builds (v0.1.34)
+## Slim vs Full Feature Builds (v0.1.35)
 
-v0.1.34 exposes Cargo features so you can trade AST size for a slim agent binary.
+v0.1.35 exposes Cargo features so you can trade AST size for a slim agent binary.
 
 | Profile | Command | Approx size | Notes |
 |---|---|---|---|
-| slim (`core` only) | `cargo install --path . --locked --force --no-default-features --features core` | ~7.7 MiB | local size-gate ≤15 MiB |
-| default (full AST subset) | `cargo install --path . --locked --force` | ~52 MB | `core` + `ast` + `lang-rust` + `lang-ts` + `lang-py` |
-| `full` | `cargo install --path . --locked --force --features full` | ~52 MB+ | default + `lang-full` + `watch` + `semantic` |
+| slim (`core` only) | `cargo install atomwrite --locked --version "^0.1.35" --no-default-features --features core` | ~7.7 MiB | local size-gate ≤15 MiB |
+| default (full AST subset) | `cargo install atomwrite --locked --version "^0.1.35"` | ~52 MB | `core` + `ast` + `lang-rust` + `lang-ts` + `lang-py` |
+| `full` | `cargo install atomwrite --locked --version "^0.1.35" --features full` | ~52 MB+ | default + `lang-full` + `watch` + `semantic` |
 
 ### Feature flags
 
@@ -277,21 +271,18 @@ v0.1.34 exposes Cargo features so you can trade AST size for a slim agent binary
 
 ```bash
 # Slim agent install (agent-friendly)
-cargo install --path . --locked --force --no-default-features --features core
+cargo install atomwrite --locked --version "^0.1.35" --no-default-features --features core
 
 # Default/full install with AST
-cargo install --path . --locked --force
+cargo install atomwrite --locked --version "^0.1.35"
 
 # Default plus watch + all languages
-cargo install --path . --locked --force --features full
+cargo install atomwrite --locked --version "^0.1.35" --features full
 
 # Verify installation (41 subcommands in --help)
 atomwrite --version
 atomwrite --help
 ```
-
-crates.io may still publish an older version until the maintainer ships 0.1.34. Prefer
-`--path . --force` for this tree.
 
 
 ## Health Check (G119)
@@ -367,7 +358,7 @@ This release introduces a new safety layer called **intention guards** and renam
 
 ### Statistics
 
-- 700+ tests listed (v0.1.34 working tree)
+- 700+ tests listed (v0.1.35 working tree)
 - 11 GAP-2026 closed
 - 3 Windows cross-compile targets green
 - ADRs in `docs/decisions/` through 0054; 38 JSON schemas

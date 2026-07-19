@@ -6,6 +6,16 @@
 > Escreva uma vez, execute em qualquer lugar -- com garantias reais de fsync em cada plataforma
 
 
+
+### Matriz de verificação (v0.1.35 honesta)
+
+| Plataforma | Status |
+|------------|--------|
+| Linux x86_64 | e2e completo + suite unit/integration |
+| Windows (`x86_64-pc-windows-gnu`) | `cargo check` no host Linux |
+| macOS (apple-darwin) | suporte `cfg` no fonte; cross-compile pode falhar sem SDK host/osxcross — prova de runtime em Mac real |
+| CI / GitHub Actions | **Não** embarcado neste repositório (somente gates locais) |
+
 ## O Que Há de Novo na v0.1.12
 
 Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
@@ -326,7 +336,7 @@ Esta release é retrocompatível em Linux, macOS e Windows para flags existentes
 - Release residual de contrato de agente sobre a superfície de plataforma da v0.1.29
 - Caminho de backup usa `reflink_or_copy` com fallback para copy; nunca hardlink do arquivo vivo
 - NDJSON do edit pode incluir `match_count` e `indent_adjusted` para parsing por agentes
-- `--fuzzy off` é rejeitado (exit 65) na CLI e em `.atomwrite.toml` `[fuzzy] mode`
+- `--fuzzy off` = exact-only (G-010 CLOSED na v0.1.35) na CLI e em `.atomwrite.toml` `[fuzzy] mode` (não rejeitado; cascata pulada)
 - Sparse outline emite kinds reais de `outline_item` AST sob orçamento
 - Help e docs de `semantic-merge` admitem merge line-based (não AST)
 - Hash recursivo de recipe exclui paths `*.bak.*`
@@ -341,3 +351,12 @@ Esta release é retrocompatível em Linux, macOS e Windows para flags existentes
 - Cancel cooperativo consultado no meio da cascata fuzzy; caps: pattern 64 KiB, lev 8192, windows 4096, growth max(4×,+16 MiB)
 - Regressão: `cargo test --test cli_v0133_oneshot_fuzzy`
 - Veja [MIGRATION.pt-BR.md](MIGRATION.pt-BR.md#v0133-para-v0134-atual) e ADR-0054
+
+## v0.1.35 — Honest multi-OS and local gates
+
+- Linux: full e2e + unit/integration
+- Windows-gnu: `cargo check --target x86_64-pc-windows-gnu` on Linux host
+- macOS: source-level `cfg`; cross may fail without host SDK — validate on a real Mac
+- Product repo ships **no** GitHub Actions workflows; use local DoD from `docs/TESTING.md`
+- Watch/notify and path separators are platform-specific; see A-XPLAT-001 in gaps.md §20
+

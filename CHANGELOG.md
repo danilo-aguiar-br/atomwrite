@@ -8,6 +8,39 @@
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.35] - 2026-07-19
+
+### Added
+- Large overwrite **default-deny**: existing targets above XDG `[write].confirm_large_bytes` (bootstrap default 100 KiB) require `--ack-overwrite` (agent one-shot; no Y/N prompt)
+- Independent flag `--require-large-ack` (no clap alias collision with `--confirm`)
+- `watch` always emits final NDJSON `type:watch_summary` (`events`, `reason`: idle|max_events|timeout|signal) even with zero events
+- `semantic-merge` writes conflict markers into output by default (`<<<<<<< ours` / `=======` / `>>>>>>> theirs`); opt-out with `--no-conflict-markers` or `--write-conflict-markers false`
+- XDG `[watch].debounce_ms` + CLI `--debounce-ms`; idle default `DEFAULT_WATCH_IDLE_EXIT_MS=500` (was ~3s)
+- `delete --plan` for plan-only listing (one-shot safe); `delete --confirm` and `delete --yes` / `-y` are **rejected** (fail-closed)
+- Agent-surface notes for write/watch/merge anti-patterns (A-DISC-001)
+- Local contract suite `tests/cli_e2e_v0135` + residual A-* closeout (gaps.md §20)
+
+### Changed
+- Version **0.1.35**
+- Monolith SRP splits via `include!` (write/recipe/lib/replace/scope/concurrency/cli_args/runtime)
+- `scope` reuses shared `summary_metrics` (DRY)
+- Honest multi-OS matrix: Linux full e2e; Windows-gnu `cargo check` on Linux host; macOS requires real Mac/osxcross (no product GitHub Actions)
+
+### Fixed
+- **A-TEST-001**: suite no longer uses `delete --yes` after B-015 rejection (green `cargo test --lib --tests`)
+- **A-WATCH-001**: idle watch no longer leaves empty stdout
+- **A-WRITE-001**: large overwrite was opt-in via `--confirm`; now always default-deny
+- **A-WRITE-002**: `--require-large-ack` was alias of `--confirm` ("used multiple times"); now independent
+- **A-MERGE-001**: conflict status wrote prefer-ours without markers; markers default ON
+- **A-ONESHOT-001**: watch idle default reduced to 500 ms
+- **A-GAPS-DOC-001**: gaps.md banner + §20 supersede stale "suite 100% / FALHA XDG" headers
+- Doctor-only env detect allowlisted (A-ENV-001); zero product env knobs
+
+### Notes
+- No product telemetry; no `.github` CI in the product repo
+- Configuration is CLI + XDG / `.atomwrite.toml` only (no `ATOMWRITE_*` runtime knobs)
+- See `docs/TESTING.md`, `docs/CROSS_PLATFORM.md`, `docs/MIGRATION.md` (0.1.34 → 0.1.35)
+
 ## [0.1.34] - 2026-07-19
 
 ### Changed
@@ -1116,7 +1149,8 @@
 - Release profile with LTO, single codegen unit, symbol stripping, and panic=abort
 
 
-[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.34...HEAD
+[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.35...HEAD
+[0.1.35]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.34...v0.1.35
 [0.1.34]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.33...v0.1.34
 [0.1.33]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.32...v0.1.33
 [0.1.32]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.31...v0.1.32

@@ -335,7 +335,7 @@ This release is fully backward-compatible across Linux, macOS, and Windows for e
 - Residual agent-contract release on top of the v0.1.29 platform surface
 - Backup path uses `reflink_or_copy` with copy fallback; never hardlink of the live file
 - Edit NDJSON may include `match_count` and `indent_adjusted` for agent parsing
-- `--fuzzy off` is rejected (exit 65) on CLI and in `.atomwrite.toml` `[fuzzy] mode`
+- `--fuzzy off` = exact-only (G-010 CLOSED in v0.1.35) on CLI and in `.atomwrite.toml` `[fuzzy] mode` (not rejected; cascade skipped)
 - Sparse outline emits real AST `outline_item` kinds under budget
 - `semantic-merge` help and docs state line-based merge (not AST)
 - Recipe recursive hash excludes `*.bak.*` paths
@@ -366,3 +366,12 @@ Notes (2026-07-19):
 - `x86_64-unknown-linux-gnu`: primary e2e host — required green.
 - Apple/Windows targets may fail on missing cross toolchains (`lib.exe`, macOS SDK, zstd asm) — document skip honestly; not a product regression.
 - Do **not** add `.github/workflows` to this crate.
+
+## v0.1.35 — Honest multi-OS and local gates
+
+- Linux: full e2e + unit/integration
+- Windows-gnu: `cargo check --target x86_64-pc-windows-gnu` on Linux host
+- macOS: source-level `cfg`; cross may fail without host SDK — validate on a real Mac
+- Product repo ships **no** GitHub Actions workflows; use local DoD from `docs/TESTING.md`
+- Watch/notify and path separators are platform-specific; see A-XPLAT-001 in gaps.md §20
+

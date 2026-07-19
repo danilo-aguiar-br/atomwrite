@@ -77,13 +77,47 @@ Todas aditivas. Nenhuma dependência existente removida.
 - 7 novos JSON schemas em `docs/schemas/`
 - Veja [docs/decisions/README.md](decisions/README.md) para decisões arquiteturais
 
+
+## v0.1.34 para v0.1.35 (Atual)
+
+### O Que Muda
+
+- **Sobrescrita grande default-deny (A-WRITE-001):** sobrescrever arquivo existente maior que XDG `[write].confirm_large_bytes` (bootstrap 100 KiB) exige `--ack-overwrite`. Sem isso, exit **65**. Sem prompt Y/N (one-shot).
+- **`--require-large-ack` independente (A-WRITE-002):** não é mais alias clap de `--confirm`. Pode passar ambos; alvos grandes ainda precisam de `--ack-overwrite`.
+- **`delete --confirm` / `delete --yes` rejeitados (B-014/B-015 / A-TEST-001):** use `delete --plan` ou `--dry-run` para plan-only; omita flags para apagar de fato. Atualize scripts/testes que ainda passam `--yes` ou `-y`.
+- **`watch` sempre emite `watch_summary` (A-WATCH-001):** mesmo com zero eventos / idle, stdout inclui linha NDJSON final `type:watch_summary`.
+- **Idle do watch 500 ms (A-ONESHOT-001):** era ~3000 ms. Override com `--idle-exit-ms` ou XDG / `.atomwrite.toml` `[watch].idle_exit_ms`.
+- **Markers do semantic-merge default ON (A-MERGE-001):** saída com conflito grava `<<<<<<< ours`. Prefer-ours sem markers: `--no-conflict-markers` ou `--write-conflict-markers false`.
+- **Debounce watch XDG (A-XDG-002):** `[watch].debounce_ms` + CLI `--debounce-ms`.
+- **Multi-OS honesto (A-XPLAT-001):** Linux e2e completo; Windows-gnu `cargo check` no host Linux; macOS precisa de Mac real ou osxcross. Sem GitHub Actions de produto.
+- **Superfície de config:** knobs de produto só CLI + XDG / `.atomwrite.toml` (sem knobs `ATOMWRITE_*` em runtime). Doctor pode ler env do host só para detecção (allowlist A-ENV-001).
+
+### Migração Passo a Passo
+
+1. Pin: `cargo install atomwrite --locked --version "^0.1.35"` (ou `cargo install --path . --force` a partir do fonte).
+2. Agentes que sobrescrevem arquivos grandes: adicionar `--ack-overwrite` (e opcionalmente `--require-large-ack`).
+3. Agentes que usavam `delete --confirm` como “preview”: trocar para `delete --plan`.
+4. Agentes que usavam `delete --yes` / `-y`: remover essas flags; agora falham com exit 65.
+5. Parsers que assumiam stdout vazio em `watch` idle: aceitar `type:watch_summary`.
+6. Pipelines que esperavam arquivo prefer-ours limpo em conflito: passar `--no-conflict-markers` se markers forem indesejados.
+7. Reexecutar gates locais: `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo test --test cli_e2e_v0135`.
+
+### Notas de Compatibilidade
+
+- Writes não grandes, contrato fuzzy one-shot de 0.1.33/0.1.34 e a superfície de 41 subcomandos permanecem.
+- Veja gaps.md §20 para a matriz de closeout A-*.
+
+### Rollback
+
+- Pin de volta para `^0.1.34` se precisar restaurar large-write opt-in e stdout vazio do watch (não recomendado para agentes).
+
 ## Versão Atual
-- atomwrite está na v0.1.34
-- Este documento cobre migração de v0.1.0 a v0.1.34
+- atomwrite está na v0.1.35
+- Este documento cobre migração de v0.1.0 a v0.1.35
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
 
 
-## v0.1.33 para v0.1.34 (Atual)
+## v0.1.33 para v0.1.34
 
 ### Alinhamento de docs (mesmo runtime one-shot da 0.1.33)
 
@@ -127,8 +161,8 @@ Todas aditivas. Nenhuma dependência existente removida.
 
 ### Mudanças BREAKING
 
-- `--fuzzy off` é rejeitado (exit 65) com nota de migração; só restam `auto` e `aggressive`
-- `.atomwrite.toml` com `[fuzzy] mode = "off"` falha no parse com INVALID_INPUT
+- `--fuzzy off` é rejeitado (exit 65) com nota de migração; só restam `auto` e `aggressive`. **Substituído na v0.1.35:** Off = exact-only (G-010 CLOSED).
+- `.atomwrite.toml` com `[fuzzy] mode = "off"` falha no parse com INVALID_INPUT. **Substituído na v0.1.35:** `mode = "off"` é exact-only.
 - Multi-match sem `--replace-all` falha com MATCH_AMBIGUOUS (exit 65)
 
 ### Adicionado (relevante para migração)
@@ -142,8 +176,8 @@ Todas aditivas. Nenhuma dependência existente removida.
 
 ### Ação de Migração
 
-- Remova `--fuzzy off` de scripts e prompts de agente; use auto ou aggressive
-- Remova mode = "off" do .atomwrite.toml [fuzzy]
+- Remova `--fuzzy off` de scripts e prompts de agente; use auto ou aggressive (conselho histórico 0.1.30; na v0.1.35 `off` voltou a ser exact-only)
+- Remova mode = "off" do .atomwrite.toml [fuzzy] (histórico 0.1.30; na v0.1.35 exact-only é permitido)
 - Em edição multi-ocorrência passe --replace-all e parseie match_count com jaq
 - Prefira jaq em match_count e indent_adjusted a reler o arquivo inteiro após edit
 - Atualize pin: cargo install atomwrite --locked --version "^0.1.30"
@@ -155,7 +189,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 ### Mudanças BREAKING
 
 - O `replace` de string fixa agora usa `fuzzy=auto` por padrão após multi-match exato com zero hits — antes a falha exact-only retornava exit 1 sem fallback fuzzy
-- Pipelines que exigiam falha exact-only (exit 1 quando a string fixa está ausente) não devem depender de exact-only (na v0.1.30 `--fuzzy off` é rejeitado)
+- Pipelines que exigiam falha exact-only (exit 1 quando a string fixa está ausente) não devem depender de exact-only (na v0.1.30 `--fuzzy off` é rejeitado). **Substituído na v0.1.35:** `--fuzzy off` = exact-only (G-010); miss exato → `MATCH_FAILED` exit 65.
 
 ### Adicionado (relevante para migração)
 
@@ -181,7 +215,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 ### Ação de Migração
 
 - Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.30"`
-- **BREAKING**: se seu pipeline depende de `replace` exact-only falhando com exit 1 quando a string fixa está ausente, use só auto/aggressive (off rejeitado na v0.1.30)
+- **BREAKING (v0.1.30):** exact-only via `--fuzzy off` foi rejeitado; restaram só auto/aggressive. **Substituído na v0.1.35 (G-010):** `--fuzzy off` = exact-only de novo; miss exato em edit → `MATCH_FAILED` exit 65 (não é o mesmo que `NO_MATCHES` exit 1 em árvore)
 - Em falhas de match, inspecione o campo opcional `best_candidate` no envelope NDJSON de erro para diagnósticos de near-miss
 - Install slim (sem AST): `cargo install --path . --locked --no-default-features --features core`
 - Install full (features default): `cargo install --path . --locked` ou `cargo install atomwrite --locked --version "^0.1.30"`
@@ -327,7 +361,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 - `edit --fuzzy-threshold <FLOAT>` para sensibilidade configurável
 - Ações `symbols` e `normalize` (NFC) no `scope`
 - `delete --older-than` com duração legível por humanos
-- `delete --confirm` como modo preview
+- `delete --confirm` como modo preview (**substituído na v0.1.35**: use `--plan`; `--confirm` rejeitado)
 - `replace --preserve-case` com adaptação de case
 - Flag `search --pcre2` (retorna exit 65 quando feature não habilitada)
 - `transform --verify-parse` re-valida output via tree-sitter

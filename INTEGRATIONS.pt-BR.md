@@ -6,23 +6,25 @@
 > atomwrite funciona com todo agente LLM que pode executar comandos shell
 
 
-## Agentes Compatíveis (v0.1.34)
+## Agentes Compatíveis (v0.1.35)
+
+- Residuais A-* da v0.1.35 fechados: write grande `--ack-overwrite`, `watch_summary`, markers de merge, delete `--plan` (não `--confirm`/`--yes`)
 - atomwrite requer apenas acesso a `bash` para funcionar
 - Qualquer agente que pode executar um comando shell pode usar atomwrite
 - Saída NDJSON é parseável por todo LLM principal sem adaptadores customizados
 - Sem plugins, extensões ou SDKs necessários
-- **41 subcomandos** a partir da v0.1.34 (superfície da v0.1.29 mais correções de contrato residual até v0.1.30; hang one-shot fuzzy corrigido na v0.1.33, docs completas na v0.1.34)
+- **41 subcomandos** a partir da v0.1.35 (superfície da v0.1.29 mais correções de contrato residual até v0.1.30; hang one-shot fuzzy corrigido na v0.1.33, docs completas na v0.1.34)
 - `--timeout-secs` global tem default **120** (passe `0` para desligar; exit **124** no prazo)
 - Multi-apply fuzzy é **one-pass** no conteúdo original; nunca reescaneia texto inserido; default max applies = 1; embeds de pattern em replacement forçam apply único (hang corrigido para edições “expandir seção”)
 - Em sucesso de `edit --replace-all` parseie `match_count`; em indent flexível parseie `indent_adjusted`
-- Fuzzy é obrigatório (`auto`/`aggressive`); `--fuzzy off` é rejeitado (exit 65)
+- Cascata fuzzy padrão para agentes: `--fuzzy auto|aggressive`; `--fuzzy off` = exact-only (G-010 CLOSED)
 - Backup reporta `reflink_or_copy` — nunca hardlink do arquivo vivo
 - Recipe exclui `*.bak.*` inclusive no passo hash
 - Use `agent-surface` para o manifesto de tools — MCP não é fornecido
 - Prefira `recipe list|run` para pipelines search-replace-verify
 - Leia `best_candidate` em falhas de match (exit 65) em vez de reler o arquivo inteiro
 - Install slim: `cargo install --path . --locked --force --no-default-features --features core`
-- Pin de agentes em `^0.1.34`
+- Pin de agentes em `^0.1.35`
 - A partir da v0.1.12, atomwrite roda em Windows 10/11, Linux e macOS com contrato NDJSON idêntico
 - A release v0.1.12 adicionou 5 novas variantes de erro e 445 testes em 43 suites
 - A release v0.1.15 corrigiu o G117 (`edit` multi-par com paridade fuzzy, `pair_results`, `failed_pair_index`, `--partial` opt-in) e o G118 (`write` resolve o alvo contra o workspace — append/checksum seguros com CWD divergente); 461 testes em 43 suítes

@@ -22,6 +22,18 @@
 - Todo arquivo recebe checksum BLAKE3: detecta drift, verifica integridade, habilita locking otimista
 
 
+
+## Novidades na v0.1.35 (2026-07-19)
+
+- Gaps residuais **A-*** fechados (gaps.md §20): suite verde sem `delete --yes`; sobrescrita grande **default-deny** (`--ack-overwrite`); `watch` sempre emite `watch_summary`; markers de conflito do semantic-merge default ON; monólitos fatiados com `include!` (SRP)
+- **Write em arquivos grandes:** alvos existentes acima de XDG `[write].confirm_large_bytes` (padrão 100 KiB) exigem `--ack-overwrite` (agente one-shot; sem Y/N interativo). `--confirm` é flag legada de awareness; `--require-large-ack` é independente (sem colisão de alias)
+- **Delete:** use `--plan` ou `--dry-run` para plan-only; `delete --confirm` e `delete --yes`/`-y` são **rejeitados** (fail-closed). Execute de novo sem essas flags para apagar
+- **Watch:** NDJSON final `type:watch_summary` em todo caminho de saída; idle padrão **500 ms** (`--idle-exit-ms` / XDG `[watch].idle_exit_ms`); debounce via CLI ou XDG `[watch].debounce_ms`
+- **Semantic-merge:** markers de conflito gravados por padrão; opt-out `--no-conflict-markers`
+- DoD local (sem GitHub Actions de produto): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
+- Suite de contrato: `cargo test --test cli_e2e_v0135`
+- Pin de agentes em `^0.1.35`. Configuração somente CLI + XDG / `.atomwrite.toml` (sem knobs `ATOMWRITE_*` de produto; sem telemetria de produto)
+
 ## Novidades na v0.1.34 (2026-07-19)
 
 - **Correção CRÍTICA one-shot:** `replace --fuzzy` não trava mais quando `replacement` embute `pattern` (footgun de agente “expandir seção” — NEW pode conter OLD)
@@ -35,7 +47,7 @@
 
 ## O Que Havia De Novo Na v0.1.30 (2026-07-13)
 
-- **Fuzzy obrigatório**: só `auto` e `aggressive`; `--fuzzy off` rejeitado (exit 65) com nota de migração
+- **Fuzzy obrigatório**: só `auto` e `aggressive`; `--fuzzy off` rejeitado (exit 65) com nota de migração. **Substituído na v0.1.35:** Off = exact-only (G-010).
 - **`edit --replace-all`** com unicidade: multi-match sem a flag falha `MATCH_AMBIGUOUS`; sucesso NDJSON inclui **`match_count`**
 - Sucesso fuzzy no NDJSON inclui **`indent_adjusted`** quando o delta de indent realinha o replacement
 - Guarda **escape-drift** bloqueia aspas escapadas espúrias; estratégia **unicode_normalized** preserva tipografia
@@ -366,12 +378,11 @@ atomwrite completions fish > ~/.config/fish/completions/atomwrite.fish
 ## Uso
 - Toda saída vai para stdout como NDJSON
 - Todos os logs vão para stderr (apenas com `--verbose`)
-- Use `--workspace <DIR>` para restringir operações à raiz do projeto
-- Use `ATOMWRITE_WORKSPACE` para definir a raiz do workspace via env var
+- Sempre passe `--workspace <DIR>` para restringir operações à raiz do projeto
 - Use `--dry-run` antes de operações destrutivas
 - Use `--expect-checksum <HASH>` para locking otimista
-- Use `--locale <TAG>` (ou `ATOMWRITE_LANG`) para sobrescrever o locale de UI das sugestões (`en`, `pt-BR`); códigos NDJSON ficam em inglês
-- Use `atomwrite locale` para diagnosticar o locale resolvido; `locale --set` / `locale --clear` para preferência XDG
+- Use `--locale <TAG>` ou `atomwrite locale --set` / `locale --clear` para locale de UI (`en`, `pt-BR`); códigos NDJSON ficam em inglês
+- Configuração somente flags CLI + XDG / `.atomwrite.toml` — sem knobs de produto `ATOMWRITE_*` em runtime (v0.1.35)
 - Pipe stdin para `write` e `batch`
 
 
@@ -379,9 +390,9 @@ atomwrite completions fish > ~/.config/fish/completions/atomwrite.fish
 
 ### I/O Central
 - `read` — ler arquivos com metadados, checksum, conteúdo opcional
-- `write` — criar ou sobrescrever arquivos atomicamente via stdin
+- `write` — criar ou sobrescrever arquivos atomicamente via stdin (alvos existentes grandes exigem `--ack-overwrite`)
 - `edit` — editar cirurgicamente por número de linha, marcador de texto ou match exato
-- `delete` — deletar arquivos com backup opcional
+- `delete` — deletar arquivos com backup opcional (`--plan` plan-only; `--confirm`/`--yes` rejeitados)
 - `copy` — copiar arquivos com verificação de checksum
 - `move` — mover ou renomear arquivos atomicamente (fallback copy em EXDEV)
 - `apply` — aplicar patches do stdin (unified diff, search/replace, full, markdown)
@@ -520,19 +531,11 @@ atomwrite completions bash
 
 
 ## Variáveis de Ambiente
-- `NO_COLOR`: desabilita saída colorida quando definida com qualquer valor
-- `RUST_LOG`: controla verbosidade do tracing (ex., `RUST_LOG=debug` ou `RUST_LOG=warn,atomwrite=info`)
-- `ATOMWRITE_LOG`: mesma sintaxe de `RUST_LOG`, **maior precedência** (override específico do projeto)
-- `ATOMWRITE_LOG_FORMAT`: `compact` (padrão em stderr) ou `json` / `jsonl` (linhas estruturadas para agregadores)
-- `ATOMWRITE_LOG_DIR`: diretório opcional para tee de diagnóstico (`Rotation::NEVER`, arquivos `atomwrite.log` / `atomwrite.jsonl`); stderr permanece o contrato agent-first
-- `ATOMWRITE_LOG_LOSSY`: writer non-blocking lossy por padrão; `0`/`false`/`off` bloqueia em vez de descartar sob backpressure
-- `ATOMWRITE_LANG`: sobrescreve locale de UI para sugestões / stderr humano (`en`, `pt-BR`); igual a `--locale`
-- `ATOMWRITE_HOME`: diretório base opcional para config/data/cache/state (sobrescreve XDG/`ProjectDirs`; ex. `{ATOMWRITE_HOME}/config/config.toml`)
-- `ATOMWRITE_WORKSPACE`: define a raiz do workspace para validação de path jail (alternativa a `--workspace`)
-- `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS`: knobs do G119 L4 HeuristicsEngine (v0.1.16+)
-- `RAYON_NUM_THREADS`: sobrescreve o pool rayon quando o pool global não foi configurado via `--threads` / `--max-concurrency`
-- `ATOMWRITE_BACKUP`: sobrescreve a decisão de backup resolvida para todo subcomando mutante (valor exato `0` desliga, qualquer outro valor liga) — tem precedência sobre flags CLI e `.atomwrite.toml` `[defaults]` (v0.1.28)
-- Flags de runtime especializadas (`CI`, `GITHUB_ACTIONS`, `WSL_DISTRO_NAME`, `FLATPAK_ID`, `SNAP`, `KUBERNETES_SERVICE_HOST`, Termux `PREFIX`, …) são detectadas para `atomwrite doctor` — não alteram o contrato NDJSON
+
+- **Política de produto v0.1.35:** o atomwrite **não** usa variáveis de ambiente de produto para knobs de runtime (workspace, backup, locale, filtro de log, home override, WAL, etc.).
+- Configure via **flags CLI** e armazenamento **XDG** / `.atomwrite.toml` (e opcional `--config`).
+- O `doctor` pode *observar* variáveis de ambiente do host (por exemplo indicadores de CI) só para diagnóstico — isso não é API de configuração.
+- Variáveis de shell do harness do agente (PATH, etc.) ficam fora da config de produto do atomwrite.
 
 
 ## Códigos de Saída
@@ -642,6 +645,12 @@ atomwrite completions bash
 - Veja [ARCHITECTURE.pt-BR.md](ARCHITECTURE.pt-BR.md) para mapa de módulos, fluxo de dados e decisões de design
 - Veja [docs/decisions/](docs/decisions/README.md) para 12 ADRs cobrindo arquitetura a partir de v0.1.12 (G72, G114, v14 Tier 3, G117, G118, G119, G120, trio v0.1.18)
 - Veja [docs/schemas/](docs/schemas/README.md) para 22 contratos estáveis de JSON Schema para toda saída NDJSON
+
+
+## Contribuindo
+- Veja [CONTRIBUTING.pt-BR.md](CONTRIBUTING.pt-BR.md) para setup de desenvolvimento, DoD local, processo de PR e notas de release
+- Veja [CONTRIBUTING.md](CONTRIBUTING.md) para o guia em inglês
+- Siga o [Código de Conduta](CODE_OF_CONDUCT.pt-BR.md) / [Code of Conduct](CODE_OF_CONDUCT.md)
 
 
 ## Segurança

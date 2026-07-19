@@ -22,9 +22,9 @@
 
 ## What's New in v0.1.30
 
-- Suite `tests/cli_v0130_agent_contract.rs` covers residual contract: match_count, indent_adjusted, fuzzy off rejected, config fuzzy off rejected, recipe bak skip, sparse outline kind, semantic-merge help line-based, replace-all uniqueness
+- Suite `tests/cli_v0130_agent_contract.rs` covers residual contract: match_count, indent_adjusted, fuzzy modes, recipe bak skip, sparse outline kind, semantic-merge help line-based, replace-all uniqueness. **Note (v0.1.35):** `--fuzzy off` = exact-only (G-010), not rejected
 - Suite `tests/cli_v0129_fuzzy_replace.rs` covers the 0.1.29 surface: fuzzy replace, `best_candidate`, durability, recipe, sparse, semantic-merge, stat, agent-surface, semantic-search, `platform.rename_method`
-- `replace --fuzzy auto|aggressive` (off rejected) with optional `--fuzzy-threshold` and bulk `--progress-every`
+- `replace --fuzzy auto|aggressive|off` (`off` = exact-only, G-010; default `auto`) with optional `--fuzzy-threshold` and bulk `--progress-every`
 - Match-failure envelopes may include `best_candidate` (schema `best-candidate.schema.json`)
 - Cooperative cancel emits `cancelled` NDJSON events (schema `cancelled-event.schema.json`, exit 143)
 - Write NDJSON reports `platform.rename_method` (`renameat2` or `rename`)
@@ -505,7 +505,7 @@ This release introduces a new safety layer called **intention guards** and renam
 ### Intention Guards (5 OPT-IN flags)
 
 - `--require-backup <N>` — refuse the operation when fewer than `N` retained backups exist for the target
-- `--confirm` — emit a confirmation prompt listing the planned mutation in NDJSON before executing
+- `--confirm` — legacy awareness flag on `write` (historical: interactive Y/N on large overwrite). **Superseded in v0.1.35:** large overwrite is one-shot default-deny via `--ack-overwrite` (no Y/N); `delete --confirm` is **rejected** (use `--plan`)
 - `--auto-rotate <N>` — automatically rotate the backup ring down to `N` entries after a successful write
 - `--risk-threshold <LOW|MEDIUM|HIGH>` — block operations whose classified risk meets or exceeds the threshold
 - `--locale <en|pt-BR>` — renamed from `--lang` to disambiguate from the tree-sitter `--lang`

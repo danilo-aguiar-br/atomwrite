@@ -3,11 +3,13 @@
   "queries": [
     {"query": "atomically edit a rust file with optimistic locking checksum", "should_trigger": true},
     {"query": "fuzzy replace text across many files in the monorepo", "should_trigger": true},
-    {"query": "write a file atomically via stdin in the workspace", "should_trigger": true},
-    {"query": "search TODO and FIXME under src with atomwrite", "should_trigger": true},
-    {"query": "run AST transform to rewrite unwrap to ?", "should_trigger": true},
+    {"query": "write a large existing file with ack-overwrite via stdin", "should_trigger": true},
+    {"query": "delete files with plan only using delete --plan", "should_trigger": true},
+    {"query": "watch filesystem and parse watch_summary NDJSON", "should_trigger": true},
+    {"query": "semantic-merge with conflict markers default on", "should_trigger": true},
+    {"query": "exact-only edit with --fuzzy off and MATCH_FAILED best_candidate", "should_trigger": true},
+    {"query": "diff file against stdin with second path dash", "should_trigger": true},
     {"query": "budget sparse list for monorepo token economy", "should_trigger": true},
-    {"query": "three-way multi-agent merge with semantic-merge", "should_trigger": true},
     {"query": "emit agent-surface manifesto without MCP", "should_trigger": true},
     {"query": "run doctor --strict for host readiness", "should_trigger": true},
     {"query": "emit command tree with commands --include-globals", "should_trigger": true},
@@ -18,8 +20,6 @@
     {"query": "tell me a joke", "should_trigger": false},
     {"query": "weather forecast for tokyo tomorrow", "should_trigger": false},
     {"query": "recommend a sci-fi movie", "should_trigger": false},
-    {"query": "how do i bake chocolate cake", "should_trigger": false},
-    {"query": "summarize medieval european history", "should_trigger": false},
-    {"query": "write a poem about the ocean", "should_trigger": false}
+    {"query": "how do i bake chocolate cake", "should_trigger": false}
   ]
 }

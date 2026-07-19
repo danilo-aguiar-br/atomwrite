@@ -9,7 +9,7 @@
 - Designed for LLM agents that need safe, structured file manipulation
 - Every write is atomic: tempfile, fsync, rename, fsync directory
 - Every response is NDJSON on stdout with BLAKE3 checksums
-- All diagnostic logs go to stderr via `tracing` (`init_telemetry` in `src/runtime.rs`): non-blocking writer, `EnvFilter` (`ATOMWRITE_LOG` > `RUST_LOG` > `-v`/`-q`), optional `ATOMWRITE_LOG_DIR` tee with `Rotation::NEVER`, JSON via `ATOMWRITE_LOG_FORMAT`. Agent data plane remains NDJSON on stdout.
+- All diagnostic logs go to stderr via `tracing` (`init_tracing` in `src/runtime.rs`; no product telemetry): non-blocking writer; filter from CLI `-v`/`-q`; optional XDG state log tee via ProjectDirs; no product `ATOMWRITE_*` / `RUST_LOG` knobs in v0.1.35+. Agent data plane remains NDJSON on stdout.
 
 
 ## Module Map
@@ -29,7 +29,7 @@
 
 ### Safety and Validation
 - `src/path_safety.rs` — workspace jail: path traversal prevention, symlink validation, FIFO/device detection, Windows reserved names (COM0–9/LPT0–9), NFC, long-path `\\?\` helper
-- `src/storage.rs` — config/data/cache/state via `directories::ProjectDirs` or `ATOMWRITE_HOME` override
+- `src/storage.rs` — config/data/cache/state via `directories::ProjectDirs` (XDG); no product ATOMWRITE_HOME runtime knob in v0.1.35+
 - `src/env_detect.rs` — WSL/container/K8s/CI/Termux/Flatpak/Snap/sudo autodetection for `doctor`
 - `src/signal.rs` — SIGINT/SIGTERM handling via signal-hook with graceful shutdown coordination
 - `src/error.rs` — domain error enum with exit codes, error classification, and retryable flag
@@ -190,7 +190,7 @@ v0.1.18 additions (G118 universal resolve-first):
 
 ### L1 WalPolicy + L4 HeuristicsEngine (v0.1.16, G119, ADR-0028)
 - `WalPolicy { Auto, Always, Never }` lets callers tune when the WAL sidecar is written; `Auto` skips it for trivial writes (size under 1 MiB, not Edit/Replace, dir under Git, write under 4 KiB)
-- `crate::wal::heuristics` aggregates 5 composable functions via `heuristics_should_preserve(target, committed_at_unix, count, rank)`; env vars `ATOMWRITE_WAL_KEEP_SECS`, `ATOMWRITE_WAL_MAX_COUNT`, `ATOMWRITE_WAL_RATE_LIMIT`, `ATOMWRITE_WAL_ARCHIVE_DAYS` tune each lever
+- `crate::wal::heuristics` aggregates 5 composable functions via `heuristics_should_preserve(target, committed_at_unix, count, rank)`; levers use constants + XDG/CLI configuration in v0.1.35+ (no product ATOMWRITE_WAL_* env knobs)
 - `wal_policy` field on `WriteOutput` NDJSON exposes the decision per call
 
 ### L3 startup auto-heal (v0.1.17, G119, ADR-0028)
@@ -215,8 +215,8 @@ v0.1.18 additions (G118 universal resolve-first):
 - Normalize raw tags with `unic-langid` (underscore → hyphen, strip `.UTF-8`; reject `C`/`POSIX` as English)
 - Negotiate against available MVP locales with `fluent-langneg` (`NegotiationStrategy::Lookup`)
 - Typed `Idioma` enum (`En` | `PtBr`, `#[non_exhaustive]`) + immutable `OnceLock<LocaleState>`
-- Precedence: `--locale` / `ATOMWRITE_LANG` → preference under `storage::config_dir()` (`ATOMWRITE_HOME` or XDG → `…/locale`) → OS → `en`
-- Override: global `--locale` (clap `value_parser`) or env `ATOMWRITE_LANG` (field name `lang` kept for API stability; flag renamed from `--lang` in ADR-0037)
+- Precedence: CLI `--locale` → preference under `storage::config_dir()` (XDG → locale) → OS → `en` (no product env knobs)
+- Override: global `--locale` (clap value_parser; field name lang kept for API stability). No product ATOMWRITE_LANG env knob in v0.1.35+
 - Diagnostics: `atomwrite locale` NDJSON report; `locale --set` / `locale --clear` for XDG preference
 - NDJSON **codes** and error **Display** messages stay English (agent machine contract)
 - Error **suggestions** and selected human stderr warnings follow the resolved locale via `t!`
@@ -247,7 +247,7 @@ v0.1.18 additions (G118 universal resolve-first):
 - `suggestion` field in `ErrorJson` provides actionable recovery guidance for each error variant
 - `ErrorContext` struct (added in v0.1.4) carries `workspace_provided: bool` and `workspace: Option<PathBuf>` from the CLI parser to the error output
 - `ErrorJson::from_error_with_context(err, &ErrorContext)` produces context-aware suggestions
-- `WorkspaceJail` suggestion adapts based on whether the user supplied `--workspace` or `ATOMWRITE_WORKSPACE`
+- `WorkspaceJail` suggestion adapts based on whether the user supplied `--workspace` (CLI/XDG only in v0.1.35+)
 - Legacy `ErrorJson::from_error(err)` delegates to `from_error_with_context` with `ErrorContext::default()` (backward compatible)
 - 25 error variants total (20 baseline from v0.1.4 + 5 added in v0.1.12: `LockTimeout` 83, `SyntaxError` 88, `ExdevFallbackDisabled` 91, `CopyBackBlake3Failed` 92, `OrphanJournal` 93)
 - v0.1.24 typed error audit: ALL user-facing `anyhow::bail!()` converted to `AtomwriteError` variants; no error path returns generic exit 1 without JSON envelope
@@ -287,7 +287,7 @@ v0.1.18 additions (G118 universal resolve-first):
 - 0045 — actionable suggestion for clap parse errors (v0.1.24)
 - 0046 — diff resolve-first retrofit (v0.1.24)
 - 0047 — scope read-only mode fix (v0.1.24)
-- 0048 — unified BackupOpts: single struct flattened via `#[command(flatten)]` into 15 mutating subcommands, resolved by a single `resolve_backup()` with precedence `ATOMWRITE_BACKUP` env > CLI flags > `.atomwrite.toml` `[defaults]` > built-in default (v0.1.28)
+- 0048 — unified BackupOpts: single struct flattened via `#[command(flatten)]` into 15 mutating subcommands, resolved by a single `resolve_backup()` with precedence CLI flags > `.atomwrite.toml` `[defaults]` / XDG > built-in default (env knobs removed by v0.1.35)
 - 0049 — live config plumbing: `load_config` called once in `lib.rs::run()`, `DefaultsSection` propagated to every mutating handler (v0.1.28)
 - 0050 — stdin-tty guard: `main.rs` computes `stdin.is_terminal()` (std `IsTerminal`, Rust >= 1.70) and propagates `stdin_is_tty` down to `cmd_edit`; stdin-consuming modes fail fast with exit 65 instead of blocking indefinitely (v0.1.28)
 - 0054 — one-shot fuzzy contract: one-pass multi-apply, embeds force single apply, default max applies 1, `--timeout-secs` default 120 / exit 124, cancel polled mid-fuzzy, resource caps (v0.1.33 runtime; v0.1.34 docs-complete)
@@ -300,3 +300,14 @@ v0.1.18 additions (G118 universal resolve-first):
 - Property-based tests via `proptest` for checksum and backup
 - Cross-compile gate via `tests/cross_compile_check.rs`
 - Snapshot tests via `insta` for stable NDJSON output
+
+## v0.1.35 residual contracts (architecture notes)
+
+- Large write guard: default-deny when existing target size exceeds XDG `[write].confirm_large_bytes`; requires `--ack-overwrite` (one-shot). `--require-large-ack` is independent (not a clap alias of `--confirm`).
+- Delete surface: `--plan` / `--dry-run` plan-only; `--confirm` and `--yes`/`-y` rejected fail-closed.
+- Watch: always emits terminal NDJSON `type:watch_summary`; idle default 500 ms; debounce from CLI or XDG `[watch].debounce_ms`.
+- Semantic-merge: conflict markers default ON; `--no-conflict-markers` opt-out.
+- SRP: secondary monólitos split via `include!`.
+- Observability: `init_tracing` only — local diagnostics on stderr; no product telemetry.
+- Config: CLI + XDG / `.atomwrite.toml` only for product knobs. Doctor may read host env for detection allowlist only.
+

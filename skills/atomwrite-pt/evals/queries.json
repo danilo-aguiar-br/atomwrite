@@ -1,0 +1,25 @@
+{
+  "skill_name": "atomwrite",
+  "queries": [
+    {"query": "editar arquivo rust com locking otimista e checksum", "should_trigger": true},
+    {"query": "fuzzy replace em muitos arquivos do monorepo", "should_trigger": true},
+    {"query": "sobrescrever arquivo grande com ack-overwrite via stdin", "should_trigger": true},
+    {"query": "apagar arquivos so em plano com delete --plan", "should_trigger": true},
+    {"query": "watch de filesystem e parsear watch_summary NDJSON", "should_trigger": true},
+    {"query": "semantic-merge com markers de conflito default on", "should_trigger": true},
+    {"query": "edit exact-only com --fuzzy off e MATCH_FAILED best_candidate", "should_trigger": true},
+    {"query": "diff arquivo contra stdin com segundo path traco", "should_trigger": true},
+    {"query": "sparse list com budget para monorepo", "should_trigger": true},
+    {"query": "emitir agent-surface manifesto sem MCP", "should_trigger": true},
+    {"query": "rodar doctor --strict para readiness do host", "should_trigger": true},
+    {"query": "emitir arvore de comandos com commands --include-globals", "should_trigger": true},
+    {"query": "qual a capital da franca", "should_trigger": false},
+    {"query": "explique relatividade geral de forma simples", "should_trigger": false},
+    {"query": "traduza este paragrafo para alemao", "should_trigger": false},
+    {"query": "calcule a raiz quadrada de 81 sem arquivos", "should_trigger": false},
+    {"query": "conte uma piada", "should_trigger": false},
+    {"query": "previsao do tempo em toquio amanha", "should_trigger": false},
+    {"query": "recomende um filme de ficcao cientifica", "should_trigger": false},
+    {"query": "como assar bolo de chocolate", "should_trigger": false}
+  ]
+}

@@ -170,12 +170,14 @@ pub struct ReadArgs {
 
 /// Fuzzy matching behavior for --old/--new edit mode.
 ///
-/// v0.1.30: fuzzy is mandatory. `Off` is rejected at runtime with exit 65.
+/// Product policy (v0.1.35 / G-010): `Off` is exact-only (no cascade). Exact miss
+/// yields [`crate::AtomwriteError::MatchFailed`] (exit 65, code `MATCH_FAILED`).
+/// Prefer `Auto` (default) or `Aggressive` for agent workflows.
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum FuzzyMode {
     /// Try exact match first, then fuzzy strategies automatically (default).
     Auto,
-    /// Removed in v0.1.30 — rejected with migration note (kept for clap parse of legacy scripts).
+    /// Exact match only — no fuzzy cascade (G-010).
     Off,
     /// Try all fuzzy strategies including low-confidence block anchor.
     Aggressive,

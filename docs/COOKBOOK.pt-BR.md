@@ -6,6 +6,18 @@
 > Receitas práticas que você pode copiar e colar nos seus workflows de agente
 
 
+
+## O Que Há de Novo na v0.1.35 (2026-07-19)
+
+- Gaps residuais **A-*** fechados (gaps.md §20): suite verde sem `delete --yes`; sobrescrita grande **default-deny** (`--ack-overwrite`); `watch` sempre emite `watch_summary`; markers de conflito do semantic-merge default ON; monólitos fatiados com `include!` (SRP)
+- **Write em arquivos grandes:** alvos existentes acima de XDG `[write].confirm_large_bytes` (padrão 100 KiB) exigem `--ack-overwrite` (agente one-shot; sem Y/N interativo). `--confirm` é flag legada de awareness; `--require-large-ack` é independente (sem colisão de alias)
+- **Delete:** use `--plan` ou `--dry-run` para plan-only; `delete --confirm` e `delete --yes`/`-y` são **rejeitados** (fail-closed). Execute de novo sem essas flags para apagar
+- **Watch:** NDJSON final `type:watch_summary` em todo caminho de saída; idle padrão **500 ms** (`--idle-exit-ms` / XDG `[watch].idle_exit_ms`); debounce via CLI ou XDG `[watch].debounce_ms`
+- **Semantic-merge:** markers de conflito gravados por padrão; opt-out `--no-conflict-markers`
+- DoD local (sem GitHub Actions de produto): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
+- Suite de contrato: `cargo test --test cli_e2e_v0135`
+- Pin de agentes em `^0.1.35`. Configuração somente CLI + XDG / `.atomwrite.toml` (sem knobs `ATOMWRITE_*` de produto; sem telemetria de produto)
+
 ## O Que Há de Novo na v0.1.34
 
 A v0.1.34 (2026-07-19) é a publicação docs-complete do runtime one-shot da v0.1.33: multi-apply fuzzy é **one-pass** E→D (`apply_fuzzy_one_pass`); máximo de applies padrão **1**; embeds forçam apply único; global `--timeout-secs` / `--timeout` **padrão 120** (`0` desabilita, prazo esgotado exit **124**). **41 subcomandos**.
@@ -56,7 +68,7 @@ atomwrite --workspace . replace --fuzzy auto --max-replacements 3 \
 ## Como Fazer Replace Fuzzy em um Monorepo
 
 - Use replace fuzzy quando indentação ou whitespace diverge entre pacotes
-- NÃO passe `--fuzzy off` (rejeitado desde v0.1.30); use auto ou aggressive
+- Prefira `--fuzzy auto` (cascata padrão para agentes); `--fuzzy off` = exact-only (G-010 CLOSED), não rejeitado
 - Emita progresso NDJSON em árvores grandes com `--progress-every`
 - Lembre: timeout global padrão é **120s** (exit 124); use `--timeout-secs 0` para varreduras ilimitadas de monorepo
 - Teto rígido de applies fuzzy é **10_000**; o padrão permanece **1** quando `--max-replacements` é omitido
@@ -1311,10 +1323,10 @@ atomwrite --workspace . verify src/main.rs --checksum abc123def456
 ```bash
 # Deletar arquivos mais antigos que 7 dias (sufixos: s/m/h/d/w)
 atomwrite --workspace . delete --older-than 7d --dry-run logs/
-atomwrite --workspace . delete --older-than 7d --yes logs/
+atomwrite --workspace . delete --older-than 7d logs/
 
-# Visualizar plano de deleção com --confirm
-atomwrite --workspace . delete --confirm --older-than 1h tmp/
+# Visualizar plano de deleção com --plan
+atomwrite --workspace . delete --plan --older-than 1h tmp/
 ```
 
 ### Substituir com Preservação de Case
@@ -1391,7 +1403,7 @@ esac
 
 ```bash
 # v0.1.24: delete --recursive agora percorre e remove
-atomwrite --workspace . delete --recursive --yes logs/
+atomwrite --workspace . delete --recursive logs/
 
 # Dry-run primeiro para pré-visualizar
 atomwrite --workspace . delete --recursive --dry-run logs/
@@ -1441,3 +1453,39 @@ atomwrite --workspace . get Cargo.toml package.version
 # Saída: {"type":"result","value":"0.1.24",...}
 # NÃO: {"type":"result","value":"\"0.1.24\"",...}  (comportamento antigo)
 ```
+
+## Como Sobrescrever Arquivo Grande com Segurança (v0.1.35)
+
+- Problema: alvo existente acima de XDG `[write].confirm_large_bytes` (padrão 100 KiB)
+- Solução: passe `--ack-overwrite` (one-shot; sem Y/N)
+
+```bash
+printf 'payload' | atomwrite --workspace . write --ack-overwrite big.txt
+```
+
+## Como Pré-visualizar Deletes Sem Mutar (v0.1.35)
+
+- Problema: precisa de plano sem apagar
+- Solução: `delete --plan` (não `--confirm` / `--yes`)
+
+```bash
+atomwrite --workspace . delete --plan --older-than 7d logs/
+atomwrite --workspace . delete --older-than 7d logs/
+```
+
+## Como Consumir Saída Idle do Watch (v0.1.35)
+
+- Problema: agentes assumiam stdout vazio sem eventos de FS
+- Solução: sempre parsear `type:watch_summary` final
+
+```bash
+atomwrite --workspace . watch . --idle-exit-ms 500
+```
+
+## Como Fazer Merge Com Markers de Conflito (v0.1.35)
+
+```bash
+atomwrite --workspace . semantic-merge --base b --ours o --theirs t --output out.txt
+atomwrite --workspace . semantic-merge --base b --ours o --theirs t --output out.txt --no-conflict-markers
+```
+

@@ -8,6 +8,39 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.35] - 2026-07-19
+
+### Added
+- Sobrescrita grande **default-deny**: alvos existentes acima de XDG `[write].confirm_large_bytes` (bootstrap 100 KiB) exigem `--ack-overwrite` (agente one-shot; sem prompt Y/N)
+- Flag independente `--require-large-ack` (sem colisão de alias clap com `--confirm`)
+- `watch` sempre emite NDJSON final `type:watch_summary` (`events`, `reason`: idle|max_events|timeout|signal) mesmo com zero eventos
+- `semantic-merge` grava markers de conflito no output por padrão (`<<<<<<< ours` / `=======` / `>>>>>>> theirs`); opt-out com `--no-conflict-markers` ou `--write-conflict-markers false`
+- XDG `[watch].debounce_ms` + CLI `--debounce-ms`; idle padrão `DEFAULT_WATCH_IDLE_EXIT_MS=500` (era ~3s)
+- `delete --plan` para listagem plan-only (seguro one-shot); `delete --confirm` e `delete --yes` / `-y` são **rejeitados** (fail-closed)
+- Notas no agent-surface para anti-padrões write/watch/merge (A-DISC-001)
+- Suite de contrato local `tests/cli_e2e_v0135` + closeout residual A-* (gaps.md §20)
+
+### Changed
+- Versão **0.1.35**
+- Splits SRP de monólitos via `include!` (write/recipe/lib/replace/scope/concurrency/cli_args/runtime)
+- `scope` reutiliza `summary_metrics` compartilhado (DRY)
+- Matriz multi-OS honesta: Linux e2e completo; Windows-gnu `cargo check` no host Linux; macOS exige Mac real/osxcross (sem GitHub Actions de produto)
+
+### Fixed
+- **A-TEST-001**: suite não usa mais `delete --yes` após rejeição B-015 (`cargo test --lib --tests` verde)
+- **A-WATCH-001**: watch idle não deixa mais stdout vazio
+- **A-WRITE-001**: sobrescrita grande era opt-in via `--confirm`; agora sempre default-deny
+- **A-WRITE-002**: `--require-large-ack` era alias de `--confirm` (“used multiple times”); agora independente
+- **A-MERGE-001**: status conflict gravava prefer-ours sem markers; markers default ON
+- **A-ONESHOT-001**: idle default do watch reduzido para 500 ms
+- **A-GAPS-DOC-001**: banner no topo do gaps.md + §20 supersede cabeçalhos stale “suite 100% / FALHA XDG”
+- Detecção de env do doctor em allowlist (A-ENV-001); zero knobs de produto via env
+
+### Notes
+- Sem telemetria de produto; sem CI `.github` no repositório de produto
+- Configuração somente CLI + XDG / `.atomwrite.toml` (sem knobs `ATOMWRITE_*` em runtime)
+- Veja `docs/TESTING.pt-BR.md`, `docs/CROSS_PLATFORM.pt-BR.md`, `docs/MIGRATION.pt-BR.md` (0.1.34 → 0.1.35)
+
 ## [0.1.34] - 2026-07-19
 
 ### Changed
@@ -1100,7 +1133,8 @@
 - Perfil release com LTO, codegen unit único, stripping de símbolos e panic=abort
 
 
-[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.34...HEAD
+[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.35...HEAD
+[0.1.35]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.34...v0.1.35
 [0.1.34]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.33...v0.1.34
 [0.1.33]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.32...v0.1.33
 [0.1.32]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.31...v0.1.32

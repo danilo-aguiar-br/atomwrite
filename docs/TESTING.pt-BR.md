@@ -4,6 +4,13 @@
 [Read in English](TESTING.md)
 
 
+## O Que Há de Novo na v0.1.35 (Atual)
+
+- Residuais A-* fechados: suite verde sem `delete --yes`; sobrescrita grande **default-deny** (`--ack-overwrite`); `watch` sempre emite `watch_summary`; markers de semantic-merge default ON; monólitos fatiados com `include!`
+- DoD local (sem GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
+- Suite de contrato: `cargo test --test cli_e2e_v0135`
+- Veja gaps.md §20
+
 ## O Que Há de Novo na v0.1.34 (Atual)
 
 - A suíte `tests/cli_v0133_oneshot_fuzzy.rs` trava o contrato one-shot fuzzy + timeout (fix de código registrado como 0.1.33; publicação docs-complete **0.1.34**)
@@ -15,9 +22,9 @@
 
 ## O Que Há de Novo na v0.1.30
 
-- A suíte `tests/cli_v0130_agent_contract.rs` cobre o contrato residual: match_count, indent_adjusted, fuzzy off rejeitado, config fuzzy off rejeitado, recipe bak skip, sparse outline kind, semantic-merge help line-based, unicidade replace-all
+- A suíte `tests/cli_v0130_agent_contract.rs` cobre o contrato residual: match_count, indent_adjusted, modos fuzzy, recipe bak skip, sparse outline kind, semantic-merge help line-based, unicidade replace-all. **Nota (v0.1.35):** `--fuzzy off` = exact-only (G-010), não rejeitado
 - A suíte `tests/cli_v0129_fuzzy_replace.rs` cobre a superfície 0.1.29: replace fuzzy, `best_candidate`, durability, recipe, sparse, semantic-merge, stat, agent-surface, semantic-search, `platform.rename_method`
-- `replace --fuzzy auto|aggressive` (off rejeitado) com `--fuzzy-threshold` opcional e `--progress-every` em massa
+- `replace --fuzzy auto|aggressive|off` (`off` = exact-only, G-010; padrão `auto`) com `--fuzzy-threshold` opcional e `--progress-every` em massa
 - Envelopes de falha de match podem incluir `best_candidate` (schema `best-candidate.schema.json`)
 - Cancel cooperativo emite eventos NDJSON `cancelled` (schema `cancelled-event.schema.json`, exit 143)
 - O NDJSON do write reporta `platform.rename_method` (`renameat2` ou `rename`)
@@ -499,7 +506,7 @@ Esta release introduz uma nova camada de segurança chamada **intention guards**
 ### Intention Guards (5 flags OPT-IN)
 
 - `--require-backup <N>` — recusa a operação quando menos de `N` backups retidos existem para o alvo
-- `--confirm` — emite um prompt de confirmação listando a mutação planejada em NDJSON antes de executar
+- `--confirm` — flag legada de awareness no `write` (histórico: Y/N interativo em sobrescrita grande). **Substituído na v0.1.35:** sobrescrita grande é default-deny one-shot via `--ack-overwrite` (sem Y/N); `delete --confirm` é **rejeitado** (use `--plan`)
 - `--auto-rotate <N>` — rotaciona automaticamente o anel de backups para `N` entradas após uma escrita bem-sucedida
 - `--risk-threshold <LOW|MEDIUM|HIGH>` — bloqueia operações cujo risco classificado atinge ou excede o threshold
 - `--locale <en|pt-BR>` — renomeado de `--lang` para desambiguar do `--lang` tree-sitter
@@ -531,3 +538,10 @@ fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 # Ou via ruplacer
 ruplacer --subvert --lang --locale
 ```
+
+## Configuração e logs (v0.1.35)
+
+- Logging de runtime do binário é **somente CLI + XDG**: use `-v`/`-vv`/`-vvv` e `-q`/`-qq`; tee opcional de arquivo sob XDG state `…/atomwrite/logs` via `directories::ProjectDirs` (sem knobs de produto `ATOMWRITE_*` ou `RUST_LOG` no binário).
+- **Não** documente nem dependa de variáveis de ambiente de produto para logging, locale, workspace, backup ou home override — removidas na v0.1.35 (use CLI + XDG apenas).
+- Doctor pode observar env do host (`CI`, etc.) só para detecção (allowlist A-ENV-001); isso **não** configura knobs de produto.
+

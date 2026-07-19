@@ -6,6 +6,18 @@
 > One CLI replaces dozens of file-manipulation tool calls your agent makes today
 
 
+
+## What's New in v0.1.35 (2026-07-19)
+
+- Residual **A-*** gaps closed (gaps.md §20): suite green without `delete --yes`; large overwrite **default-deny** (`--ack-overwrite`); `watch` always emits `watch_summary`; semantic-merge conflict markers default ON; monólitos `include!` SRP splits
+- **Write large files:** existing targets above XDG `[write].confirm_large_bytes` (default 100 KiB) require `--ack-overwrite` (agent one-shot; no interactive Y/N). `--confirm` is a legacy awareness flag; `--require-large-ack` is independent (no alias collision)
+- **Delete:** use `--plan` or `--dry-run` for plan-only; `delete --confirm` and `delete --yes`/`-y` are **rejected** (fail-closed). Run again without those flags to delete
+- **Watch:** final NDJSON `type:watch_summary` on every exit path; idle default **500 ms** (`--idle-exit-ms` / XDG `[watch].idle_exit_ms`); debounce via CLI or XDG `[watch].debounce_ms`
+- **Semantic-merge:** conflict markers written by default; opt-out `--no-conflict-markers`
+- Local DoD (no product GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
+- Contract suite: `cargo test --test cli_e2e_v0135`
+- Pin agents to `^0.1.35`. Configuration is CLI + XDG / `.atomwrite.toml` only (no product `ATOMWRITE_*` runtime knobs; no product telemetry)
+
 ## What's New in v0.1.34
 
 v0.1.34 (2026-07-19) is the **docs-complete** publish of the v0.1.33 one-shot runtime. Same binary behavior; documentation aligned. There are still **41 subcommands**.
@@ -39,7 +51,7 @@ v0.1.30 (2026-07-13) closes residual agent-contract gaps on top of the v0.1.29 s
 
 ### Fuzzy mandatory, match_count, indent_adjusted
 
-- Fuzzy modes: only `auto` and `aggressive` (`--fuzzy off` is rejected with exit 65)
+- Fuzzy modes: `--fuzzy auto|aggressive|off` where `off` = exact-only (G-010 CLOSED); default `auto` (cascade still default policy for agents)
 - Multi-occurrence edits require `--replace-all`; success NDJSON includes `match_count`
 - When indent delta realigns the replacement, success NDJSON includes `indent_adjusted: true`
 - Match failures emit ranked `best_candidate`, `candidates[]`, and `diff_preview`
@@ -131,6 +143,34 @@ atomwrite --workspace . semantic-search "atomic rename tempfile" src/ --k 10
 
 ```bash
 atomwrite --workspace . codemod --rules rules.yaml --dry-run src/
+```
+
+
+### Large overwrite (v0.1.35)
+
+```bash
+printf 'new content' | atomwrite --workspace . write --ack-overwrite path/to/file.txt
+printf 'new content' | atomwrite --workspace . write --require-large-ack --ack-overwrite path/to/file.txt
+```
+
+### Delete plan-only (v0.1.35)
+
+```bash
+atomwrite --workspace . delete --plan tmp/old.txt
+atomwrite --workspace . delete tmp/old.txt
+```
+
+### Watch summary (v0.1.35)
+
+```bash
+atomwrite --workspace . watch . --idle-exit-ms 500 --max-events 10
+```
+
+### Semantic-merge markers (v0.1.35)
+
+```bash
+atomwrite --workspace . semantic-merge --base b.txt --ours o.txt --theirs t.txt --output out.txt
+atomwrite --workspace . semantic-merge --base b.txt --ours o.txt --theirs t.txt --output out.txt --no-conflict-markers
 ```
 
 ### `watch`
@@ -358,7 +398,7 @@ echo "replacement block" | atomwrite edit src/main.rs --range 10:20
 atomwrite edit src/main.rs --old "old_text" --new "new_text"
 ```
 
-- Use `--fuzzy auto|aggressive` for fuzzy text matching when exact match fails (9 strategies in cascade; off rejected since v0.1.30)
+- Use `--fuzzy auto|aggressive|off` for fuzzy text matching when exact match fails (9 strategies in cascade; `off` = exact-only, G-010; default `auto`)
 - Since v0.1.15 repeated `--old`/`--new` pairs also run the fuzzy cascade per pair (G117); responses include `pairs_total` and per-pair `pair_results`, and failures report `failed_pair_index`
 - Use `--partial` (v0.1.15) to apply the matching pairs and report the rest; zero applied pairs exits 1 (`NO_MATCHES`) without writing
 - Never pipe `edit` into `jaq` without `-e`: the error envelope goes to stdout, so `| jaq '.edits'` masks exit 65 as `null` — use `jaq -e '.edits'` or `${PIPESTATUS[0]}`
@@ -414,12 +454,12 @@ atomwrite replace --dry-run 'before' 'after' src/
 - Use `--dry-run` to preview replacements without modifying files
 - Use `--preserve-timestamps` to keep the original mtime of modified files (default: mtime is updated to reflect the change)
 - Fixed-string replace defaults to `--fuzzy auto` after zero exact multi-match hits (v0.1.29 BREAKING vs exact-only exit 1)
-- Modes: `--fuzzy auto|aggressive` (off rejected) and optional `--fuzzy-threshold <0.0-1.0>`
-- Shared 9-strategy cascade (same as edit) after exact multi-match finds zero hits
+- Modes: `--fuzzy auto|aggressive|off` (`off` = exact-only, G-010; default `auto`) and optional `--fuzzy-threshold <0.0-1.0>`
+- Shared 9-strategy cascade (same as edit) after exact multi-match finds zero hits (skipped when `--fuzzy off`)
 - Fuzzy multi-apply is **one-pass** L→R on original content (`apply_fuzzy_one_pass`); never re-scans inserted text
 - Default max fuzzy applies = **1** if `--max-replacements` omitted; hard ceiling 10_000
 - If replacement **contains** pattern (fixed-string), force single apply (prevents infinite growth when expanding a section)
-- Exact-only is not supported; use auto/aggressive and structured uniqueness errors
+- Prefer `--fuzzy auto` for agents; use `--fuzzy off` only for intentional exact-only (exact miss → `MATCH_FAILED` exit 65)
 - Match failures may emit `best_candidate` with line, similarity, strategy, diff_preview
 - Use `--progress-every N` for NDJSON progress heartbeats on large trees
 - Regex mode (`--regex`) keeps the regex engine and does not run fuzzy cascade
@@ -428,8 +468,7 @@ atomwrite replace --dry-run 'before' 'after' src/
 - Use `--include` and `--exclude` for glob filtering
 
 ```bash
-# --fuzzy off rejected since v0.1.30; use auto or aggressive
-# off rejected: use --fuzzy auto or --fuzzy aggressive
+# Prefer --fuzzy auto (default cascade). --fuzzy off = exact-only (G-010), not rejected.
 atomwrite --workspace . replace --progress-every 50 'old' 'new' packages/
 
 # Expand-section safe: NEW embeds OLD — one-pass forces single apply, no hang
@@ -819,7 +858,7 @@ This release introduces a new safety layer called **intention guards** and renam
 ### Intention Guards (5 OPT-IN flags)
 
 - `--require-backup <N>` — refuse the operation when fewer than `N` retained backups exist for the target
-- `--confirm` — emit a confirmation prompt listing the planned mutation in NDJSON before executing
+- `--confirm` — legacy awareness flag on `write` (historical: interactive Y/N on large overwrite). **Superseded in v0.1.35:** large overwrite is one-shot default-deny via `--ack-overwrite` (no Y/N); `delete --confirm` is **rejected** (use `--plan`)
 - `--auto-rotate <N>` — automatically rotate the backup ring down to `N` entries after a successful write
 - `--risk-threshold <LOW|MEDIUM|HIGH>` — block operations whose classified risk meets or exceeds the threshold
 - `--locale <en|pt-BR>` — renamed from `--lang` to disambiguate from the tree-sitter `--lang`
@@ -1022,7 +1061,7 @@ max_filesize = 10485760
 ### New Flags
 
 - `delete --older-than <DURATION>` — filter by age with suffixes s/m/h/d/w
-- `delete --confirm` — preview mode (emits `type: "plan"` NDJSON)
+- `delete --plan` — plan-only (emits `type: "plan"` NDJSON); `delete --confirm`/`--yes` **rejected** since v0.1.35
 - `replace --preserve-case` — adapts replacement case (UPPER/lower/Title)
 - `search --pcre2` — request PCRE2 backend (exit 65 when feature not compiled)
 - `edit --fuzzy-threshold <FLOAT>` — override the default fuzzy matching threshold

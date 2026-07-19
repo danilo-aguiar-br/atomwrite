@@ -6,7 +6,7 @@
 
 ## What's New in v0.1.12
 
-This section summarizes the migration-relevant changes in v0.1.12. See the [v0.1.11 to v0.1.12](#v0111-to-v0112) section below for the v0.1.12 migration guide, the [v0.1.32 to v0.1.33](#v0132-to-v0133) section for the one-shot runtime break, and the [v0.1.33 to v0.1.34 (Current)](#v0133-to-v0134-current) section for the latest transition.
+This section summarizes the migration-relevant changes in v0.1.12. See the [v0.1.11 to v0.1.12](#v0111-to-v0112) section below for the v0.1.12 migration guide, the [v0.1.32 to v0.1.33](#v0132-to-v0133) section for the one-shot runtime break, and the [v0.1.33 to v0.1.34](#v0133-to-v0134-current) section for the latest transition.
 
 ### New Subcommands (6)
 
@@ -68,7 +68,7 @@ All additive. No existing dependency removed.
 
 - Update version pin: `cargo install atomwrite --locked --version "^0.1.12"`
 - New subcommands and flags are opt-in. No code changes required for existing callers.
-- See the [v0.1.33 to v0.1.34 (Current)](#v0133-to-v0134-current) section for the latest migration steps.
+- See the [v0.1.33 to v0.1.34](#v0133-to-v0134-current) section for the latest migration steps.
 
 ### Test Coverage
 
@@ -77,13 +77,47 @@ All additive. No existing dependency removed.
 - 7 new JSON schemas in `docs/schemas/`
 - See [docs/decisions/README.md](decisions/README.md) for architectural decisions
 
+
+## v0.1.34 to v0.1.35 (Current)
+
+### What Changes
+
+- **Large overwrite default-deny (A-WRITE-001):** overwriting an existing file larger than XDG `[write].confirm_large_bytes` (bootstrap default 100 KiB) now requires `--ack-overwrite`. Without it the command exits **65**. No interactive Y/N prompt (one-shot).
+- **`--require-large-ack` is independent (A-WRITE-002):** it is no longer a clap alias of `--confirm`. You may pass both; large targets still need `--ack-overwrite`.
+- **`delete --confirm` / `delete --yes` rejected (B-014/B-015 / A-TEST-001):** use `delete --plan` or `--dry-run` for plan-only; omit flags to actually delete. Update scripts and tests that still pass `--yes` or `-y`.
+- **`watch` always emits `watch_summary` (A-WATCH-001):** even with zero events / idle exit, stdout includes a final NDJSON line `type:watch_summary`.
+- **Watch idle default 500 ms (A-ONESHOT-001):** was ~3000 ms. Override with `--idle-exit-ms` or XDG / `.atomwrite.toml` `[watch].idle_exit_ms`.
+- **Semantic-merge markers default ON (A-MERGE-001):** conflict output writes `<<<<<<< ours` markers. Prefer-ours without markers: `--no-conflict-markers` or `--write-conflict-markers false`.
+- **XDG watch debounce (A-XDG-002):** `[watch].debounce_ms` + CLI `--debounce-ms`.
+- **Honest multi-OS (A-XPLAT-001):** Linux full e2e; Windows-gnu `cargo check` on Linux host; macOS needs a real Mac or osxcross. No product GitHub Actions.
+- **Config surface:** product knobs are CLI + XDG / `.atomwrite.toml` only (no `ATOMWRITE_*` runtime knobs). Doctor may read host env for detection only (A-ENV-001 allowlist).
+
+### Step-by-Step Migration
+
+1. Pin: `cargo install atomwrite --locked --version "^0.1.35"` (or `cargo install --path . --force` from source).
+2. Agents that overwrite large files: add `--ack-overwrite` (and optionally `--require-large-ack` for explicitness).
+3. Agents that used `delete --confirm` as “preview”: switch to `delete --plan`.
+4. Agents that used `delete --yes` / `-y`: remove those flags; they now fail with exit 65.
+5. Parsers that assumed empty stdout on idle `watch`: accept `type:watch_summary`.
+6. Pipelines that expected clean prefer-ours files on merge conflict: pass `--no-conflict-markers` if markers are unwanted.
+7. Re-run local gates: `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo test --test cli_e2e_v0135`.
+
+### Compatibility Notes
+
+- Non-large writes, fuzzy one-shot contract from 0.1.33/0.1.34, and the 41-subcommand surface remain.
+- See gaps.md §20 for the A-* closeout matrix.
+
+### Rollback
+
+- Pin back to `^0.1.34` if you must restore the previous large-write opt-in and watch empty-stdout behavior (not recommended for agents).
+
 ## Current Version
-- atomwrite is at v0.1.34
-- This document covers migration from v0.1.0 through v0.1.34
+- atomwrite is at v0.1.35
+- This document covers migration from v0.1.0 through v0.1.35
 - See the sections below for additive changes and breaking changes in each version
 
 
-## v0.1.33 to v0.1.34 (Current)
+## v0.1.33 to v0.1.34
 
 ### Docs alignment (same runtime as 0.1.33 oneshot)
 
@@ -127,8 +161,8 @@ All additive. No existing dependency removed.
 
 ### BREAKING Changes
 
-- `--fuzzy off` is rejected (exit 65) with a migration note; only `auto` and `aggressive` remain
-- `.atomwrite.toml` with `[fuzzy] mode = "off"` fails parse with INVALID_INPUT
+- `--fuzzy off` is rejected (exit 65) with a migration note; only `auto` and `aggressive` remain. **Superseded in v0.1.35:** Off = exact-only (G-010 CLOSED).
+- `.atomwrite.toml` with `[fuzzy] mode = "off"` fails parse with INVALID_INPUT. **Superseded in v0.1.35:** `mode = "off"` is exact-only.
 - Multi-match without `--replace-all` fails with MATCH_AMBIGUOUS (exit 65)
 
 ### Added (migration-relevant)
@@ -142,8 +176,8 @@ All additive. No existing dependency removed.
 
 ### Migration Action
 
-- Remove `--fuzzy off` from scripts and agent prompts; use auto or aggressive
-- Remove mode = "off" from .atomwrite.toml [fuzzy]
+- Remove `--fuzzy off` from scripts and agent prompts; use auto or aggressive (historical 0.1.30 advice; as of v0.1.35 `off` is exact-only again)
+- Remove mode = "off" from .atomwrite.toml [fuzzy] (historical 0.1.30; as of v0.1.35 exact-only is allowed)
 - For bulk multi-occurrence edits pass --replace-all and parse match_count with jaq
 - Prefer jaq on match_count and indent_adjusted over full file re-reads after edit
 - Update version pin: cargo install atomwrite --locked --version "^0.1.30"
@@ -155,7 +189,7 @@ All additive. No existing dependency removed.
 ### BREAKING Changes
 
 - Default fixed-string `replace` now uses `fuzzy=auto` after exact multi-match finds zero hits — previously exact-only failure returned exit 1 with no fuzzy fallback
-- Pipelines that required exact-only failure (exit 1 on zero exact hits) must not rely on exact-only (as of v0.1.30 `--fuzzy off` is rejected)
+- Pipelines that required exact-only failure (exit 1 on zero exact hits) must not rely on exact-only (as of v0.1.30 `--fuzzy off` is rejected). **Superseded in v0.1.35:** `--fuzzy off` = exact-only (G-010); exact miss → `MATCH_FAILED` exit 65.
 
 ### Added (migration-relevant)
 
@@ -181,7 +215,7 @@ All additive. No existing dependency removed.
 ### Migration Action
 
 - Update version pin: `cargo install atomwrite --locked --version "^0.1.30"`
-- **BREAKING**: if your pipeline depends on exact-only `replace` failing with exit 1 when the fixed string is absent, use auto/aggressive only (off rejected in v0.1.30)
+- **BREAKING (v0.1.30):** exact-only via `--fuzzy off` was rejected; only auto/aggressive remained. **Superseded in v0.1.35 (G-010):** `--fuzzy off` = exact-only again; exact miss on edit → `MATCH_FAILED` exit 65 (not the same as tree-wide `NO_MATCHES` exit 1)
 - On match failures, inspect optional `best_candidate` in the NDJSON error envelope for near-miss diagnostics
 - Slim install (no AST): `cargo install --path . --locked --no-default-features --features core`
 - Full install (default features): `cargo install --path . --locked` or `cargo install atomwrite --locked --version "^0.1.30"`
@@ -327,7 +361,7 @@ All additive. No existing dependency removed.
 - `edit --fuzzy-threshold <FLOAT>` for configurable match sensitivity
 - `scope` actions `symbols` and `normalize` (NFC)
 - `delete --older-than` with human-readable duration
-- `delete --confirm` as preview mode
+- `delete --confirm` as preview mode (**superseded in v0.1.35**: use `--plan`; `--confirm` rejected)
 - `replace --preserve-case` with case adaptation
 - `search --pcre2` flag (returns exit 65 when feature not enabled)
 - `transform --verify-parse` re-validates output via tree-sitter

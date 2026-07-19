@@ -4,24 +4,24 @@
 
 atomwrite is a Rust CLI that provides 41 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
-**Latest release: v0.1.34** — One-shot fuzzy hang fixed (NEW may embed OLD); `replace --fuzzy` is one-pass on original content, never re-scans inserted text; default max fuzzy applies = 1; embeds force 1 apply; `--timeout-secs` default **120** (0 disables; exit **124** on deadline); cancel polled mid-fuzzy; resource caps (pattern 64 KiB / lev 8192 / windows 4096 / growth); full docs aligned (ADR-0054). Pin `^0.1.34`. 41 subcommands; no telemetry. See `CHANGELOG.md` and `https://docs.rs/atomwrite`.
+**Latest release: v0.1.35** — Residual A-* closed: large overwrite **default-deny** (`--ack-overwrite`); `watch` emits `watch_summary` even with 0 events; `semantic-merge` conflict markers default ON; `delete --plan` (not `--confirm`/`--yes`); watch idle 500 ms; suite `cli_e2e_v0135` green. Pin `^0.1.35`. 41 subcommands; no telemetry; CLI+XDG config only. See `CHANGELOG.md` and gaps.md §20.
 
-**Previous:** v0.1.33 runtime hang fix + one-pass fuzzy; v0.1.32 docs.rs `doc_cfg` / multi-target; v0.1.30 agent surface (fuzzy mandatory, `match_count`/`indent_adjusted`, `best_candidate`, recipe bak skip, `cli_v0130_agent_contract`). See `CHANGELOG.md`.
+**Previous:** v0.1.34 docs-complete one-shot fuzzy;  v0.1.33 runtime hang fix + one-pass fuzzy; v0.1.32 docs.rs `doc_cfg` / multi-target; v0.1.30 agent surface (fuzzy mandatory, `match_count`/`indent_adjusted`, `best_candidate`, recipe bak skip, `cli_v0130_agent_contract`). See `CHANGELOG.md`.
 
 ## 41 Subcommands
 
 ### Core I/O (7)
 - `read` — read files with metadata, checksum, optional content. `--mode raw|envelope` selects byte-stream vs NDJSON envelope
-- `write` — create or overwrite files atomically via stdin. `--preserve-timestamps` keeps source mtime
+- `write` — create or overwrite files atomically via stdin; large targets require `--ack-overwrite` (default-deny). `--preserve-timestamps` keeps source mtime
 - `edit` — surgically edit by line number, text marker, or exact/fuzzy match; multi-pair `--old`/`--new` with per-pair fuzzy cascade, `pair_results` and `--partial` (v0.1.15)
-- `delete` — delete files with optional backup
+- `delete` — delete files with optional backup; plan-only via `--plan` (`--confirm`/`--yes` rejected)
 - `copy` — copy files with checksum verification
 - `move` — move or rename files atomically (EXDEV copy-fallback)
 - `apply` — apply patches from stdin (unified diff, search/replace, full, markdown)
 
 ### Search and replace (3)
 - `search` — search file contents in parallel (ripgrep engine). `--no-begin-end` disables anchor emission
-- `replace` — replace text across files with atomic writes; `--fuzzy auto|aggressive` (off rejected since v0.1.30) and `--fuzzy-threshold`; **one-pass** multi-apply on original content (never re-scans inserted text); default max applies = **1**; if replacement embeds pattern → force 1 apply; reports `strategy`/`similarity`/`match_count`/`indent_adjusted`; match errors may include `best_candidate`
+- `replace` — replace text across files with atomic writes; `--fuzzy auto|aggressive|off` (`off` = exact-only, G-010; default `auto`) and `--fuzzy-threshold`; **one-pass** multi-apply on original content (never re-scans inserted text); default max applies = **1**; if replacement embeds pattern → force 1 apply; reports `strategy`/`similarity`/`match_count`/`indent_adjusted`; match errors may include `best_candidate`
 - `transform` — AST refactoring via ast-grep (306 languages)
 
 ### Inspection (9)
@@ -68,7 +68,7 @@ Plus the G72 syntax check on `write --syntax-check` (24 languages, exit 88).
 - `sparse` — budgeted monorepo list/read/outline (outline emits real AST outline_item) (`sparse list --max-files N`)
 - `semantic-merge` — line-based three-way merge for multi-agent conflicts (not AST)
 - `agent-surface` — clap-derived tool manifesto (CLI only; MCP is FORBIDDEN)
-- `watch` — filesystem events with debounce/checksum/gitignore (feature `watch`)
+- `watch` — filesystem events with debounce/checksum/gitignore; always ends with `watch_summary` NDJSON (feature `watch`)
 - `codemod` — multi-rule AST campaign with `by_rule_id` summary
 - `semantic-search` — offline token ranking / inverted index (feature `semantic`; not OpenRouter embeddings)
 - `stat` — alias of `read --stat`
@@ -87,7 +87,7 @@ Plus the G72 syntax check on `write --syntax-check` (24 languages, exit 88).
 
 - **5 intention-guard flags** form a new safety layer that intercepts destructive mutations before they touch the disk:
   - `--require-backup <N>` — refuse the operation when fewer than `N` retained backups exist for the target
-  - `--confirm` — emit a confirmation prompt listing the planned mutation in NDJSON before executing
+  - `--confirm` — historical interactive confirm (v0.1.20); **superseded in v0.1.35** by one-shot `--ack-overwrite` / reject `delete --confirm`
   - `--auto-rotate <N>` — automatically rotate the backup ring down to `N` entries after a successful write
   - `--risk-threshold <LOW|MEDIUM|HIGH>` — block operations whose classified risk meets or exceeds the threshold
   - `--locale <en|pt-BR>` — renamed from `--lang` to avoid clashing with the language selector used by `scope` and `transform` (G121+)
@@ -119,6 +119,8 @@ Plus the G72 syntax check on `write --syntax-check` (24 languages, exit 88).
 - [CROSS_PLATFORM](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/CROSS_PLATFORM.md): macOS, Linux, Windows quirks
 - [CHANGELOG](https://github.com/danilo-aguiar-br/atomwrite/blob/main/CHANGELOG.md): Release history
 - [SECURITY](https://github.com/danilo-aguiar-br/atomwrite/blob/main/SECURITY.md): Vulnerability reporting
+- [CONTRIBUTING](https://github.com/danilo-aguiar-br/atomwrite/blob/main/CONTRIBUTING.md): Contributor onboarding, local DoD, PR and release process
+- [CODE_OF_CONDUCT](https://github.com/danilo-aguiar-br/atomwrite/blob/main/CODE_OF_CONDUCT.md): Contributor Covenant 2.1 community standards
 - [docs/decisions/](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/decisions/): 29 ADRs (0019-0047, v0.1.12 through v0.1.24 architectural decisions)
 - [docs/schemas/](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/schemas/): 38 stable JSON Schema contracts
 - [Crates.io](https://crates.io/crates/atomwrite): Package registry
