@@ -6,13 +6,14 @@
 //! diff algorithm itself is single-threaded (similar crate). Bound: global
 //! rayon pool (`--threads` / `--max-concurrency`).
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use similar::{Algorithm, TextDiff};
 
 use crate::cli::{DiffAlgorithm, DiffArgs, GlobalArgs};
+use crate::error::AtomwriteError;
 use crate::ndjson_types::{DiffChangeOutput, DiffStatOutput, DiffSummaryOutput, DiffUnifiedOutput};
 use crate::output::NdjsonWriter;
 
@@ -26,21 +27,73 @@ use crate::output::NdjsonWriter;
 pub fn cmd_diff(
     args: &DiffArgs,
     global: &GlobalArgs,
+    stdin: impl Read,
     writer: &mut NdjsonWriter<impl Write>,
 ) -> Result<()> {
     let start = Instant::now();
 
     let max_size = global.effective_max_filesize();
     let workspace = global.resolve_workspace()?;
-    let resolved_a = crate::path_safety::validate_path(&args.file_a, &workspace)?;
-    let resolved_b = crate::path_safety::validate_path(&args.file_b, &workspace)?;
-    // Independent reads — fan out on the process-wide rayon pool.
-    let (content_a, content_b) = rayon::join(
-        || crate::file_io::read_file_string(&resolved_a, max_size),
-        || crate::file_io::read_file_string(&resolved_b, max_size),
-    );
-    let content_a = content_a?;
-    let content_b = content_b?;
+    // G-003 / B-001: either FILE_A or FILE_B may be "-" (stdin). Not both.
+    // Must use the already-locked `stdin` from `run()` — never `std::io::stdin()`
+    // again or we deadlock on the outer lock (same bug class as edit-loop).
+    let stdin_a = args.file_a.as_os_str() == "-";
+    let stdin_b = args.file_b.as_os_str() == "-";
+    if stdin_a && stdin_b {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "diff: only one of FILE_A or FILE_B may be '-' (stdin); both sides cannot be stdin"
+                .into(),
+        }
+        .into());
+    }
+
+    let content_a;
+    let content_b;
+    if stdin_a {
+        let resolved_b = crate::path_safety::validate_path(&args.file_b, &workspace)?;
+        let mut buf = String::new();
+        stdin
+            .take(max_size.saturating_add(1))
+            .read_to_string(&mut buf)
+            .context("failed to read stdin for diff file_a")?;
+        if (buf.len() as u64) > max_size {
+            return Err(AtomwriteError::FileTooLarge {
+                path: std::path::PathBuf::from("-"),
+                size: buf.len() as u64,
+                max_size,
+            }
+            .into());
+        }
+        content_a = buf;
+        content_b = crate::file_io::read_file_string(&resolved_b, max_size)?;
+    } else if stdin_b {
+        let resolved_a = crate::path_safety::validate_path(&args.file_a, &workspace)?;
+        content_a = crate::file_io::read_file_string(&resolved_a, max_size)?;
+        let mut buf = String::new();
+        stdin
+            .take(max_size.saturating_add(1))
+            .read_to_string(&mut buf)
+            .context("failed to read stdin for diff file_b")?;
+        if (buf.len() as u64) > max_size {
+            return Err(AtomwriteError::FileTooLarge {
+                path: std::path::PathBuf::from("-"),
+                size: buf.len() as u64,
+                max_size,
+            }
+            .into());
+        }
+        content_b = buf;
+    } else {
+        let resolved_a = crate::path_safety::validate_path(&args.file_a, &workspace)?;
+        let resolved_b = crate::path_safety::validate_path(&args.file_b, &workspace)?;
+        // Independent reads — fan out on the process-wide rayon pool.
+        let (a, b) = rayon::join(
+            || crate::file_io::read_file_string(&resolved_a, max_size),
+            || crate::file_io::read_file_string(&resolved_b, max_size),
+        );
+        content_a = a?;
+        content_b = b?;
+    }
 
     let algo = match args.algorithm {
         DiffAlgorithm::Myers => Algorithm::Myers,
@@ -50,7 +103,9 @@ pub fn cmd_diff(
 
     let diff = TextDiff::configure()
         .algorithm(algo)
-        .timeout(std::time::Duration::from_millis(500))
+        .timeout(std::time::Duration::from_millis(
+            crate::constants::DIFF_SIMILARITY_TIMEOUT_MS,
+        ))
         .diff_lines(&content_a, &content_b);
 
     let identical = content_a == content_b;

@@ -1,5 +1,8 @@
 # ADR-0049: encanamento vivo de config para o `[defaults]` do `.atomwrite.toml`
 
+> **Histórico (pré-0.1.35):** knobs `ATOMWRITE_*` / env descritos abaixo estão **supplantados**. Config de runtime é só flags CLI + XDG `config.toml` / `atomwrite set|get`.
+
+
 - **Status**: Aceito
 - **Date**: 2026-07-06
 - **Context**: As chaves `backup`/`retention` do `[defaults]` do `.atomwrite.toml` eram parseadas por `load_config` mas nunca de fato consultadas por nenhum comando mutante (GAP-CONFIG-DEFAULTS-DEAD) — o resolver que existia na época recebia apenas `(backup: bool, no_backup: bool)` como argumentos e não tinha caminho para alcançar os valores parseados da config. Usuários que configuravam `[defaults]` no config do projeto viam-no silenciosamente ignorado.

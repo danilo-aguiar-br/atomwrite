@@ -50,7 +50,7 @@
       "$ref": "#/$defs/PlatformInfo"
     },
     "risk_assessment": {
-      "description": "GAP-2026-011 L6: risk telemetry for size-delta warnings. Omitted\nwhen the write is below the configured risk threshold (default\n50% delta) and no other guard was triggered.",
+      "description": "GAP-2026-011 L6: local risk diagnostics for size-delta warnings (not product telemetry; G-031). Omitted\nwhen the write is below the configured risk threshold (default\n50% delta) and no other guard was triggered.",
       "anyOf": [
         {
           "$ref": "#/$defs/WriteRiskAssessment"
@@ -65,7 +65,7 @@
       "type": "string"
     },
     "stdin_bytes_read": {
-      "description": "Number of bytes read from stdin (G120 L4 telemetry). 0 means the\ncaller passed empty stdin and explicitly opted in via\n`--allow-empty-stdin`.",
+      "description": "Number of bytes read from stdin (G120 L4 local diagnostics). 0 means the\ncaller passed empty stdin and explicitly opted in via\n`--allow-empty-stdin`.",
       "type": "integer",
       "format": "uint64",
       "minimum": 0
@@ -131,7 +131,7 @@
       ]
     },
     "WriteRiskAssessment": {
-      "description": "GAP-2026-011 L1/L6: Telemetry describing why a write was classified\nas risky. Emitted in `WriteOutput.risk_assessment` when the size\ndelta exceeds the user-configured `--risk-threshold` (default 50%).",
+      "description": "GAP-2026-011 L1/L6: Local diagnostics describing why a write was classified\nas risky (G-031: not product telemetry). Emitted in `WriteOutput.risk_assessment` when the size\ndelta exceeds the user-configured `--risk-threshold` (default 50%).",
       "type": "object",
       "properties": {
         "guard_triggered": {

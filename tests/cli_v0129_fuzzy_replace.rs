@@ -43,7 +43,7 @@ fn replace_fuzzy_off_exits_no_matches() {
     let file = dir.path().join("a.rs");
     std::fs::write(&file, "fn main() {\n    let x = 1;\n}\n").unwrap();
 
-    // v0.1.30: --fuzzy off is rejected (exit 65), not silent zero-matches.
+    // G-010/G-047: --fuzzy off = exact-only; near-miss → NO_MATCHES exit 1.
     atomwrite()
         .args([
             "--workspace",
@@ -57,8 +57,8 @@ fn replace_fuzzy_off_exits_no_matches() {
         ])
         .assert()
         .failure()
-        .code(65)
-        .stdout(predicates::str::contains("0.1.30").or(predicates::str::contains("off")));
+        .code(1)
+        .stdout(predicates::str::contains("NO_MATCHES"));
 }
 
 #[test]
@@ -92,6 +92,7 @@ fn edit_best_candidate_on_near_miss() {
             output.contains("best_candidate")
                 || output.contains("match failed")
                 || output.contains("INVALID_INPUT")
+                || output.contains("MATCH_FAILED")
                 || output.contains("not found"),
             "stdout={output}"
         );
@@ -313,7 +314,7 @@ fn edit_best_candidate_has_line_and_similarity_fields() {
     // fuzzy=off still emits MatchFailed; best_candidate may be null when no
     // scored near-miss exists. Assert the error envelope is structured.
     assert!(
-        combined.contains("INVALID_INPUT")
+        combined.contains("INVALID_INPUT") || combined.contains("MATCH_FAILED")
             || combined.contains("match failed")
             || combined.contains("best_candidate")
             || !output.status.success(),

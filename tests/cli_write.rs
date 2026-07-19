@@ -438,19 +438,26 @@ fn g120_empty_stdin_allowed_with_flag_truncates() {
     let target = dir.path().join("target.txt");
     std::fs::write(&target, "original content\n").expect("seed");
 
+    // G-017/G-047: empty stdin truncates → also requires --allow-shrink.
     let output = common::atomwrite()
         .args([
             "--workspace",
             dir.path().to_str().unwrap(),
             "write",
             "--allow-empty-stdin",
+            "--allow-shrink",
         ])
         .arg(&target)
         .write_stdin("")
         .output()
         .expect("run");
 
-    assert!(output.status.success(), "exit: {:?}", output.status);
+    assert!(
+        output.status.success(),
+        "exit: {:?} stdout: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout)
+    );
 
     let events = common::parse_ndjson(&output.stdout);
     assert_eq!(events.len(), 1);
@@ -691,6 +698,7 @@ fn v0_1_20_risk_assessment_high_delta_emits_warning() {
     let target = dir.path().join("data.bin");
     std::fs::write(&target, "x".repeat(1000)).expect("seed");
 
+    // G-017/G-047: high shrink also needs --allow-shrink; risk_assessment still emitted.
     let output = common::atomwrite()
         .args([
             "--workspace",
@@ -698,13 +706,18 @@ fn v0_1_20_risk_assessment_high_delta_emits_warning() {
             "write",
             "--risk-threshold",
             "50",
+            "--allow-shrink",
         ])
         .arg(&target)
         .write_stdin("y") // 1 byte vs 1000 bytes = 99.9% delta
         .output()
         .expect("run");
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     let events = common::parse_ndjson(&output.stdout);
     let risk = events[0]["risk_assessment"]
         .as_object()

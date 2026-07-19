@@ -117,6 +117,7 @@ pub fn cmd_delete(
         Vec::new()
     };
     let mut deleted = 0u64;
+    let mut planned = 0u64;
     let mut _bytes_freed = 0u64;
     let mut skipped = 0u64;
 
@@ -127,7 +128,24 @@ pub fn cmd_delete(
 
     let mut visited = 0u64;
     let max_size = global.effective_max_filesize();
-    let dry_or_confirm = args.dry_run || args.confirm;
+    // B-005 / B-014: `--confirm` is not plan and does not delete — fail closed.
+    if args.confirm {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: "delete --confirm is rejected (one-shot): use --plan to list targets without deleting, or omit flags to delete; write --confirm is a different large-file guard"
+                .into(),
+        }
+        .into());
+    }
+    // B-015: `-y/--yes` is not a no-op — fail closed so agents do not invent confirm UX.
+    if args.yes {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: "delete -y/--yes is rejected (one-shot: no interactive confirm exists); use --plan to list targets, or omit flags to delete"
+                .into(),
+        }
+        .into());
+    }
+    // A-004: `--plan` / `--dry-run` are plan-only; never mutates.
+    let dry_or_confirm = args.dry_run || args.plan;
     let do_backup = resolved.backup;
     let retention = resolved.retention;
 
@@ -246,7 +264,8 @@ pub fn cmd_delete(
                     would_modify: true,
                     details: Some(format!("{size} bytes")),
                 })?;
-                deleted += 1;
+                // G-002/G-016: plan must not count as modified.
+                planned += 1;
                 _bytes_freed += size;
             }
             DeleteItem::Deleted {
@@ -271,7 +290,8 @@ pub fn cmd_delete(
     }
 
     // Phase 3 — remove emptied directory trees (independent roots fan out).
-    if !args.dry_run && !crate::signal::is_global_shutdown() {
+    // G-002 / A-004: plan never mutates directory trees either.
+    if !args.dry_run && !args.plan && !crate::signal::is_global_shutdown() {
         let cleanup: Vec<Result<(), anyhow::Error>> = if should_parallelize(dir_roots.len()) {
             dir_roots
                 .par_iter()
@@ -297,9 +317,9 @@ pub fn cmd_delete(
     writer.write_event(&Summary {
         r#type: "summary",
         files_visited: visited,
-        files_matched: deleted,
+        files_matched: deleted + planned,
         files_modified: Some(deleted),
-        files_skipped: Some(skipped + visited.saturating_sub(deleted + skipped)),
+        files_skipped: Some(skipped + visited.saturating_sub(deleted + planned + skipped)),
         total_matches: None,
         total_replacements: None,
         elapsed_ms: start.elapsed().as_millis() as u64,

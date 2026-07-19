@@ -54,10 +54,10 @@ pub struct SparseListArgs {
     #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub path: PathBuf,
     /// Maximum files to emit.
-    #[arg(long, default_value_t = 100)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_SPARSE_MAX_ENTRIES as u64)]
     pub max_files: u64,
     /// Maximum total bytes of path strings to emit.
-    #[arg(long, default_value_t = 1_048_576)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_SPARSE_MAX_BYTES as u64)]
     pub max_bytes: u64,
     /// Include glob.
     #[arg(long, action = clap::ArgAction::Append)]
@@ -74,10 +74,10 @@ pub struct SparseReadArgs {
     #[arg(long, value_hint = ValueHint::FilePath)]
     pub paths_file: PathBuf,
     /// Head lines per file.
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_SPARSE_OUTLINE_DEPTH as u64)]
     pub head: u64,
     /// Maximum files to read.
-    #[arg(long, default_value_t = 20)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_SPARSE_MAX_SYMBOLS as u64)]
     pub max_files: u64,
 }
 
@@ -88,7 +88,7 @@ pub struct SparseOutlineArgs {
     #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub path: PathBuf,
     /// Maximum files to outline.
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_SPARSE_OUTLINE_DEPTH as u64)]
     pub max_files: u64,
     /// Include glob.
     #[arg(long, action = clap::ArgAction::Append)]

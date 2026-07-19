@@ -12,7 +12,6 @@ fn delete_removes_file() {
             "--workspace",
             dir.path().to_str().unwrap(),
             "delete",
-            "--yes",
         ])
         .arg(&path)
         .output()
@@ -58,7 +57,6 @@ fn delete_with_backup() {
             dir.path().to_str().unwrap(),
             "delete",
             "--backup",
-            "--yes",
         ])
         .arg(&path)
         .output()
@@ -84,7 +82,6 @@ fn delete_not_found_exits_4() {
             "--workspace",
             dir.path().to_str().unwrap(),
             "delete",
-            "--yes",
         ])
         .arg(dir.path().join("nonexistent.txt"))
         .output()

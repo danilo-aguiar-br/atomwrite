@@ -31,7 +31,7 @@ pub enum LogFormat {
     Json,
 }
 
-/// Resolve CLI `-v`/`-q` to a default EnvFilter directive (no env override).
+/// Resolve CLI `-v`/`-q` to a default `EnvFilter` directive (no env override).
 pub fn cli_log_level(verbose: u8, quiet: u8) -> &'static str {
     // Quiet only applies when verbose is unset; `-v -q` keeps the verbose level.
     match (verbose, quiet) {
@@ -44,97 +44,36 @@ pub fn cli_log_level(verbose: u8, quiet: u8) -> &'static str {
     }
 }
 
-/// Build an [`EnvFilter`] with precedence: `ATOMWRITE_LOG` → `RUST_LOG` → CLI default.
+/// Build an [`EnvFilter`] from CLI verbosity only (G-007: no product env).
 ///
-/// Invalid directives are reported on stderr and replaced by the CLI default
-/// (rules: never silence filter parse errors).
+/// Precedence: `-v`/`-q` → default. XDG log settings may be added via config
+/// later; process environment is never consulted for filter directives.
 pub fn build_env_filter(cli_default: &str) -> EnvFilter {
-    if let Ok(directive) = std::env::var("ATOMWRITE_LOG") {
-        if !directive.is_empty() {
-            return match EnvFilter::builder().parse(&directive) {
-                Ok(filter) => filter,
-                Err(err) => {
-                    let _ = writeln!(
-                        io::stderr(),
-                        "atomwrite: invalid ATOMWRITE_LOG={directive:?}: {err}; using default {cli_default}"
-                    );
-                    return EnvFilter::new(cli_default);
-                }
-            };
-        }
-    }
-
-    match std::env::var("RUST_LOG") {
-        Ok(directive) if !directive.is_empty() => match EnvFilter::builder().parse(&directive) {
-            Ok(filter) => filter,
-            Err(err) => {
-                let _ = writeln!(
-                    io::stderr(),
-                    "atomwrite: invalid RUST_LOG={directive:?}: {err}; using default {cli_default}"
-                );
-                EnvFilter::new(cli_default)
-            }
-        },
-        _ => EnvFilter::new(cli_default),
-    }
+    EnvFilter::new(cli_default)
 }
 
-/// Resolve log format from `ATOMWRITE_LOG_FORMAT` (`json`|`compact`).
+/// Resolve log format: compact on TTY stderr; JSON when file logging is on.
 ///
-/// Default: `json` when writing an optional log file (aggregators), else `compact`.
+/// G-007: no `ATOMWRITE_LOG_FORMAT` env — file sink implies JSON.
 pub fn resolve_log_format(file_sink: bool) -> LogFormat {
-    let owned = std::env::var("ATOMWRITE_LOG_FORMAT").ok();
-    resolve_log_format_from(owned.as_deref(), file_sink)
-}
-
-/// Pure format resolution (env value already read) — unit-testable without `set_var`.
-///
-/// Takes `Option<&str>` (not `Option<String>`): only reads the tag; caller
-/// owns any temporary from `env::var`.
-pub fn resolve_log_format_from(env_value: Option<&str>, file_sink: bool) -> LogFormat {
-    match env_value {
-        Some(v) => {
-            let lower = v.to_ascii_lowercase();
-            match lower.as_str() {
-                "json" | "jsonl" | "ndjson" => LogFormat::Json,
-                "compact" | "text" | "pretty" => LogFormat::Compact,
-                other => {
-                    let _ = writeln!(
-                        io::stderr(),
-                        "atomwrite: unknown ATOMWRITE_LOG_FORMAT={other:?}; using compact"
-                    );
-                    LogFormat::Compact
-                }
-            }
-        }
-        None if file_sink => LogFormat::Json,
-        None => LogFormat::Compact,
+    if file_sink {
+        LogFormat::Json
+    } else {
+        LogFormat::Compact
     }
 }
 
-/// Optional file directory for diagnostics (`ATOMWRITE_LOG_DIR`).
+/// Optional file directory for diagnostics under XDG state (G-007: no env).
 ///
-/// CLI rule: `Rotation::NEVER` (one-shot process). Agent contract still uses
-/// stderr; the file is a tee for post-mortem / container volume capture.
-fn log_dir_from_env() -> Option<PathBuf> {
-    match std::env::var_os("ATOMWRITE_LOG_DIR") {
-        Some(v) if !v.is_empty() => Some(PathBuf::from(v)),
-        _ => None,
-    }
+/// When `atomwrite` state dir is available, logs go to `{state}/logs`.
+/// Operators can still use `--verbose` on stderr without a file sink.
+fn log_dir_from_xdg() -> Option<PathBuf> {
+    crate::storage::state_dir().map(|s| s.join("logs"))
 }
 
-/// Whether the non-blocking writer may drop lines under backpressure.
-///
-/// Default: lossy (latency-first for CLI). Set `ATOMWRITE_LOG_LOSSY=0` for
-/// non-lossy (blocks producer; preferred for audit trails).
-fn log_lossy_from_env() -> bool {
-    match std::env::var("ATOMWRITE_LOG_LOSSY") {
-        Ok(v) => {
-            let lower = v.to_ascii_lowercase();
-            !(lower == "0" || lower == "false" || lower == "no" || lower == "off")
-        }
-        Err(_) => true,
-    }
+/// Default: lossy (latency-first for CLI one-shot). G-007: not env-tunable.
+fn log_lossy_default() -> bool {
+    true
 }
 
 /// Combined stderr (+ optional file) sink for the non-blocking worker.
@@ -191,28 +130,28 @@ fn try_open_log_file(dir: &Path, json: bool) -> Option<RollingFileAppender> {
     }
 }
 
-/// Configure tracing for the binary (canonical telemetry init).
+/// Configure tracing for the binary (local logs only — no product telemetry).
 ///
-/// - Filter: `ATOMWRITE_LOG` > `RUST_LOG` > `-v`/`-q` default
-/// - Writer: non-blocking stderr; optional tee to `ATOMWRITE_LOG_DIR` (`Rotation::NEVER`)
-/// - Format: compact (TTY) or JSON (`ATOMWRITE_LOG_FORMAT=json` / file default)
-/// - Layers: fmt + `ErrorLayer` (SpanTrace) + LogTracer via `tracing-log` feature
+/// - Filter: CLI `-v`/`-q` primary; optional XDG log settings (no product env knobs)
+/// - Writer: non-blocking stderr; optional tee to XDG log dir
+/// - Format: compact (TTY) or JSON when file logging
+/// - Layers: fmt + `ErrorLayer` (`SpanTrace`) + `LogTracer` via `tracing-log` feature
 ///
 /// Returns a [`WorkerGuard`] that **must** live until process exit so the
 /// background writer flushes (do not bind to `_` alone if early-return paths
 /// drop it before final events — `main` keeps `_guard` for the full scope).
 ///
-/// Alias: [`init_tracing`] (historical name).
-pub fn init_telemetry(
+/// G-008: canonical name is [`init_tracing`] (no product telemetry).
+pub fn init_tracing(
     verbose: u8,
     quiet: u8,
-    cli_no_color: bool,
+    color: ColorMode,
 ) -> WorkerGuard {
     let cli_default = cli_log_level(verbose, quiet);
     let filter = build_env_filter(cli_default);
     let filter_display = filter.to_string();
 
-    let log_dir = log_dir_from_env();
+    let log_dir = log_dir_from_xdg();
     // Prefer JSON when a log directory is requested (aggregator-friendly).
     let format = resolve_log_format(log_dir.is_some());
     let file = log_dir
@@ -220,18 +159,11 @@ pub fn init_telemetry(
         .and_then(|dir| try_open_log_file(dir, matches!(format, LogFormat::Json)));
     let file_sink = file.is_some();
 
-    let ansi = if matches!(format, LogFormat::Json) {
-        false
-    } else if no_color() || cli_no_color {
-        false
-    } else if force_color() {
-        true
-    } else {
-        std::io::IsTerminal::is_terminal(&std::io::stderr())
-    };
+    // JSON sinks never ANSI; otherwise CLI/XDG color mode (no process env).
+    let ansi = !matches!(format, LogFormat::Json) && stderr_color_enabled(color);
 
     // File/line only when the *CLI* asked for debug/trace — avoids leaking
-    // paths into default warn-level agent runs even if RUST_LOG is broader.
+    // paths into default warn-level agent runs.
     let show_source = matches!(cli_default, "debug" | "trace");
 
     let sink = LogSink {
@@ -239,7 +171,7 @@ pub fn init_telemetry(
         file,
     };
     let (non_blocking, guard) = NonBlockingBuilder::default()
-        .lossy(log_lossy_from_env())
+        .lossy(log_lossy_default())
         .thread_name("atomwrite-log")
         .finish(sink);
 
@@ -304,19 +236,9 @@ pub fn init_telemetry(
     guard
 }
 
-/// Historical name for [`init_telemetry`].
-#[inline]
-pub fn init_tracing(
-    verbose: u8,
-    quiet: u8,
-    cli_no_color: bool,
-) -> WorkerGuard {
-    init_telemetry(verbose, quiet, cli_no_color)
-}
-
 /// Install a panic hook that logs via tracing before the previous hook.
 ///
-/// Must run **after** [`init_telemetry`] so the event reaches the subscriber.
+/// Must run **after** [`init_tracing`] so the event reaches the subscriber.
 /// Chains to the prior hook (`human_panic` when installed first in `main`).
 pub fn install_panic_hook() {
     let default_hook = std::panic::take_hook();
@@ -343,35 +265,43 @@ pub fn install_panic_hook() {
     }));
 }
 
-fn no_color() -> bool {
-    std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
-}
-
-fn force_color() -> bool {
-    std::env::var_os("CLICOLOR_FORCE").is_some_and(|v| v == "1")
+/// Color policy for stderr human messages and tracing ANSI.
+///
+/// G-007: no process env (`NO_COLOR` / `CLICOLOR_FORCE`). Controlled only by
+/// CLI (`--color` / `--no-color`) and optional XDG `ui.color` (wired by caller).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorMode {
+    /// Color when stderr is a TTY.
+    #[default]
+    Auto,
+    /// Always emit ANSI (even on pipes).
+    Always,
+    /// Never emit ANSI.
+    Never,
 }
 
 /// Whether stderr human messages may use ANSI colors.
 ///
-/// Agent-first: never color when stderr is not a TTY, when `NO_COLOR` is set,
-/// when `cli_no_color` is true, or when `CLICOLOR_FORCE` is absent on pipes.
-pub fn stderr_color_enabled(cli_no_color: bool) -> bool {
-    if no_color() || cli_no_color {
-        return false;
+/// Agent-first: never color on non-TTY unless `ColorMode::Always`.
+pub fn stderr_color_enabled(mode: ColorMode) -> bool {
+    match mode {
+        ColorMode::Never => false,
+        ColorMode::Always => true,
+        ColorMode::Auto => std::io::IsTerminal::is_terminal(&std::io::stderr()),
     }
-    if force_color() {
-        return true;
-    }
-    std::io::IsTerminal::is_terminal(&std::io::stderr())
 }
 
 /// Emit a human warning on stderr (never on stdout).
 ///
-/// Respects `NO_COLOR`, `CLICOLOR_FORCE`, and TTY detection so agents parsing
-/// stderr never assume ANSI sequences (rules_rust_cli_stdin_stdout).
-pub fn warn_stderr(cli_no_color: bool, message: impl AsRef<str>) {
+/// G-026: only when stderr is a TTY (agents parse NDJSON on stdout; non-TTY
+/// must not mix human risk lines). Color respects CLI `ColorMode`.
+pub fn warn_stderr(mode: ColorMode, message: impl AsRef<str>) {
+    use std::io::IsTerminal;
+    if !std::io::stderr().is_terminal() {
+        return;
+    }
     let msg = message.as_ref();
-    if stderr_color_enabled(cli_no_color) {
+    if stderr_color_enabled(mode) {
         eprintln!("\x1b[33mwarning:\x1b[0m {msg}");
     } else {
         eprintln!("warning: {msg}");
@@ -422,7 +352,7 @@ pub fn enrich_clap_suggestion(msg: &str) -> Option<String> {
 
 /// Early `--json-schema` path: emit schema without full clap parse of subcommand args.
 ///
-/// Justification vs rules "never parse env::args before Clap": agents need a
+/// Justification vs rules "never parse `env::args` before Clap": agents need a
 /// schema dump even when remaining argv would fail validation (e.g. missing
 /// required path). Full parse still goes through Clap for all normal paths.
 pub fn prescan_json_schema() -> Option<String> {
@@ -527,57 +457,6 @@ fn extract_path_from_message(msg: &str) -> PathBuf {
     PathBuf::from("unknown")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cli_log_level_matrix() {
-        assert_eq!(cli_log_level(0, 0), "warn");
-        assert_eq!(cli_log_level(1, 0), "info");
-        assert_eq!(cli_log_level(2, 0), "debug");
-        assert_eq!(cli_log_level(3, 0), "trace");
-        assert_eq!(cli_log_level(0, 1), "error");
-        assert_eq!(cli_log_level(0, 2), "off");
-        // verbose wins over quiet when both set
-        assert_eq!(cli_log_level(1, 1), "info");
-    }
-
-    #[test]
-    fn resolve_log_format_from_matrix() {
-        assert_eq!(resolve_log_format_from(None, false), LogFormat::Compact);
-        assert_eq!(resolve_log_format_from(None, true), LogFormat::Json);
-        assert_eq!(
-            resolve_log_format_from(Some("json"), false),
-            LogFormat::Json
-        );
-        assert_eq!(
-            resolve_log_format_from(Some("JSONL"), false),
-            LogFormat::Json
-        );
-        assert_eq!(
-            resolve_log_format_from(Some("compact"), true),
-            LogFormat::Compact
-        );
-        assert_eq!(
-            resolve_log_format_from(Some("nope"), true),
-            LogFormat::Compact
-        );
-    }
-
-    #[test]
-    fn env_filter_parses_target_directive() {
-        let f = EnvFilter::builder()
-            .parse("warn,atomwrite=info")
-            .expect("parse directive");
-        let s = f.to_string();
-        assert!(
-            s.contains("warn") || s.contains("info") || !s.is_empty(),
-            "unexpected filter display: {s}"
-        );
-    }
-}
-
 /// Handle clap parse failure: help/version exit via clap; other errors as NDJSON exit 2.
 pub fn handle_clap_parse_error(clap_err: clap::Error) -> ExitCode {
     use clap::error::ErrorKind;
@@ -614,5 +493,41 @@ pub fn handle_clap_parse_error(clap_err: clap::Error) -> ExitCode {
             let _ = out.flush();
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_log_level_matrix() {
+        assert_eq!(cli_log_level(0, 0), "warn");
+        assert_eq!(cli_log_level(1, 0), "info");
+        assert_eq!(cli_log_level(2, 0), "debug");
+        assert_eq!(cli_log_level(3, 0), "trace");
+        assert_eq!(cli_log_level(0, 1), "error");
+        assert_eq!(cli_log_level(0, 2), "off");
+        // verbose wins over quiet when both set
+        assert_eq!(cli_log_level(1, 1), "info");
+    }
+
+    #[test]
+    fn resolve_log_format_matrix() {
+        // G-007: format is file_sink-driven only (no env override).
+        assert_eq!(resolve_log_format(false), LogFormat::Compact);
+        assert_eq!(resolve_log_format(true), LogFormat::Json);
+    }
+
+    #[test]
+    fn env_filter_parses_target_directive() {
+        let f = EnvFilter::builder()
+            .parse("warn,atomwrite=info")
+            .expect("parse directive");
+        let s = f.to_string();
+        assert!(
+            s.contains("warn") || s.contains("info") || !s.is_empty(),
+            "unexpected filter display: {s}"
+        );
     }
 }

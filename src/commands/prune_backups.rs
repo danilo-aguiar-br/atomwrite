@@ -65,7 +65,8 @@ pub fn cmd_prune_backups(
     // across independent targets, then flatten for the unlink stage.
     let max_age_secs = args.max_age_secs;
     let max_count = args.max_count;
-    let phase1: Vec<Result<(Vec<PathBuf>, Option<PruneBackupEntry>), anyhow::Error>> =
+    type Phase1Item = Result<(Vec<PathBuf>, Option<PruneBackupEntry>), anyhow::Error>;
+    let phase1: Vec<Phase1Item> =
         if should_parallelize(args.paths.len()) {
             args.paths
                 .par_iter()

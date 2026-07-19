@@ -168,11 +168,11 @@ Also reports `os` / `arch` / `family` / compile `target`, storage `config_dir`, 
 ## File Paths and XDG
 - atomwrite uses absolute paths in all NDJSON output
 - Relative paths in arguments are resolved against the workspace root
-- `--workspace` defaults to the current working directory
-- `--workspace` is required when set via the `ATOMWRITE_WORKSPACE` environment variable
+- `--workspace` defaults to the current working directory (pass explicitly for agents)
+- Workspace jail is **CLI-only**: always pass `--workspace <root>` (no product environment variables)
 - Backup files are stored alongside the original with a timestamp suffix, unless `--output-dir` is set
-- The `completions --install` command writes to XDG data directories (`$XDG_DATA_HOME` or `~/.local/share`)
-- **`ATOMWRITE_HOME`**: optional base directory override for config/data/cache/state (`{ATOMWRITE_HOME}/config`, …). When unset, `directories::ProjectDirs` / XDG is used (`src/storage.rs`)
+- The `completions --install` command writes to XDG data directories (`directories::ProjectDirs` / platform conventions)
+- **`storage.home`** (XDG `config.toml` via `atomwrite set storage.home` / `get`): optional base directory override for config/data/cache/state (`{home}/config`, …). When unset, `directories::ProjectDirs` is used (`src/storage.rs`) — never process environment for home override
 - Global config: `{config_dir}/config.toml`; locale preference: `{config_dir}/locale`
 - Paths use `PathBuf` / `Path::join` only — no hardcoded `/` or `\` separators in application logic
 - Unicode NFC normalization applied during path jail validation
@@ -341,3 +341,19 @@ This release is fully backward-compatible across Linux, macOS, and Windows for e
 - Cooperative cancel polled mid-fuzzy cascade; caps: pattern 64 KiB, lev 8192, windows 4096, growth max(4×,+16 MiB)
 - Regression: `cargo test --test cli_v0133_oneshot_fuzzy`
 - See [MIGRATION.md](MIGRATION.md#v0133-to-v0134-current) and ADR-0054
+
+## A-014 multi-target smoke (local, no GitHub Actions)
+
+Run on a host with rustup targets installed:
+
+```bash
+for t in x86_64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin \
+  x86_64-pc-windows-gnu x86_64-pc-windows-msvc i686-pc-windows-gnu; do
+  cargo check --release --target "$t" || echo "SKIP/FAIL $t"
+done
+```
+
+Notes (2026-07-19):
+- `x86_64-unknown-linux-gnu`: primary e2e host — required green.
+- Apple/Windows targets may fail on missing cross toolchains (`lib.exe`, macOS SDK, zstd asm) — document skip honestly; not a product regression.
+- Do **not** add `.github/workflows` to this crate.

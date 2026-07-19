@@ -78,7 +78,7 @@ impl ShutdownSignal {
 
     /// Return the exit code corresponding to the received signal or timeout.
     ///
-    /// Ordering: **Acquire** on `signal_code` (published via AcqRel CAS).
+    /// Ordering: **Acquire** on `signal_code` (published via `AcqRel` CAS).
     #[inline]
     pub fn exit_code(&self) -> u8 {
         match self.signal_code.load(Ordering::Acquire) {
@@ -103,10 +103,10 @@ impl ShutdownSignal {
     /// Record a cooperative cancel (signal or timeout).
     ///
     /// Orderings (Rules Rust atomics — documented per op):
-    /// - `signal_code` **AcqRel** CAS: first writer wins; subsequent signals
+    /// - `signal_code` **`AcqRel`** CAS: first writer wins; subsequent signals
     ///   keep the original code (SIGINT vs SIGTERM vs timeout).
     /// - `flag` **Release** store: publishes shutdown to walkers that **Acquire**.
-    /// - `count` **AcqRel** fetch_add: second hit force-exits; must observe prior.
+    /// - `count` **`AcqRel`** `fetch_add`: second hit force-exits; must observe prior.
     fn record_signal(&self, code: u8) {
         self.signal_code
             .compare_exchange(0, code, Ordering::AcqRel, Ordering::Acquire)
@@ -223,20 +223,8 @@ pub fn install_handlers_early() -> Option<Arc<ShutdownSignal>> {
         }
     }
 
-    // Signal-handler readiness probe: when ATOMWRITE_READY_FILE is set in
-    // the environment, atomwrite writes its PID to that path immediately
-    // after `signal_hook::flag::register` has been called. Test harnesses
-    // spawn the binary and wait for the file to appear before sending any
-    // signal. Without this gate, SIGINT can race `posix_spawn` and arrive
-    // a few hundred microseconds before the handler is installed, in
-    // which case the kernel's SIG_D disposition kills the child with no
-    // "shutting down" banner — the test would see an empty stderr pipe.
-    if let Some(path) = std::env::var_os("ATOMWRITE_READY_FILE") {
-        if let Some(parent) = std::path::Path::new(&path).parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(&path, std::process::id().to_string());
-    }
+    // G-007: readiness probe is CLI `--ready-file` only (see [`write_ready_file`]).
+    // Callers (main after clap parse) write the PID after handlers are installed.
 
     // Pre-populate the OnceLock so subsequent `get_or_install_handlers()`
     // calls return THIS instance (with all of its handlers already
@@ -245,6 +233,17 @@ pub fn install_handlers_early() -> Option<Arc<ShutdownSignal>> {
     GLOBAL_SHUTDOWN.set(Arc::clone(&signal)).ok();
 
     Some(signal)
+}
+
+/// Write process PID to `path` after signal handlers are installed.
+///
+/// G-007: replaces env `ATOMWRITE_READY_FILE`. Used by tests via CLI
+/// `--ready-file` so harnesses wait for handlers without product env knobs.
+pub fn write_ready_file(path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, std::process::id().to_string());
 }
 
 /// Reset SIGPIPE to default disposition for standard Unix CLI behavior.

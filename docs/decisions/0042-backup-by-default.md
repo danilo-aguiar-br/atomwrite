@@ -1,5 +1,8 @@
 # ADR-0042: backup-by-default for content-mutating commands
 
+> **Historical (pre-0.1.35):** product `ATOMWRITE_*` / env knobs described below are **superseded**. Runtime config is CLI flags + XDG `config.toml` / `atomwrite set|get` only.
+
+
 - **Status**: Accepted
 - **Date**: 2026-06-19
 - **Context**: `AtomicWriteOptions::default()` had `backup: false`. The `write` command (and 8 other content-mutating commands) did NOT create backups by default. In the incident of 2026-06-15, an agent used `atomwrite write` instead of `atomwrite edit --before-match`, destroying 122,994 bytes of `gaps.md` with no backup to recover from. ADR-0035 (v0.1.20) added 6 defense-in-depth layers (L1-L6) but ALL were opt-in. The field `keep_backup: false` meant that even when `--backup` was explicitly passed, the backup was deleted silently after a successful write via `delete_backup_quietly`. The result: the default execution path (no flags) preserved ZERO recoverable copies. The Unix convention (cp, mv, dd) does not create backups by default, but this convention is inadequate for a tool whose primary audience is LLM agents that make semantic command errors (confusing `write` with `edit`).

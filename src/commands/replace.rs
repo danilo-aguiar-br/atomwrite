@@ -85,11 +85,17 @@ pub fn cmd_replace(
     let files_modified = Arc::new(AtomicU64::new(0));
     let files_skipped = Arc::new(AtomicU64::new(0));
     let total_replacements = Arc::new(AtomicU64::new(0));
+    // G-027: count binary rejections separately from generic I/O failures.
+    let binary_rejects = Arc::new(AtomicU64::new(0));
+    let first_binary_path: Arc<std::sync::Mutex<Option<PathBuf>>> =
+        Arc::new(std::sync::Mutex::new(None));
 
     let fv = Arc::clone(&files_visited);
     let fm = Arc::clone(&files_modified);
     let fs_skip = Arc::clone(&files_skipped);
     let tr = Arc::clone(&total_replacements);
+    let binary_rejects_w = Arc::clone(&binary_rejects);
+    let first_binary_w = Arc::clone(&first_binary_path);
     let ft = Arc::clone(&files_total);
     let replacement: Arc<str> = args.replacement.clone().into();
     let max_replacements = args.max_replacements;
@@ -114,6 +120,12 @@ pub fn cmd_replace(
     let quiet = global.quiet;
     let no_progress = global.no_progress;
     let pattern_owned: Arc<str> = args.pattern.clone().into();
+    let fuzzy_opts = fuzzy::match_opts_from_section(
+        fuzzy_mode,
+        fuzzy_threshold,
+        fuzzy_cfg,
+        false,
+    );
     let walker_thread = std::thread::spawn(move || {
         walker.build_parallel().run(|| {
             let pattern = pattern.clone();
@@ -124,6 +136,8 @@ pub fn cmd_replace(
             let fm = Arc::clone(&fm);
             let fs_skip = Arc::clone(&fs_skip);
             let tr = Arc::clone(&tr);
+            let binary_rejects_w = Arc::clone(&binary_rejects_w);
+            let first_binary_w = Arc::clone(&first_binary_w);
             let ft = Arc::clone(&ft);
             let ws = Arc::clone(&ws);
             let expect_ck = expect_ck.clone();
@@ -176,6 +190,22 @@ pub fn cmd_replace(
                     }
                 };
 
+                // G-015 / G-027: refuse binary content with permanent BINARY_FILE taxonomy.
+                if crate::binary_detect::is_binary(content.as_bytes()) {
+                    fs_skip.fetch_add(1, Ordering::Relaxed);
+                    binary_rejects_w.fetch_add(1, Ordering::Relaxed);
+                    if let Ok(mut guard) = first_binary_w.lock() {
+                        if guard.is_none() {
+                            *guard = Some(path.clone());
+                        }
+                    }
+                    let _ = tx.send(ReplaceEvent::Error {
+                        path,
+                        kind: ReplaceErrorKind::BinaryRejected,
+                    });
+                    return ignore::WalkState::Continue;
+                }
+
                 let mut fuzzy_meta: Option<(bool, String, Option<f64>, u64)> = None;
                 let mut word_ignored = false;
                 let (replaced, count) = if use_regex {
@@ -210,8 +240,7 @@ pub fn cmd_replace(
                             &content,
                             pattern_owned.as_ref(),
                             replacement.as_ref(),
-                            fuzzy_mode,
-                            fuzzy_threshold,
+                            fuzzy_opts,
                             max_replacements,
                         ) {
                             Ok(result) => {
@@ -229,7 +258,7 @@ pub fn cmd_replace(
                                     (std::borrow::Cow::Borrowed(content.as_str()), 0)
                                 }
                             }
-                            Err(e) if matches!(e, crate::error::AtomwriteError::Cancelled { .. }) => {
+                            Err(crate::error::AtomwriteError::Cancelled { .. }) => {
                                 return ignore::WalkState::Quit;
                             }
                             Err(_) => (std::borrow::Cow::Borrowed(content.as_str()), 0),
@@ -422,6 +451,11 @@ pub fn cmd_replace(
                     ReplaceErrorKind::WriteFailure(msg) => {
                         (msg, crate::error::ErrorClass::Transient.as_str(), true)
                     }
+                    ReplaceErrorKind::BinaryRejected => (
+                        "binary file rejected for text replace (G-015/G-027)".to_string(),
+                        crate::error::ErrorClass::Permanent.as_str(),
+                        false,
+                    ),
                     ReplaceErrorKind::JailViolation => (
                         "path escapes workspace jail; use --workspace to set a different root"
                             .to_string(),
@@ -445,12 +479,19 @@ pub fn cmd_replace(
     }
 
     let total_repl = total_replacements.load(Ordering::Relaxed);
+    let matched = files_modified.load(Ordering::Relaxed);
+    // B-002g: dry-run / preview must not claim disk mutations.
+    let modified_count = if dry_run || preview {
+        Some(0)
+    } else {
+        Some(matched)
+    };
 
     writer.write_event(&Summary {
         r#type: "summary",
         files_visited: files_visited.load(Ordering::Relaxed),
-        files_matched: files_modified.load(Ordering::Relaxed),
-        files_modified: Some(files_modified.load(Ordering::Relaxed)),
+        files_matched: matched,
+        files_modified: modified_count,
         files_skipped: Some(files_skipped.load(Ordering::Relaxed)),
         total_matches: None,
         total_replacements: Some(total_repl),
@@ -458,6 +499,16 @@ pub fn cmd_replace(
     })?;
 
     if total_repl == 0 {
+        // G-027: all-binary / binary-only skips must not look like NO_MATCHES + retryable.
+        let binaries = binary_rejects.load(Ordering::Relaxed);
+        if binaries > 0 && files_modified.load(Ordering::Relaxed) == 0 {
+            let path = first_binary_path
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+                .unwrap_or_else(|| PathBuf::from("."));
+            return Err(crate::error::AtomwriteError::BinaryFile { path }.into());
+        }
         return Err(crate::error::AtomwriteError::NoMatches.into());
     }
 
@@ -502,6 +553,8 @@ enum ReplaceEvent {
 enum ReplaceErrorKind {
     StateDrift { expected: String, actual: String },
     WriteFailure(String),
+    /// G-027: binary content is a permanent precondition, not a transient write failure.
+    BinaryRejected,
     JailViolation,
 }
 

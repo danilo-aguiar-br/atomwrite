@@ -42,7 +42,7 @@ pub fn cmd_regex(
             || matches!(ex.as_str(), "-d" | "-w" | "-s" | "-r" | "-i")
         {
             crate::runtime::warn_stderr(
-                false,
+                crate::runtime::ColorMode::Never,
                 format!(
                     "example {:?} looks like a flag; place flags BEFORE examples: \
                      `atomwrite regex {} \"ex1\" \"ex2\"`",

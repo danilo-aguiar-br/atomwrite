@@ -942,12 +942,11 @@ atomwrite --workspace . backup --output-dir /var/backups/atomwrite src/critical.
 atomwrite completions bash --install
 ```
 
-### Use the Environment Variable for Workspace
+### Always pass `--workspace` for agents
 
 ```bash
-# For agents that don't pass --workspace explicitly
-export ATOMWRITE_WORKSPACE=/home/user/project
-atomwrite read src/main.rs
+# Agents must pass --workspace explicitly (no product environment variables)
+atomwrite --workspace /home/user/project read src/main.rs
 ```
 
 
@@ -985,7 +984,7 @@ atomwrite replace --preserve-timestamps 'old_api' 'new_api' src/
 ```bash
 # When workspace is NOT provided, the suggestion prompts for the flag
 atomwrite read /etc/passwd 2>/dev/null
-# Output: {"error":true,"code":"WORKSPACE_JAIL","exit":126,...,"suggestion":"set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>",...}
+# Output: {"error":true,"code":"WORKSPACE_JAIL","exit":126,...,"suggestion":"set --workspace <root> (XDG/config only; no environment variables)",...}
 
 # When workspace IS provided, the suggestion says "use a path inside"
 atomwrite --workspace /home/user/project read /etc/passwd 2>/dev/null
@@ -1136,10 +1135,10 @@ atomwrite --workspace . write src/lib.rs < new_lib.rs
 
 ### How to Inspect Journal Health
 
-The `wal-stats` subcommand (G119 L5) emits read-only telemetry about the current WAL state. Pair it with `jaq` to gate local or post-build scripts.
+The `wal-stats` subcommand (G119 L5) emits read-only local diagnostics about the current WAL state. Pair it with `jaq` to gate local or post-build scripts.
 
 ```bash
-# Full telemetry as NDJSON
+# Full local WAL diagnostics as NDJSON
 atomwrite --workspace . wal-stats
 
 # Gate on zero reclaimable journals

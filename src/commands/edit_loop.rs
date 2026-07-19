@@ -154,12 +154,14 @@ pub fn cmd_edit_loop(
     let mut applied = 0usize;
     let mut unmatched = 0usize;
     for (i, pair) in pairs.iter().enumerate() {
-        match fuzzy::match_pair(
+        match fuzzy::match_pair_cfg(
             &content,
             &pair.old,
             &pair.new,
             fuzzy_mode,
             fuzzy_threshold,
+            fuzzy_cfg,
+            false,
         ) {
             Ok((edited, _info)) => {
                 content = edited;

@@ -41,6 +41,7 @@ pub fn cmd_write(
     writer: &mut NdjsonWriter<impl Write>,
     shutdown: &ShutdownSignal,
     defaults: &crate::config::DefaultsSection,
+    write_cfg: &crate::config::WriteSection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
@@ -112,20 +113,41 @@ pub fn cmd_write(
         }
     }
 
-    // GAP-2026-017: block writes that shrink >50% when --expect-checksum is active
-    if args.expect_checksum.is_some() && !args.allow_shrink && resolved.exists() {
-        let original_size = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
-        let new_size = content.len() as u64;
-        if original_size > 0 && new_size < original_size / 2 {
-            let shrink_pct = 100u64.saturating_sub(new_size.saturating_mul(100) / original_size);
+    // G-001 / G-019 / G-034 — confirm/ack BEFORE shrink so agents see ack requirement first.
+    // One-shot: never read Y/N from stdin (collides with payload).
+    if args.confirm && resolved.exists() {
+        let size = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
+        if size > write_cfg.confirm_large_bytes && !args.ack_overwrite {
             return Err(AtomwriteError::InvalidInput {
                 reason: format!(
-                    "stdin is {}% smaller than target ({} -> {} bytes); \
-                     pass --allow-shrink to confirm intentional truncation",
-                    shrink_pct, original_size, new_size
+                    "overwrite of large file {} ({} bytes) requires --ack-overwrite with --confirm (one-shot; no interactive prompt)",
+                    resolved.display(),
+                    size
                 ),
             }
             .into());
+        }
+    }
+
+    // G-017 / G-028: block writes that shrink more than configured percent (not only with CAS).
+    if !args.allow_shrink && resolved.exists() {
+        let original_size = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
+        let new_size = content.len() as u64;
+        if original_size > 0 {
+            let remain_pct = new_size.saturating_mul(100) / original_size;
+            let min_remain = 100u64.saturating_sub(u64::from(write_cfg.shrink_block_percent));
+            if remain_pct < min_remain {
+                let shrink_pct =
+                    100u64.saturating_sub(new_size.saturating_mul(100) / original_size);
+                return Err(AtomwriteError::InvalidInput {
+                    reason: format!(
+                        "stdin is {}% smaller than target ({} -> {} bytes); \
+                         pass --allow-shrink to confirm intentional truncation",
+                        shrink_pct, original_size, new_size
+                    ),
+                }
+                .into());
+            }
         }
     }
 
@@ -153,26 +175,7 @@ pub fn cmd_write(
         .into());
     }
 
-    // GAP-2026-011 L3 — confirm guard
-    if args.confirm && resolved.exists() {
-        let size = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
-        if size > 100 * 1024 {
-            use std::io::BufRead;
-            eprint!("Overwrite {} ({} bytes)? [y/N] ", resolved.display(), size);
-            let stdin_lock = std::io::stdin();
-            let mut handle = stdin_lock.lock();
-            let mut input = String::new();
-            let _ = handle.read_line(&mut input);
-            if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
-                return Err(AtomwriteError::InvalidInput {
-                    reason: "aborted by user (confirm=no)".into(),
-                }
-                .into());
-            }
-        }
-    }
-
-    // GAP-2026-011 L5 — auto-rotate guard
+    // GAP-2026-011 L5 — auto-rotate guard (age from XDG `[write].auto_rotate_max_age_secs`)
     let auto_rotate_active = args.auto_rotate
         && effective_backup
         && resolved.exists()
@@ -180,13 +183,35 @@ pub fn cmd_write(
             .and_then(|m| m.modified())
             .ok()
             .and_then(|t| t.elapsed().ok())
-            .is_some_and(|age| age < std::time::Duration::from_secs(24 * 3600));
+            .is_some_and(|age| {
+                age < std::time::Duration::from_secs(write_cfg.auto_rotate_max_age_secs)
+            });
 
-    // GAP-2026-011 L1 + L6 — size guard and risk_assessment telemetry
-    // GAP-2026-024: skip risk_assessment for append/prepend (never causes data loss)
-    let risk_assessment = if resolved.exists() && !args.append && !args.prepend {
-        let original = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
-        let new_bytes = content.len() as u64;
+    // GAP-2026-011 L1 + L6 — size guard and risk_assessment diagnostics
+    // GAP-2026-024: skip size risk for append/prepend (never causes data loss)
+    // B-013: content-pattern risk applies to create/overwrite payloads (not product telemetry).
+    let new_bytes = content.len() as u64;
+    let original_bytes = if resolved.exists() {
+        std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
+
+    let mut risk_assessment = None;
+
+    if let Some(content_risk) = assess_content_risk(&content, original_bytes, new_bytes) {
+        crate::runtime::warn_stderr(
+            global.color_mode(),
+            &format!(
+                "write content risk {} (guard={})",
+                content_risk.risk_level, content_risk.guard_triggered
+            ),
+        );
+        risk_assessment = Some(content_risk);
+    }
+
+    if risk_assessment.is_none() && resolved.exists() && !args.append && !args.prepend {
+        let original = original_bytes;
         if original > 0 {
             let delta_pct = ((new_bytes.abs_diff(original)) * 100 / original) as u32;
             if delta_pct >= u32::from(args.risk_threshold) {
@@ -198,43 +223,36 @@ pub fn cmd_write(
                     "low"
                 };
                 crate::runtime::warn_stderr(
-                    global.no_color,
-                    rust_i18n::t!(
+                    global.color_mode(),
+                    &rust_i18n::t!(
                         "warn.write-risk",
                         level = level,
                         delta_pct = delta_pct,
                         original = original,
                         new_bytes = new_bytes
-                    )
-                    .to_string(),
+                    ),
                 );
-                // GAP-2026-017: block shrink when --expect-checksum is active
-                if args.expect_checksum.is_some() && !args.allow_shrink && new_bytes < original {
+                // G-017: block large shrink always (CAS optional).
+                if !args.allow_shrink && new_bytes < original {
                     return Err(AtomwriteError::InvalidInput {
                         reason: format!(
-                            "write risk {} ({}% size delta, {} -> {} bytes) blocked with --expect-checksum; \
+                            "write risk {} ({}% size delta, {} -> {} bytes) blocked; \
                              pass --allow-shrink to override",
                             level, delta_pct, original, new_bytes
                         ),
                     }
                     .into());
                 }
-                Some(crate::ndjson_types::WriteRiskAssessment {
+                risk_assessment = Some(crate::ndjson_types::WriteRiskAssessment {
                     original_bytes: original,
                     new_bytes,
                     size_delta_pct: delta_pct,
                     risk_level: level,
                     guard_triggered: "size",
-                })
-            } else {
-                None
+                });
             }
-        } else {
-            None
         }
-    } else {
-        None
-    };
+    }
 
     let opts = AtomicWriteOptions {
         backup: effective_backup || auto_rotate_active,
@@ -277,10 +295,42 @@ pub fn cmd_write(
     Ok(())
 }
 
+/// B-013: classify destructive shell-like payloads (local diagnostics, not telemetry).
+fn assess_content_risk(
+    content: &[u8],
+    original_bytes: u64,
+    new_bytes: u64,
+) -> Option<crate::ndjson_types::WriteRiskAssessment> {
+    let text = std::str::from_utf8(content).ok()?;
+    for pat in crate::constants::WRITE_CONTENT_RISK_PATTERNS {
+        if text.contains(pat) {
+            return Some(crate::ndjson_types::WriteRiskAssessment {
+                original_bytes,
+                new_bytes,
+                size_delta_pct: 0,
+                risk_level: "high",
+                guard_triggered: "content_pattern",
+            });
+        }
+    }
+    // curl|sh style without requiring both tokens adjacent in the constant list.
+    if text.contains("curl") && (text.contains("| sh") || text.contains("|sh") || text.contains("| bash"))
+    {
+        return Some(crate::ndjson_types::WriteRiskAssessment {
+            original_bytes,
+            new_bytes,
+            size_delta_pct: 0,
+            risk_level: "high",
+            guard_triggered: "content_pattern",
+        });
+    }
+    None
+}
+
 /// Read all bytes from stdin, applying optional `max_size` cap and the G120
 /// L1 guard for empty input. Returns the buffer plus the actual byte count
 /// read so the caller can include `stdin_bytes_read` in the NDJSON envelope
-/// (G120 L4 telemetry).
+/// (G120 L4 local diagnostics).
 ///
 /// The empty-stdin guard defaults to ON because accepting 0 bytes as a valid
 /// payload is a frequent source of silent data loss when the upstream
@@ -304,7 +354,8 @@ pub(crate) fn read_stdin_content_cancellable(
         // payload is near max_size; failure is non-fatal (we still grow).
         let _ = buf.try_reserve(reserve.min(crate::constants::STDIN_INITIAL_CAPACITY * 64));
     }
-    let mut chunk = [0u8; 64 * 1024];
+    // A-025: stdin read chunk aligned with BUF_CAPACITY.
+    let mut chunk = [0u8; crate::constants::BUF_CAPACITY];
     loop {
         if shutdown.is_some_and(|s| s.is_shutdown()) {
             return Err(crate::signal::cancelled_error("stdin read cancelled by signal").into());

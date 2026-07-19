@@ -87,7 +87,9 @@ fn read_format_raw_emits_bytes() {
         .expect("run");
 
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "raw content\n");
+    // B-006: --format raw always emits file bytes (not NDJSON).
+    let body = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(body, "raw content\n");
 }
 
 #[test]

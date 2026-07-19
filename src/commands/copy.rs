@@ -64,13 +64,10 @@ pub fn cmd_copy(
         }
     }
 
-    // v0.1.28 GAP-CLI-SURFACE-DRIFT: overwrite requires an EXPLICIT authorization
-    // (--force, --backup, or ATOMWRITE_BACKUP enabled) now that backup defaults to true.
-    let env_backup_enabled = std::env::var("ATOMWRITE_BACKUP")
-        .map(|v| v != "0")
-        .unwrap_or(false);
+    // v0.1.28 / G-007: overwrite requires EXPLICIT CLI authorization
+    // (--force or --backup). No product env knobs.
     let overwrite_authorized =
-        args.force || args.backup_opts.backup == Some(true) || env_backup_enabled;
+        args.force || args.backup_opts.backup == Some(true);
     if target.exists() && !overwrite_authorized {
         return Err(AtomwriteError::InvalidInput {
             reason: format!(

@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "atomwrite"
-version = "0.1.34"
+version = "0.1.35"
 edition = "2024"
 rust-version = "1.88"
 description = "Atomic file operations CLI for LLM agents — read, write, edit, search, replace with NDJSON output"
@@ -35,9 +35,9 @@ exclude = [
 
 [dependencies]
 notify = { version = "7", optional = true }
-# Features: derive (API), env (#[arg(env)]), wrap_help, string (runtime parsers).
+# Features: derive (API), wrap_help, string (runtime parsers). No clap env knobs (G-007).
 # color + suggestions are also clap defaults; listed explicitly per rules_rust_cli_com_clap.
-clap = { version = "4", features = ["derive", "env", "wrap_help", "string", "color", "suggestions", "cargo"] }
+clap = { version = "4", features = ["derive", "wrap_help", "string", "color", "suggestions", "cargo"] }
 clap_complete = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -50,6 +50,7 @@ anyhow = "1"
 tempfile = "3"
 walkdir = "2"
 blake3 = { version = "1", features = ["mmap", "rayon"] }
+base64 = "0.22"
 rayon = "1"
 crossbeam-channel = "0.5"
 regex = "1"
@@ -193,7 +194,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 status = "actively-developed"
 
 [features]
-default = ["core", "ast", "lang-rust", "lang-ts", "lang-py"]
+# B-007: include `watch` so help and default binary match (still one-shot-bound).
+default = ["core", "ast", "lang-rust", "lang-ts", "lang-py", "watch"]
 core = []
 ast = ["dep:ast-grep-core", "dep:ast-grep-language", "dep:tree-sitter", "dep:tree-sitter-language-pack", "dep:serde_yaml"]
 lang-rust = []
@@ -202,8 +204,9 @@ lang-py = []
 lang-go = []
 lang-full = ["lang-rust", "lang-ts", "lang-py", "lang-go"]
 watch = ["dep:notify"]
-semantic = []
-full = ["default", "lang-full", "watch", "semantic"]
+# A-017: empty `semantic` feature removed — semantic-search is always compiled
+# (offline Jaccard). Keep `full` without a no-op semantic gate.
+full = ["default", "lang-full", "watch"]
 # Opt-in property tests that may take longer than the default budget.
 # Run with: cargo test --features slow-tests
 slow-tests = []

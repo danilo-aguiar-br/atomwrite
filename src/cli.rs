@@ -81,6 +81,17 @@ pub struct GlobalArgs {
     #[arg(long, global = true, help = "Disable colored output", action = clap::ArgAction::SetTrue)]
     pub no_color: bool,
 
+    /// Write PID to this path after signal handlers install (test harness only).
+    ///
+    /// G-007: replaces env readiness probes. One-shot agents normally omit this.
+    #[arg(
+        long = "ready-file",
+        global = true,
+        value_hint = ValueHint::FilePath,
+        help = "Write PID after signal handlers are ready (test harness; no product env)"
+    )]
+    pub ready_file: Option<PathBuf>,
+
     /// Disable .gitignore filtering.
     #[arg(long, global = true, help = "Do not respect .gitignore files", action = clap::ArgAction::SetTrue)]
     pub no_gitignore: bool,
@@ -104,8 +115,8 @@ pub struct GlobalArgs {
     /// * `N` → exactly N workers (deterministic tests / constrained hosts)
     ///
     /// Alias: `--max-concurrency` (Rules Rust bounded-concurrency surface).
-    /// Env: `RAYON_NUM_THREADS` is still honored by rayon if the pool was not
-    /// configured via this flag path first.
+    /// Bound is **CLI-only** (`--threads` / `--max-concurrency`); atomwrite does
+    /// not document or require process env knobs for concurrency (G-007 / O-009).
     #[arg(
         short = 'j',
         long = "threads",
@@ -124,7 +135,7 @@ pub struct GlobalArgs {
     )]
     pub max_filesize: Option<u64>,
 
-    /// Global operation timeout in seconds. **Default 120** (v0.1.33/0.1.34 one-shot).
+    /// Global operation timeout in seconds (one-shot default: [`crate::constants::DEFAULT_TIMEOUT_SECS`]).
     ///
     /// When non-zero, a watchdog sets the cooperative cancel flag after N
     /// seconds (exit 124). Alias: `--timeout`. Pass `0` to disable (not
@@ -133,8 +144,8 @@ pub struct GlobalArgs {
         long = "timeout-secs",
         visible_alias = "timeout",
         global = true,
-        default_value_t = 120u64,
-        help = "Global operation timeout in seconds (default: 120; 0 = disable; exit 124 on deadline)"
+        default_value_t = crate::constants::DEFAULT_TIMEOUT_SECS,
+        help = "Global operation timeout in seconds (default from constants::DEFAULT_TIMEOUT_SECS=120; 0 = disable; exit 124 on deadline)"
     )]
     pub timeout_secs: u64,
 
@@ -164,20 +175,15 @@ pub struct GlobalArgs {
     ///
     /// ADR-0037: long flag renamed `--lang` → `--locale` in v0.1.20 to
     /// free the `--lang` namespace for subcommand-level use (e.g.
-    /// `scope --lang` as an alias for `--language`). The env var
-    /// `ATOMWRITE_LANG` and the Rust field name `lang` are unchanged
-    /// to preserve backward compatibility for env-var consumers and
-    /// programmatic API users. Existing `--lang` flag invocations
-    /// will fail loudly with `unknown argument` — this is a deliberate
-    /// breaking change in CLI surface, documented in CHANGELOG v0.1.20.
+    /// `scope --lang` as an alias for `--language`). Field name remains `lang`.
     ///
-    /// Precedence (Rules Rust i18n): `--locale` / `ATOMWRITE_LANG` → XDG
-    /// preference → OS via `sys-locale` → `en`. NDJSON error **codes** and
-    /// Display **messages** stay English; **suggestions** follow the locale.
+    /// Precedence (Rules Rust i18n): `--locale` → XDG preference → OS via
+    /// `sys-locale` → `en`. NDJSON error **codes** and Display **messages**
+    /// stay English; **suggestions** follow the locale.
+    /// G-007: locale via CLI / XDG only (no product env knobs).
     #[arg(
         long = "locale",
         global = true,
-        env = "ATOMWRITE_LANG",
         value_parser = crate::locale::parse_cli_locale,
         help = "Override locale (en, pt-BR); renamed from --lang in v0.1.20"
     )]
@@ -188,10 +194,10 @@ pub struct GlobalArgs {
     /// `Aborted` sidecars older than 3600s within a 100ms wall-clock
     /// budget. Set this flag in tight local loops or in benchmarks that
     /// measure the subcommand cost in isolation.
+    /// G-007: flag only (no `ATOMWRITE_WAL_NO_AUTO_HEAL` env).
     #[arg(
         long,
         global = true,
-        env = "ATOMWRITE_WAL_NO_AUTO_HEAL",
         help = "Skip startup wal-heal pass (G119 L3); default: run with 3600s threshold and 100ms budget",
         action = clap::ArgAction::SetTrue
     )]
@@ -223,6 +229,18 @@ impl GlobalArgs {
     pub fn effective_max_filesize(&self) -> u64 {
         self.max_filesize
             .unwrap_or(crate::constants::DEFAULT_MAX_FILESIZE)
+    }
+
+    /// Resolve stderr/tracing ANSI policy (G-007: CLI only, no process env).
+    pub fn color_mode(&self) -> crate::runtime::ColorMode {
+        if self.no_color {
+            return crate::runtime::ColorMode::Never;
+        }
+        match self.color {
+            ColorChoice::Auto => crate::runtime::ColorMode::Auto,
+            ColorChoice::Always => crate::runtime::ColorMode::Always,
+            ColorChoice::Never => crate::runtime::ColorMode::Never,
+        }
     }
 }
 
@@ -267,7 +285,7 @@ pub enum Commands {
     /// Compare two files or file vs stdin (unified diff)
     Diff(DiffArgs),
 
-    /// Move or rename files atomically
+    /// Move or rename files/dirs atomically (same-FS dir rename; cross-device dirs: copy -r + delete)
     Move(MoveArgs),
 
     /// Copy files with checksum verification and atomic destination
@@ -317,7 +335,7 @@ pub enum Commands {
     Outline(crate::cli_args::OutlineArgs),
 
     /// Snapshot of journal state: count by terminal state, size, age,
-    /// breakdown by directory (G119 L5 telemetry).
+    /// breakdown by directory (G119 L5 journal stats).
     WalStats(crate::cli_args::WalStatsArgs),
 
     /// Remove stale terminal journals older than the threshold (G119 L3).

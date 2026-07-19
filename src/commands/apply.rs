@@ -32,6 +32,7 @@ pub fn cmd_apply(
     stdin: impl Read,
     writer: &mut NdjsonWriter<impl Write>,
     defaults: &crate::config::DefaultsSection,
+    fuzzy_cfg: &crate::config::FuzzySection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
@@ -66,7 +67,7 @@ pub fn cmd_apply(
 
     let (result_content, hunks) = match format {
         PatchFormat::Unified => apply_unified(&original, &patch)?,
-        PatchFormat::SearchReplace => apply_search_replace(&original, &patch)?,
+        PatchFormat::SearchReplace => apply_search_replace(&original, &patch, fuzzy_cfg)?,
         PatchFormat::Full => (patch.clone(), 1),
         PatchFormat::Markdown => {
             let stripped = strip_markdown_fences(&patch);
@@ -264,7 +265,11 @@ fn parse_range(range: &str) -> Option<(usize, usize)> {
     }
 }
 
-fn apply_search_replace(original: &str, patch: &str) -> Result<(String, usize)> {
+fn apply_search_replace(
+    original: &str,
+    patch: &str,
+    fuzzy_cfg: &crate::config::FuzzySection,
+) -> Result<(String, usize)> {
     let mut result = original.to_owned();
     let mut blocks = 0usize;
 
@@ -290,8 +295,20 @@ fn apply_search_replace(original: &str, patch: &str) -> Result<(String, usize)> 
             let search_text = lines[search_start..sep].join("\n");
             let replace_text = lines[replace_start..replace_end].join("\n");
 
+            // Exact first; on miss use fuzzy cascade (G-FZZ-059/073).
             if let Some(pos) = result.find(&search_text) {
                 result.replace_range(pos..pos + search_text.len(), &replace_text);
+                blocks += 1;
+            } else if let Ok((edited, _info)) = crate::fuzzy::match_pair_cfg(
+                &result,
+                &search_text,
+                &replace_text,
+                crate::cli_args::FuzzyMode::Auto,
+                None,
+                fuzzy_cfg,
+                false,
+            ) {
+                result = edited;
                 blocks += 1;
             }
 
@@ -376,7 +393,7 @@ mod tests {
     fn apply_search_replace_basic() {
         let original = "hello world\nfoo bar\n";
         let patch = "<<<<<<< SEARCH\nhello world\n=======\nhello universe\n>>>>>>> REPLACE\n";
-        let (result, blocks) = apply_search_replace(original, patch).unwrap();
+        let (result, blocks) = apply_search_replace(original, patch, &crate::config::FuzzySection::default()).unwrap();
         assert_eq!(blocks, 1);
         assert!(result.contains("hello universe"));
     }
@@ -385,7 +402,7 @@ mod tests {
     fn apply_search_replace_no_blocks_fails() {
         let original = "hello world\n";
         let patch = "no search replace blocks here\n";
-        let result = apply_search_replace(original, patch);
+        let result = apply_search_replace(original, patch, &crate::config::FuzzySection::default());
         assert!(result.is_err());
     }
 

@@ -95,7 +95,12 @@ pub mod line_endings;
 /// Advisory file locking for concurrent edit protection (G54).
 pub mod lock;
 /// NDJSON output type definitions.
-pub mod ndjson_types;
+pub mod ndjson;
+#[allow(deprecated)]
+pub mod ndjson_types {
+    //! Compatibility shim — types live in [`crate::ndjson`].
+    pub use crate::ndjson::*;
+}
 /// NDJSON output writer utilities.
 pub mod output;
 /// Workspace path jail validation.
@@ -104,7 +109,7 @@ pub mod path_safety;
 pub mod platform;
 /// Graceful shutdown signal handling.
 pub mod signal;
-/// Cross-platform storage paths (`ATOMWRITE_HOME` / XDG / ProjectDirs).
+/// Cross-platform storage paths (XDG / ProjectDirs; no product env knobs).
 pub mod storage;
 /// Binary startup helpers (tracing, locale, clap error mapping).
 pub mod runtime;
@@ -271,19 +276,27 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
     let workspace = cli.global.resolve_workspace()?;
     let config = crate::config::load_config(&workspace, cli.global.config.as_deref())?;
     crate::config::validate_fuzzy(&config.fuzzy)?;
+    crate::config::validate_write(&config.write)?;
+    crate::config::validate_search_section(&config.search)?;
     let defaults = &config.defaults;
+    let write_cfg = &config.write;
     let fuzzy_cfg = &config.fuzzy;
+    let search_cfg = &config.search;
 
     // G119 L3 — autonomous startup `wal-heal` pass. Walks the workspace
     // once, removes every `Committed`/`Aborted` sidecar older than
     // `threshold_secs` (default 3600s = 1h), and is bounded by a
     // 100ms wall-clock budget so the per-invocation overhead is
     // predictable. Disabled via `--no-auto-heal` or
-    // `ATOMWRITE_WAL_NO_AUTO_HEAL=1` for tight local loops and benchmarks.
+    // Use CLI `--no-auto-heal` for tight local loops and benchmarks.
     // `Started` journals are NEVER removed automatically — they are the
     // orphans worth operator attention.
     if !cli.global.no_auto_heal {
-        match crate::wal::auto_heal_on_startup(&workspace, 3600, 100) {
+        match crate::wal::auto_heal_on_startup(
+            &workspace,
+            crate::constants::DEFAULT_WAL_HEAL_THRESHOLD_SECS,
+            crate::constants::DEFAULT_WAL_HEAL_MAX_DURATION_MS,
+        ) {
             Ok(report) if report.removed > 0 || report.malformed > 0 => {
                 tracing::info!(
                     removed = report.removed,
@@ -310,9 +323,15 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
 
     let result = match &cli.command {
         Commands::Read(args) => commands::read::cmd_read(args, &cli.global, &mut writer),
-        Commands::Write(args) => {
-            commands::write::cmd_write(args, &cli.global, stdin, &mut writer, &shutdown, defaults)
-        }
+        Commands::Write(args) => commands::write::cmd_write(
+            args,
+            &cli.global,
+            stdin,
+            &mut writer,
+            &shutdown,
+            defaults,
+            write_cfg,
+        ),
         Commands::Edit(args) => commands::edit::cmd_edit(
             args,
             &cli.global,
@@ -324,7 +343,21 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
             stdin_is_tty,
         ),
         Commands::Search(args) => {
-            commands::search::cmd_search(args, &cli.global, &mut writer, &shutdown)
+            // A-019: apply XDG [search] defaults when CLI still has constant defaults.
+            let mut args = args.clone();
+            if args.max_filesize == crate::constants::DEFAULT_SEARCH_MAX_FILESIZE_BYTES {
+                args.max_filesize = search_cfg.max_filesize;
+            }
+            if args.max_columns == crate::constants::DEFAULT_SEARCH_MAX_COLUMNS {
+                args.max_columns = search_cfg.max_columns;
+            }
+            if args.context == 0 && search_cfg.context > 0 {
+                args.context = search_cfg.context as usize;
+            }
+            if search_cfg.smart_case && !args.case_insensitive {
+                args.smart_case = true;
+            }
+            commands::search::cmd_search(&args, &cli.global, &mut writer, &shutdown)
         }
         Commands::Replace(args) => {
             commands::replace::cmd_replace(
@@ -341,7 +374,7 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
             commands::delete::cmd_delete(args, &cli.global, &mut writer, defaults)
         }
         Commands::Count(args) => commands::count::cmd_count(args, &cli.global, &mut writer),
-        Commands::Diff(args) => commands::diff::cmd_diff(args, &cli.global, &mut writer),
+        Commands::Diff(args) => commands::diff::cmd_diff(args, &cli.global, stdin, &mut writer),
         Commands::Move(args) => {
             commands::r#move::cmd_move(args, &cli.global, &mut writer, defaults)
         }
@@ -378,7 +411,7 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
             commands::rollback::cmd_rollback(args, &cli.global, &mut writer, defaults)
         }
         Commands::Apply(args) => {
-            commands::apply::cmd_apply(args, &cli.global, stdin, &mut writer, defaults)
+            commands::apply::cmd_apply(args, &cli.global, stdin, &mut writer, defaults, fuzzy_cfg)
         }
         Commands::Set(args) => commands::set::cmd_set(args, &cli.global, &mut writer, defaults),
         Commands::Get(args) => commands::get::cmd_get(args, &cli.global, &mut writer),
@@ -497,14 +530,11 @@ fn generate_completions(args: &cli::CompletionsArgs, mut out: impl Write) -> Res
     };
 
     if args.install {
-        // Install to XDG data directory
-        let xdg_data = std::env::var_os("XDG_DATA_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME")
-                    .map(|h| std::path::PathBuf::from(h).join(".local").join("share"))
-            })
-            .ok_or_else(|| anyhow::anyhow!("cannot determine XDG data directory"))?;
+        // Install under platform data dir (XDG via `directories` / storage layer).
+        let xdg_data = crate::storage::data_dir()
+            .and_then(|d| d.parent().map(|p| p.to_path_buf()))
+            .or_else(crate::storage::data_dir)
+            .ok_or_else(|| anyhow::anyhow!("cannot determine XDG data directory (storage)"))?;
 
         let (subdir, filename) = match args.shell {
             cli::ShellType::Bash => ("bash-completion/completions", "atomwrite"),

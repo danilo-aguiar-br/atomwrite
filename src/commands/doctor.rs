@@ -97,33 +97,30 @@ pub fn cmd_doctor(
             )
         }),
         Box::new(|| {
-            check(
-                "feature_watch",
-                if cfg!(feature = "watch") {
-                    "pass"
-                } else {
-                    "warn"
-                },
-                if cfg!(feature = "watch") {
-                    "watch feature enabled".to_string()
-                } else {
-                    "watch feature disabled — install with --features watch".to_string()
-                },
-            )
+            // A-006: opt-in long-running feature uses status `info` when off so
+            // agents do not interpret `pass` as "watch is usable".
+            // `info` never fails `--strict` (only fail/warn do).
+            if cfg!(feature = "watch") {
+                check(
+                    "feature_watch",
+                    "pass",
+                    "watch feature enabled (long-running; not one-shot default)",
+                )
+            } else {
+                check(
+                    "feature_watch",
+                    "info",
+                    "watch disabled in this build (one-shot default; use --features watch)",
+                )
+            }
         }),
         Box::new(|| {
+            // G-012 / A-017: offline Jaccard semantic-search is always in the binary
+            // (empty Cargo feature removed; not a gate).
             check(
                 "feature_semantic",
-                if cfg!(feature = "semantic") {
-                    "pass"
-                } else {
-                    "warn"
-                },
-                if cfg!(feature = "semantic") {
-                    "semantic feature enabled".to_string()
-                } else {
-                    "semantic feature disabled — install with --features semantic".to_string()
-                },
+                "pass",
+                "semantic-search offline Jaccard always available (no feature gate)",
             )
         }),
         Box::new(|| {
@@ -148,7 +145,7 @@ pub fn cmd_doctor(
         Box::new(|| {
             if let Some(cfg_dir) = crate::storage::config_dir() {
                 let via = if crate::storage::home_override().is_some() {
-                    "ATOMWRITE_HOME"
+                    "XDG/ProjectDirs config"
                 } else {
                     "ProjectDirs/XDG"
                 };
@@ -161,7 +158,7 @@ pub fn cmd_doctor(
                 check(
                     "storage_config_dir",
                     "warn",
-                    "cannot resolve config dir (no HOME / ATOMWRITE_HOME / ProjectDirs)",
+                    "cannot resolve config dir (no ProjectDirs / XDG home)",
                 )
             }
         }),
@@ -234,7 +231,15 @@ pub fn cmd_doctor(
     // Stable NDJSON for agents (par_iter order is not sorted).
     checks.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let ok = !checks.iter().any(|c| c.status == "fail");
+    // G-009 / A-006: non-strict `ok` is fail-only; strict also rejects `warn`.
+    // Status `info` is informational only (never fails ok/strict).
+    let has_fail = checks.iter().any(|c| c.status == "fail");
+    let has_warn = checks.iter().any(|c| c.status == "warn");
+    let ok = if args.strict {
+        !has_fail && !has_warn
+    } else {
+        !has_fail
+    };
     writer.write_event(&DoctorReport {
         r#type: "doctor_report",
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -244,7 +249,7 @@ pub fn cmd_doctor(
     })?;
 
     if args.strict && !ok {
-        anyhow::bail!("doctor: one or more checks failed (strict mode)");
+        anyhow::bail!("doctor: one or more checks failed or warned (strict mode)");
     }
     Ok(())
 }

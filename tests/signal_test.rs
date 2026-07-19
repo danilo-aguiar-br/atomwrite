@@ -152,7 +152,7 @@ fn batch_interrupted_by_signal() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .env("ATOMWRITE_READY_FILE", &ready_path)
+        .args(["--ready-file"]).arg(&ready_path)
         .spawn()
         .unwrap();
 
@@ -211,7 +211,7 @@ fn shutdown_message_on_stderr() {
             "searchable",
         ])
         .arg(dir.path())
-        .env("ATOMWRITE_READY_FILE", &ready_path)
+        .args(["--ready-file"]).arg(&ready_path)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -219,11 +219,8 @@ fn shutdown_message_on_stderr() {
 
     // Wait for atomwrite to install its signal handlers. Without this
     // barrier, SIGINT can race `posix_spawn` and arrive before
-    // `install_handlers_early` calls `signal_hook::flag::register`, in
-    // which case the kernel's SIG_DFL disposition kills the child with
-    // no shutdown banner. Polling the readiness file is the only
-    // race-free way to observe handler installation without modifying
-    // the public CLI surface.
+    // handlers are registered. Polling `--ready-file` is the race-free
+    // harness (G-007: no product env knobs).
     let deadline = Instant::now() + Duration::from_secs(10);
     while !ready_path.exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(5));

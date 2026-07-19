@@ -29,7 +29,8 @@ fn subcommands_with_backup_opts() -> Vec<(&'static str, Vec<&'static str>)> {
         ("apply", vec!["apply", "f.txt"]),
         ("set", vec!["set", "f.toml", "key.path", "value"]),
         ("del", vec!["del", "f.toml", "key.path"]),
-        ("case", vec!["case", "f.rs"]),
+        // G-029/G-047: --subvert is required for case.
+        ("case", vec!["case", "--subvert", "old", "new", "f.rs"]),
         ("batch", vec!["batch"]),
         ("delete", vec!["delete", "f.txt"]),
         ("move", vec!["move", "src.txt", "dst.txt"]),

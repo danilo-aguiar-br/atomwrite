@@ -39,9 +39,12 @@ pub enum RecipeAction {
 /// `recipe run` arguments.
 #[derive(Args, Debug)]
 pub struct RecipeRunArgs {
-    /// Recipe name (built-in) or path to YAML documentation.
-    #[arg(long)]
-    pub name: String,
+    /// Recipe name (built-in) or path to YAML documentation (`--name`).
+    #[arg(long, value_name = "NAME")]
+    pub name: Option<String>,
+    /// Positional recipe name (B-004 discoverability: `recipe run NAME`).
+    #[arg(value_name = "NAME")]
+    pub name_positional: Option<String>,
     /// Dry-run all mutating steps.
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
@@ -147,14 +150,21 @@ fn run_recipe(
     fuzzy_cfg: &crate::config::FuzzySection,
 ) -> Result<()> {
     let start = std::time::Instant::now();
-    // Allow documented YAML names that map to the same built-ins.
-    let name = args
+    // B-004: accept `--name` or positional NAME.
+    let raw_name = args
         .name
+        .as_deref()
+        .or(args.name_positional.as_deref())
+        .ok_or_else(|| AtomwriteError::InvalidInput {
+            reason: "recipe run requires --name NAME or positional NAME".into(),
+        })?;
+    // Allow documented YAML names that map to the same built-ins.
+    let name = raw_name
         .trim_end_matches(".yaml")
         .trim_end_matches(".yml")
         .rsplit('/')
         .next()
-        .unwrap_or(args.name.as_str());
+        .unwrap_or(raw_name);
 
     match name {
         "search-replace-verify" => {
@@ -210,10 +220,8 @@ fn run_search_replace_verify(
         include: args.include.clone(),
         exclude: {
             let mut ex = args.exclude.clone();
-            if !ex.iter().any(|e| e.contains("bak")) {
-                ex.push("*.bak.*".into());
-                ex.push("**/*.bak.*".into());
-            }
+            // A-027: single source BACKUP_EXCLUDE_GLOBS.
+            crate::commands::push_backup_excludes(&mut ex);
             ex
         },
         count: false,
@@ -223,8 +231,9 @@ fn run_search_replace_verify(
         invert: false,
         sort: None,
         include_fifo: false,
-        max_filesize: 10 * 1024 * 1024,
-        max_columns: 500,
+        max_filesize: crate::constants::DEFAULT_SEARCH_MAX_FILESIZE_BYTES,
+        max_columns: crate::constants::DEFAULT_SEARCH_MAX_COLUMNS,
+        binary: false,
         no_begin_end: false,
         pcre2: false,
         target: crate::cli_args::SearchTarget::Content,
@@ -303,10 +312,8 @@ fn run_search_replace_verify(
         include: args.include.clone(),
         exclude: {
             let mut ex = args.exclude.clone();
-            if !ex.iter().any(|e| e.contains("bak")) {
-                ex.push("*.bak.*".into());
-                ex.push("**/*.bak.*".into());
-            }
+            // A-027: single source BACKUP_EXCLUDE_GLOBS.
+            crate::commands::push_backup_excludes(&mut ex);
             ex
         },
         preview: false,
@@ -319,7 +326,7 @@ fn run_search_replace_verify(
             other => other,
         },
         fuzzy_threshold: args.fuzzy_threshold,
-        progress_every: 50,
+        progress_every: crate::constants::DEFAULT_PROGRESS_EVERY_FILES,
         preserve_timestamps: false,
     };
     {
@@ -369,7 +376,7 @@ fn run_search_replace_verify(
         verify: None,
         stdin: false,
         recursive: true,
-        exclude: vec!["*.bak.*".into(), "**/*.bak.*".into()],
+        exclude: crate::commands::backup_exclude_globs(),
     };
     let mut buf = Vec::new();
     let hash_res = {
@@ -568,9 +575,14 @@ fn finish_recipe(
     start: std::time::Instant,
     err: Option<anyhow::Error>,
 ) -> Result<()> {
+    let recipe_name = args
+        .name
+        .clone()
+        .or_else(|| args.name_positional.clone())
+        .unwrap_or_else(|| "unknown".into());
     writer.write_event(&RecipeResult {
         r#type: "recipe_result",
-        recipe: args.name.clone(),
+        recipe: recipe_name,
         dry_run: args.dry_run,
         steps,
         failed_step_id,

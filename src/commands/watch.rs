@@ -27,7 +27,7 @@ pub struct WatchArgs {
     #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub path: PathBuf,
     /// Debounce milliseconds (coalesce per-path quiet period).
-    #[arg(long, default_value_t = 200)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_WATCH_DEBOUNCE_MS)]
     pub debounce_ms: u64,
     /// Maximum events before exit (0 = unlimited until signal).
     #[arg(long, default_value_t = 0)]
@@ -77,6 +77,10 @@ pub fn cmd_watch(
     watcher.watch(&root, RecursiveMode::Recursive)?;
 
     let debounce = Duration::from_millis(args.debounce_ms.max(1));
+    // B-007: exit if no events arrive within idle window (one-shot bound).
+    let idle_exit = Duration::from_millis(crate::constants::DEFAULT_WATCH_IDLE_EXIT_MS);
+    let watch_started = Instant::now();
+    let mut saw_any_event = false;
     // path -> (last_seen, last_kind)
     let mut pending: HashMap<PathBuf, (Instant, String)> = HashMap::new();
     let mut count = 0u64;
@@ -105,12 +109,14 @@ pub fn cmd_watch(
             break;
         }
 
-        let wait = debounce.min(Duration::from_millis(50));
+        // A-020: named floor so poll sleep is not a magic literal.
+        let wait = debounce.min(Duration::from_millis(crate::constants::WATCH_DEBOUNCE_FLOOR_MS));
         match rx.recv_timeout(wait) {
             Ok(Ok(event)) => {
                 if !is_core_kind(&event.kind) {
                     continue;
                 }
+                saw_any_event = true;
                 let kind = format!("{:?}", event.kind);
                 let now = Instant::now();
                 for path in event.paths {
@@ -139,6 +145,14 @@ pub fn cmd_watch(
             &matcher,
         )?;
         if args.max_events > 0 && count >= args.max_events {
+            return Ok(());
+        }
+        // Idle exit: no events at all within DEFAULT_WATCH_IDLE_EXIT_MS.
+        if !saw_any_event && pending.is_empty() && watch_started.elapsed() >= idle_exit {
+            tracing::debug!(
+                idle_ms = crate::constants::DEFAULT_WATCH_IDLE_EXIT_MS,
+                "watch idle-exit (no filesystem events)"
+            );
             return Ok(());
         }
     }

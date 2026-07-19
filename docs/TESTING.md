@@ -444,16 +444,12 @@ RUSTFLAGS='-C target-cpu=native' cargo build --release
 Release knobs live in `Cargo.toml` (`[profile.release]`, `[profile.bench]`,
 `[profile.min-size]`) and the mold linker in `.cargo/config.toml` (Linux x86_64).
 **No GitHub Actions / CI benchmark gates** (project policy).
-## Environment Variables
-- `PROPTEST_CASES` -- number of property test cases (default: 256)
-- `RUST_LOG` -- tracing EnvFilter directive for debug output during tests
-- `ATOMWRITE_LOG` -- same EnvFilter syntax; **overrides** `RUST_LOG` when set (binary `init_telemetry`)
-- `ATOMWRITE_LOG_FORMAT` -- `compact` or `json`/`jsonl` for structured stderr logs
-- `ATOMWRITE_LOG_DIR` -- optional tee directory (`Rotation::NEVER`); default format becomes JSON when set
-- `ATOMWRITE_LOG_LOSSY` -- set `0`/`false` for non-lossy non_blocking writer
-- `INSTA_UPDATE` -- set to `always` to auto-update snapshots
-- `RUST_TEST_THREADS` -- limit parallel test execution (useful for I/O-bound tests)
-- `CARGO_TARGET_DIR` -- override target directory for test builds
+## Logging and test harness knobs
+- Binary runtime logging is **CLI + XDG only** (v0.1.35): use `-v`/`-vv`/`-vvv` and `-q`/`-qq`; optional file tee under XDG state `…/atomwrite/logs` via `directories::ProjectDirs` (no product `ATOMWRITE_*` or `RUST_LOG` knobs in the binary).
+- Tracing entrypoint: `init_tracing` (local diagnostics only — no product telemetry).
+- Cargo/test harness only (not product config): `PROPTEST_CASES`, `INSTA_UPDATE`, `RUST_TEST_THREADS`, `CARGO_TARGET_DIR`.
+- Do **not** document or rely on product environment variables for logging, locale, workspace, backup, or home override — removed in v0.1.35 (use CLI + XDG only).
+
 
 
 ## Troubleshooting

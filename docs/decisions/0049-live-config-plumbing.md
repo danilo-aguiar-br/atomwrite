@@ -1,5 +1,8 @@
 # ADR-0049: live config plumbing for `.atomwrite.toml` `[defaults]`
 
+> **Historical (pre-0.1.35):** product `ATOMWRITE_*` / env knobs described below are **superseded**. Runtime config is CLI flags + XDG `config.toml` / `atomwrite set|get` only.
+
+
 - **Status**: Accepted
 - **Date**: 2026-07-06
 - **Context**: `.atomwrite.toml` `[defaults]` `backup`/`retention` keys were parsed by `load_config` but never actually consulted by any mutating command (GAP-CONFIG-DEFAULTS-DEAD) — the resolver that existed at the time took only `(backup: bool, no_backup: bool)` as arguments and had no path to reach the parsed config values. Users who set `[defaults]` in their project config saw it silently ignored.

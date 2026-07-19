@@ -61,7 +61,16 @@ pub fn cmd_read(
     let modified_str = format_modified(&metadata);
 
     if matches!(args.format, OutputFormat::Raw) {
-        return write_raw(writer, &raw_bytes, args, is_binary);
+        return write_raw(
+            writer,
+            &raw_bytes,
+            args,
+            is_binary,
+            &path,
+            &hash,
+            &permissions_str,
+            &modified_str,
+        );
     }
 
     let content_str = if is_binary || args.stat {
@@ -125,6 +134,7 @@ pub fn cmd_read(
         range,
         verified: args.verify_checksum.as_ref().map(|_| true),
         mode: mode.to_string(),
+        content_b64: None,
     };
 
     writer.write_event(&output)?;
@@ -133,16 +143,23 @@ pub fn cmd_read(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_raw(
     writer: &mut NdjsonWriter<impl Write>,
     data: &[u8],
     args: &ReadArgs,
     is_binary: bool,
+    path: &std::path::Path,
+    hash: &str,
+    permissions_str: &str,
+    modified_str: &str,
 ) -> Result<()> {
+    // B-006: `--format raw` always emits file bytes (TTY and non-TTY).
+    // Agent NDJSON contract uses default format; `--bytes` is a no-op alias.
+    let _ = (args.bytes, path, hash, permissions_str, modified_str, is_binary);
     writer.flush()?;
     let inner = std::io::stdout();
     let mut lock = inner.lock();
-
     if is_binary {
         match lock.write_all(data) {
             Ok(()) => {}
@@ -158,7 +175,6 @@ fn write_raw(
             Err(e) => return Err(e.into()),
         }
     }
-
     let _ = lock.flush();
     Ok(())
 }

@@ -54,9 +54,9 @@ pub fn cmd_hash(
 
     let mut file_paths: Vec<PathBuf> = Vec::new();
     let mut dir_roots: Vec<PathBuf> = Vec::new();
-    // Recipe and agents pass exclude; recursive walks always skip `*.bak.*`.
+    // Recipe and agents pass exclude; recursive walks always skip backups (A-027).
     let excludes = if args.exclude.is_empty() && args.recursive {
-        vec!["*.bak.*".into(), "**/*.bak.*".into()]
+        crate::commands::backup_exclude_globs()
     } else {
         args.exclude.clone()
     };
@@ -236,7 +236,10 @@ fn is_excluded_path(path: &Path, excludes: &[String]) -> bool {
     let s = path.to_string_lossy();
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     for pat in excludes {
-        if pat == "*.bak.*" || pat == "**/*.bak.*" {
+        if crate::constants::BACKUP_EXCLUDE_GLOBS
+            .iter()
+            .any(|g| pat == *g)
+        {
             if name.contains(".bak.") || s.contains(".bak.") {
                 return true;
             }

@@ -2,9 +2,20 @@
 
 //! Runtime environment autodetect (WSL, container, CI, Termux, Snap, Flatpak).
 //!
-//! Rules Rust multiplataforma — specialized environments must be detected once
+//! Cross-platform rules: specialized environments must be detected once
 //! and exposed to diagnostics (`atomwrite doctor`) without scattering `cfg` or
 //! ad-hoc env reads through business logic.
+//!
+//! # G-035 — OS probe allowlist (not product knobs)
+//!
+//! This module **may** read a fixed allowlist of **host/OS** environment
+//! variables (`CI`, `GITHUB_ACTIONS`, `WSL_*`, `container`, `FLATPAK_ID`,
+//! `SNAP`, `PREFIX`, `SUDO_USER`, `KUBERNETES_SERVICE_HOST`) **only** for
+//! doctor diagnostics. These are **not** product configuration knobs.
+//!
+//! Product configuration remains CLI flags + XDG `config.toml` only
+//! (`rules_rust_storage_xdg_cli_rust_sem_env_em_runtime`). Prefer filesystem
+//! probes (`/.dockerenv`, cgroup) when equivalent.
 
 use std::path::Path;
 
@@ -85,6 +96,8 @@ enum ProbeFs {
 }
 
 fn detect_with(probe: EnvProbe, fs: ProbeFs) -> RuntimeEnvironment {
+    // A-007: prefer filesystem probes; OS env allowlist is residual diagnostics only
+    // (not product knobs — see module docs / ADR G-035).
     RuntimeEnvironment {
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
@@ -92,11 +105,12 @@ fn detect_with(probe: EnvProbe, fs: ProbeFs) -> RuntimeEnvironment {
         target: option_env!("TARGET").unwrap_or("unknown").to_string(),
         wsl: is_wsl(&probe, &fs),
         container: is_container(&probe, &fs),
-        kubernetes: nonempty(&probe.kubernetes),
+        kubernetes: is_kubernetes(&probe, &fs),
         ci: nonempty(&probe.ci) || nonempty(&probe.github_actions),
-        termux: is_termux(&probe),
-        flatpak: nonempty(&probe.flatpak_id),
-        snap: nonempty(&probe.snap),
+        termux: is_termux(&probe, &fs),
+        flatpak: is_flatpak(&probe, &fs),
+        snap: is_snap(&probe, &fs),
+        // sudo: no reliable portable FS probe; residual OS allowlist only.
         sudo: nonempty(&probe.sudo_user),
     }
 }
@@ -162,12 +176,71 @@ fn is_container(probe: &EnvProbe, fs: &ProbeFs) -> bool {
     }
 }
 
-fn is_termux(probe: &EnvProbe) -> bool {
-    probe
+fn is_termux(probe: &EnvProbe, fs: &ProbeFs) -> bool {
+    if probe
         .prefix
         .as_ref()
         .and_then(|p| p.to_str())
         .is_some_and(|p| p.contains("com.termux"))
+    {
+        return true;
+    }
+    match fs {
+        ProbeFs::Live => {
+            // Termux home layout (FS-first when PREFIX unset).
+            Path::new("/data/data/com.termux/files/usr").is_dir()
+        }
+        #[cfg(test)]
+        ProbeFs::None => false,
+    }
+}
+
+fn is_flatpak(probe: &EnvProbe, fs: &ProbeFs) -> bool {
+    if nonempty(&probe.flatpak_id) {
+        return true;
+    }
+    match fs {
+        ProbeFs::Live => Path::new("/.flatpak-info").is_file(),
+        #[cfg(test)]
+        ProbeFs::None => false,
+    }
+}
+
+fn is_snap(probe: &EnvProbe, fs: &ProbeFs) -> bool {
+    if nonempty(&probe.snap) {
+        return true;
+    }
+    match fs {
+        ProbeFs::Live => {
+            // Only true when *this process* runs from a snap mount (not mere
+            // presence of /snap on a host that has snapd installed).
+            #[cfg(unix)]
+            {
+                if let Ok(exe) = std::fs::read_link("/proc/self/exe") {
+                    if exe.starts_with("/snap/") {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        #[cfg(test)]
+        ProbeFs::None => false,
+    }
+}
+
+fn is_kubernetes(probe: &EnvProbe, fs: &ProbeFs) -> bool {
+    if nonempty(&probe.kubernetes) {
+        return true;
+    }
+    match fs {
+        ProbeFs::Live => {
+            // In-cluster serviceaccount is the standard FS marker.
+            Path::new("/var/run/secrets/kubernetes.io/serviceaccount").is_dir()
+        }
+        #[cfg(test)]
+        ProbeFs::None => false,
+    }
 }
 
 /// Human-readable one-line summary for doctor / logs.

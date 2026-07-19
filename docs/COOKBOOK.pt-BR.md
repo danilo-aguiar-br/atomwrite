@@ -946,7 +946,7 @@ atomwrite completions bash --install
 
 ```bash
 # Para agentes que não passam --workspace explicitamente
-export ATOMWRITE_WORKSPACE=/home/usuario/projeto
+atomwrite --workspace /home/usuario/projeto
 atomwrite read src/main.rs
 ```
 
@@ -985,7 +985,7 @@ atomwrite replace --preserve-timestamps 'old_api' 'new_api' src/
 ```bash
 # Quando workspace NÃO é fornecido, a solicitação da flag é sugerida
 atomwrite read /etc/passwd 2>/dev/null
-# Saída: {"error":true,"code":"WORKSPACE_JAIL","exit":126,...,"suggestion":"set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>",...}
+# Saída: {"error":true,"code":"WORKSPACE_JAIL","exit":126,...,"suggestion":"set --workspace <root> (XDG/config only; no environment variables)",...}
 
 # Quando workspace É fornecido, a sugestão diz "use a path inside"
 atomwrite --workspace /home/user/project read /etc/passwd 2>/dev/null
@@ -1136,7 +1136,7 @@ atomwrite --workspace . write src/lib.rs < new_lib.rs
 
 ### Como Inspecionar Saúde dos Journals
 
-O subcomando `wal-stats` (G119 L5) emite telemetria read-only sobre o estado atual do WAL. Combine-o com `jaq` para gatear scripts locais ou scripts pós-build.
+O subcomando `wal-stats` (G119 L5) emite diagnósticos locais read-only sobre o estado atual do WAL. Combine-o com `jaq` para gatear scripts locais ou scripts pós-build.
 
 ```bash
 # Telemetria completa como NDJSON

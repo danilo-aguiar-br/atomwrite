@@ -4,9 +4,9 @@
 //! effective for the shared `BackupOpts` (`resolve_backup` in
 //! `src/commands/mod.rs`). Precedence implemented there is:
 //!
-//!   `ATOMWRITE_BACKUP` env \> `--no-backup`/`--backup` \> `[defaults].backup`
-//!   \> built-in `true`.
+//!   `--no-backup`/`--backup` \> `[defaults].backup` \> built-in `true`.
 //!   `--retention` \> `[defaults].retention` \> built-in `5`.
+//!   G-007/G-046: no product env knobs (`ATOMWRITE_BACKUP` is ignored).
 //!
 //! These tests observe that precedence end-to-end via the presence/absence
 //! of `.bak.*` sidecar files, using `delete` as the observable command
@@ -87,13 +87,9 @@ fn explicit_backup_flag_overrides_config_defaults_backup_false() {
 }
 
 #[test]
-fn env_atomwrite_backup_zero_overrides_explicit_backup_flag() {
-    // Documented precedence: ATOMWRITE_BACKUP env wins over --backup/--no-backup
-    // unconditionally (see resolve_backup in src/commands/mod.rs).
+fn env_atomwrite_backup_zero_does_not_override_explicit_backup_flag() {
+    // G-007/G-046: env is not a product config surface; CLI --backup wins.
     let dir = tempfile::tempdir().expect("tempdir");
-    // No config file: built-in default is backup = true; --backup would be
-    // redundant confirmation, so the env override is the only thing that
-    // can flip the outcome to "no backup".
     let path = common::create_test_file(dir.path(), "f.txt", "bye\n");
 
     let output = common::atomwrite()
@@ -111,13 +107,14 @@ fn env_atomwrite_backup_zero_overrides_explicit_backup_flag() {
 
     assert!(output.status.success());
     assert!(
-        !has_bak_file(dir.path()),
-        "ATOMWRITE_BACKUP=0 must override explicit --backup (env has highest precedence)"
+        has_bak_file(dir.path()),
+        "explicit --backup must create backup; ATOMWRITE_BACKUP env must be ignored"
     );
 }
 
 #[test]
-fn env_atomwrite_backup_nonzero_overrides_config_defaults_backup_false() {
+fn env_atomwrite_backup_nonzero_does_not_override_config_defaults_backup_false() {
+    // G-007/G-046: env cannot force backup when [defaults].backup = false.
     let dir = tempfile::tempdir().expect("tempdir");
     write_config(dir.path(), "[defaults]\nbackup = false\n");
     let path = common::create_test_file(dir.path(), "f.txt", "bye\n");
@@ -136,8 +133,8 @@ fn env_atomwrite_backup_nonzero_overrides_config_defaults_backup_false() {
 
     assert!(output.status.success());
     assert!(
-        has_bak_file(dir.path()),
-        "ATOMWRITE_BACKUP=1 must override [defaults].backup = false even without --backup"
+        !has_bak_file(dir.path()),
+        "[defaults].backup = false must hold; ATOMWRITE_BACKUP env must be ignored"
     );
 }
 

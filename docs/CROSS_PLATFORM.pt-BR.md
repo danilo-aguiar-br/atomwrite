@@ -169,10 +169,10 @@ Também reporta `os` / `arch` / `family` / `target` de compilação, `config_dir
 - atomwrite usa caminhos absolutos em toda saída NDJSON
 - Caminhos relativos nos argumentos são resolvidos contra a raiz do workspace
 - `--workspace` padrão é o diretório de trabalho atual
-- `--workspace` é obrigatório quando definido via variável de ambiente `ATOMWRITE_WORKSPACE`
+- Jail de workspace é **somente CLI**: sempre passe `--workspace <raiz>` (sem variáveis de ambiente de produto)
 - Arquivos de backup são armazenados ao lado do original com sufixo de timestamp, a menos que `--output-dir` seja definido
 - O comando `completions --install` escreve nos diretórios de dados XDG (`$XDG_DATA_HOME` ou `~/.local/share`)
-- **`ATOMWRITE_HOME`**: override opcional da base de config/data/cache/state (`{ATOMWRITE_HOME}/config`, …). Se ausente, usa `directories::ProjectDirs` / XDG (`src/storage.rs`)
+- **`storage.home`** (XDG `config.toml` via `atomwrite set storage.home` / `get`): override opcional da base de config/data/cache/state. Se ausente, usa `directories::ProjectDirs` (`src/storage.rs`) — nunca use variáveis de ambiente para home override
 - Config global: `{config_dir}/config.toml`; preferência de locale: `{config_dir}/locale`
 - Paths usam apenas `PathBuf` / `Path::join` — sem separadores `/` ou `\` hardcoded na lógica
 - Normalização Unicode NFC na validação de path jail

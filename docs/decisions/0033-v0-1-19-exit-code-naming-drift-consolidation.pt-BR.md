@@ -1,5 +1,8 @@
 # 0033-v0-1-19-exit-code-naming-drift-consolidation (PT-BR) — Tradução
 
+> **Histórico (pré-0.1.35):** knobs `ATOMWRITE_*` / env descritos abaixo estão **supplantados**. Config de runtime é só flags CLI + XDG `config.toml` / `atomwrite set|get`.
+
+
 _Tradução automática do ADR original em inglês. Em caso de divergência, a versão EN prevalece._
 
 # ADR-0033: v0.1.19 — Exit code documentation drift consolidation

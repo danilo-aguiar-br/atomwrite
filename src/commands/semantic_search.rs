@@ -21,6 +21,12 @@ use crate::cli::GlobalArgs;
 use crate::concurrency::should_parallelize;
 use crate::error::AtomwriteError;
 use crate::output::NdjsonWriter;
+
+/// Per-file semantic score bag (hits + optional index tokens).
+type ScoredFile = (
+    Vec<(f64, String, u64, String)>,
+    Vec<crate::ndjson_types::SemanticIndexToken>,
+);
 use crate::path_safety::validate_path;
 use crate::signal::ShutdownSignal;
 
@@ -33,10 +39,10 @@ pub struct SemanticSearchArgs {
     #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
     /// Maximum results.
-    #[arg(long, default_value_t = 20)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_SEMANTIC_SEARCH_TOP as u64)]
     pub k: u64,
     /// Minimum Jaccard score [0.0, 1.0].
-    #[arg(long, default_value_t = 0.05)]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_SEMANTIC_SEARCH_MIN_SCORE)]
     pub min_score: f64,
     /// Optional local inverted-index directory (offline, no network).
     ///
@@ -45,6 +51,15 @@ pub struct SemanticSearchArgs {
     /// `inverted-index` instead of pure line Jaccard.
     #[arg(long, value_hint = ValueHint::DirPath)]
     pub index_dir: Option<PathBuf>,
+
+    /// Include atomwrite backup paths (`*.bak.*`) in ranking (A-008b).
+    /// Default: exclude backups so agents do not edit sidecars.
+    #[arg(
+        long,
+        help = "Include *.bak.* backup files (default: exclude atomwrite backups)",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub include_backups: bool,
 }
 
 /// Rank lines by token overlap with the query (offline, no embeddings).
@@ -146,14 +161,16 @@ pub fn cmd_semantic_search(
         };
         crate::concurrency::sort_paths_parallel(&mut files);
 
+        // A-008b: exclude atomwrite backups by default (DRY: is_backup_path).
+        if !args.include_backups {
+            files.retain(|p| !crate::commands::is_backup_path(p));
+        }
+
         // Stage 2 — CPU: tokenize + Jaccard per file in parallel.
         let q_tokens = Arc::new(q_tokens);
         let min_score = args.min_score;
         let build_index = args.index_dir.is_some();
-        let scored: Vec<(
-            Vec<(f64, String, u64, String)>,
-            Vec<crate::ndjson_types::SemanticIndexToken>,
-        )> = if should_parallelize(files.len()) {
+        let scored: Vec<ScoredFile> = if should_parallelize(files.len()) {
             files
                 .par_iter()
                 .map(|path| {
@@ -219,10 +236,7 @@ fn score_file(
     max_size: u64,
     build_index: bool,
     shutdown: &ShutdownSignal,
-) -> (
-    Vec<(f64, String, u64, String)>,
-    Vec<crate::ndjson_types::SemanticIndexToken>,
-) {
+) -> ScoredFile {
     let mut hits = Vec::new();
     let mut built = Vec::new();
     if shutdown.is_shutdown() {

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "WriteRiskAssessment",
-  "description": "GAP-2026-011 L1/L6: Telemetry describing why a write was classified as risky. Emitted in WriteOutput.risk_assessment when the size delta exceeds the user-configured --risk-threshold (default 50%).",
+  "description": "GAP-2026-011 L1/L6: Local diagnostics describing why a write was classified as risky (G-031: not product telemetry). Emitted in WriteOutput.risk_assessment when the size delta exceeds the user-configured --risk-threshold (default 50%).",
   "type": "object",
   "additionalProperties": false,
   "properties": {

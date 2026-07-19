@@ -48,7 +48,7 @@
 - `--backup`/`--no-backup` agora são mutuamente exclusivos via `conflicts_with` (exit 2) em vez da última flag vencer silenciosamente
 - `rollback` mantém seu snapshot de segurança pré-rollback opt-in via `--backup` explícito — exceção documentada ao contrato unificado default-true
 - Zero literais `retention: 5` hardcoded remanescentes; `Default` impls em `config.rs`/`atomic.rs` leem `constants::DEFAULT_BACKUP_RETENTION`
-- Chaves `[defaults]` `backup`/`retention` do `.atomwrite.toml` agora são efetivas ponta a ponta em todo subcomando que muta (GAP-CONFIG-DEFAULTS-DEAD, ADR-0049) — precedência `ATOMWRITE_BACKUP` env var > flags CLI (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > default embutido (`true`/`5`)
+- Chaves `[defaults]` `backup`/`retention` do `.atomwrite.toml` agora são efetivas ponta a ponta em todo subcomando que muta (GAP-CONFIG-DEFAULTS-DEAD, ADR-0049) — precedência: flags CLI (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > config XDG > default embutido (`true`/`5`) — sem knobs de env de produto
 - `batch --retention <N>` e `batch --backup` agora são efetivos ponta a ponta, incluindo o passo de pre-backup transacional e a operação `delete` dentro de um batch
 - Nova guarda stdin-tty nos modos de `edit` que consomem stdin (`--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`, `--multi`): falha rápido com exit 65 (`INVALID_INPUT`) e `suggestion` acionável quando stdin é um terminal, em vez de bloquear indefinidamente (ADR-0050)
 - Os modos de `edit` que consomem stdin agora rejeitam `--old`/`--new`/`--old-file`/`--new-file` no parse via `conflicts_with_all` (exit 2) em vez de despachar silenciosamente para `edit_by_marker`
@@ -269,7 +269,7 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - `case` -- (v0.1.12, v14 Tier 3) renomeia identificadores em múltiplos arquivos via `heck`; estilos: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`
 - `query` -- (v0.1.12, v14 Tier 3, G72) caminha um AST tree-sitter e emite nós como NDJSON; 305 linguagens via `tree-sitter-language-pack`; modos: `--kinds`, `--query <KIND>`, `-Q <KIND>`, `--tree`, `--positions`
 - `outline` -- (v0.1.12, v14 Tier 3) extrai estrutura de alto nível (funções, classes, structs, enums, traits, módulos) como NDJSON
-- `wal-stats` -- (v0.1.18) inspeciona estado do journal WAL para telemetria e debug; escopo via `--workspace <DIR>`; relatório NDJSON com `terminal_committed`, `terminal_aborted`, `total_bytes`, `oldest_age_secs`
+- `wal-stats` -- (v0.1.18) inspeciona estado do journal WAL para diagnósticos locais e debug; escopo via `--workspace <DIR>`; relatório NDJSON com `terminal_committed`, `terminal_aborted`, `total_bytes`, `oldest_age_secs`
 - `wal-heal` -- (v0.1.18) remove journals terminais órfãos mais antigos que `--threshold-secs` (padrão 3600s); budget de wall-clock via `--max-duration-ms` (padrão 100ms)
 - `edit-loop` -- (v0.1.22) aplica N pares `{old, new}` em 1 invocação via NDJSON no stdin; suporta `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`
 - `prune-backups` -- (v0.1.22) limpeza manual de arquivos `.bak.YYYYMMDD_HHMMSS` legados (v0.1.20 e anteriores); flags `--max-age-secs <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` para segurança); saída NDJSON com `path`, `reason`, `action`, `total`
@@ -410,7 +410,7 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - `retryable` é true para classes `transient` e `conflict`
 - Campo `workspace` aparece apenas em erros `WORKSPACE_JAIL` e reporta a raiz do workspace resolvida
 - Todas as 20 variants de erro carregam texto `suggestion` acionável (adicionado na v0.1.4, GAP 13)
-- Sugestão de `WorkspaceJail` é **context-aware**: quando `--workspace` ou `ATOMWRITE_WORKSPACE` já está definido, a sugestão diz "use a path inside the workspace (<root>)" em vez de re-pedir a flag
+- Sugestão de `WorkspaceJail` é **context-aware**: quando `--workspace` já está definido, a sugestão diz "use a path inside the workspace (<root>)" em vez de re-pedir a flag
 - Sugestão de `BinaryFile` recomenda `read --stat` para leituras somente de metadados (referência phantom anterior a `--force-text` foi removida)
 - Sugestão de `FileImmutable` menciona `chattr -i` (Unix) e `fsutil` (Windows)
 - Sugestão de `NoMatches` orienta ampliação do padrão e revisão de filtros `--include`/`--exclude`
@@ -466,7 +466,7 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - `--max-filesize <BYTES>` -- ignora arquivos maiores que o limite
 - `--timeout-secs <SECONDS>` (alias `--timeout`) -- timeout global de operação; **padrão 120**; `0` desabilita; prazo esgotado → exit **124**. Use para limitar buscas longas, batches e operações replace
 - `--json-schema` -- emite JSON schema da saída do subcomando
-- `--locale <en|pt-BR>` -- substitui o locale de exibição (en, pt-BR); env `ATOMWRITE_LANG` ainda aceito (nome histórico; flag renomeada de `--lang` na v0.1.20)
+- `--locale <en|pt-BR>` -- substitui o locale de exibição (en, pt-BR); use apenas `--locale` (sem knobs de env de produto; preferência XDG via `atomwrite locale`)
 
 
 ## PROIBIDO -- Armadilhas Comuns

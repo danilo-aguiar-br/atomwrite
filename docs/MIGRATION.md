@@ -220,7 +220,7 @@ All additive. No existing dependency removed.
 ### Bug Fixes (High) — GAP-CONFIG-DEFAULTS-DEAD
 
 - `.atomwrite.toml` `[defaults]` `backup`/`retention` keys are now effective across every mutating subcommand — `resolve_backup()` previously took only `(backup: bool, no_backup: bool)` and never consulted the parsed config
-- Precedence is now `ATOMWRITE_BACKUP` env var > CLI flags (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > built-in default (`true` / `5`)
+- Precedence is now CLI flags (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > XDG config > built-in default (`true` / `5`) — no product env knobs (v0.1.35)
 
 ### Migration Action
 
@@ -346,7 +346,7 @@ All additive. No existing dependency removed.
 - `get`/`del` on missing key returns INVALID_INPUT (exit 65) instead of FILE_NOT_FOUND (exit 4)
 - `list --long` modified field now emits ISO 8601 format
 - `size_delta_pct` in risk_assessment changed from u8 to u32
-- Risk telemetry default changed to disabled (255)
+- Risk assessment default changed to disabled (255)
 
 ### Migration Action
 - Update version pin: `cargo install atomwrite --locked --version "^0.1.25"`
@@ -473,7 +473,7 @@ Migration impact:
 
 Error suggestions are now context-aware and actionable:
 
-- `WorkspaceJail` suggestion adapts: when the user has supplied `--workspace` (or `ATOMWRITE_WORKSPACE`), the suggestion now says "use a path inside the workspace (<root>)" instead of re-prompting the flag.
+- `WorkspaceJail` suggestion adapts: when the user has supplied `--workspace`, the suggestion now says "use a path inside the workspace (<root>)" instead of re-prompting the flag.
 - All 20 error variants now carry `suggestion` text. Previously 6 variants (InvalidInput, Io, ConfigInvalid, FileImmutable, NoMatches, InternalError) returned `None`. Only `BrokenPipe` (SIGPIPE, not actionable) remains without a suggestion.
 - Phantom `--force-text` flag reference removed from BinaryFile suggestion.
 - New `ErrorContext` struct (`workspace_provided`, `workspace`) and `ErrorJson::from_error_with_context()` API. The legacy `from_error()` is preserved.
@@ -576,7 +576,7 @@ The flag now actually reads the NDJSON manifest from a file (validated against w
 The flag now places backups in the custom directory (created if missing) and prunes old backups in that directory.
 
 ##### WORKSPACE_JAIL error message corrected
-The misleading "use an absolute path" suggestion is now "set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>".
+The misleading "use an absolute path" suggestion is now "set --workspace <root> (XDG/config only; no environment variables)".
 
 #### Added (Agent-First Features)
 
@@ -983,7 +983,7 @@ For the complete migration guide, see `docs/MIGRATION-v0.1.21-to-v0.1.22.md`.
 
 ### Behavioral Changes (Action Required)
 
-- backup-by-default: all 9 content-mutating commands (`write`, `edit`, `edit-loop`, `replace`, `transform`, `apply`, `set`, `del`, `case`) now create a backup BEFORE writing by default. The backup is auto-deleted after success (existing `keep_backup: false` default unchanged). If your pipeline depends on NO backup file being created (e.g., checks for `.bak.*` files), add `--no-backup` to the command or set `ATOMWRITE_BACKUP=0` globally
+- backup-by-default: all 9 content-mutating commands (`write`, `edit`, `edit-loop`, `replace`, `transform`, `apply`, `set`, `del`, `case`) now create a backup BEFORE writing by default. The backup is auto-deleted after success (existing `keep_backup: false` default unchanged). If your pipeline depends on NO backup file being created (e.g., checks for `.bak.*` files), add `--no-backup` to the command
 - shrink guard: `write --expect-checksum` now BLOCKS writes that shrink the file by more than 50%. If your pipeline legitimately truncates files while using `--expect-checksum`, add `--allow-shrink` to the command. Without `--expect-checksum`, behavior is unchanged
 
 ### Additive Changes (No Action Required)
@@ -994,8 +994,20 @@ For the complete migration guide, see `docs/MIGRATION-v0.1.21-to-v0.1.22.md`.
 ### Migration Checklist
 
 - If using `write` without `--backup`: no action needed (backup auto-deletes after success)
-- If checking for `.bak.*` file absence in automated local runs: add `--no-backup` or set `ATOMWRITE_BACKUP=0`
+- If checking for `.bak.*` file absence in automated local runs: add `--no-backup`
 - If using `write --expect-checksum` to legitimately truncate files: add `--allow-shrink`
 - If passing values starting with `-` to `edit --old`, `search`, `replace`, `calc`, `regex`, `transform`, `read --grep`, `query --query`: the fix is automatic, no migration needed
 
+
+## v0.1.35 — no product environment knobs
+
+**Breaking (runtime config):** the CLI no longer reads `ATOMWRITE_*` or `RUST_LOG`/`NO_COLOR` as product configuration.
+Use only:
+- CLI flags (`--workspace`, `--locale`, `--no-backup`, `-v`/`-q`, `--color`, `--threads`, …)
+- `atomwrite set` / `get` + XDG `config.toml` (`[storage].home`, `[fuzzy].threshold_*`, …)
+- optional workspace `.atomwrite.toml`
+
+Rewrite older examples that used `export` of product workspace/backup knobs (removed) to `--workspace` and `--no-backup`.
+Logging: `init_tracing` + CLI; optional file tee under XDG state — no product log environment knobs.
+`wal-stats` is **local diagnostics** (not product telemetry).
 

@@ -72,11 +72,11 @@ pub fn cmd_case(
     let to_style = case_style_name(&args.to);
     let preserve_timestamps = args.preserve_timestamps;
 
+    // G-029/G-040: clap requires `--subvert`; this is defense-in-depth only (no "yet").
     if args.subvert.is_empty() {
         return Err(crate::error::AtomwriteError::InvalidInput {
             reason:
-                "--subvert OLD NEW is required; global identifier scanning is not yet implemented. \
-                     Use --subvert to specify each identifier to rename, e.g.: \
+                "--subvert OLD NEW is required (pair of identifiers to rename). Example: \
                      atomwrite case --to snake --subvert myVar my_var src/"
                     .into(),
         }

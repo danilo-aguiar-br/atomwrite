@@ -2,7 +2,7 @@
 
 //! G119 L3 + L5 — `wal-stats` and `wal-heal` subcommands.
 //!
-//! `wal-stats` is read-only telemetry (G119 L5). `wal-heal` is the
+//! `wal-stats` is read-only local diagnostics (G119 L5). `wal-heal` is the
 //! explicit operator-facing version of the auto-heal pass (G119 L3)
 //! that future releases will run on startup.
 //!
@@ -61,11 +61,13 @@ pub fn cmd_wal_heal(
 
     if args.dry_run {
         let stats = crate::wal::compute_wal_stats(&workspace)?;
+        // B-003: honest would_modify — 0 journals means no mutation planned.
+        let would_modify = stats.total_journals > 0;
         let plan = crate::ndjson_types::DryRunPlan {
             r#type: "plan",
             operation: "wal-heal".into(),
             path: workspace.display().to_string(),
-            would_modify: true,
+            would_modify,
             details: Some(format!(
                 "would remove up to {} terminal journals older than {}s (preserving Started orphans)",
                 stats.total_journals, args.threshold_secs

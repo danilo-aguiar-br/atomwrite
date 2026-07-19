@@ -112,11 +112,12 @@ fn write_expect_checksum_allow_shrink_permits() {
 }
 
 #[test]
-fn write_without_expect_checksum_permits_shrink() {
+fn write_without_expect_checksum_still_blocks_shrink_without_allow() {
+    // G-017/G-047: shrink > threshold is blocked even without CAS; needs --allow-shrink.
     let dir = tempfile::tempdir().expect("tempdir");
     let target = create_large_file(dir.path(), "large.txt", 1000);
 
-    let output = common::atomwrite()
+    let blocked = common::atomwrite()
         .args(["--workspace", dir.path().to_str().unwrap(), "write"])
         .arg(&target)
         .write_stdin("y".repeat(400))
@@ -124,9 +125,32 @@ fn write_without_expect_checksum_permits_shrink() {
         .expect("run");
 
     assert!(
+        !blocked.status.success(),
+        "shrink without --allow-shrink must fail (G-017)"
+    );
+    let stdout = String::from_utf8_lossy(&blocked.stdout);
+    assert!(
+        stdout.contains("allow-shrink") || stdout.contains("INVALID_INPUT"),
+        "must mention allow-shrink: {stdout}"
+    );
+
+    let output = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "write",
+            "--allow-shrink",
+        ])
+        .arg(&target)
+        .write_stdin("y".repeat(400))
+        .output()
+        .expect("run");
+
+    assert!(
         output.status.success(),
-        "should succeed without --expect-checksum; stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "should succeed with --allow-shrink; stderr: {} stdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
     assert_eq!(fs::read_to_string(&target).unwrap().len(), 400);
 }

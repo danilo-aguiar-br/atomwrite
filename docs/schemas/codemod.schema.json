@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "codemod",
+  "description": "NDJSON/agent envelope for `codemod` (G-042 minimal published schema; additionalProperties allowed for evolution).",
+  "type": "object",
+  "additionalProperties": true
+}

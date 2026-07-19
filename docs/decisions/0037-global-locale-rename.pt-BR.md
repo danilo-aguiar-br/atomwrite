@@ -1,5 +1,8 @@
 # 0037-global-locale-rename (PT-BR) — Tradução
 
+> **Histórico (pré-0.1.35):** knobs `ATOMWRITE_*` / env descritos abaixo estão **supplantados**. Config de runtime é só flags CLI + XDG `config.toml` / `atomwrite set|get`.
+
+
 _Tradução automática do ADR original em inglês. Em caso de divergência, a versão EN prevalece._
 
 # ADR-0037: `GlobalArgs.lang` → `--locale` — freeing the `--lang` namespace

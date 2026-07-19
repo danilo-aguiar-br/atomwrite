@@ -64,7 +64,7 @@ impl<W: Write> NdjsonWriter<W> {
     /// Emit a structured error as a single NDJSON line, with diagnostic context.
     ///
     /// Use this overload when the caller knows whether the workspace root was
-    /// explicitly provided (e.g. via `--workspace` or `ATOMWRITE_WORKSPACE`).
+    /// explicitly provided (e.g. via CLI `--workspace`).
     /// The context controls the suggestion text for `WorkspaceJail` errors
     /// (GAP 13 fix).
     ///
@@ -224,8 +224,7 @@ fn finalize_line_bytes(raw: &[u8], buf: &mut String, total: usize) -> std::io::R
 
 /// Strip a leading UTF-8 BOM character from an NDJSON line (after decode).
 ///
-/// Rules: multiplataforma — BOM no início de arquivos Windows deve ser
-/// removido antes do parsing JSON.
+/// Cross-platform: Windows editors may emit a UTF-8 BOM; strip it before JSON parse.
 #[inline]
 pub fn strip_utf8_bom_str(s: &str) -> &str {
     s.strip_prefix('\u{FEFF}').unwrap_or(s)

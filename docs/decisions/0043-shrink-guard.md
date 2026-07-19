@@ -1,5 +1,8 @@
 # ADR-0043: shrink guard with --expect-checksum
 
+> **Historical (pre-0.1.35):** product `ATOMWRITE_*` / env knobs described below are **superseded**. Runtime config is CLI flags + XDG `config.toml` / `atomwrite set|get` only.
+
+
 - **Status**: Accepted
 - **Date**: 2026-06-19
 - **Context**: `--expect-checksum` only validates concurrency (hash match), NOT content correctness. The `verify_checksum()` function returns `Ok(())` when hashes match without inspecting stdin size. The `risk_assessment` (L1, from ADR-0035 v0.1.20) calculates size delta but only emits an `eprintln!` warning — it never blocks the operation. In the 2026-06-15 incident, `--expect-checksum` passed (the file had not been modified by a third party) but the write shrunk the file from 122,994 to 16,780 bytes (86% reduction). The agent believed it was protected by `--expect-checksum` because the documentation says "USE `--expect-checksum` for optimistic locking (state drift detection)" — language that suggests safety when it only provides concurrency control. LLM agents consume stdout (NDJSON), NOT stderr — the L1 warning was invisible to the agent. The exit code was 0 ("success") even after destroying 86% of the content. The combination `--expect-checksum` + exit 0 + `status: "success"` created false confidence that the operation was safe.

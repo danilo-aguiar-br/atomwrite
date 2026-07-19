@@ -863,7 +863,8 @@ fn edit_nfc_vs_nfd_does_not_match() {
     assert_eq!(output.status.code(), Some(65));
     let events = common::parse_ndjson(&output.stdout);
     assert_eq!(events[0]["error"], true);
-    assert_eq!(events[0]["code"], "INVALID_INPUT");
+    // G-FZZ-002: dedicated MATCH_FAILED code (was INVALID_INPUT).
+    assert_eq!(events[0]["code"], "MATCH_FAILED");
 
     // File unchanged.
     let content = std::fs::read_to_string(&path).expect("read");
@@ -952,7 +953,7 @@ fn edit_new_empty_string_deletion_removes_only_match() {
 /// regression coverage. NOTE: the BOM is consumed (not preserved
 /// through edit) — this is a known design choice, not a bug.
 #[test]
-fn edit_utf8_bom_is_stripped_before_match() {
+fn edit_utf8_bom_is_preserved_on_edit() {
     let dir = tempfile::tempdir().expect("tempdir");
     let before = "\u{FEFF}hello\n";
     let path = common::create_test_file(dir.path(), "g117_bom.txt", before);
@@ -977,15 +978,14 @@ fn edit_utf8_bom_is_stripped_before_match() {
         String::from_utf8_lossy(&output.stderr)
     );
     let events = common::parse_ndjson(&output.stdout);
-    // BOM is consumed by the loader — only the post-BOM payload is
-    // counted. bytes_before excludes the 3 BOM bytes.
-    assert_eq!(events[0]["bytes_before"], 6);
+    // G-FZZ-075: BOM is preserved on read/write-back for Windows agents.
+    assert_eq!(events[0]["bytes_before"], 9);
     assert_eq!(events[0]["strategy"], "exact");
 
     let content = std::fs::read_to_string(&path).expect("read");
-    // BOM is stripped; only "world\n" remains.
-    assert_eq!(content, "world\n");
-    assert!(!content.starts_with('\u{FEFF}'));
+    // BOM retained; payload replaced.
+    assert_eq!(content, "\u{FEFF}world\n");
+    assert!(content.starts_with('\u{FEFF}'));
 }
 
 /// G117 edge case: `--partial` with ZERO applicable pairs must exit

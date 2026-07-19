@@ -220,7 +220,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 ### Correções de Bugs (Altas) — GAP-CONFIG-DEFAULTS-DEAD
 
 - As chaves `backup`/`retention` de `[defaults]` do `.atomwrite.toml` agora são efetivas em todo subcomando mutante — `resolve_backup()` antes recebia apenas `(backup: bool, no_backup: bool)` e nunca consultava a config parseada
-- A precedência agora é variável de ambiente `ATOMWRITE_BACKUP` > flags CLI (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > default embutido (`true` / `5`)
+- A precedência agora é flags CLI (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > config XDG > default embutido (`true` / `5`) — sem knobs de env de produto (v0.1.35)
 
 ### Ação de Migração
 
@@ -346,7 +346,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 - `get`/`del` em chave ausente retorna INVALID_INPUT (exit 65) em vez de FILE_NOT_FOUND (exit 4)
 - Campo `modified` de `list --long` agora emite formato ISO 8601
 - `size_delta_pct` em risk_assessment alterado de u8 para u32
-- Default de telemetria de risco alterado para desabilitado (255)
+- Default de avaliação de risco alterado para desabilitado (255)
 
 ### Ação de Migração
 - Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.25"`
@@ -473,7 +473,7 @@ Impacto da migração:
 
 Sugestões de erro agora são context-aware e acionáveis:
 
-- Sugestão de `WorkspaceJail` se adapta: quando o usuário forneceu `--workspace` (ou `ATOMWRITE_WORKSPACE`), a sugestão agora diz "use a path inside the workspace (<root>)" em vez de re-pedir a flag.
+- Sugestão de `WorkspaceJail` se adapta: quando o usuário forneceu `--workspace`, a sugestão agora diz "use a path inside the workspace (<root>)" em vez de re-pedir a flag.
 - Todas as 20 variants de erro agora carregam texto `suggestion`. Anteriormente 6 variants (InvalidInput, Io, ConfigInvalid, FileImmutable, NoMatches, InternalError) retornavam `None`. Apenas `BrokenPipe` (SIGPIPE, não-acionável) permanece sem sugestão.
 - Referência phantom à flag `--force-text` removida da sugestão de BinaryFile.
 - Novo struct `ErrorContext` (`workspace_provided`, `workspace`) e API `ErrorJson::from_error_with_context()`. A versão legacy `from_error()` é preservada.
@@ -576,7 +576,7 @@ A flag agora realmente lê o manifesto NDJSON de um arquivo (validado contra jai
 A flag agora coloca backups no diretório customizado (criado se faltar) e poda backups antigos naquele diretório.
 
 ##### Mensagem de erro de WORKSPACE_JAIL corrigida
-A sugestão enganosa "use an absolute path" agora é "set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>".
+A sugestão enganosa "use an absolute path" agora é "set --workspace <root> (XDG/config only; no environment variables)".
 
 #### Adicionado (Funcionalidades Agent-First)
 
@@ -1020,7 +1020,7 @@ Esta release adiciona 2 novos sub-comandos para fechar o último GAP-2026-012 e 
 
 ### Mudanças Comportamentais (Ação Necessária)
 
-- backup-by-default: todos os 9 comandos que mutam conteúdo (`write`, `edit`, `edit-loop`, `replace`, `transform`, `apply`, `set`, `del`, `case`) agora criam backup ANTES de escrever por padrão. O backup é auto-deletado após sucesso (default existente `keep_backup: false` inalterado). Se seu pipeline depende de NENHUM arquivo de backup ser criado (ex.: verifica ausência de arquivos `.bak.*`), adicione `--no-backup` ao comando ou defina `ATOMWRITE_BACKUP=0` globalmente
+- backup-by-default: todos os 9 comandos que mutam conteúdo (`write`, `edit`, `edit-loop`, `replace`, `transform`, `apply`, `set`, `del`, `case`) agora criam backup ANTES de escrever por padrão. O backup é auto-deletado após sucesso (default existente `keep_backup: false` inalterado). Se seu pipeline depende de NENHUM arquivo de backup ser criado (ex.: verifica ausência de arquivos `.bak.*`), adicione `--no-backup` ao comando
 - guarda de shrink: `write --expect-checksum` agora BLOQUEIA writes que reduzem o arquivo em mais de 50%. Se seu pipeline legitimamente trunca arquivos usando `--expect-checksum`, adicione `--allow-shrink` ao comando. Sem `--expect-checksum`, o comportamento é inalterado
 
 ### Mudanças Aditivas (Sem Ação Necessária)
@@ -1031,8 +1031,20 @@ Esta release adiciona 2 novos sub-comandos para fechar o último GAP-2026-012 e 
 ### Checklist de Migração
 
 - Se usa `write` sem `--backup`: nenhuma ação necessária (backup auto-deleta após sucesso)
-- Se verifica ausência de arquivos `.bak.*` em scripts locais: adicione `--no-backup` ou defina `ATOMWRITE_BACKUP=0`
+- Se verifica ausência de arquivos `.bak.*` em scripts locais: adicione `--no-backup`
 - Se usa `write --expect-checksum` para truncar arquivos legitimamente: adicione `--allow-shrink`
 - Se passa valores iniciando com `-` para `edit --old`, `search`, `replace`, `calc`, `regex`, `transform`, `read --grep`, `query --query`: a correção é automática, nenhuma migração necessária
 
+
+## v0.1.35 — sem knobs de ambiente de produto
+
+**Breaking (config runtime):** a CLI **não** lê mais variáveis `ATOMWRITE_*` nem `RUST_LOG`/`NO_COLOR` como configuração de produto.
+Use apenas:
+- flags CLI (`--workspace`, `--locale`, `--no-backup`, `-v`/`-q`, `--color`, `--threads`, …)
+- `atomwrite set` / `get` + XDG `config.toml` (`[storage].home`, `[fuzzy].threshold_*`, …)
+- opcional `.atomwrite.toml` no workspace
+
+Exemplos antigos com `export` de knobs de produto workspace/backup (removidos) devem ser reescritos para `--workspace` e `--no-backup`.
+Logging: `init_tracing` + CLI; tee de arquivo sob state XDG — sem knobs de ambiente de log de produto.
+`wal-stats` é **diagnóstico local** (não telemetria de produto).
 

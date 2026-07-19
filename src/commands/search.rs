@@ -171,6 +171,7 @@ pub fn cmd_search(
     let max_columns = args.max_columns;
     let no_begin_end = args.no_begin_end;
     let multiline = args.multiline;
+    let search_binary = args.binary;
 
     let shutdown_flag = shutdown.flag();
     let walker_thread = std::thread::spawn(move || {
@@ -237,6 +238,26 @@ pub fn cmd_search(
                             "skipping oversized file (G68)"
                         );
                         return ignore::WalkState::Continue;
+                    }
+                }
+
+                // A-008: skip binary files unless --binary (align with replace/ripgrep).
+                // Only probe the first BINARY_DETECT_SIZE bytes (do not load whole file).
+                if !search_binary {
+                    use std::io::Read;
+                    if let Ok(mut f) = std::fs::File::open(entry.path()) {
+                        let mut head =
+                            vec![0u8; crate::constants::BINARY_DETECT_SIZE];
+                        if let Ok(n) = f.read(&mut head) {
+                            head.truncate(n);
+                            if crate::binary_detect::is_binary(&head) {
+                                tracing::debug!(
+                                    path = %entry.path().display(),
+                                    "skipping binary file (A-008); pass --binary to opt in"
+                                );
+                                return ignore::WalkState::Continue;
+                            }
+                        }
                     }
                 }
 

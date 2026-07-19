@@ -1,5 +1,8 @@
 # ADR-0028: G119 — Limpeza inteligente de sidecars WAL em 5 camadas autônomas
 
+> **Historical (pre-0.1.35):** product `ATOMWRITE_*` / env knobs described below are **superseded**. Runtime config is CLI flags + XDG `config.toml` / `atomwrite set|get` only.
+
+
 - **Status**: Accepted
 - **Date**: 2026-06-13
 - **Context**: G119 começou parcial na v0.1.15 com L2 (Drop guard), L3 (wal-heal) e L5 (wal-stats) entregues. Faltavam L1 (prevenção via `--wal-policy`) e L4 (heurísticas avançadas). Sem L1, 100% das mutações com `--strict-atomic` ou `ATOMWRITE_WAL=1` continuam deixando sidecar; sem L4, o engine de decisão é binário (drop ou keep), sem nuance para TTL/LRU/rate-limit/sentinela/arquivamento. A auditoria empírica de 2026-06-13 contou 60 sidecars `Committed` em 10 diretórios (18 raiz, 18 docs, 14 schemas, 2 workflows, 2 skill-en, 2 skill-pt, 2 src, 1 commands, 1 tests, 1 snapshots) totalizando 47.624 bytes. Cada um desses sidecars representa I/O desperdiçado em write trivial (set/del, set de chave TOML, edit de uma linha) que o L1 teria prevenido na fonte.

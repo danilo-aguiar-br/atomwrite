@@ -166,7 +166,7 @@ atomwrite --workspace . replace --progress-every 50 'old_api' 'new_api' src/
 
 ## Quickstart: WAL Cleanup (G119)
 
-v0.1.15 ships a three-layer WAL management system (G119). The new `wal-stats` subcommand is read-only telemetry. The new `wal-heal` subcommand is scoped reaping. The new `--wal-policy` flag controls sidecar creation per write. Use the global `--no-auto-heal` to disable automatic healing during sensitive workflows.
+v0.1.15 ships a three-layer WAL management system (G119). The new `wal-stats` subcommand is read-only local diagnostics. The new `wal-heal` subcommand is scoped reaping. The new `--wal-policy` flag controls sidecar creation per write. Use the global `--no-auto-heal` to disable automatic healing during sensitive workflows.
 
 ### Inspect with `wal-stats`
 
@@ -734,22 +734,22 @@ atomwrite outline src/main.rs --positions
 - `--threads <N>` / `-j <N>` -- number of parallel threads (0 = all cores)
 - `--max-filesize <BYTES>` -- skip files larger than this limit
 - `--json-schema` -- emit JSON schema for the subcommand output
-- `--locale <en|pt-BR>` -- override display locale (en, pt-BR); env `ATOMWRITE_LANG` still accepted (flag renamed from `--lang` in v0.1.20)
+- `--locale <en|pt-BR>` -- override display locale (en, pt-BR); use `--locale` only (no product environment variables; XDG locale preference via `atomwrite locale`)
 - `--timeout-secs <SECONDS>` (alias `--timeout`) -- global operation timeout; **default 120**; `0` disables; deadline → exit **124**
 - `--grep <REGEX>` on `read` to filter returned lines to those matching a regex
 
 
 ## Configuration
 - Since v0.1.25, atomwrite supports an optional `.atomwrite.toml` config file
-- Hierarchy: CLI flags > environment variables > local `.atomwrite.toml` > XDG `~/.config/atomwrite/config.toml` > built-in defaults
+- Hierarchy: CLI flags > local `.atomwrite.toml` > XDG `config.toml` (`atomwrite set/get`) > built-in defaults (no product environment variables)
 - The config file is optional; atomwrite works without any configuration
 - Use `--workspace` to set the project root boundary
 - Use `--json-schema` to introspect output format at runtime
 - Generate shell completions with `atomwrite completions bash` or auto-install with `atomwrite completions bash --install` (writes to XDG data dir)
-- `ATOMWRITE_LANG`: override locale for translated messages
-- `ATOMWRITE_WORKSPACE`: set the workspace root for path jail validation
-- `NO_COLOR`: disable colored output when set (see https://no-color.org)
-- `RAYON_NUM_THREADS`: override number of parallel threads
+- Locale: `--locale <en|pt-BR>` or `atomwrite locale` (XDG preference). No product env knobs.
+- Workspace jail: always pass `--workspace <root>` (never environment variables).
+- Color: `--color auto|always|never` or `--no-color` (CLI only; no `NO_COLOR` product path).
+- Threads: `--threads` / `-j` / `--max-concurrency` (CLI only).
 
 
 ## Modification Time And Build Systems
@@ -785,9 +785,9 @@ For interactive agent workflows, the safe default is to let `atomwrite` update t
 ## Error Suggestions (v0.1.4)
 - Every error envelope on stdout includes a `suggestion` field with actionable recovery guidance
 - All 25 error variants now carry a `suggestion` (the only exception is `BrokenPipe` because SIGPIPE is not actionable)
-- Suggestions are **context-aware**: the `WorkspaceJail` suggestion changes depending on whether the user already supplied `--workspace` or `ATOMWRITE_WORKSPACE`
+- Suggestions are **context-aware**: the `WorkspaceJail` suggestion changes depending on whether the user already supplied `--workspace`
 - When the workspace IS provided: `"use a path inside the workspace (<root>)"`
-- When the workspace is NOT provided: `"set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>"`
+- When the workspace is NOT provided: `"set --workspace <root> (XDG/config only; no environment variables)"`
 - `FileImmutable` suggests `chattr -i` (Unix) or `fsutil` (Windows) to clear the immutable attribute
 - `NoMatches` guides the user to broaden the pattern and review `--include`/`--exclude` filters
 - `BinaryFile` recommends `read --stat` for metadata-only reads (no longer references the phantom `--force-text` flag that was removed in v0.1.4)
@@ -795,7 +795,7 @@ For interactive agent workflows, the safe default is to let `atomwrite` update t
 
 Example of a context-aware error envelope (when workspace is NOT provided):
 ```json
-{"error":true,"code":"WORKSPACE_JAIL","exit":126,"message":"path outside workspace jail: /etc/passwd (workspace: /home/user/project)","path":"/etc/passwd","error_class":"precondition_failed","retryable":false,"suggestion":"set --workspace <root> or export ATOMWRITE_WORKSPACE=<path>","workspace":"/home/user/project"}
+{"error":true,"code":"WORKSPACE_JAIL","exit":126,"message":"path outside workspace jail: /etc/passwd (workspace: /home/user/project)","path":"/etc/passwd","error_class":"precondition_failed","retryable":false,"suggestion":"set --workspace <root> (XDG/config only; no environment variables)","workspace":"/home/user/project"}
 ```
 
 Example when workspace IS provided via `--workspace /home/user/project`:
@@ -1074,7 +1074,7 @@ This release closes two audit gaps (GAP-CLI-SURFACE-DRIFT, GAP-CONFIG-DEFAULTS-D
 ### Live Config Plumbing (ADR-0049)
 
 - `.atomwrite.toml` `[defaults]` `backup`/`retention` keys are now effective across every mutating subcommand, closing GAP-CONFIG-DEFAULTS-DEAD
-- Precedence: `ATOMWRITE_BACKUP` env var > CLI flags (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > built-in default (`true`/`5`)
+- Precedence: CLI flags (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > XDG config > built-in default (`true`/`5`) — no product env knobs
 - `batch --retention <N>` and `batch --backup` are now effective end-to-end, including the transactional pre-backup step and the `delete` operation inside a batch
 
 ### Edit stdin-tty Guard (ADR-0050)
@@ -1148,7 +1148,7 @@ atomwrite --workspace . write target.rs < new.rs
 atomwrite --workspace . write --no-backup target.rs < new.rs
 
 # Global opt-out via environment:
-ATOMWRITE_BACKUP=0 atomwrite --workspace . write target.rs < new.rs
+atomwrite --workspace . write --no-backup target.rs < new.rs
 ```
 
 ### shrink guard (GAP-2026-017)

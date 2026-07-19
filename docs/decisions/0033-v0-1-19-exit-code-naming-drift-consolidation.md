@@ -1,5 +1,8 @@
 # ADR-0033: v0.1.19 — Exit code documentation drift consolidation
 
+> **Historical (pre-0.1.35):** product `ATOMWRITE_*` / env knobs described below are **superseded**. Runtime config is CLI flags + XDG `config.toml` / `atomwrite set|get` only.
+
+
 - **Status**: Accepted
 - **Date**: 2026-06-14
 - **Context**: Phase D testing on 2026-06-14 ran 7 concrete binary-level probes against the v0.1.18 release and surfaced 7 places where the published docs (SKILL.md EN+PT, `error-output.schema.json`, README, CHANGELOG) diverged from the actual binary behavior. Each drift is small individually, but together they create an environment where agents and local gates cannot reliably interpret exit codes. The drifts are:

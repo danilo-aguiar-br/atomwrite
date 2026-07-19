@@ -106,6 +106,8 @@ pub fn read_file_bytes(path: &Path, max_size: u64) -> Result<Vec<u8>> {
     }
 }
 
+/// Optional byte-level BOM strip (kept for call sites that intentionally discard BOM).
+#[allow(dead_code)]
 fn strip_utf8_bom(bytes: &mut Vec<u8>) {
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         bytes.drain(..3);
@@ -123,8 +125,9 @@ fn strip_utf8_bom(bytes: &mut Vec<u8>) {
 /// Returns `AtomwriteError::InvalidInput` if the file is not valid UTF-8.
 /// Returns an I/O error if the file cannot be read or mmapped.
 pub fn read_file_string(path: &Path, max_size: u64) -> Result<String> {
-    let mut bytes = read_file_bytes(path, max_size)?;
-    strip_utf8_bom(&mut bytes);
+    // G-FZZ-075: do not strip UTF-8 BOM here — write-back must preserve it.
+    // Fuzzy match normalizes U+FEFF / ZWSP on the match path only.
+    let bytes = read_file_bytes(path, max_size)?;
     String::from_utf8(bytes).map_err(|_| {
         AtomwriteError::InvalidInput {
             reason: format!("file is not valid UTF-8: {}", path.display()),

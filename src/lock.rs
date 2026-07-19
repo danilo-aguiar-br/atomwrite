@@ -160,7 +160,12 @@ fn try_acquire_loop(file: &std::fs::File, timeout_ms: u64, start: Instant) -> Re
                     .into());
                 }
                 attempts += 1;
-                let sleep_ms = if attempts < 20 { 10 } else { 50 };
+                // A-030: named poll intervals (not magic 10/50/20).
+                let sleep_ms = if attempts < crate::constants::LOCK_POLL_FAST_ATTEMPTS {
+                    crate::constants::LOCK_POLL_FAST_MS
+                } else {
+                    crate::constants::LOCK_POLL_SLOW_MS
+                };
                 std::thread::sleep(Duration::from_millis(sleep_ms));
             }
             Err(e) => {

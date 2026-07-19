@@ -337,12 +337,15 @@ pub fn cmd_transform(
     }
 
     let total_repl = total_replacements.load(Ordering::Relaxed);
+    let matched = files_transformed.load(Ordering::Relaxed);
+    // B-002: dry-run must not claim disk mutations (files_modified=0).
+    let files_modified = if dry_run { Some(0) } else { Some(matched) };
 
     writer.write_event(&Summary {
         r#type: "summary",
         files_visited: files_visited.load(Ordering::Relaxed),
-        files_matched: files_transformed.load(Ordering::Relaxed),
-        files_modified: Some(files_transformed.load(Ordering::Relaxed)),
+        files_matched: matched,
+        files_modified,
         files_skipped: Some(files_skipped.load(Ordering::Relaxed)),
         total_matches: Some(total_repl),
         total_replacements: Some(total_repl),

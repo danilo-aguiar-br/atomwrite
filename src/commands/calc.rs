@@ -29,13 +29,27 @@ pub fn cmd_calc(
 
     if args.stdin || args.expression.is_none() {
         let reader = std::io::BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
+        let mut evaluated = 0u64;
         for line in reader.lines() {
             let line = line?;
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
+            // B-009: skip comment/blank lines; evaluate remaining expressions.
+            // Junk that is not a comment still fails in fend.
+            if trimmed.as_bytes().first() == Some(&b'#') || trimmed.starts_with("//") {
+                continue;
+            }
             evaluate_one(trimmed, &mut ctx, writer)?;
+            evaluated += 1;
+        }
+        if evaluated == 0 {
+            return Err(AtomwriteError::InvalidInput {
+                reason: "calc: no expressions to evaluate (stdin was empty or only comments/blank lines)"
+                    .into(),
+            }
+            .into());
         }
     } else if let Some(ref expr) = args.expression {
         evaluate_one(expr, &mut ctx, writer)?;
@@ -56,10 +70,18 @@ fn evaluate_one(
             reason: format!("calc error: {e}"),
         })?;
 
+    let main = result.get_main_result().to_owned();
+    if main.trim().is_empty() {
+        return Err(AtomwriteError::InvalidInput {
+            reason: format!("calc: empty result for expression {expression:?}"),
+        }
+        .into());
+    }
+
     let output = CalcOutput {
         r#type: "calc",
         expression: expression.to_owned(),
-        result: result.get_main_result().to_owned(),
+        result: main,
         elapsed_ms: start.elapsed().as_millis() as u64,
     };
 

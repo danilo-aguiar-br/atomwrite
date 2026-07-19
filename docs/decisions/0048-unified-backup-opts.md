@@ -1,5 +1,8 @@
 # ADR-0048: unified BackupOpts and single resolve_backup() resolver
 
+> **Historical (pre-0.1.35):** product `ATOMWRITE_*` / env knobs described below are **superseded**. Runtime config is CLI flags + XDG `config.toml` / `atomwrite set|get` only.
+
+
 - **Status**: Accepted
 - **Date**: 2026-07-06
 - **Context**: Backup-related flags (`--backup`, `--no-backup`, `--keep-backup`, `--retention <N>`) were hand-declared separately in each of 15 mutating subcommand structs (`write`, `edit`, `edit-loop`, `replace`, `transform`, `scope`, `apply`, `set`, `del`, `case`, `batch`, `delete`, `move`, `copy`, `rollback`), with divergent presence and defaults across structs (GAP-CLI-SURFACE-DRIFT). This caused `replace --retention` and `delete --no-backup` to return exit 2 `ARGUMENT_PARSE_ERROR` because the flag was missing or declared with an incompatible type in those specific structs. `--backup` and `--no-backup` being passed together silently let the last flag win instead of failing fast. `retention: 5` was hardcoded at 9 call sites instead of flowing from a single source of truth, and `.atomwrite.toml` `[defaults]` `backup`/`retention` keys were parsed but never consulted (GAP-CONFIG-DEFAULTS-DEAD) — see ADR-0049.

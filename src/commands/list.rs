@@ -143,7 +143,7 @@ pub fn cmd_list(
 
     let want_long = args.long;
     let want_ext = args.count_by_ext;
-    let ws = workspace.clone();
+    let ws = workspace;
     let roots_cap = roots.clone();
 
     let mut records: Vec<ListRecord> = collect_mapped_parallel(&builder, move |entry| {

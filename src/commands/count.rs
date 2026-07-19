@@ -107,13 +107,14 @@ pub fn cmd_count(
     let total_blank = Arc::new(AtomicU64::new(0));
     let total_bytes = Arc::new(AtomicU64::new(0));
     // Shard bags: workers push local maps/vecs once on Drop (not per entry).
-    let by_ext_shards: Option<Arc<Mutex<Vec<BTreeMap<String, ExtCountOutput>>>>> =
-        if by_extension {
-            Some(Arc::new(Mutex::new(Vec::new())))
-        } else {
-            None
-        };
-    let by_size_shards: Option<Arc<Mutex<Vec<Vec<(PathBuf, u64)>>>>> = if by_size {
+    type ExtShardBag = Arc<Mutex<Vec<BTreeMap<String, ExtCountOutput>>>>;
+    type SizeShardBag = Arc<Mutex<Vec<Vec<(PathBuf, u64)>>>>;
+    let by_ext_shards: Option<ExtShardBag> = if by_extension {
+        Some(Arc::new(Mutex::new(Vec::new())))
+    } else {
+        None
+    };
+    let by_size_shards: Option<SizeShardBag> = if by_size {
         Some(Arc::new(Mutex::new(Vec::new())))
     } else {
         None
@@ -138,9 +139,10 @@ pub fn cmd_count(
         let shutdown_flag = Arc::clone(&shutdown_flag);
 
         // Worker-local composites — merge once on Drop (Mutex-free hot path).
+        type ExtShardBag = Arc<Mutex<Vec<BTreeMap<String, ExtCountOutput>>>>;
         struct ExtGuard {
             local: BTreeMap<String, ExtCountOutput>,
-            shards: Arc<Mutex<Vec<BTreeMap<String, ExtCountOutput>>>>,
+            shards: ExtShardBag,
         }
         impl Drop for ExtGuard {
             fn drop(&mut self) {
@@ -153,9 +155,10 @@ pub fn cmd_count(
                 }
             }
         }
+        type SizeShardBag = Arc<Mutex<Vec<Vec<(PathBuf, u64)>>>>;
         struct SizeGuard {
             local: Vec<(PathBuf, u64)>,
-            shards: Arc<Mutex<Vec<Vec<(PathBuf, u64)>>>>,
+            shards: SizeShardBag,
         }
         impl Drop for SizeGuard {
             fn drop(&mut self) {

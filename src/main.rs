@@ -56,15 +56,21 @@ fn main() -> ExitCode {
 
     atomwrite::runtime::init_locale(cli.global.lang.as_deref());
     // Keep WorkerGuard until end of main so non_blocking log worker flushes.
-    let _guard = atomwrite::runtime::init_telemetry(
+    // Color: CLI only (G-007) via GlobalArgs::color_mode.
+    let _guard = atomwrite::runtime::init_tracing(
         cli.global.verbose,
         cli.global.quiet,
-        cli.global.no_color,
+        cli.global.color_mode(),
     );
     // Panic hook after subscriber so panic events reach tracing (+ human_panic chain).
     atomwrite::runtime::install_panic_hook();
-    // Observability for locale detection failure / resolved tag (after tracing).
+    // Local diagnostics for locale detection failure / resolved tag (after tracing).
     atomwrite::locale::log_resolved_locale();
+
+    // G-007: readiness probe via CLI `--ready-file` (handlers already installed early).
+    if let Some(ref ready) = cli.global.ready_file {
+        atomwrite::signal::write_ready_file(ready);
+    }
 
     let shutdown = atomwrite::signal::install_handlers()
         .inspect_err(|e| tracing::warn!(%e, "signal handler registration failed"))
@@ -101,16 +107,16 @@ fn map_run_error(err: &anyhow::Error, cli: &atomwrite::cli::Cli) -> ExitCode {
         // human banner on stderr (same path as Ok + is_shutdown), not only
         // a CANCELLED NDJSON line — agents still get the envelope when we
         // emit it below for non-signal programmatic cancels.
-        if let atomwrite::error::AtomwriteError::Cancelled { exit, .. } = aw_err {
-            if atomwrite::signal::is_global_shutdown() {
-                if *exit == 124 {
-                    atomwrite::signal::write_timeout_message();
-                } else {
-                    atomwrite::signal::write_shutdown_message();
-                }
-                tracing::info!(exit = *exit, "shutdown via Cancelled");
-                return ExitCode::from(*exit);
+        if let atomwrite::error::AtomwriteError::Cancelled { exit, .. } = aw_err
+            && atomwrite::signal::is_global_shutdown()
+        {
+            if *exit == 124 {
+                atomwrite::signal::write_timeout_message();
+            } else {
+                atomwrite::signal::write_shutdown_message();
             }
+            tracing::info!(exit = *exit, "shutdown via Cancelled");
+            return ExitCode::from(*exit);
         }
         let mut out = io::stdout().lock();
         let ctx = atomwrite::error::ErrorContext {

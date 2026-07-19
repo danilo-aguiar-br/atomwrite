@@ -223,7 +223,11 @@ fn json_set(
     });
     apply_json_pointer(&mut value_json, &pointer, value);
     // Pretty-print is intentional: human-edited config files, not NDJSON stdout.
-    let new_content = serde_json::to_string_pretty(&value_json)?;
+    let mut new_content = serde_json::to_string_pretty(&value_json)?;
+    // G-022: POSIX text files end with newline; keep agent diffs clean.
+    if crate::constants::ENSURE_TRAILING_NEWLINE_JSON && !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
     Ok((new_content, old_value, "json"))
 }
 

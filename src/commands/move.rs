@@ -57,13 +57,10 @@ pub fn cmd_move(
         }
     }
 
-    // v0.1.28 GAP-CLI-SURFACE-DRIFT: overwrite requires an EXPLICIT authorization
-    // (--force, --backup, or ATOMWRITE_BACKUP enabled) now that backup defaults to true.
-    let env_backup_enabled = std::env::var("ATOMWRITE_BACKUP")
-        .map(|v| v != "0")
-        .unwrap_or(false);
+    // v0.1.28 / G-007: overwrite requires EXPLICIT CLI authorization
+    // (--force or --backup). No product env knobs.
     let overwrite_authorized =
-        args.force || args.backup_opts.backup == Some(true) || env_backup_enabled;
+        args.force || args.backup_opts.backup == Some(true);
     if target.exists() && !overwrite_authorized {
         return Err(AtomwriteError::InvalidInput {
             reason: format!(
@@ -100,8 +97,15 @@ pub fn cmd_move(
     }
 
     let max_size = global.effective_max_filesize();
-    let hash = checksum::hash_file(&source, max_size)?;
-    let bytes = std::fs::metadata(&source)?.len();
+    let source_meta = std::fs::metadata(&source)?;
+    let is_dir = source_meta.is_dir();
+    // G-004: directories use rename (same FS) without hashing file content.
+    let hash = if is_dir {
+        String::new()
+    } else {
+        checksum::hash_file(&source, max_size)?
+    };
+    let bytes = source_meta.len();
     let source_str = source.display().to_string();
     let target_str = target.display().to_string();
 
@@ -131,6 +135,16 @@ pub fn cmd_move(
         }
         Err(e) if e.raw_os_error() == Some(18) => {
             // EXDEV = 18 on Linux — cross-device: copy + delete
+            if is_dir {
+                // G-004: cross-device directory move is not supported without recursive copy.
+                return Err(AtomwriteError::InvalidInput {
+                    reason: format!(
+                        "cannot move directory {} across devices; copy -r then delete, or keep same filesystem",
+                        source.display()
+                    ),
+                }
+                .into());
+            }
             let content = crate::file_io::read_file_bytes(&source, max_size)?;
             crate::atomic::atomic_write(
                 &target,
@@ -159,6 +173,16 @@ pub fn cmd_move(
                 }
             }
             (true, false)
+        }
+        Err(e) if e.raw_os_error() == Some(21) => {
+            // EISDIR — permanent precondition, not transient I/O (G-023).
+            return Err(AtomwriteError::InvalidInput {
+                reason: format!(
+                    "source {} is a directory and rename failed; ensure target parent exists and same filesystem",
+                    source.display()
+                ),
+            }
+            .into());
         }
         Err(e) => {
             return Err(e).with_context(|| {

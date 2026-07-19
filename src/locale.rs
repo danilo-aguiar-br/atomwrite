@@ -4,7 +4,7 @@
 //!
 //! Startup order (Rules Rust i18n):
 //! 1. Console UTF-8 (`platform::init_console`, before this module)
-//! 2. CLI / env override (`--locale` / `ATOMWRITE_LANG` via clap)
+//! 2. CLI override (`--locale` flag; XDG preference via locale command)
 //! 3. Persisted XDG preference (`directories::ProjectDirs`)
 //! 4. OS locale via `sys-locale` (never raw `LANG` in portable code)
 //! 5. Deterministic fallback [`Idioma::En`]
@@ -17,6 +17,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+#[cfg(test)]
+use std::sync::Mutex;
 
 use fluent_langneg::{negotiate_languages, NegotiationStrategy};
 use unic_langid::LanguageIdentifier;
@@ -37,7 +39,7 @@ pub enum TextDirection {
 pub enum LocaleSource {
     /// Explicit `--locale` CLI flag (highest priority).
     CliFlag,
-    /// `ATOMWRITE_LANG` when clap injects it as the same field (treated as flag).
+    /// CLI `--locale` when provided as the same field.
     EnvVar,
     /// User preference under XDG config (`locale` file).
     Persisted,
@@ -250,7 +252,7 @@ pub fn negotiate_to_idioma(requested_tags: &[&str]) -> Idioma {
         .unwrap_or(Idioma::En)
 }
 
-/// XDG / `ATOMWRITE_HOME` config path for the persisted locale preference.
+/// XDG config path for the persisted locale preference.
 pub fn preference_path() -> Option<PathBuf> {
     crate::storage::config_dir().map(|d| d.join("locale"))
 }
@@ -265,7 +267,7 @@ pub fn read_persisted_preference(path: &Path) -> Option<String> {
     let idioma = negotiate_to_idioma(&[tag]);
     // Only accept if the tag actually maps to a supported locale cleanly.
     Idioma::from_tag(tag)
-        .or_else(|| {
+        .or({
             // Allow `pt` / `pt_BR.UTF-8` style values in the file via negotiation.
             Some(idioma)
         })
@@ -318,7 +320,7 @@ pub fn resolve_locale(
         .as_ref()
         .and_then(|p| read_persisted_preference(p));
 
-    // Layer 1 — explicit CLI / env (clap merges `ATOMWRITE_LANG` into the same Option).
+    // Layer 1 — explicit CLI `--locale`.
     if let Some(raw) = cli_override.map(str::trim).filter(|s| !s.is_empty()) {
         let idioma = negotiate_to_idioma(&[raw]);
         return LocaleState {
@@ -412,9 +414,58 @@ pub fn resolved_idioma() -> Idioma {
         .unwrap_or(Idioma::En)
 }
 
+/// Process-wide lock for locale-mutating unit tests (A-012).
+///
+/// `rust_i18n::set_locale` is global; parallel tests must serialize.
+#[cfg(test)]
+static LOCALE_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+/// RAII guard: sets locale for the duration of a test and restores English on drop.
+///
+/// Holds the locale test mutex so concurrent tests cannot race (A-012 flake fix).
+#[cfg(test)]
+pub struct LocaleTestGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    prev: &'static str,
+}
+
+#[cfg(test)]
+impl LocaleTestGuard {
+    /// Lock the locale test mutex, set `idioma`, restore `en` on drop.
+    pub fn set(idioma: Idioma) -> Self {
+        let lock = LOCALE_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = resolved_idioma().as_str();
+        // Prefer previous rust-i18n locale if init already ran; else English.
+        let prev = if prev.is_empty() { "en" } else { prev };
+        // Capture before overwrite — rust-i18n has no get; always restore en.
+        let _ = prev;
+        rust_i18n::set_locale(idioma.as_str());
+        Self {
+            _lock: lock,
+            prev: "en",
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for LocaleTestGuard {
+    fn drop(&mut self) {
+        rust_i18n::set_locale(self.prev);
+    }
+}
+
 /// Apply an idioma for tests without requiring OS detection.
+///
+/// Prefer [`LocaleTestGuard::set`] so the locale is restored and tests serialize.
 #[cfg(test)]
 pub fn set_locale_for_test(idioma: Idioma) {
+    // Backward-compatible: still sets locale, but callers that need isolation
+    // should use LocaleTestGuard. Holding a brief lock reduces race windows.
+    let _g = LOCALE_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     rust_i18n::set_locale(idioma.as_str());
 }
 
@@ -451,7 +502,7 @@ pub fn parse_cli_locale(raw: &str) -> Result<String, String> {
     Ok(negotiate_to_idioma(&[&tag]).as_str().to_string())
 }
 
-/// Emit a tracing event for detection failure / resolved locale (call after telemetry init).
+/// Emit a tracing event for detection failure / resolved locale (call after tracing init).
 pub fn log_resolved_locale() {
     match resolved_state() {
         Some(state) => {

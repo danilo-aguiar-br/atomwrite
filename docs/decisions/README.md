@@ -1,5 +1,8 @@
 # ADRs (Architecture Decision Records) — Index
 
+> **Historical (pre-0.1.35):** product `ATOMWRITE_*` / env knobs described below are **superseded**. Runtime config is CLI flags + XDG `config.toml` / `atomwrite set|get` only.
+
+
 - **Format**: Michael Nygard's ADR template (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit).
 - **Authoring rule**: Every non-trivial change to atomwrite (a new subcommand, a new error variant, a new dependency) MUST be accompanied by an ADR or by an update to an existing ADR.
 - **Storage**: One file per ADR in `docs/decisions/`. Filename is `NNNN-kebab-case-slug.md`. Numbering is monotonic.

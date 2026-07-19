@@ -2,7 +2,8 @@
 
 //! Configuration file loading for `.atomwrite.toml`.
 //!
-//! Hierarchy (highest wins): CLI flags > env vars > local config > global config > defaults.
+//! Hierarchy (highest wins): CLI flags > local config > global XDG config > defaults.
+//! G-007: product knobs are never read from process environment variables.
 
 use std::path::Path;
 
@@ -15,10 +16,59 @@ use crate::error::AtomwriteError;
 pub struct AtomwriteConfig {
     /// Default settings for write operations.
     pub defaults: DefaultsSection,
+    /// Write guard policy (confirm / shrink / auto-rotate) — G-028.
+    pub write: WriteSection,
     /// Fuzzy matching defaults for edit operations.
     pub fuzzy: FuzzySection,
     /// Search defaults.
     pub search: SearchSection,
+    /// Storage paths (XDG home override).
+    pub storage: StorageSection,
+}
+
+/// Write-guard policy loaded from XDG / `.atomwrite.toml` `[write]` (G-028).
+#[derive(Debug, serde::Deserialize)]
+#[serde(default)]
+pub struct WriteSection {
+    /// Bytes above which `--confirm` requires `--ack-overwrite`.
+    pub confirm_large_bytes: u64,
+    /// Block writes that shrink the target by more than this percent (1–99).
+    pub shrink_block_percent: u8,
+    /// Auto-rotate backup window for recently modified files (seconds).
+    pub auto_rotate_max_age_secs: u64,
+}
+
+impl Default for WriteSection {
+    fn default() -> Self {
+        Self {
+            confirm_large_bytes: crate::constants::CONFIRM_LARGE_FILE_BYTES,
+            shrink_block_percent: crate::constants::SHRINK_BLOCK_PERCENT,
+            auto_rotate_max_age_secs: crate::constants::AUTO_ROTATE_MAX_AGE_SECS,
+        }
+    }
+}
+
+/// Validate `[write]` section ranges (fail closed on bad XDG config).
+pub fn validate_write(cfg: &WriteSection) -> Result<(), AtomwriteError> {
+    if cfg.confirm_large_bytes == 0 {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "config [write] confirm_large_bytes must be >= 1".into(),
+        });
+    }
+    if !(1..=99).contains(&cfg.shrink_block_percent) {
+        return Err(AtomwriteError::InvalidInput {
+            reason: format!(
+                "config [write] shrink_block_percent = {} is out of range; must be 1..=99",
+                cfg.shrink_block_percent
+            ),
+        });
+    }
+    if cfg.auto_rotate_max_age_secs == 0 {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "config [write] auto_rotate_max_age_secs must be >= 1".into(),
+        });
+    }
+    Ok(())
 }
 
 /// Default settings applied to write/edit/replace operations.
@@ -41,7 +91,7 @@ impl Default for DefaultsSection {
             backup: true,
             retention: crate::constants::DEFAULT_BACKUP_RETENTION,
             line_ending: "auto".into(),
-            max_filesize: 1_073_741_824,
+            max_filesize: crate::constants::DEFAULT_MAX_FILESIZE,
         }
     }
 }
@@ -52,20 +102,52 @@ impl Default for DefaultsSection {
 pub struct FuzzySection {
     /// Default fuzzy mode: auto or aggressive (off rejected since v0.1.30).
     pub mode: String,
-    /// Default similarity threshold (0.0–1.0).
+    /// Default similarity threshold (0.0–1.0) for Auto block/dual-gate.
     pub threshold: f64,
+    /// Aggressive-mode floor (G-FZZ-150 XDG matrix).
+    #[serde(default = "default_fuzzy_aggressive")]
+    pub threshold_aggressive: f64,
+    /// Context-aware Damerau threshold.
+    #[serde(default = "default_fuzzy_context")]
+    pub threshold_context: f64,
+    /// Jaro-Winkler line threshold.
+    #[serde(default = "default_fuzzy_jw")]
+    pub threshold_jw: f64,
+}
+
+fn default_fuzzy_aggressive() -> f64 {
+    crate::constants::FUZZY_THRESHOLD_AGGRESSIVE
+}
+fn default_fuzzy_context() -> f64 {
+    crate::constants::FUZZY_THRESHOLD_CONTEXT
+}
+fn default_fuzzy_jw() -> f64 {
+    crate::constants::FUZZY_THRESHOLD_JW
 }
 
 impl Default for FuzzySection {
     fn default() -> Self {
         Self {
             mode: "auto".into(),
-            threshold: 0.70,
+            threshold: crate::constants::FUZZY_THRESHOLD_AUTO,
+            threshold_aggressive: crate::constants::FUZZY_THRESHOLD_AGGRESSIVE,
+            threshold_context: crate::constants::FUZZY_THRESHOLD_CONTEXT,
+            threshold_jw: crate::constants::FUZZY_THRESHOLD_JW,
         }
     }
 }
 
-/// Search defaults.
+
+/// Storage configuration (XDG; no process env knobs).
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct StorageSection {
+    /// Optional home override path (absolute). When set, config/data/cache/state
+    /// are rooted under `{home}/…` instead of `ProjectDirs`.
+    pub home: Option<String>,
+}
+
+/// Search defaults (A-019: policy overridable via XDG / workspace config).
 #[derive(Debug, serde::Deserialize)]
 #[serde(default)]
 pub struct SearchSection {
@@ -73,6 +155,10 @@ pub struct SearchSection {
     pub context: u32,
     /// Enable smart-case by default.
     pub smart_case: bool,
+    /// Default `search --max-filesize` (bytes).
+    pub max_filesize: u64,
+    /// Default `search --max-columns`.
+    pub max_columns: usize,
 }
 
 impl Default for SearchSection {
@@ -80,15 +166,32 @@ impl Default for SearchSection {
         Self {
             context: 0,
             smart_case: true,
+            max_filesize: crate::constants::DEFAULT_SEARCH_MAX_FILESIZE_BYTES,
+            max_columns: crate::constants::DEFAULT_SEARCH_MAX_COLUMNS,
         }
     }
+}
+
+/// Validate `[search]` section (A-019).
+pub fn validate_search_section(cfg: &SearchSection) -> Result<(), AtomwriteError> {
+    if cfg.max_filesize == 0 {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "config [search] max_filesize must be >= 1".into(),
+        });
+    }
+    if cfg.max_columns == 0 {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "config [search] max_columns must be >= 1".into(),
+        });
+    }
+    Ok(())
 }
 
 /// Load configuration from the hierarchy:
 /// 1. Explicit `--config` path (strict — missing/malformed is hard error)
 /// 2. `{workspace}/.atomwrite.toml` (local; soft-fail to defaults)
 /// 3. Global config via [`crate::storage::global_config_path`]
-///    (`ATOMWRITE_HOME/config/config.toml` or XDG/`ProjectDirs`; soft-fail)
+///    (`set storage.home` / XDG `ProjectDirs` config path; soft-fail)
 /// 4. Built-in defaults
 ///
 /// Auto-discovered configs that fail to parse emit `tracing::warn!` and fall
@@ -156,15 +259,15 @@ fn load_from_path_soft(path: &Path) -> AtomwriteConfig {
     }
 }
 
-/// Reject illegal `[fuzzy]` values (v0.1.30 product policy).
+/// Reject illegal `[fuzzy]` values (v0.1.35: off = exact-only).
 pub fn validate_fuzzy(cfg: &FuzzySection) -> Result<(), AtomwriteError> {
     let mode = cfg.mode.trim().to_ascii_lowercase();
     match mode.as_str() {
-        "auto" | "aggressive" => {}
-        "off" | "exact" | "disabled" | "false" | "0" => {
+        "auto" | "aggressive" | "off" | "exact" => {}
+        "disabled" | "false" | "0" => {
             return Err(AtomwriteError::InvalidInput {
                 reason: format!(
-                    "config [fuzzy] mode = \"{}\" is not allowed since v0.1.30; use \"auto\" or \"aggressive\"",
+                    "config [fuzzy] mode = \"{}\" is invalid; use \"auto\", \"aggressive\", or \"off\" (exact-only)",
                     cfg.mode
                 ),
             });
@@ -172,7 +275,7 @@ pub fn validate_fuzzy(cfg: &FuzzySection) -> Result<(), AtomwriteError> {
         other => {
             return Err(AtomwriteError::InvalidInput {
                 reason: format!(
-                    "config [fuzzy] mode = \"{other}\" is invalid; use \"auto\" or \"aggressive\""
+                    "config [fuzzy] mode = \"{other}\" is invalid; use \"auto\", \"aggressive\", or \"off\""
                 ),
             });
         }
@@ -198,24 +301,20 @@ pub fn resolve_fuzzy(
     cfg: &FuzzySection,
 ) -> Result<(FuzzyMode, Option<f64>), AtomwriteError> {
     validate_fuzzy(cfg)?;
-    if matches!(cli_mode, FuzzyMode::Off) {
-        return Err(AtomwriteError::InvalidInput {
-            reason: "fuzzy mode 'off' was removed in v0.1.30; use auto (default) or aggressive"
-                .into(),
-        });
-    }
+    // G-010: Off is exact-only (no cascade) — honest API for agents.
     let cfg_mode = match cfg.mode.trim().to_ascii_lowercase().as_str() {
         "aggressive" => FuzzyMode::Aggressive,
+        "off" => FuzzyMode::Off,
         _ => FuzzyMode::Auto,
     };
     let mode = match cli_mode {
         FuzzyMode::Aggressive => FuzzyMode::Aggressive,
+        FuzzyMode::Off => FuzzyMode::Off,
         FuzzyMode::Auto => cfg_mode,
-        FuzzyMode::Off => FuzzyMode::Auto, // unreachable after check
     };
     let threshold = match cli_threshold {
         Some(t) => Some(t),
-        None if (cfg.threshold - 0.70).abs() > f64::EPSILON => Some(cfg.threshold),
+        None if (cfg.threshold - crate::constants::FUZZY_THRESHOLD_AUTO).abs() > f64::EPSILON => Some(cfg.threshold),
         None => None,
     };
     Ok((mode, threshold))

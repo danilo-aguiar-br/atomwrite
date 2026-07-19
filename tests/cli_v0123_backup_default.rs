@@ -3,7 +3,7 @@
 //! GAP-2026-016: backup-by-default for content-mutating commands.
 //!
 //! Validates that backup is created automatically without --backup flag,
-//! that --no-backup disables it, and that ATOMWRITE_BACKUP=0 overrides.
+//! that --no-backup disables it, and that CLI flags (not env knobs) control backup.
 
 mod common;
 
@@ -70,12 +70,14 @@ fn write_keep_backup_retains_after_success() {
     let dir = tempfile::tempdir().expect("tempdir");
     let target = common::create_test_file(dir.path(), "target.txt", "keep me as backup");
 
+    // G-017/G-047: payload shorter than target needs --allow-shrink.
     let output = common::atomwrite()
         .args([
             "--workspace",
             dir.path().to_str().unwrap(),
             "write",
             "--keep-backup",
+            "--allow-shrink",
         ])
         .arg(&target)
         .write_stdin("new data")
@@ -84,8 +86,9 @@ fn write_keep_backup_retains_after_success() {
 
     assert!(
         output.status.success(),
-        "exit 0 expected; stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "exit 0 expected; stderr: {} stdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
     assert_eq!(fs::read_to_string(&target).unwrap(), "new data");
 
@@ -164,9 +167,10 @@ fn edit_creates_backup_by_default() {
 }
 
 #[test]
-fn env_atomwrite_backup_zero_disables() {
+fn env_atomwrite_backup_ignored_cli_no_backup_disables() {
+    // G-007/G-046: product knobs are CLI+XDG only — ATOMWRITE_BACKUP env must be ignored.
     let dir = tempfile::tempdir().expect("tempdir");
-    let target = common::create_test_file(dir.path(), "target.txt", "env test");
+    let target = common::create_test_file(dir.path(), "target.txt", "env test content");
 
     let output = common::atomwrite()
         .env("ATOMWRITE_BACKUP", "0")
@@ -174,7 +178,8 @@ fn env_atomwrite_backup_zero_disables() {
             "--workspace",
             dir.path().to_str().unwrap(),
             "write",
-            "--keep-backup",
+            "--no-backup",
+            "--allow-shrink",
         ])
         .arg(&target)
         .write_stdin("overwritten")
@@ -183,8 +188,9 @@ fn env_atomwrite_backup_zero_disables() {
 
     assert!(
         output.status.success(),
-        "exit 0 expected; stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "exit 0 expected; stderr: {} stdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
 
     let bak_count = fs::read_dir(dir.path())
@@ -194,7 +200,7 @@ fn env_atomwrite_backup_zero_disables() {
         .count();
     assert_eq!(
         bak_count, 0,
-        "ATOMWRITE_BACKUP=0 should disable backup entirely"
+        "--no-backup must disable backup; env ATOMWRITE_BACKUP is not a product knob"
     );
 }
 

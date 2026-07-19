@@ -48,7 +48,7 @@
 - `--backup`/`--no-backup` are now mutually exclusive via `conflicts_with` (exit 2) instead of the last flag silently winning
 - `rollback` keeps its pre-rollback safety snapshot opt-in via explicit `--backup` — documented exception to the unified default-true contract
 - Zero hardcoded `retention: 5` literals remain; `Default` impls in `config.rs`/`atomic.rs` read `constants::DEFAULT_BACKUP_RETENTION`
-- `.atomwrite.toml` `[defaults]` `backup`/`retention` keys are now effective end-to-end across every mutating subcommand (GAP-CONFIG-DEFAULTS-DEAD, ADR-0049) — precedence `ATOMWRITE_BACKUP` env var > CLI flags (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > built-in default (`true`/`5`)
+- `.atomwrite.toml` `[defaults]` `backup`/`retention` keys are now effective end-to-end across every mutating subcommand (GAP-CONFIG-DEFAULTS-DEAD, ADR-0049) — precedence: CLI flags (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > XDG config > built-in default (`true`/`5`) — no product env knobs
 - `batch --retention <N>` and `batch --backup` are now effective end-to-end, including the transactional pre-backup step and the `delete` operation inside a batch
 - New stdin-tty guard on `edit`'s stdin-consuming modes (`--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`, `--multi`): fails fast with exit 65 (`INVALID_INPUT`) and an actionable `suggestion` when stdin is a terminal, instead of blocking indefinitely (ADR-0050)
 - `edit`'s stdin-consuming modes now reject `--old`/`--new`/`--old-file`/`--new-file` at parse time via `conflicts_with_all` (exit 2) instead of silently dispatching into `edit_by_marker`
@@ -115,7 +115,7 @@
 ## What's New in v0.1.23
 
 - GAP-2026-015 closed — `allow_hyphen_values = true` added to 15 CLI text-accepting fields in 8 structs. Values starting with `-` (Markdown bullets `- item`, negative numbers `-5`, YAML entries `- key: val`, diff content `--- a/file`) are now accepted as data, not parsed as flags. Excluded: `CaseArgs.subvert` (incompatible with `num_args = 2..`). See ADR-0041.
-- GAP-2026-016 closed — backup is now enabled by default in 9 content-mutating structs: `WriteArgs`, `EditArgs`, `EditLoopArgs`, `ReplaceArgs`, `TransformArgs`, `ApplyArgs`, `SetArgs`, `DelArgs`, `CaseArgs`. Backup is auto-deleted after success (`keep_backup: false` default unchanged). Opt-out: `--no-backup` flag or `ATOMWRITE_BACKUP=0` env var. Precedence: CLI flag > env var > default (true). 4 non-content structs unchanged: `DeleteArgs`, `MoveArgs`, `CopyArgs`, `RollbackArgs`. See ADR-0042.
+- GAP-2026-016 closed — backup is now enabled by default in 9 content-mutating structs: `WriteArgs`, `EditArgs`, `EditLoopArgs`, `ReplaceArgs`, `TransformArgs`, `ApplyArgs`, `SetArgs`, `DelArgs`, `CaseArgs`. Backup is auto-deleted after success (`keep_backup: false` default unchanged). Opt-out: `--no-backup` flag. Precedence: CLI flag > `.atomwrite.toml` / XDG > default (true). No product env knobs. 4 non-content structs unchanged: `DeleteArgs`, `MoveArgs`, `CopyArgs`, `RollbackArgs`. See ADR-0042.
 - GAP-2026-017 closed — writes that shrink file size by >50% are now BLOCKED when `--expect-checksum` is active. Returns exit 65 (`INVALID_INPUT`) with suggestion to pass `--allow-shrink`. The `risk_assessment` (L1) becomes blocking (not just informative) when `--expect-checksum` is active and the file shrinks. Without `--expect-checksum`, behavior is unchanged. See ADR-0043.
 - GAP-2026-018 closed — new `--old-file <PATH>` and `--new-file <PATH>` flags on `edit`. Content is read from files inside the atomwrite process, bypassing shell expansion and kernel ARG_MAX (~131 KB). `conflicts_with` prevents mixing `--old` with `--old-file` (exit 2). Cross-mixing guard rejects `--old` + `--new-file` and `--old-file` + `--new` (exit 65). `strip_file_trailing_newline()` strips one trailing newline for argv parity. `PairResult.source` reports "arg" or "file". See ADR-0044.
 - 609+ tests passing (31 new: 12 hyphen + 7 backup + 4 shrink + 8 old-file)
@@ -284,7 +284,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `case` -- (v0.1.12, v14 Tier 3) renames identifiers across multiple files via `heck`; styles: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`
 - `query` -- (v0.1.12, v14 Tier 3, G72) walks a tree-sitter AST and emits nodes as NDJSON; 305 languages via `tree-sitter-language-pack`; modes: `--kinds`, `--query <KIND>`, `-Q <KIND>`, `--tree`, `--positions`
 - `outline` -- (v0.1.12, v14 Tier 3) extracts high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON
-- `wal-stats` -- (v0.1.18) inspects WAL journal state for telemetry and debugging; scope via `--workspace <DIR>`; NDJSON report with `terminal_committed`, `terminal_aborted`, `total_bytes`, `oldest_age_secs`
+- `wal-stats` -- (v0.1.18) inspects WAL journal state for local diagnostics and debugging; scope via `--workspace <DIR>`; NDJSON report with `terminal_committed`, `terminal_aborted`, `total_bytes`, `oldest_age_secs`
 - `wal-heal` -- (v0.1.18) removes orphan terminal journals older than `--threshold-secs` (default 3600s); wall-clock budget via `--max-duration-ms` (default 100ms)
 - `edit-loop` -- (v0.1.22) applies N `{old, new}` pairs in 1 invocation via NDJSON on stdin; supports `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`
 - `prune-backups` -- (v0.1.22) manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` files (v0.1.20 and earlier); flags `--max-age-secs <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` for safety); NDJSON output with `path`, `reason`, `action`, `total`
@@ -425,7 +425,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `retryable` is true for `transient` and `conflict` classes
 - The `workspace` field only appears on `WORKSPACE_JAIL` errors and reports the resolved workspace root
 - All 20 error variants carry actionable `suggestion` text (added in v0.1.4, GAP 13)
-- The `WorkspaceJail` suggestion is **context-aware**: when `--workspace` or `ATOMWRITE_WORKSPACE` is already set, the suggestion says "use a path inside the workspace (<root>)" instead of re-asking for the flag
+- The `WorkspaceJail` suggestion is **context-aware**: when `--workspace` is already set, the suggestion says "use a path inside the workspace (<root>)" instead of re-asking for the flag
 - The `BinaryFile` suggestion recommends `read --stat` for metadata-only reads (phantom reference to `--force-text` was removed)
 - The `FileImmutable` suggestion mentions `chattr -i` (Unix) and `fsutil` (Windows)
 - The `NoMatches` suggestion guides pattern broadening and reviewing `--include`/`--exclude` filters
@@ -481,7 +481,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `--max-filesize <BYTES>` -- ignores files larger than the limit
 - `--timeout-secs <SECONDS>` (alias `--timeout`) -- global operation timeout; **default 120**; `0` disables; deadline → exit **124**. Use to bound long searches, batches, and replace operations
 - `--json-schema` -- emits the JSON schema for the subcommand's output
-- `--locale <en|pt-BR>` -- overrides the display locale (en, pt-BR); env `ATOMWRITE_LANG` still accepted (historical name; flag renamed from `--lang` in v0.1.20)
+- `--locale <en|pt-BR>` -- overrides the display locale (en, pt-BR); use `--locale` only (no product env knobs; XDG preference via `atomwrite locale`)
 
 
 ## PROHIBITED -- Common Pitfalls

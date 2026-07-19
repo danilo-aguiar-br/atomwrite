@@ -17,6 +17,33 @@ pub(crate) static BACKUP_FILENAME_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\.bak\.\d{8}_\d{6}(_\d{3})?$").expect("valid backup regex")
 });
 
+/// True when `path` looks like an atomwrite timestamped backup (`*.bak.*`).
+///
+/// DRY helper for recipe / semantic-search / hash excludes (A-008b / O-007).
+pub(crate) fn is_backup_path(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|name| name.contains(".bak.") || BACKUP_FILENAME_RE.is_match(name))
+}
+
+/// A-027: owned exclude globs for walks that skip atomwrite backups.
+#[must_use]
+pub(crate) fn backup_exclude_globs() -> Vec<String> {
+    crate::constants::BACKUP_EXCLUDE_GLOBS
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
+}
+
+/// A-027: append backup exclude globs to an existing exclude list (idempotent-ish).
+pub(crate) fn push_backup_excludes(exclude: &mut Vec<String>) {
+    for g in crate::constants::BACKUP_EXCLUDE_GLOBS {
+        if !exclude.iter().any(|e| e == *g) {
+            exclude.push((*g).to_string());
+        }
+    }
+}
+
 /// v0.1.29
 pub mod agent_surface;
 /// Full clap command tree as JSON (`atomwrite commands`).
@@ -128,20 +155,18 @@ pub(crate) struct ResolvedBackup {
     pub retention: u8,
 }
 
-/// Resolve effective backup configuration from CLI args, environment, and
-/// `.atomwrite.toml` `[defaults]`.
+/// Resolve effective backup configuration from CLI args and
+/// `.atomwrite.toml` `[defaults]` (G-007: no product env).
 ///
-/// Precedence for `backup`: `ATOMWRITE_BACKUP` env \> `--no-backup`/`--backup`
-/// \> `.atomwrite.toml` `[defaults].backup` \> `true`.
+/// Precedence for `backup`: `--no-backup`/`--backup` \> `.atomwrite.toml`
+/// `[defaults].backup` \> `true`.
 /// Precedence for `retention`: `--retention` \> `.atomwrite.toml`
-/// `[defaults].retention` \> `5`.
+/// `[defaults].retention` \> constant default.
 pub(crate) fn resolve_backup(
     opts: &crate::cli_args::BackupOpts,
     defaults: &crate::config::DefaultsSection,
 ) -> ResolvedBackup {
-    let backup = if let Ok(val) = std::env::var("ATOMWRITE_BACKUP") {
-        val != "0"
-    } else if opts.no_backup {
+    let backup = if opts.no_backup {
         false
     } else if opts.backup == Some(true) {
         true

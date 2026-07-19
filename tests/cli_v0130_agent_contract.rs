@@ -12,7 +12,8 @@ fn bin() -> Command {
 }
 
 #[test]
-fn fuzzy_off_rejected() {
+fn fuzzy_off_exact_only_succeeds_on_exact_match() {
+    // G-010/G-047: --fuzzy off is exact-only (not rejected); exact hits succeed.
     let dir = tempdir().unwrap();
     let f = dir.path().join("t.rs");
     fs::write(&f, "let x = 1;\n").unwrap();
@@ -30,9 +31,8 @@ fn fuzzy_off_rejected() {
             "off",
         ])
         .assert()
-        .failure()
-        .code(65)
-        .stdout(predicate::str::contains("0.1.30").or(predicate::str::contains("off")));
+        .success()
+        .stdout(predicate::str::contains("\"strategy\":\"exact\""));
 }
 
 #[test]
@@ -158,7 +158,8 @@ fn indent_adjusted_true_on_delta() {
 }
 
 #[test]
-fn config_fuzzy_off_rejected() {
+fn config_fuzzy_off_exact_only_succeeds_on_exact_match() {
+    // G-010/G-047: XDG [fuzzy].mode = "off" is exact-only, not a hard reject.
     let dir = tempdir().unwrap();
     fs::write(
         dir.path().join(".atomwrite.toml"),
@@ -179,13 +180,8 @@ fn config_fuzzy_off_rejected() {
             "bb",
         ])
         .assert()
-        .failure()
-        .code(65)
-        .stdout(
-            predicate::str::contains("off")
-                .or(predicate::str::contains("not allowed"))
-                .or(predicate::str::contains("0.1.30")),
-        );
+        .success()
+        .stdout(predicate::str::contains("\"strategy\":\"exact\""));
 }
 
 #[test]

@@ -67,16 +67,18 @@ use rayon::prelude::*;
 
 /// Backpressure capacity for walker → main NDJSON event channels.
 ///
+/// A-031: re-export of [`crate::constants::EVENT_CHANNEL_CAP`] (policy of record).
 /// Bounded (never unbounded): a slow stdout consumer stalls walkers instead of
 /// growing RAM without limit.
-pub const EVENT_CHANNEL_CAP: usize = 1024;
+pub const EVENT_CHANNEL_CAP: usize = crate::constants::EVENT_CHANNEL_CAP;
 
 /// Conservative RSS budget per concurrent file task (bytes).
 ///
+/// A-031: re-export of [`crate::constants::RAM_PER_TASK_BYTES`].
 /// Grounded as a safety ceiling for typical CLI file work (not ML). Operators
 /// with tighter RAM are protected via `min(cpus, ram_cap)` even when
 /// `--threads` is omitted.
-pub const RAM_PER_TASK_BYTES: u64 = 16 * 1024 * 1024;
+pub const RAM_PER_TASK_BYTES: u64 = crate::constants::RAM_PER_TASK_BYTES;
 
 /// Fraction of free RAM eligible for concurrent tasks (50% safety margin).
 const RAM_SAFETY_FRACTION_NUM: u64 = 1;
