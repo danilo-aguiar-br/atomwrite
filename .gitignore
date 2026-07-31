@@ -57,8 +57,9 @@ gaps.md
 fuzz/corpus/
 .serena/
 
+
 # BEGIN GH_SKILL_HYGIENE
-# Managed by ~/.grok/skills/gh/scripts/pre-commit-hygiene.sh — do not hand-edit inside markers
+# Managed by ~/.grok/skills/crates-io-gh/scripts/pre-commit-hygiene.sh — do not hand-edit inside markers
 # Ensures agent residual, secrets, DBs, media dumps and temp dirs never enter git
 # Empty/whitespace-only patterns are rejected (never added). No *.lock patterns.
 # --- extensions ---
