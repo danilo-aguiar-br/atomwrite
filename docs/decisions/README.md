@@ -70,3 +70,5 @@
   - [PT-BR](0053-clap-rules-audit-exceptions.pt-BR.md) — translation
 - [0054 — v0.1.34 oneshot fuzzy + timeout](0054-v0-1-34-oneshot-fuzzy-timeout.md) — one-pass fuzzy; embeds force 1; timeout default 120 / exit 124; cancel mid-cascade; caps; no telemetry; docs-complete of 0.1.33
   - [PT-BR](0054-v0-1-34-oneshot-fuzzy-timeout.pt-BR.md) — full translation
+- [0055 — v0.1.36 agent contract gaps](0055-v0-1-36-agent-contract-gaps.md) — closes/mitigates GAP-2026-019…033: content-source jail + scratch init, error ok:false + match_count, fuzzy honesty (null similarity / dual-gate / soft-floor), agent-native --select/--filter/--limit, extract --field, CANONICAL_SUBCOMMAND_COUNT=45, ADR surface
+  - [PT-BR](0055-v0-1-36-agent-contract-gaps.pt-BR.md) — tradução

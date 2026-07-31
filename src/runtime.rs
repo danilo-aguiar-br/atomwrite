@@ -142,11 +142,7 @@ fn try_open_log_file(dir: &Path, json: bool) -> Option<RollingFileAppender> {
 /// drop it before final events — `main` keeps `_guard` for the full scope).
 ///
 /// G-008: canonical name is [`init_tracing`] (no product telemetry).
-pub fn init_tracing(
-    verbose: u8,
-    quiet: u8,
-    color: ColorMode,
-) -> WorkerGuard {
+pub fn init_tracing(verbose: u8, quiet: u8, color: ColorMode) -> WorkerGuard {
     let cli_default = cli_log_level(verbose, quiet);
     let filter = build_env_filter(cli_default);
     let filter_display = filter.to_string();

@@ -48,14 +48,16 @@ cargo build --release --features full
 - Verifique cross-compile Windows ao tocar código de plataforma: `cargo check --target x86_64-pc-windows-gnu`
 - Instale a partir do path após mudanças substantivas: `cargo install --path . --force`
 - Suite opcional de contrato residual de agente: `cargo test --test cli_e2e_v0135`
+- Suite opcional de contrato de agente v0.1.36: `cargo test --test cli_v0136_gaps`
+- SSOT opcional de gaps: `bash scripts/check-gaps-ssot.sh`
 - Superfície slim opcional: `cargo test --no-default-features --features core`
 - Checagem opcional de formatação: `cargo fmt -- --check`
 - Lint opcional de docs: `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`
 - Checagens opcionais de supply-chain: `cargo audit` e `cargo deny check`
 
 ### Pin da release atual
-- A versão pública atual é `0.1.35`
-- Fixe consumidores e agentes em `^0.1.35`
+- A versão pública atual é `0.1.36`
+- Fixe consumidores e agentes em `^0.1.36`
 - Mantenha strings de versão consistentes em `Cargo.toml`, README, CHANGELOG e skills
 
 
@@ -112,6 +114,8 @@ cargo build --release --features full
 - Adicione ou atualize JSON schemas em `docs/schemas/` para novos envelopes NDJSON
 - Adicione um ADR em `docs/decisions/` para escolhas de design não triviais
 - Atualize `llms.txt`, `llms.pt-BR.txt` e `llms-full.txt` quando a documentação principal mudar
+- Quando a superfície da CLI mudar: atualize `CANONICAL_SUBCOMMAND_COUNT`, inventários de **45** em README/AGENTS/`llms*`, `docs/schemas/README.md` e rode `scripts/check-gaps-ssot.sh`
+- Quando gaps de contrato de agente fecharem: atualize status em `gaps.md`, ADR, HOW_TO_USE, COOKBOOK, MIGRATION, TESTING e as duas skills na mesma entrega
 - Nota: `gaps.md` são notas locais de auditoria e não fazem parte da documentação pública de empacotamento
 - Exclua notas privadas como `docs_rules/`, `gaps.md` e memória local de agentes das expectativas de empacotamento de release
 
@@ -144,7 +148,7 @@ cargo build --release --features full
   - `cargo package --list` / dry-run de publish conforme necessário
   - `cargo install --path . --force`
 - Publique no crates.io somente após a DoD local estar verde
-- A linha de release atual é `0.1.35`; consumidores devem fixar `^0.1.35`
+- A linha de release atual é `0.1.36`; consumidores devem fixar `^0.1.36`
 
 
 ## Reconhecimento

@@ -2,7 +2,7 @@
 
 [Read in English](PRIVACY.md)
 
-**Última atualização:** 2026-07-19
+**Última atualização:** 2026-07-31
 
 ## Resumo
 
@@ -11,7 +11,8 @@
 ## O que roda localmente
 
 - Todas as leituras, escritas, buscas, backups e sidecars WAL executam na máquina que invoca o binário.
-- Configuração é somente flags CLI + diretórios XDG + `.atomwrite.toml` (sem knobs de produto `ATOMWRITE_*` em runtime na v0.1.35). O env do host ainda pode fornecer sinais de SO como `NO_COLOR`; o locale do SO é lido uma vez via `sys-locale` apenas para idioma de sugestões de UI.
+- Configuração é somente flags CLI + diretórios XDG + `.atomwrite.toml` (sem knobs de produto `ATOMWRITE_*` em runtime; política desde v0.1.35, pin atual `^0.1.36`). O env do host ainda pode fornecer sinais de SO como `NO_COLOR`; o locale do SO é lido uma vez via `sys-locale` apenas para idioma de sugestões de UI.
+- Diretórios de staging do agente em `.atomwrite/scratch/` são arquivos locais do workspace (nunca enviados).
 - Features opcionais (AST, watch, semantic) ainda operam somente em dados do filesystem local.
 - **Preferência de locale (somente local):** ao rodar `atomwrite locale --set <tag>`, o atomwrite grava um arquivo de preferência de uma linha sob o diretório de config XDG (ex.: `~/.config/atomwrite/locale` no Linux) com modo `0600` quando a plataforma permite. Esse arquivo armazena apenas uma tag BCP 47 (`en` ou `pt-BR`). Nunca é enviado. O locale do SO não sai do host.
 
@@ -37,8 +38,9 @@
 Maintainer: veja `Cargo.toml` `authors` / repositório listado nos metadados do pacote.
 
 
-## Privacidade de configuração na v0.1.35
+## Privacidade de configuração (v0.1.35+, atual v0.1.36)
 
 - Configuração de produto é somente flags CLI + diretórios XDG + `.atomwrite.toml`.
 - Nenhuma telemetria de produto é coletada ou transmitida.
 - O `doctor` pode ler env do host para diagnósticos locais (indicadores de CI); isso não é um canal remoto de phone-home.
+- O `scratch init` cria apenas diretórios locais sob o jail do workspace para staging de content-source do agente.

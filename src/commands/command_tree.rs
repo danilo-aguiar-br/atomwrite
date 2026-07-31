@@ -70,14 +70,8 @@ pub fn cmd_commands_tree(
     _defaults: &crate::config::DefaultsSection,
 ) -> Result<()> {
     let cmd = Cli::command();
-    let about = cmd
-        .get_about()
-        .map(|s| s.to_string())
-        .unwrap_or_default();
-    let mut commands: Vec<CommandNode> = cmd
-        .get_subcommands()
-        .map(command_node)
-        .collect();
+    let about = cmd.get_about().map(|s| s.to_string()).unwrap_or_default();
+    let mut commands: Vec<CommandNode> = cmd.get_subcommands().map(command_node).collect();
     commands.sort_by(|a, b| a.name.cmp(&b.name));
 
     let global_args = if args.include_globals {
@@ -102,10 +96,7 @@ fn command_node(cmd: &clap::Command) -> CommandNode {
     subcommands.sort_by(|a, b| a.name.cmp(&b.name));
     CommandNode {
         name: cmd.get_name().to_string(),
-        about: cmd
-            .get_about()
-            .map(|s| s.to_string())
-            .unwrap_or_default(),
+        about: cmd.get_about().map(|s| s.to_string()).unwrap_or_default(),
         aliases: cmd.get_all_aliases().map(|s| s.to_string()).collect(),
         args: arg_nodes(cmd),
         subcommands,
@@ -130,10 +121,7 @@ fn arg_nodes(cmd: &clap::Command) -> Vec<ArgNode> {
                     | clap::ArgAction::HelpShort
                     | clap::ArgAction::Version
             ),
-            help: a
-                .get_help()
-                .map(|s| s.to_string())
-                .unwrap_or_default(),
+            help: a.get_help().map(|s| s.to_string()).unwrap_or_default(),
         })
         .collect()
 }

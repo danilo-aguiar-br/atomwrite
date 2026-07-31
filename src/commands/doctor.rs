@@ -76,7 +76,8 @@ pub fn cmd_doctor(
             let detail = format!(
                 "cpus={cpus}, effective_threads={effective}, ram_cap={}, configured_pool={}, cli_threads={:?}",
                 ram.map(|n| n.to_string()).unwrap_or_else(|| "n/a".into()),
-                pool.map(|n| n.to_string()).unwrap_or_else(|| "unset".into()),
+                pool.map(|n| n.to_string())
+                    .unwrap_or_else(|| "unset".into()),
                 threads
             );
             check("concurrency_bound", "pass", detail)
@@ -92,7 +93,8 @@ pub fn cmd_doctor(
                 if cfg!(feature = "ast") {
                     "ast feature enabled (scope/query/outline/transform)".to_string()
                 } else {
-                    "ast feature disabled — install with --features ast for AST commands".to_string()
+                    "ast feature disabled — install with --features ast for AST commands"
+                        .to_string()
                 },
             )
         }),
@@ -361,4 +363,3 @@ fn is_writable_dir(dir: &Path) -> std::io::Result<bool> {
         Err(e) => Err(e),
     }
 }
-

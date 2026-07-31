@@ -58,10 +58,7 @@ fn all_15_subcommands_accept_backup_flag() {
 fn all_15_subcommands_accept_no_backup_flag() {
     for (name, base) in subcommands_with_backup_opts() {
         let result = parse(&base, &["--no-backup"]);
-        assert!(
-            result.is_ok(),
-            "{name} must accept --no-backup: {result:?}"
-        );
+        assert!(result.is_ok(), "{name} must accept --no-backup: {result:?}");
     }
 }
 
@@ -203,10 +200,7 @@ fn delete_no_backup_leaves_no_bak_file() {
         .expect("read dir")
         .filter_map(Result::ok)
         .any(|e| e.file_name().to_string_lossy().contains(".bak."));
-    assert!(
-        !has_bak,
-        "delete --no-backup must not leave a .bak.* file"
-    );
+    assert!(!has_bak, "delete --no-backup must not leave a .bak.* file");
 }
 
 #[test]
@@ -216,11 +210,7 @@ fn delete_default_backup_true_leaves_bak_file() {
 
     let output = common::atomwrite()
         .env_remove("ATOMWRITE_BACKUP")
-        .args([
-            "--workspace",
-            dir.path().to_str().unwrap(),
-            "delete",
-        ])
+        .args(["--workspace", dir.path().to_str().unwrap(), "delete"])
         .arg(&path)
         .output()
         .expect("run");

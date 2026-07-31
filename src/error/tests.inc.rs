@@ -176,6 +176,7 @@ mod tests {
                 AtomwriteError::WorkspaceJail {
                     path: p.clone(),
                     workspace: p.clone(),
+                    content_source: false,
                 },
                 126,
                 ErrorClass::PreconditionFailed,
@@ -364,6 +365,7 @@ mod tests {
         let err = AtomwriteError::WorkspaceJail {
             path: PathBuf::from("/etc/passwd"),
             workspace: PathBuf::from("/home/user/project"),
+            content_source: false,
         };
         let ctx = ErrorContext::default();
         let json = ErrorJson::from_error_with_context(&err, &ctx);
@@ -382,6 +384,7 @@ mod tests {
         let err = AtomwriteError::WorkspaceJail {
             path: PathBuf::from("/etc/passwd"),
             workspace: PathBuf::from("/home/user/project"),
+            content_source: false,
         };
         let ctx = ErrorContext {
             workspace_provided: true,
@@ -396,6 +399,26 @@ mod tests {
         assert!(
             !s.contains("--workspace"),
             "with workspace_provided, suggestion must NOT mention --workspace flag, got: {s}"
+        );
+    }
+
+    #[test]
+    fn content_source_jail_uses_staging_suggestion() {
+        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Idioma::En);
+        let err = AtomwriteError::WorkspaceJail {
+            path: PathBuf::from("/tmp/old.txt"),
+            workspace: PathBuf::from("/home/user/project"),
+            content_source: true,
+        };
+        let ctx = ErrorContext {
+            workspace_provided: true,
+            workspace: Some(PathBuf::from("/home/user/project")),
+        };
+        let json = ErrorJson::from_error_with_context(&err, &ctx);
+        let s = json.suggestion.expect("must have suggestion");
+        assert!(
+            s.contains("content-source") || s.contains(".atomwrite/scratch"),
+            "content_source jail must mention staging/content-source, got: {s}"
         );
     }
 
@@ -439,6 +462,7 @@ mod tests {
             AtomwriteError::WorkspaceJail {
                 path: PathBuf::from("/x"),
                 workspace: PathBuf::from("/w"),
+                content_source: false,
             },
             AtomwriteError::SymlinkBlocked {
                 path: PathBuf::from("/x"),

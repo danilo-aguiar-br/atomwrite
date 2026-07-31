@@ -12,11 +12,7 @@
 #[inline]
 #[must_use]
 pub fn files_modified_for_summary(matched: u64, dry_run: bool) -> Option<u64> {
-    if dry_run {
-        Some(0)
-    } else {
-        Some(matched)
-    }
+    if dry_run { Some(0) } else { Some(matched) }
 }
 
 /// Same as [`files_modified_for_summary`] but for non-optional `u64` summary fields

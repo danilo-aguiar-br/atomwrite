@@ -211,3 +211,19 @@ fn tool(
         stdout_kind,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constants::CANONICAL_SUBCOMMAND_COUNT;
+
+    /// SSOT: docs/agent-facing counts must match clap inventory (v0.1.36 residual).
+    #[test]
+    fn clap_subcommand_count_matches_canonical_ssot() {
+        let n = Cli::command().get_subcommands().count();
+        assert_eq!(
+            n, CANONICAL_SUBCOMMAND_COUNT,
+            "update CANONICAL_SUBCOMMAND_COUNT and agent-facing docs when adding a subcommand (got {n})"
+        );
+    }
+}

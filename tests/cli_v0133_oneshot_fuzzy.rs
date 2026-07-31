@@ -16,11 +16,7 @@ fn atomwrite() -> Command {
 fn replace_fuzzy_pattern_subset_of_replacement_terminates() {
     let dir = tempdir().unwrap();
     let file = dir.path().join("doc.md");
-    std::fs::write(
-        &file,
-        "## Section\n- old bullet alpha\n- old bullet beta\n",
-    )
-    .unwrap();
+    std::fs::write(&file, "## Section\n- old bullet alpha\n- old bullet beta\n").unwrap();
 
     let old = "## Section\n- old bullet alpha\n- old bullet beta";
     // NEW embeds OLD (expanded section) — previously infinite-looped.

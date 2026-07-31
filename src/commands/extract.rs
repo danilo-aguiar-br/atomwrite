@@ -23,6 +23,7 @@ pub fn cmd_extract(
     stdin: impl Read,
     writer: &mut NdjsonWriter<impl Write>,
 ) -> Result<()> {
+    let fields = resolve_extract_fields(args)?;
     let mut reader = std::io::BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
     let mut line_buf = String::new();
 
@@ -50,13 +51,28 @@ pub fn cmd_extract(
                     continue;
                 }
             }
-            extract_json(trimmed, &args.fields, writer)?;
+            extract_json(trimmed, fields, writer)?;
         } else {
-            extract_text(trimmed, &args.fields, args.delimiter.as_deref(), writer)?;
+            extract_text(trimmed, fields, args.delimiter.as_deref(), writer)?;
         }
     }
 
     Ok(())
+}
+
+/// Resolve positional fields vs `--field` (mutually exclusive when both non-empty).
+fn resolve_extract_fields(args: &ExtractArgs) -> Result<&[String]> {
+    if !args.field.is_empty() && !args.fields.is_empty() {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: "extract: use either positional fields or --field, not both".into(),
+        }
+        .into());
+    }
+    if !args.field.is_empty() {
+        Ok(&args.field)
+    } else {
+        Ok(&args.fields)
+    }
 }
 
 /// Check that a JSON value's nesting depth does not exceed `max`.

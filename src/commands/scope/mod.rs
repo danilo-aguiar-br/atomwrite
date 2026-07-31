@@ -396,7 +396,6 @@ pub fn cmd_scope(
     Ok(())
 }
 
-
 include!("scope_actions.inc.rs");
 
 include!("queries.inc.rs");

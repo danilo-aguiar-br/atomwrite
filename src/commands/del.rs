@@ -47,8 +47,7 @@ pub fn cmd_del(
     if !validated.exists() {
         return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
-    let original =
-        crate::file_io::read_file_string(&validated, global.effective_max_filesize())?;
+    let original = crate::file_io::read_file_string(&validated, global.effective_max_filesize())?;
 
     let (new_content, removed_value, existed, format) =
         match validated.extension().and_then(|s| s.to_str()) {

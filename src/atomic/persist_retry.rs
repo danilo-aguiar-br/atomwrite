@@ -39,4 +39,3 @@ pub(crate) fn persist_with_retry(mut temp: NamedTempFile, target: &Path) -> Resu
     }
     .into())
 }
-

@@ -11,10 +11,10 @@ use anyhow::{Context, Result};
 
 use crate::platform;
 
-#[cfg(windows)]
-use super::persist_retry::persist_with_retry;
 #[cfg(unix)]
 use super::inplace::copy_tempfile_to_target;
+#[cfg(windows)]
+use super::persist_retry::persist_with_retry;
 
 pub(crate) fn write_rename_path(
     target: &Path,

@@ -57,7 +57,17 @@ pub fn match_pair_with(
     let exact_count = count_occurrences(content, old);
     if exact_count > 0 {
         if exact_count > 1 && !opts.replace_all {
-            return Err(ambiguous_err(old, exact_count));
+            let off = find_str(content, old).unwrap_or(0);
+            let (line, column) = line_col_of_offset(content, off);
+            let bc = BestCandidate {
+                text: Some(truncate_text(old)),
+                line: Some(line),
+                column: Some(column),
+                similarity: Some(1.0),
+                strategy: Some("exact".into()),
+                diff_preview: None,
+            };
+            return Err(ambiguous_err(old, exact_count, Some(bc)));
         }
         let edited = if opts.replace_all {
             content.replace(old, new)
@@ -106,52 +116,9 @@ pub fn match_pair_with(
     let mut best: Option<BestCandidate> = None;
     let mut cands: Vec<BestCandidate> = Vec::new();
 
-    // Collect all ranges for a strategy
-    type LineRangeFinder = fn(&[&str], &[&str]) -> Option<(usize, usize)>;
+    // GAP-2026-026: non-overlapping collect lives in collect.inc.rs (SRP).
     let collect_all = |finder: LineRangeFinder| -> Vec<(usize, usize)> {
-        let mut hits = Vec::new();
-        let mut offset = 0usize;
-        let mut slice = content_lines.as_slice();
-        while let Some((s, e)) = finder(slice, &old_lines) {
-            hits.push((s + offset, e + offset));
-            offset += e;
-            if offset >= content_lines.len() {
-                break;
-            }
-            slice = &content_lines[offset..];
-            if slice.is_empty() {
-                break;
-            }
-        }
-        // Simpler: scan without slicing for non-overlapping
-        hits.clear();
-        let mut i = 0usize;
-        while i < content_lines.len() {
-            if let Some((s, e)) = finder(&content_lines[i..], &old_lines) {
-                hits.push((i + s, i + e));
-                i += e;
-            } else {
-                break;
-            }
-            // Also try advancing by 1 if finder always searches from 0 of slice
-        }
-        // Robust scan: check every start
-        hits.clear();
-        if old_lines.is_empty() {
-            return hits;
-        }
-        let mut start_at = 0usize;
-        while start_at < content_lines.len() {
-            if let Some((s, e)) = finder(&content_lines[start_at..], &old_lines) {
-                let abs_s = start_at + s;
-                let abs_e = start_at + e;
-                hits.push((abs_s, abs_e));
-                start_at = abs_e;
-            } else {
-                break;
-            }
-        }
-        hits
+        collect_all_ranges(&content_lines, &old_lines, finder)
     };
 
     let apply_hits = |hits: Vec<(usize, usize)>, name: &str, tried: u64, sim: Option<f64>| -> std::result::Result<(String, FuzzyInfo), AtomwriteError> {
@@ -161,7 +128,19 @@ pub fn match_pair_with(
             });
         }
         if hits.len() > 1 && !opts.replace_all {
-            return Err(ambiguous_err(old, hits.len() as u64));
+            let (start, end) = hits[0];
+            let text = content_lines[start..end].join("\n");
+            let off = byte_offset_of_line(content, start);
+            let (line, column) = line_col_of_offset(content, off);
+            let bc = BestCandidate {
+                text: Some(truncate_text(&text)),
+                line: Some(line),
+                column: Some(column),
+                similarity: None,
+                strategy: Some("ambiguous".into()),
+                diff_preview: None,
+            };
+            return Err(ambiguous_err(old, hits.len() as u64, Some(bc)));
         }
         if hits.len() == 1 || !opts.replace_all {
             let (start, end) = hits[0];
@@ -242,7 +221,9 @@ pub fn match_pair_with(
     ] {
         let hits = collect_all(finder);
         if !hits.is_empty() {
-            return apply_hits(hits, name, tried, Some(1.0));
+            // GAP-2026-021: normalized exact-equivalent strategies are not byte-identical.
+            // Emit similarity: null (not a fake 1.0).
+            return apply_hits(hits, name, tried, None);
         }
     }
 
@@ -266,7 +247,7 @@ pub fn match_pair_with(
                 fuzzy: true,
                 strategy: "escape_normalized".into(),
                 strategies_tried: 6,
-                similarity: Some(1.0),
+                similarity: None,
                 diff_preview: mini_diff(old, matched),
                 match_count: 1,
                 indent_adjusted,
@@ -297,7 +278,7 @@ pub fn match_pair_with(
 
     // Strategy 8b: unicode_normalized
     if let Some((start, end)) = match_unicode_normalized(&content_lines, &old_lines) {
-        return apply_hits(vec![(start, end)], "unicode_normalized", 10, Some(1.0));
+        return apply_hits(vec![(start, end)], "unicode_normalized", 10, None);
     }
 
     // Strategy 9: context-aware
@@ -324,7 +305,20 @@ pub fn match_pair_with(
             }
             if !all_jw.is_empty() {
                 if all_jw.len() > 1 && !opts.replace_all {
-                    return Err(ambiguous_err(old, all_jw.len() as u64));
+                    let (i0, score0) = all_jw[0];
+                    let off = byte_offset_of_line(content, i0);
+                    let (line, column) = line_col_of_offset(content, off);
+                    let bc = BestCandidate {
+                        text: Some(truncate_text(
+                            content_lines.get(i0).copied().unwrap_or(""),
+                        )),
+                        line: Some(line),
+                        column: Some(column),
+                        similarity: Some(score0),
+                        strategy: Some("context_aware_jw".into()),
+                        diff_preview: None,
+                    };
+                    return Err(ambiguous_err(old, all_jw.len() as u64, Some(bc)));
                 }
                 // G-FZZ-012/121: pick argmax JW, not first hit in scan order.
                 let (i, score) = all_jw
@@ -375,9 +369,12 @@ pub fn match_pair_with(
                 );
             }
         }
-        if let Some((start, end, similarity)) =
-            match_context_aware(&content_lines, &old_lines, ctx_threshold)
-        {
+        if let Some((start, end, similarity)) = match_context_aware(
+            &content_lines,
+            &old_lines,
+            ctx_threshold,
+            opts.soft_floor_delta,
+        ) {
             return apply_hits(vec![(start, end)], "context_aware", 9, Some(similarity));
         }
         rank_into(content, old, &mut best, &mut cands);
@@ -398,5 +395,4 @@ pub fn match_pair_with(
 }
 
 // ─── matching strategies ─────────────────────────────────────────────────────
-
 

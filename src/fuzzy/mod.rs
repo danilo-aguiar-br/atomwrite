@@ -20,23 +20,24 @@
 //! - Pattern / levenshtein / window caps + cooperative cancel poll via
 //!   [`crate::signal::is_global_shutdown`].
 
-mod score;
-mod windows;
 mod normalize;
+mod score;
 mod util;
+mod windows;
 
-use score::{gestalt_ratio, line_vote_ratio};
-use windows::{match_block_anchor, match_context_aware};
 use normalize::{maybe_unescape_new_string, normalize_unicode_for_match};
+use score::{gestalt_ratio, line_vote_ratio};
 use util::{byte_offset_of_line, count_occurrences, find_str, line_col_of_offset, truncate_text};
+use windows::{match_block_anchor, match_context_aware};
 
 use crate::cli_args::FuzzyMode;
 use crate::error::AtomwriteError;
 use crate::ndjson_types::BestCandidate;
 
-
 include!("types.inc.rs");
 include!("rank.inc.rs");
+include!("escape_map.inc.rs");
+include!("collect.inc.rs");
 include!("cascade.inc.rs");
 include!("strategies.inc.rs");
 include!("one_pass.inc.rs");

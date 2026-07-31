@@ -16,11 +16,11 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 #[cfg(test)]
 use std::sync::Mutex;
+use std::sync::OnceLock;
 
-use fluent_langneg::{negotiate_languages, NegotiationStrategy};
+use fluent_langneg::{NegotiationStrategy, negotiate_languages};
 use unic_langid::LanguageIdentifier;
 
 /// Text direction for the resolved language script.
@@ -171,11 +171,7 @@ pub fn normalize_bcp47_tag(raw: &str) -> String {
         return String::new();
     }
     // Drop encoding / modifier: `pt_BR.UTF-8@euro` → `pt_BR`
-    let base = trimmed
-        .split(['.', '@'])
-        .next()
-        .unwrap_or(trimmed)
-        .trim();
+    let base = trimmed.split(['.', '@']).next().unwrap_or(trimmed).trim();
     // POSIX "C" / "POSIX" are not user language preferences.
     if base.eq_ignore_ascii_case("C") || base.eq_ignore_ascii_case("POSIX") {
         return String::new();
@@ -220,9 +216,7 @@ pub fn negotiate_to_idioma(requested_tags: &[&str]) -> Idioma {
         .filter_map(|t| t.parse().ok())
         .collect();
 
-    let default: fluent_langneg::LanguageIdentifier = "en"
-        .parse()
-        .expect("en is valid BCP 47");
+    let default: fluent_langneg::LanguageIdentifier = "en".parse().expect("en is valid BCP 47");
 
     if requested.is_empty() {
         return Idioma::En;
@@ -408,10 +402,7 @@ pub fn resolved_state() -> Option<&'static LocaleState> {
 
 /// Resolved idioma (defaults to English when init has not run — e.g. unit tests).
 pub fn resolved_idioma() -> Idioma {
-    RESOLVED
-        .get()
-        .map(|s| s.idioma)
-        .unwrap_or(Idioma::En)
+    RESOLVED.get().map(|s| s.idioma).unwrap_or(Idioma::En)
 }
 
 /// Process-wide lock for locale-mutating unit tests (A-012).
@@ -433,9 +424,7 @@ pub struct LocaleTestGuard {
 impl LocaleTestGuard {
     /// Lock the locale test mutex, set `idioma`, restore `en` on drop.
     pub fn set(idioma: Idioma) -> Self {
-        let lock = LOCALE_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let lock = LOCALE_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let prev = resolved_idioma().as_str();
         // Prefer previous rust-i18n locale if init already ran; else English.
         let prev = if prev.is_empty() { "en" } else { prev };
@@ -463,9 +452,7 @@ impl Drop for LocaleTestGuard {
 pub fn set_locale_for_test(idioma: Idioma) {
     // Backward-compatible: still sets locale, but callers that need isolation
     // should use LocaleTestGuard. Holding a brief lock reduces race windows.
-    let _g = LOCALE_TEST_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let _g = LOCALE_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     rust_i18n::set_locale(idioma.as_str());
 }
 

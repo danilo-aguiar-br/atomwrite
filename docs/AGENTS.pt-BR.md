@@ -5,6 +5,15 @@
 
 
 
+## O Que Há de Novo na v0.1.36 (2026-07-31)
+
+- Contrato de agente residual (GAP-2026-019…033 + CAPA): jail de content-source, `scratch init`, shape global de stdout
+- **Shape (global):** `--select`/`--fields` (CSV), `--filter KEY=VAL` (AND repetível, só top-level), `--limit N` (**só long** — **sem `-n` global**; `replace` usa `-n`)
+- **Erros always-emit:** falhas sempre imprimem NDJSON com `ok:false`; `--filter` nunca dropa; `--select` pode afinar chaves; `--limit` só em sucesso
+- **SSOT: 45 subcomandos** (`CANONICAL_SUBCOMMAND_COUNT` / `atomwrite agent-surface`). Não documentar 41/42 como atual
+- `extract`: campos posicionais ou `--field` local (repetível). **NUNCA** `extract --select` — o `--select` global só projeta a linha emitida (nome local colide com clap)
+- Pin `^0.1.36`. Config CLI + XDG / `.atomwrite.toml`. Suíte: `cli_v0136_gaps`. ADR-0055
+
 ## O Que Há de Novo na v0.1.35 (2026-07-19)
 
 - Gaps residuais **A-*** fechados (gaps.md §20): suite verde sem `delete --yes`; sobrescrita grande **default-deny** (`--ack-overwrite`); `watch` sempre emite `watch_summary`; markers de conflito do semantic-merge default ON; monólitos fatiados com `include!` (SRP)
@@ -14,7 +23,7 @@
 - **Semantic-merge:** markers de conflito gravados por padrão; opt-out `--no-conflict-markers`
 - DoD local (sem GitHub Actions de produto): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
 - Suite de contrato: `cargo test --test cli_e2e_v0135`
-- Pin de agentes em `^0.1.35`. Configuração somente CLI + XDG / `.atomwrite.toml` (sem knobs `ATOMWRITE_*` de produto; sem telemetria de produto)
+- Pin histórico `^0.1.35` (substituído por **`^0.1.36`**). Configuração somente CLI + XDG / `.atomwrite.toml` (sem knobs `ATOMWRITE_*` de produto; sem telemetria de produto)
 
 ## O Que Há de Novo na v0.1.34
 
@@ -26,7 +35,7 @@
 - Cancel cooperativo consultado no meio da cascata fuzzy; caps: pattern 64 KiB, lev 8192 chars, max windows 4096, growth max(4×,+16 MiB)
 - Caps fuzzy (constantes em `src/constants.rs`): `FUZZY_MAX_PATTERN_BYTES` (64 KiB), `FUZZY_MAX_LEVENSHTEIN_CHARS` (8192), `FUZZY_MAX_WINDOWS` (4096), `FUZZY_MAX_BUFFER_GROWTH_FACTOR`/`FUZZY_MAX_BUFFER_GROWTH_BYTES` (max 4× / +16 MiB), teto rígido `FUZZY_HARD_MAX_REPLACEMENTS` (10_000)
 - Suíte de regressão: `tests/cli_v0133_oneshot_fuzzy.rs` — hang < 2s, embeds, timeout
-- 41 subcomandos; fuzzy ainda só `auto|aggressive` (`off` rejeitado exit 65). **Substituído na v0.1.35:** `off` = exact-only (G-010).
+- **Histórico (na v0.1.33):** 41 subcomandos; fuzzy ainda só `auto|aggressive` (`off` rejeitado exit 65). **Substituído na v0.1.35:** `off` = exact-only (G-010).
 - Veja [ADR-0054](decisions/0054-v0-1-34-oneshot-fuzzy-timeout.pt-BR.md) para o contrato one-shot fuzzy + timeout (exit 124 vs 143)
 
 ## O Que Havia de Novo na v0.1.30
@@ -48,7 +57,7 @@
 - `recipe` executa dispatch multi-passo real (search→replace→hash)
 - Cancel cooperativo: SIGINT/SIGTERM aborta stdin e trabalho em chunks; NDJSON cancelled pode sair com exit 143
 - `semantic-search` é ranking offline por tokens/índice com foundation Jaccard (não embeddings OpenRouter)
-- 41 subcomandos no total, 38 schemas JSON, 683 testes listados
+- **Histórico (na v0.1.29):** 41 subcomandos no total, 38 schemas JSON, 683 testes listados
 
 
 ## O Que Há de Novo na v0.1.28
@@ -252,7 +261,7 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 ```
 
 
-## 41 Subcomandos
+## 45 Subcomandos (SSOT)
 - `read` -- lê arquivos com metadados, checksum, conteúdo opcional; `--format raw` (alias `--raw`) emite bytes crus para composabilidade Unix (G81); `--grep <REGEX>` filtra linhas retornadas
 - `write` -- cria ou sobrescreve arquivos atomicamente via stdin; `--syntax-check` valida com tree-sitter após escrita (G72, exit 88); alvos existentes grandes exigem `--ack-overwrite` (default-deny acima de XDG `[write].confirm_large_bytes`)
 - `edit` -- edita cirurgicamente por número de linha, marcador de texto ou match exato; `--fuzzy auto|aggressive|off` onde `off` = exact-only (G-010); padrão `auto`; sucesso NDJSON pode incluir `match_count` e `indent_adjusted`; `--multi` para multi-edit NDJSON
@@ -294,6 +303,22 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - `codemod` -- (v0.1.29) campanha AST multi-regra com summary `by_rule_id`
 - `semantic-search` -- (v0.1.29, feature `semantic`) ranking offline por tokens/índice invertido
 - `stat` -- (v0.1.29) alias de `read --stat`
+- `doctor` -- diagnósticos de prontidão do host
+- `locale` -- mostra/define/limpa preferência de locale da UI (XDG); distinto do `--locale` global
+- `commands` -- emite a árvore completa de comandos em JSON para descoberta
+- `scratch` -- `scratch init` cria staging sob `$WS/.atomwrite/scratch/` para `--old-file`/`--new-file` (NUNCA `/tmp` do SO fora do workspace; exit 126 `WORKSPACE_JAIL`)
+
+
+## OBRIGATÓRIO — Staging de conteúdo (`--old-file` / `--new-file`)
+Estagie arquivos de conteúdo **dentro** do jail do workspace. Prefira a fórmula da skill:
+
+```bash
+WS="$PWD"
+atomwrite --workspace "$WS" scratch init
+# então grave old/new sob $WS/.atomwrite/scratch/
+```
+
+NUNCA estagie `--old-file`/`--new-file` em `/tmp` do SO fora de `--workspace` (exit 126 `WORKSPACE_JAIL`).
 
 
 ## OBRIGATÓRIO — Hierarquia de edição
@@ -301,6 +326,7 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 - Ordem: `ssr` (quando aplicável) → `transform` → `scope` → `replace` → `edit` → `write`
 - `write` de arquivo completo é o último recurso
 - Use `transform`/`scope` para estrutura AST; `replace`/`edit` para texto; `write` só quando reescrita total for necessária
+- Reescrita total intencionalmente menor: `write --allow-shrink`
 
 
 ## OBRIGATÓRIO -- Contrato de Saída
@@ -379,17 +405,18 @@ atomwrite calc "2 horas + 30 minutos para segundos"
 Search/replace com zero matches (exit 1):
 
 ```json
-{"error":true,"code":"NO_MATCHES","exit":1,"message":"no matches for pattern","path":"src/file.rs","error_class":"permanent","retryable":false,"suggestion":"inspecione best_candidate ou retente com --fuzzy aggressive e unicidade / --replace-all","workspace":null,"best_candidate":{"text":"near miss snippet","similarity":0.82,"strategy":"jaro_winkler","line":12,"column":4,"diff_preview":null}}
+{"error":true,"ok":false,"code":"NO_MATCHES","exit":1,"message":"no matches for pattern","path":"src/file.rs","error_class":"permanent","retryable":false,"suggestion":"inspecione best_candidate ou retente com --fuzzy aggressive e unicidade / --replace-all","workspace":null,"match_count":0,"best_candidate":{"text":"near miss snippet","similarity":0.82,"strategy":"jaro_winkler","line":12,"column":4,"diff_preview":null}}
 ```
 
 Miss de edit/fuzzy (exit 65) — inspecione `best_candidate` opcional e ajuste `--old`:
 
 ```json
-{"error":true,"code":"MATCH_FAILED","exit":65,"message":"no match for old text","path":"src/file.rs","error_class":"permanent","retryable":false,"suggestion":"inspecione best_candidate no NDJSON de erro e ajuste --old, ou reduza --fuzzy-threshold","workspace":null,"best_candidate":{"text":"near miss snippet","similarity":0.82,"strategy":"jaro_winkler","line":12,"column":4,"diff_preview":null}}
+{"error":true,"ok":false,"code":"MATCH_FAILED","exit":65,"message":"no match for old text","path":"src/file.rs","error_class":"permanent","retryable":false,"suggestion":"inspecione best_candidate no NDJSON de erro e ajuste --old, ou reduza --fuzzy-threshold","workspace":null,"match_count":0,"best_candidate":{"text":"near miss snippet","similarity":0.82,"strategy":"jaro_winkler","line":12,"column":4,"diff_preview":null}}
 ```
 
+- Todo envelope de erro inclui `"ok":false` e `"match_count":0` (ou a contagem apropriada para `MATCH_AMBIGUOUS`)
 - Campo `workspace` aparece apenas em erros `WORKSPACE_JAIL` e reporta a raiz do workspace resolvida (pode ser `null`)
-- `suggestion` é context-aware: sugestão de `WORKSPACE_JAIL` muda com base em se `--workspace` foi fornecido
+- `suggestion` é context-aware: sugestão de `WORKSPACE_JAIL` muda com base em se `--workspace` foi fornecido; se `--old-file`/`--new-file` estiver fora do jail, estagie com `scratch init` sob o workspace (não diga só "ajuste `--workspace`")
 - Veja `docs/schemas/` para definições completas de JSON Schema de todos os tipos de saída (`error-output.schema.json` define todos os 20 códigos de erro e o campo `workspace`)
 
 
@@ -424,13 +451,13 @@ Miss de edit/fuzzy (exit 65) — inspecione `best_candidate` opcional e ajuste `
 
 
 ## OBRIGATÓRIO -- Tratamento de Erros
-- Erros emitem JSON no stdout com `error: true`
-- Campos: `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`, `workspace`
+- Erros emitem JSON no stdout com `error: true`, `ok: false` e `match_count` (0 em miss; contagem apropriada para `MATCH_AMBIGUOUS`)
+- Campos: `ok`, `match_count`, `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`, `workspace`
 - Valores de `error_class`: `permanent`, `transient`, `conflict`, `precondition_failed`
 - `retryable` é true para classes `transient` e `conflict`
 - Campo `workspace` aparece apenas em erros `WORKSPACE_JAIL` e reporta a raiz do workspace resolvida
 - Todas as 20 variants de erro carregam texto `suggestion` acionável (adicionado na v0.1.4, GAP 13)
-- Sugestão de `WorkspaceJail` é **context-aware**: quando `--workspace` já está definido, a sugestão diz "use a path inside the workspace (<root>)" em vez de re-pedir a flag
+- Sugestão de `WorkspaceJail` é **context-aware**: quando `--workspace` já está definido, a sugestão diz "use a path inside the workspace (<root>)" em vez de re-pedir a flag. Se arquivos de content-source (`--old-file`/`--new-file`) estiverem fora do jail, estagie-os com `scratch init` sob o workspace — não diga só "ajuste `--workspace`"
 - Sugestão de `BinaryFile` recomenda `read --stat` para leituras somente de metadados (referência phantom anterior a `--force-text` foi removida)
 - Sugestão de `FileImmutable` menciona `chattr -i` (Unix) e `fsutil` (Windows)
 - Sugestão de `NoMatches` orienta ampliação do padrão e revisão de filtros `--include`/`--exclude`
@@ -460,7 +487,7 @@ Miss de edit/fuzzy (exit 65) — inspecione `best_candidate` opcional e ajuste `
 - `CONFIG_INVALID` (exit 78) -- corrija a configuração e tente novamente
 - `CHECKSUM_VERIFY_FAILED` (exit 81) -- o hash passado para `--verify` não confere; releia o arquivo
 - `FILE_TOO_LARGE` (exit 65) -- aumente `--max-filesize` ou processe um arquivo menor
-- `WORKSPACE_JAIL` (exit 126) -- não tente novamente, path está fora do workspace
+- `WORKSPACE_JAIL` (exit 126) -- não tente novamente com o mesmo path externo; estagie arquivos de content-source com `scratch init` sob o workspace, ou defina `--workspace` para a raiz permitida
 - `SYMLINK_BLOCKED` (exit 127) -- não tente novamente com symlinks desabilitados
 - `IMMUTABLE_FILE` (exit 128) -- não tente novamente sem remover flag de imutabilidade
 - `INTERNAL_ERROR` (exit 255) -- reporte como bug; não acionável pelo usuário
@@ -468,7 +495,7 @@ Miss de edit/fuzzy (exit 65) — inspecione `best_candidate` opcional e ajuste `
 ### Pré-condição Falhou (retryable: false)
 - `BINARY_FILE` (exit 65) -- use modo `--stat` para ler metadados sem conteúdo
 - `IMMUTABLE_FILE` (exit 128) -- remova flag de imutabilidade primeiro (chattr -i no Unix, fsutil no Windows)
-- `WORKSPACE_JAIL` (exit 126) -- ajuste limite de `--workspace`
+- `WORKSPACE_JAIL` (exit 126) -- se `--old-file`/`--new-file` estiver fora do jail, estagie com `scratch init` sob o workspace; caso contrário defina `--workspace` para a raiz permitida (ex.: skills do host sob home em multi-root)
 - `FIFO_DETECTED` (exit 85) -- pule este arquivo ou use redirecionamento de stdin
 - `DEVICE_FILE` (exit 86) -- pule este arquivo ou use redirecionamento de stdin
 
@@ -487,6 +514,12 @@ Miss de edit/fuzzy (exit 65) — inspecione `best_candidate` opcional e ajuste `
 - `--timeout-secs <SECONDS>` (alias `--timeout`) -- timeout global de operação; **padrão 120**; `0` desabilita; prazo esgotado → exit **124**. Use para limitar buscas longas, batches e operações replace
 - `--json-schema` -- emite JSON schema da saída do subcomando
 - `--locale <en|pt-BR>` -- substitui o locale de exibição (en, pt-BR); use apenas `--locale` (sem knobs de env de produto; preferência XDG via `atomwrite locale`)
+- `--select` / `--fields <KEYS>` -- projeta chaves top-level do NDJSON (CSV)
+- `--filter <EXPR>` -- mantém eventos que casam `key=value` (AND repetível, só top-level)
+- `--limit <N>` -- máximo de eventos NDJSON após o filtro (**só long**; sem `-n` global; `replace` usa `-n`)
+- `--no-auto-heal` -- pula o heal de WAL no startup
+- `--config <PATH>` -- arquivo de configuração explícito
+- Nota: eventos de erro sempre emitem mesmo sob `--filter`; `--select`/`--fields` opcional pode afinar chaves; `--limit` só em eventos de sucesso
 
 
 ## PROIBIDO -- Armadilhas Comuns
@@ -500,7 +533,15 @@ Miss de edit/fuzzy (exit 65) — inspecione `best_candidate` opcional e ajuste `
 - NUNCA passe `delete --confirm` / `--yes` / `-y` (rejeitados fail-closed; use `--plan` ou omita as flags)
 - NUNCA escreva alvos existentes grandes sem `--ack-overwrite` (default-deny acima de XDG `[write].confirm_large_bytes`)
 - NUNCA assuma stdout vazio em `watch` idle — sempre termina com `type:watch_summary`
-- NUNCA invente knobs de produto `ATOMWRITE_*` em runtime (somente CLI + XDG / `.atomwrite.toml` na v0.1.35)
+- NUNCA invente knobs de produto `ATOMWRITE_*` em runtime (somente CLI + XDG / `.atomwrite.toml` em `^0.1.36`)
+- NUNCA estagie `--old-file`/`--new-file` em `/tmp` do SO fora de `--workspace` (use `scratch`)
+- NUNCA invente `edit --strategy` (use apenas `--fuzzy auto|aggressive|off`)
+- NUNCA passe `$VAR` de shell sem aspas em corpos quando o `$` literal deve sobreviver (use `<<'EOF'` ou staging em arquivo)
+- NUNCA use edit/replace fuzzy para rename estrutural de símbolo (use transform/scope/codemod)
+- NUNCA rode `--fuzzy aggressive` em árvore inteira sem `--dry-run` antes
+- SEMPRE defina `--workspace` para a raiz permitida ao editar paths multi-root (ex.: skills do host sob home)
+- Prefira patches baseados em arquivo para conteúdo com `//`, jq, aspas, multilinha
+- Reescrita total intencionalmente menor: `write --allow-shrink`
 - Prefira `--fuzzy auto` (cascata padrão para agentes); use `--fuzzy off` só para exact-only intencional (G-010)
 
 

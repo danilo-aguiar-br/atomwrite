@@ -59,8 +59,7 @@ pub fn cmd_move(
 
     // v0.1.28 / G-007: overwrite requires EXPLICIT CLI authorization
     // (--force or --backup). No product env knobs.
-    let overwrite_authorized =
-        args.force || args.backup_opts.backup == Some(true);
+    let overwrite_authorized = args.force || args.backup_opts.backup == Some(true);
     if target.exists() && !overwrite_authorized {
         return Err(AtomwriteError::InvalidInput {
             reason: format!(

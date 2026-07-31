@@ -8,6 +8,34 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.36] - 2026-07-31
+
+### Adicionado
+- Sentinela `ok: false` em todos os envelopes `ErrorJson` (GAP-2026-020)
+- `match_count: 0` estável em falhas de match / NoMatches
+- `best_candidate` em `MatchAmbiguous` (GAP-2026-025)
+- XDG `[fuzzy].soft_floor_delta` no context-aware (GAP-2026-022)
+- Mapa de offsets escape_normalized (GAP-2026-024)
+- Constante `SCRATCH_DIR_REL` e sugestões de staging (GAP-2026-019)
+- Suggestion content-source em jail de `--old-file`/`--new-file`
+- Shaping global agent-native: `--select`/`--fields`, `--filter`, `--limit` (sem `-n` global)
+- Envelopes de erro always-emit sob shape (`--filter` não silencia falhas)
+- `extract --field` (seleção local de campos; **não** `--select` local — colide com shape global; o `--select` global ainda projeta a linha emitida). Agentes/skills NUNCA devem ensinar `extract --select`
+- Subcomando `scratch init` (staging sob workspace; sem `/tmp`)
+- `collect.inc.rs`; proptest FP; `scripts/check-gaps-ssot.sh`
+- ADR-0055 EN+pt-BR; skills com fórmulas staging/shape/anti-padrões
+- Suite `tests/cli_v0136_gaps.rs`
+
+### Alterado
+- Versão **0.1.36**
+- Estratégias normalizadas: `similarity: null` (não 1.0 falso)
+- `collect_all` via `collect.inc.rs`; dual-gate no miolo de `block_anchor`
+- Threshold aggressive 0.50 reavaliado (FP=0 com dual-gate; override XDG)
+- Superfície **45** subcomandos (SSOT: enum `Commands` / `agent-surface`; inclui `scratch`, `doctor`, `locale`, `commands`, `stat`, `verify`, …). Constante `CANONICAL_SUBCOMMAND_COUNT` + teste
+
+### Corrigido
+- Inventário GAP-2026-019…033 fechado ou mitigado por classe
+
 ## [0.1.35] - 2026-07-19
 
 ### Added
@@ -141,7 +169,7 @@
 ### Alterado
 - `replace` de string fixa usa fuzzy=auto por padrão após miss de multi-match exato (breaking vs 0.1.28, que só falhava com exit 1)
 - Numeração de estratégias normalizada para nove estratégias nomeadas
-- Superfície skill documenta 41 subcomandos (antes 33)
+- **Na época da release:** superfície skill documenta 41 subcomandos (antes 33)
 
 ### Corrigido
 - Falhas de match não descartam mais scores de near-miss
@@ -1133,7 +1161,8 @@
 - Perfil release com LTO, codegen unit único, stripping de símbolos e panic=abort
 
 
-[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.35...HEAD
+[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.36...HEAD
+[0.1.36]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.35...v0.1.36
 [0.1.35]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.34...v0.1.35
 [0.1.34]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.33...v0.1.34
 [0.1.33]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.32...v0.1.33

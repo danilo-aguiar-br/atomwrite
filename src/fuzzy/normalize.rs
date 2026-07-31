@@ -23,7 +23,12 @@ pub(crate) fn normalize_unicode_for_match(s: &str) -> String {
     let nfc: String = s.nfc().collect();
     let stripped: String = nfc
         .chars()
-        .filter(|c| !matches!(c, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}' | '\u{2060}'))
+        .filter(|c| {
+            !matches!(
+                c,
+                '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}' | '\u{2060}'
+            )
+        })
         .collect();
     let mapped = stripped
         .replace(['—', '–'], "-")

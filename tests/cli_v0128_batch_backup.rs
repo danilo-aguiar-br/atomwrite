@@ -255,10 +255,7 @@ fn batch_delete_op_backup_honors_retention() {
         bak_count <= 2,
         "delete op with backup must honor --retention 2 (not the old hardcoded 5), got {bak_count}"
     );
-    assert!(
-        bak_count >= 1,
-        "at least 1 delete backup should exist"
-    );
+    assert!(bak_count >= 1, "at least 1 delete backup should exist");
 }
 
 /// Regression: `--backup` and `--no-backup` remain mutually exclusive on

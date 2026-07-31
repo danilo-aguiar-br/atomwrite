@@ -59,7 +59,8 @@ fn en_and_pt_br_key_parity() {
     let en_keys = locale_keys(&en);
     let pt_keys = locale_keys(&pt);
     assert_eq!(
-        en_keys, pt_keys,
+        en_keys,
+        pt_keys,
         "only en: {:?}\nonly pt-BR: {:?}",
         en_keys.difference(&pt_keys).collect::<Vec<_>>(),
         pt_keys.difference(&en_keys).collect::<Vec<_>>()
@@ -85,11 +86,13 @@ fn locale_subcommand_emits_report() {
     assert_eq!(v["type"], "locale_report");
     assert_eq!(v["resolved"], "en");
     assert!(v["available"].as_array().unwrap().iter().any(|x| x == "en"));
-    assert!(v["available"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|x| x == "pt-BR"));
+    assert!(
+        v["available"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x == "pt-BR")
+    );
 }
 
 #[test]

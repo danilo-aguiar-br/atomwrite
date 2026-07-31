@@ -4,14 +4,24 @@
 [Read in English](TESTING.md)
 
 
-## O Que Há de Novo na v0.1.35 (Atual)
+## O Que Há de Novo na v0.1.36 (Atual)
+
+- CAPA residual de contrato de agente: erros always-emit sob `--filter`; extract `--field`; `CANONICAL_SUBCOMMAND_COUNT` = **45**
+- Superfície completa da CLI sob política de teste: **45** subcomandos (`CANONICAL_SUBCOMMAND_COUNT`): `agent-surface`, `apply`, `backup`, `batch`, `calc`, `case`, `codemod`, `commands`, `completions`, `copy`, `count`, `del`, `delete`, `diff`, `doctor`, `edit`, `edit-loop`, `extract`, `get`, `hash`, `list`, `locale`, `move`, `outline`, `prune-backups`, `query`, `read`, `recipe`, `regex`, `replace`, `rollback`, `scope`, `scratch`, `search`, `semantic-merge`, `semantic-search`, `set`, `sparse`, `stat`, `transform`, `verify`, `wal-heal`, `wal-stats`, `watch`, `write`
+- A suíte `tests/cli_v0136_gaps.rs` cobre pontos de contrato **GAP-019…033** (jail do workspace / staging scratch, erro `ok:false` + `match_count`, honestidade fuzzy com estratégias normalizadas emitindo `similarity: null` (nunca 1.0 falso), política dual-gate / soft-floor, flags de shape, extract `--field` e não `--select`, fórmulas de staging)
+- Gate SSOT local: `bash scripts/check-gaps-ssot.sh` (deve permanecer verde com Status em `gaps.md`)
+- Rode: `cargo test --test cli_v0136_gaps` e depois `./scripts/check-gaps-ssot.sh`
+- DoD local (sem GitHub Actions de produto): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`
+- Pin docs/agentes em `^0.1.36`; ADR-0055
+
+## O Que Há de Novo na v0.1.35
 
 - Residuais A-* fechados: suite verde sem `delete --yes`; sobrescrita grande **default-deny** (`--ack-overwrite`); `watch` sempre emite `watch_summary`; markers de semantic-merge default ON; monólitos fatiados com `include!`
 - DoD local (sem GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
 - Suite de contrato: `cargo test --test cli_e2e_v0135`
 - Veja gaps.md §20
 
-## O Que Há de Novo na v0.1.34 (Atual)
+## O Que Há de Novo na v0.1.34
 
 - A suíte `tests/cli_v0133_oneshot_fuzzy.rs` trava o contrato one-shot fuzzy + timeout (fix de código registrado como 0.1.33; publicação docs-complete **0.1.34**)
 - Cobre: hang de expand-section quando NEW embute OLD termina em **menos de 2 segundos**; embeds forçam apply único via `apply_fuzzy_one_pass`; teto rígido **10_000** applies; timeout global padrão 120 / exit **124**; cancel cooperativo no meio da cascata / exit **143**
@@ -29,7 +39,7 @@
 - Cancel cooperativo emite eventos NDJSON `cancelled` (schema `cancelled-event.schema.json`, exit 143)
 - O NDJSON do write reporta `platform.rename_method` (`renameat2` ou `rename`)
 - `write --durability full|fast|auto` para trade-off de custo de fsync
-- Novos subcomandos: `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch` (feature), `codemod`, `semantic-search` — **41 subcomandos** no total
+- **Histórico (na v0.1.29):** novos subcomandos: `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch` (feature), `codemod`, `semantic-search` — **41 subcomandos** no total
 - Matriz de features: slim `core` (~7.7 MiB, local size-gate ≤15 MiB) vs default/full AST (~52 MB)
 - Gates **locais** (manuais; sem scripts locais remoto): size-gate slim ≤15 MiB; core-test; schema-diff em `docs/schemas`
 - Rode a suíte de contrato 0.1.30: `cargo test --test cli_v0130_agent_contract`

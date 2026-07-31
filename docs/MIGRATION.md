@@ -78,7 +78,27 @@ All additive. No existing dependency removed.
 - See [docs/decisions/README.md](decisions/README.md) for architectural decisions
 
 
-## v0.1.34 to v0.1.35 (Current)
+## v0.1.35 to v0.1.36 (Current)
+
+### What Changes
+
+- **Staging:** prefer `atomwrite scratch init` then `--old-file`/`--new-file` under `.atomwrite/scratch/` (WORKSPACE_JAIL 126 on OS `/tmp` remains)
+- **Error envelope:** always `ok: false` on failures; `match_count` present on match failures
+- **Agent stdout:** global `--select`/`--fields`, `--filter`, `--limit` (**long-only** — no global `-n`). **Errors always emit** even if `--filter` would drop a success event; `--limit` counts success events only; `--select` may thin error keys
+- **extract:** local `--field` (repeatable) or positionals; global `--select` projects the emitted line (cannot name extract flag `--select` — collides with global). **Legacy CAPA/plans that say `extract --select` → use `extract --field`**
+- **Fuzzy:** `similarity: null` on normalized strategies; dual-gate block_anchor; XDG `soft_floor_delta`
+- **Subcommands:** **45** SSOT (`Commands` / `agent-surface` / `CANONICAL_SUBCOMMAND_COUNT`) — not “41” or incomplete “42”
+- Pin: `cargo install atomwrite --locked --version "^0.1.36"`
+
+### Step-by-Step Migration
+
+1. Pin `^0.1.36`
+2. Replace `/tmp` old/new files with workspace scratch (`scratch init`)
+3. Parsers: check exit and `ok`/`error` before success fields (stdout may still show an error line when exit ≠ 0 even under aggressive `--filter`)
+4. Prefer `--select ok,error,code,match_count,suggestion` and `--limit N` instead of jq/`-n` for agent loops
+5. Local gate: `cargo test --tests && ./scripts/check-gaps-ssot.sh`
+
+## v0.1.34 to v0.1.35
 
 ### What Changes
 
@@ -94,7 +114,7 @@ All additive. No existing dependency removed.
 
 ### Step-by-Step Migration
 
-1. Pin: `cargo install atomwrite --locked --version "^0.1.35"` (or `cargo install --path . --force` from source).
+1. **Historical (0.1.34 → 0.1.35 pin at that release):** `cargo install atomwrite --locked --version "^0.1.35"` (or `cargo install --path . --force` from source). Current line is **`^0.1.36`**.
 2. Agents that overwrite large files: add `--ack-overwrite` (and optionally `--require-large-ack` for explicitness).
 3. Agents that used `delete --confirm` as “preview”: switch to `delete --plan`.
 4. Agents that used `delete --yes` / `-y`: remove those flags; they now fail with exit 65.
@@ -104,16 +124,17 @@ All additive. No existing dependency removed.
 
 ### Compatibility Notes
 
-- Non-large writes, fuzzy one-shot contract from 0.1.33/0.1.34, and the 41-subcommand surface remain.
-- See gaps.md §20 for the A-* closeout matrix.
+- Non-large writes and the fuzzy one-shot contract from 0.1.33/0.1.34 remain.
+- **Historical (at v0.1.35):** the documented surface was **41** subcommands. **Current (v0.1.36):** SSOT is **45** (`doctor`, `locale`, `commands`, `scratch` complete the surface) — do not treat “41 remain” as current.
+- See gaps.md §20 for the A-* closeout matrix; see [v0.1.35 to v0.1.36](#v0135-to-v0136-current) for extract `--field`, global shape, and scratch staging.
 
 ### Rollback
 
 - Pin back to `^0.1.34` if you must restore the previous large-write opt-in and watch empty-stdout behavior (not recommended for agents).
 
 ## Current Version
-- atomwrite is at v0.1.35
-- This document covers migration from v0.1.0 through v0.1.35
+- atomwrite is at v0.1.36
+- This document covers migration from v0.1.0 through v0.1.36
 - See the sections below for additive changes and breaking changes in each version
 
 
@@ -209,7 +230,7 @@ All additive. No existing dependency removed.
 ### Changed
 
 - Strategy numbering normalized to nine named strategies
-- Skill surface documents 41 subcommands
+- **Historical (at v0.1.29):** skill surface documents 41 subcommands
 - Slim core release ~7.7 MiB (local size-gate ≤ 15 MiB); default/full with AST ~52 MB — PRD 5–8 MB applies to core only
 
 ### Migration Action
@@ -654,7 +675,7 @@ atomwrite v0.1.2 now compiles on macOS arm64 (Apple Silicon) and macOS x86_64. T
 - Performance improvements
 
 ### Planned Stabilizations for 1.0
-- NDJSON output schemas for all 41 subcommands
+- **Historical (at that release):** NDJSON output schemas for all 41 subcommands
 - Exit code assignments
 - Error code strings (`FILE_NOT_FOUND`, `STATE_DRIFT`, etc)
 - Global flag names and behavior

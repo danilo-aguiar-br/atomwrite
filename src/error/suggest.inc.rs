@@ -89,8 +89,20 @@ fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
             Some(t!("suggestion.checksum-verify").to_string())
         }
         AtomwriteError::FileTooLarge { .. } => Some(t!("suggestion.file-too-large").to_string()),
-        AtomwriteError::WorkspaceJail { workspace, .. } => {
-            if ctx.workspace_provided {
+        AtomwriteError::WorkspaceJail {
+            workspace,
+            content_source,
+            ..
+        } => {
+            if *content_source && ctx.workspace_provided {
+                Some(
+                    t!(
+                        "suggestion.workspace-jail-content-source",
+                        workspace = workspace.display().to_string()
+                    )
+                    .to_string(),
+                )
+            } else if ctx.workspace_provided {
                 Some(
                     t!(
                         "suggestion.workspace-jail-inside",

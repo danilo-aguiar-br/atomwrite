@@ -13,9 +13,8 @@ use regex::Regex;
 /// and every call site must share the same compiled automaton. Used by
 /// `list` and `count` to bucket backups under a dedicated extension key
 /// rather than treating the timestamp suffix as a real extension.
-pub(crate) static BACKUP_FILENAME_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\.bak\.\d{8}_\d{6}(_\d{3})?$").expect("valid backup regex")
-});
+pub(crate) static BACKUP_FILENAME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\.bak\.\d{8}_\d{6}(_\d{3})?$").expect("valid backup regex"));
 
 /// True when `path` looks like an atomwrite timestamped backup (`*.bak.*`).
 ///
@@ -44,14 +43,8 @@ pub(crate) fn push_backup_excludes(exclude: &mut Vec<String>) {
     }
 }
 
-/// DRY dry-run / plan summary counters (R-DRY-001).
-pub mod summary_metrics;
 /// v0.1.29
 pub mod agent_surface;
-/// Full clap command tree as JSON (`atomwrite commands`).
-pub mod command_tree;
-/// Environment diagnostic for agent hosts (`atomwrite doctor`).
-pub mod doctor;
 /// Patch application from stdin (unified diff, SEARCH/REPLACE, full file).
 pub mod apply;
 /// Standalone file backup with BLAKE3 checksums.
@@ -63,6 +56,8 @@ pub mod calc;
 /// v14 Tier 3: identifier case conversion (snake/camel/Pascal/kebab/SCREAMING).
 pub mod case;
 pub mod codemod;
+/// Full clap command tree as JSON (`atomwrite commands`).
+pub mod command_tree;
 /// Atomic file copy with checksum verification.
 pub mod copy;
 /// Line, match, and extension counting.
@@ -73,6 +68,8 @@ pub mod del;
 pub mod delete;
 /// Unified diff between two files.
 pub mod diff;
+/// Environment diagnostic for agent hosts (`atomwrite doctor`).
+pub mod doctor;
 /// Surgical file editing by line or marker.
 pub mod edit;
 /// v0.1.22 ADR-0039: apply N `old`/`new` pairs from NDJSON stdin in one write.
@@ -124,6 +121,8 @@ pub mod scope;
 #[cfg(not(feature = "ast"))]
 #[path = "scope_stub.rs"]
 pub mod scope;
+/// Canonical agent staging directory (`atomwrite scratch init`).
+pub mod scratch;
 /// Parallel file content search via ripgrep.
 pub mod search;
 /// v0.1.29
@@ -133,6 +132,8 @@ pub mod semantic_search;
 pub mod set;
 /// v0.1.29
 pub mod sparse;
+/// DRY dry-run / plan summary counters (R-DRY-001).
+pub mod summary_metrics;
 /// Structural AST code search and rewrite.
 #[cfg(feature = "ast")]
 #[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
@@ -208,11 +209,10 @@ pub(crate) fn read_stdin_text_guarded(
     let mut buf = String::new();
     // Cap is known up-front; fallible reserve turns OOM into a domain error.
     let reserve = usize::try_from(max_size).unwrap_or(usize::MAX);
-    buf.try_reserve(reserve).map_err(|e| {
-        crate::error::AtomwriteError::InternalError {
+    buf.try_reserve(reserve)
+        .map_err(|e| crate::error::AtomwriteError::InternalError {
             reason: format!("allocation failed for stdin buffer of {reserve} bytes: {e}"),
-        }
-    })?;
+        })?;
     stdin.take(max_size).read_to_string(&mut buf)?;
     Ok(buf)
 }

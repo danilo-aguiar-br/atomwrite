@@ -5,14 +5,16 @@
 
 > Write once, run anywhere -- with real fsync guarantees on every platform
 
-### Verification matrix (v0.1.35 honest)
+### Verification matrix (v0.1.36 honest)
 
 | Platform | Status |
 |----------|--------|
-| Linux x86_64 | Full e2e + unit/integration suite |
+| Linux x86_64 | Full e2e + unit/integration suite (`cli_v0136_gaps`, residual agent contract) |
 | Windows (`x86_64-pc-windows-gnu`) | `cargo check` on Linux host |
 | macOS (apple-darwin) | Source `cfg` support; cross-compile may fail without host SDK/osxcross — runtime proof on real Mac |
 | CI / GitHub Actions | **Not** shipped in this repo (local gates only) |
+
+**v0.1.36 note (all platforms):** workspace jail for content-source paths (`--old-file`/`--new-file`) is OS-agnostic — stage under `$WS/.atomwrite/scratch/` via `scratch init`; never rely on OS `/tmp` outside `--workspace`. Agent-native stdout shape (`--select`/`--filter`/`--limit`) and error envelopes (`ok:false`) are identical across platforms.
 
 
 ## What's New in v0.1.12
@@ -374,4 +376,14 @@ Notes (2026-07-19):
 - macOS: source-level `cfg`; cross may fail without host SDK — validate on a real Mac
 - Product repo ships **no** GitHub Actions workflows; use local DoD from `docs/TESTING.md`
 - Watch/notify and path separators are platform-specific; see A-XPLAT-001 in gaps.md §20
+
+## v0.1.36 — Agent contract (platform-neutral)
+
+- Pin agents to `^0.1.36`; **45** subcommands SSOT (`agent-surface` / `commands`)
+- SSOT **45** subcommands identical on Linux/macOS/Windows: `agent-surface`, `apply`, `backup`, `batch`, `calc`, `case`, `codemod`, `commands`, `completions`, `copy`, `count`, `del`, `delete`, `diff`, `doctor`, `edit`, `edit-loop`, `extract`, `get`, `hash`, `list`, `locale`, `move`, `outline`, `prune-backups`, `query`, `read`, `recipe`, `regex`, `replace`, `rollback`, `scope`, `scratch`, `search`, `semantic-merge`, `semantic-search`, `set`, `sparse`, `stat`, `transform`, `verify`, `wal-heal`, `wal-stats`, `watch`, `write`. Features: `watch` needs feature `watch`; `semantic-search` needs feature `semantic`; AST commands need default/full features — but names still part of surface SSOT.
+- Content-source jail + `scratch init` (no `/tmp` allowlist) — same path policy on Linux/macOS/Windows
+- Error NDJSON always includes `ok: false` + stable `match_count`
+- Global `--select`/`--fields`, `--filter`, `--limit` (long-only; no global `-n`)
+- Contract suite: `cargo test --test cli_v0136_gaps`; SSOT: `scripts/check-gaps-ssot.sh`
+- See ADR-0055 and `gaps.md` GAP-2026-019…033
 

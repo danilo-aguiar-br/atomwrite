@@ -4,7 +4,17 @@
 [Leia em Português](TESTING.pt-BR.md)
 
 
-## What's New in v0.1.35 (Current)
+## What's New in v0.1.36 (Current)
+
+- Residual agent-contract CAPA: always-emit errors under `--filter`; extract `--field`; `CANONICAL_SUBCOMMAND_COUNT` = **45**
+- Full CLI surface under test policy: **45** subcommands (`CANONICAL_SUBCOMMAND_COUNT`): `agent-surface`, `apply`, `backup`, `batch`, `calc`, `case`, `codemod`, `commands`, `completions`, `copy`, `count`, `del`, `delete`, `diff`, `doctor`, `edit`, `edit-loop`, `extract`, `get`, `hash`, `list`, `locale`, `move`, `outline`, `prune-backups`, `query`, `read`, `recipe`, `regex`, `replace`, `rollback`, `scope`, `scratch`, `search`, `semantic-merge`, `semantic-search`, `set`, `sparse`, `stat`, `transform`, `verify`, `wal-heal`, `wal-stats`, `watch`, `write`
+- Suite `tests/cli_v0136_gaps.rs` covers **GAP-019…033** contract points (workspace jail / scratch staging, error `ok:false` + `match_count`, fuzzy honesty with normalized strategies emitting `similarity: null` (never fake 1.0), dual-gate / soft-floor policy, shape flags, extract `--field` not `--select`, staging formulas)
+- Local SSOT gate: `bash scripts/check-gaps-ssot.sh` (must stay green with `gaps.md` Status)
+- Run: `cargo test --test cli_v0136_gaps` then `./scripts/check-gaps-ssot.sh`
+- Local DoD (no product GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`
+- Pin docs/agents to `^0.1.36`; ADR-0055
+
+## What's New in v0.1.35
 
 - Residual A-* closed: suite green without `delete --yes`; large overwrite **default-deny** (`--ack-overwrite`); `watch` always emits `watch_summary`; semantic-merge conflict markers default ON; monólitos `include!` splits
 - Local DoD (no GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
@@ -29,7 +39,7 @@
 - Cooperative cancel emits `cancelled` NDJSON events (schema `cancelled-event.schema.json`, exit 143)
 - Write NDJSON reports `platform.rename_method` (`renameat2` or `rename`)
 - `write --durability full|fast|auto` trade-off for fsync cost
-- New subcommands: `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch` (feature), `codemod`, `semantic-search` — **41 subcommands** total
+- **Historical (at v0.1.29):** new subcommands: `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch` (feature), `codemod`, `semantic-search` — **41 subcommands** total
 - Feature matrix: slim `core` (~7.7 MiB, local size-gate ≤15 MiB) vs default/full AST (~52 MB)
 - **Local** gates (manual; no remote automation): size-gate slim ≤15 MiB; core-test; schema-diff on `docs/schemas`
 - Run the 0.1.30 contract suite: `cargo test --test cli_v0130_agent_contract`
@@ -402,6 +412,19 @@ cargo insta review
 - Skip long-running property tests with `PROPTEST_CASES=10`
 - Suitable for pre-commit hooks
 - Total time: under 30 seconds
+
+### Full (local pre-release v0.1.36+)
+
+Required local release gate (no product GitHub Actions):
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --lib
+cargo test --tests
+cargo test --test cli_v0136_gaps
+./scripts/check-gaps-ssot.sh
+```
 
 ### Full (local pre-release)
 - Run `cargo test` with all features

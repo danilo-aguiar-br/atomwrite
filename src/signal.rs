@@ -49,10 +49,7 @@ pub fn is_global_shutdown() -> bool {
 /// library callers that cancel before `install_handlers`).
 #[inline]
 pub fn current_exit_code() -> u8 {
-    GLOBAL_SHUTDOWN
-        .get()
-        .map(|s| s.exit_code())
-        .unwrap_or(130)
+    GLOBAL_SHUTDOWN.get().map(|s| s.exit_code()).unwrap_or(130)
 }
 
 /// Build a [`crate::error::AtomwriteError::Cancelled`] with the live signal exit code.
@@ -172,16 +169,14 @@ pub fn install_handlers_early() -> Option<Arc<ShutdownSignal>> {
     {
         // Rules graceful-shutdown: never silently ignore handler registration
         // failure. Tracing is not ready this early — report to stderr only.
-        if let Err(e) =
-            signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&flag))
+        if let Err(e) = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&flag))
         {
             let _ = writeln!(
                 std::io::stderr(),
                 "atomwrite: failed to register SIGINT flag handler: {e}"
             );
         }
-        if let Err(e) =
-            signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&flag))
+        if let Err(e) = signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&flag))
         {
             let _ = writeln!(
                 std::io::stderr(),

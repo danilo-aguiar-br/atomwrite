@@ -25,7 +25,7 @@
 - Sem telemetria de conteúdo de arquivos ou patterns
 - Modos fuzzy permanecem só `auto|aggressive` (`off` rejeitado exit 65 desde v0.1.30)
 - Suíte de regressão: `tests/cli_v0133_oneshot_fuzzy.rs` (hang < 2s, embeds, timeout)
-- 41 subcomandos inalterados
+- **Histórico (na v0.1.34):** 41 subcomandos inalterados
 
 ## Consequências
 - Agentes podem expandir seções com segurança quando NEW embute OLD, sem risco de hang

@@ -5,6 +5,15 @@
 
 
 
+## What's New in v0.1.36 (2026-07-31)
+
+- Agent-contract residual (GAP-2026-019…033 + CAPA): content-source jail, `scratch init`, global agent-native stdout shape
+- **Stdout shape (global):** `--select`/`--fields` (CSV keys), `--filter KEY=VAL` (repeatable AND, top-level only), `--limit N` (**long-only** — **no global `-n`**; `replace` owns `-n`)
+- **Always-emit errors:** failure envelopes always print NDJSON with `ok:false`; `--filter` never drops them; optional `--select` may thin keys; `--limit` applies to success events only
+- **SSOT surface: 45 subcommands** (`CANONICAL_SUBCOMMAND_COUNT` / `atomwrite agent-surface`). Do not document 41/42 as current
+- `extract`: positional fields or local `--field` (repeatable). **NEVER** `extract --select` — global `--select` only projects the emitted line (local name collides with clap)
+- Pin agents to `^0.1.36`. Config CLI + XDG / `.atomwrite.toml` only. Suite: `cli_v0136_gaps`. ADR-0055
+
 ## What's New in v0.1.35 (2026-07-19)
 
 - Residual **A-*** gaps closed (gaps.md §20): suite green without `delete --yes`; large overwrite **default-deny** (`--ack-overwrite`); `watch` always emits `watch_summary`; semantic-merge conflict markers default ON; monólitos `include!` SRP splits
@@ -14,7 +23,7 @@
 - **Semantic-merge:** conflict markers written by default; opt-out `--no-conflict-markers`
 - Local DoD (no product GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
 - Contract suite: `cargo test --test cli_e2e_v0135`
-- Pin agents to `^0.1.35`. Configuration is CLI + XDG / `.atomwrite.toml` only (no product `ATOMWRITE_*` runtime knobs; no product telemetry)
+- Historical pin `^0.1.35` (superseded by **`^0.1.36`**). Configuration is CLI + XDG / `.atomwrite.toml` only (no product `ATOMWRITE_*` runtime knobs; no product telemetry)
 
 ## What's New in v0.1.34
 
@@ -26,7 +35,7 @@
 - Cooperative cancel polled mid-fuzzy cascade; caps: pattern 64 KiB, lev 8192 chars, max windows 4096, growth max(4×,+16 MiB)
 - Fuzzy caps (constants in `src/constants.rs`): `FUZZY_MAX_PATTERN_BYTES` (64 KiB), `FUZZY_MAX_LEVENSHTEIN_CHARS` (8192), `FUZZY_MAX_WINDOWS` (4096), `FUZZY_MAX_BUFFER_GROWTH_FACTOR`/`FUZZY_MAX_BUFFER_GROWTH_BYTES` (max 4× / +16 MiB), hard ceiling `FUZZY_HARD_MAX_REPLACEMENTS` (10_000)
 - Regression suite: `tests/cli_v0133_oneshot_fuzzy.rs` — hang < 2s, embeds, timeout
-- 41 subcommands; fuzzy still only `auto|aggressive` (`off` rejected exit 65). **Superseded in v0.1.35:** `off` = exact-only (G-010).
+- **Historical (at v0.1.33):** 41 subcommands; fuzzy still only `auto|aggressive` (`off` rejected exit 65). **Superseded in v0.1.35:** `off` = exact-only (G-010).
 - See [ADR-0054](decisions/0054-v0-1-34-oneshot-fuzzy-timeout.md) for one-shot fuzzy + timeout contract (exit 124 vs 143)
 
 ## What Was New in v0.1.30
@@ -48,7 +57,7 @@
 - `recipe` runs real multi-step dispatch (search→replace→hash)
 - Cooperative cancel: SIGINT/SIGTERM aborts stdin and chunked work; cancelled NDJSON may exit 143
 - `semantic-search` is offline token/index ranking with Jaccard foundation (not OpenRouter embeddings)
-- 41 subcommands total, 38 JSON schemas, 683 tests listed
+- **Historical (at v0.1.29):** 41 subcommands total, 38 JSON schemas, 683 tests listed
 
 
 ## What's New in v0.1.28
@@ -267,7 +276,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 ```
 
 
-## 41 Subcommands
+## 45 Subcommands (SSOT)
 - `read` -- reads files with metadata, checksum, optional content; `--format raw` (alias `--raw`) emits raw bytes for Unix composability (G81); `--grep <REGEX>` filters returned lines
 - `write` -- creates or overwrites files atomically via stdin; `--syntax-check` validates with tree-sitter after write (G72, exit 88); large existing targets require `--ack-overwrite` (default-deny above XDG `[write].confirm_large_bytes`)
 - `edit` -- edits surgically by line number, text marker, or exact match; `--fuzzy auto|aggressive|off` where `off` = exact-only (G-010); default `auto`; success NDJSON may include `match_count` and `indent_adjusted`; `--multi` for NDJSON multi-edit
@@ -309,6 +318,22 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - `codemod` -- (v0.1.29) multi-rule AST campaign with `by_rule_id` summary
 - `semantic-search` -- (v0.1.29, feature `semantic`) offline token ranking / inverted index
 - `stat` -- (v0.1.29) alias of `read --stat`
+- `doctor` -- host readiness diagnostics
+- `locale` -- show/set/clear UI locale preference (XDG); distinct from global `--locale`
+- `commands` -- emit full command tree JSON for discovery
+- `scratch` -- `scratch init` creates staging under `$WS/.atomwrite/scratch/` for `--old-file`/`--new-file` (NEVER OS `/tmp` outside workspace; exit 126 `WORKSPACE_JAIL`)
+
+
+## REQUIRED — Content staging (`--old-file` / `--new-file`)
+Stage content files **inside** the workspace jail. Prefer the skill formula:
+
+```bash
+WS="$PWD"
+atomwrite --workspace "$WS" scratch init
+# then write old/new under $WS/.atomwrite/scratch/
+```
+
+NEVER stage `--old-file`/`--new-file` in OS `/tmp` outside `--workspace` (exit 126 `WORKSPACE_JAIL`).
 
 
 ## REQUIRED — Edit hierarchy
@@ -316,6 +341,7 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 - Order: `ssr` (when applicable) → `transform` → `scope` → `replace` → `edit` → `write`
 - Full-file `write` is the last resort
 - Use `transform`/`scope` for AST structure; `replace`/`edit` for text; `write` only when a full rewrite is required
+- Intentional smaller full rewrite: `write --allow-shrink`
 
 
 ## REQUIRED -- Output Contract
@@ -394,17 +420,18 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 Search/replace zero matches (exit 1):
 
 ```json
-{"error":true,"code":"NO_MATCHES","exit":1,"message":"no matches for pattern","path":"src/file.rs","error_class":"permanent","retryable":false,"suggestion":"inspect best_candidate or retry with --fuzzy aggressive and uniqueness / --replace-all","workspace":null,"best_candidate":{"text":"near miss snippet","similarity":0.82,"strategy":"jaro_winkler","line":12,"column":4,"diff_preview":null}}
+{"error":true,"ok":false,"code":"NO_MATCHES","exit":1,"message":"no matches for pattern","path":"src/file.rs","error_class":"permanent","retryable":false,"suggestion":"inspect best_candidate or retry with --fuzzy aggressive and uniqueness / --replace-all","workspace":null,"match_count":0,"best_candidate":{"text":"near miss snippet","similarity":0.82,"strategy":"jaro_winkler","line":12,"column":4,"diff_preview":null}}
 ```
 
 Edit/fuzzy miss (exit 65) — inspect optional `best_candidate` and adjust `--old`:
 
 ```json
-{"error":true,"code":"MATCH_FAILED","exit":65,"message":"no match for old text","path":"src/file.rs","error_class":"permanent","retryable":false,"suggestion":"inspect best_candidate in the error NDJSON and adjust --old, or lower --fuzzy-threshold","workspace":null,"best_candidate":{"text":"near miss snippet","similarity":0.82,"strategy":"jaro_winkler","line":12,"column":4,"diff_preview":null}}
+{"error":true,"ok":false,"code":"MATCH_FAILED","exit":65,"message":"no match for old text","path":"src/file.rs","error_class":"permanent","retryable":false,"suggestion":"inspect best_candidate in the error NDJSON and adjust --old, or lower --fuzzy-threshold","workspace":null,"match_count":0,"best_candidate":{"text":"near miss snippet","similarity":0.82,"strategy":"jaro_winkler","line":12,"column":4,"diff_preview":null}}
 ```
 
+- Every error envelope includes `"ok":false` and `"match_count":0` (or the appropriate count for `MATCH_AMBIGUOUS`)
 - The `workspace` field only appears on `WORKSPACE_JAIL` errors and reports the resolved workspace root (may be `null`)
-- `suggestion` is context-aware: `WORKSPACE_JAIL` suggestion changes based on whether `--workspace` was provided
+- `suggestion` is context-aware: `WORKSPACE_JAIL` suggestion changes based on whether `--workspace` was provided; if `--old-file`/`--new-file` is outside the jail, stage with `scratch init` under the workspace (do not only "adjust `--workspace`")
 - See `docs/schemas/` for complete JSON Schema definitions of all output types (`error-output.schema.json` defines all 20 error codes and the `workspace` field)
 
 
@@ -439,13 +466,13 @@ Edit/fuzzy miss (exit 65) — inspect optional `best_candidate` and adjust `--ol
 
 
 ## REQUIRED -- Error Handling
-- Errors emit JSON on stdout with `error: true`
-- Fields: `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`, `workspace`
+- Errors emit JSON on stdout with `error: true`, `ok: false`, and `match_count` (0 on miss; appropriate count for `MATCH_AMBIGUOUS`)
+- Fields: `ok`, `match_count`, `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`, `workspace`
 - `error_class` values: `permanent`, `transient`, `conflict`, `precondition_failed`
 - `retryable` is true for `transient` and `conflict` classes
 - The `workspace` field only appears on `WORKSPACE_JAIL` errors and reports the resolved workspace root
 - All 20 error variants carry actionable `suggestion` text (added in v0.1.4, GAP 13)
-- The `WorkspaceJail` suggestion is **context-aware**: when `--workspace` is already set, the suggestion says "use a path inside the workspace (<root>)" instead of re-asking for the flag
+- The `WorkspaceJail` suggestion is **context-aware**: when `--workspace` is already set, the suggestion says "use a path inside the workspace (<root>)" instead of re-asking for the flag. If content-source files (`--old-file`/`--new-file`) are outside the jail, stage them with `scratch init` under the workspace — do not only "adjust `--workspace`"
 - The `BinaryFile` suggestion recommends `read --stat` for metadata-only reads (phantom reference to `--force-text` was removed)
 - The `FileImmutable` suggestion mentions `chattr -i` (Unix) and `fsutil` (Windows)
 - The `NoMatches` suggestion guides pattern broadening and reviewing `--include`/`--exclude` filters
@@ -475,7 +502,7 @@ Edit/fuzzy miss (exit 65) — inspect optional `best_candidate` and adjust `--ol
 - `CONFIG_INVALID` (exit 78) -- correct the configuration and retry
 - `CHECKSUM_VERIFY_FAILED` (exit 81) -- the hash passed to `--verify` did not match; re-read the file
 - `FILE_TOO_LARGE` (exit 65) -- increase `--max-filesize` or process a smaller file
-- `WORKSPACE_JAIL` (exit 126) -- do not retry, path is outside the workspace
+- `WORKSPACE_JAIL` (exit 126) -- do not retry with the same outside path; stage content-source files with `scratch init` under the workspace, or set `--workspace` to the allowed root
 - `SYMLINK_BLOCKED` (exit 127) -- do not retry with symlinks disabled
 - `IMMUTABLE_FILE` (exit 128) -- do not retry without removing the immutability flag
 - `INTERNAL_ERROR` (exit 255) -- report as a bug; not user-actionable
@@ -483,7 +510,7 @@ Edit/fuzzy miss (exit 65) — inspect optional `best_candidate` and adjust `--ol
 ### Precondition Failed (retryable: false)
 - `BINARY_FILE` (exit 65) -- use `--stat` mode to read metadata without content
 - `IMMUTABLE_FILE` (exit 128) -- remove the immutability flag first (chattr -i on Unix, fsutil on Windows)
-- `WORKSPACE_JAIL` (exit 126) -- adjust the `--workspace` boundary
+- `WORKSPACE_JAIL` (exit 126) -- if `--old-file`/`--new-file` is outside the jail, stage with `scratch init` under the workspace; otherwise set `--workspace` to the allowed root (e.g. multi-root host skills under home)
 - `FIFO_DETECTED` (exit 85) -- skip this file or use stdin redirection
 - `DEVICE_FILE` (exit 86) -- skip this file or use stdin redirection
 
@@ -502,6 +529,12 @@ Edit/fuzzy miss (exit 65) — inspect optional `best_candidate` and adjust `--ol
 - `--timeout-secs <SECONDS>` (alias `--timeout`) -- global operation timeout; **default 120**; `0` disables; deadline → exit **124**. Use to bound long searches, batches, and replace operations
 - `--json-schema` -- emits the JSON schema for the subcommand's output
 - `--locale <en|pt-BR>` -- overrides the display locale (en, pt-BR); use `--locale` only (no product env knobs; XDG preference via `atomwrite locale`)
+- `--select` / `--fields <KEYS>` -- project NDJSON top-level keys (CSV)
+- `--filter <EXPR>` -- keep events matching `key=value` (repeatable AND, top-level only)
+- `--limit <N>` -- max NDJSON events after filter (**long-only**; no global `-n`; `replace` owns `-n`)
+- `--no-auto-heal` -- skip startup WAL heal
+- `--config <PATH>` -- explicit config file path
+- Note: error events always emit even under `--filter`; optional `--select`/`--fields` may thin keys; `--limit` applies to success events only
 
 
 ## PROHIBITED -- Common Pitfalls
@@ -515,7 +548,15 @@ Edit/fuzzy miss (exit 65) — inspect optional `best_candidate` and adjust `--ol
 - NEVER pass `delete --confirm` / `--yes` / `-y` (rejected fail-closed; use `--plan` or omit flags)
 - NEVER write large existing targets without `--ack-overwrite` (default-deny above XDG `[write].confirm_large_bytes`)
 - NEVER assume empty stdout on `watch` idle — always ends with `type:watch_summary`
-- NEVER invent product `ATOMWRITE_*` runtime knobs (CLI + XDG / `.atomwrite.toml` only in v0.1.35)
+- NEVER invent product `ATOMWRITE_*` runtime knobs (CLI + XDG / `.atomwrite.toml` only in `^0.1.36`)
+- NEVER stage `--old-file`/`--new-file` in OS `/tmp` outside `--workspace` (use `scratch`)
+- NEVER invent `edit --strategy` (use `--fuzzy auto|aggressive|off` only)
+- NEVER pass unquoted shell `$VAR` in bodies when literal `$` must survive (use `<<'EOF'` or file staging)
+- NEVER use fuzzy edit/replace for structural symbol rename (use transform/scope/codemod)
+- NEVER run `--fuzzy aggressive` tree-wide without `--dry-run` first
+- ALWAYS set `--workspace` to the allowed root when editing multi-root paths (e.g. host skills under home)
+- Prefer file-based patches for content with `//`, jq, quotes, multiline
+- Intentional smaller full rewrite: `write --allow-shrink`
 - Prefer `--fuzzy auto` (default cascade for agents); use `--fuzzy off` only for intentional exact-only (G-010)
 
 

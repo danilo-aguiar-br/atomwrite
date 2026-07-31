@@ -97,22 +97,21 @@ pub fn cmd_hash(
             builder.filter_entry(|entry| !path_looks_like_bak(entry.path()));
         }
         let walked = crate::concurrency::collect_files_parallel(&builder);
-        let filtered: Vec<PathBuf> = if crate::concurrency::should_parallelize(walked.len())
-            && !excludes.is_empty()
-        {
-            use rayon::prelude::*;
-            walked
-                .into_par_iter()
-                .filter(|p| !is_excluded_path(p, &excludes))
-                .collect()
-        } else if excludes.is_empty() {
-            walked
-        } else {
-            walked
-                .into_iter()
-                .filter(|p| !is_excluded_path(p, &excludes))
-                .collect()
-        };
+        let filtered: Vec<PathBuf> =
+            if crate::concurrency::should_parallelize(walked.len()) && !excludes.is_empty() {
+                use rayon::prelude::*;
+                walked
+                    .into_par_iter()
+                    .filter(|p| !is_excluded_path(p, &excludes))
+                    .collect()
+            } else if excludes.is_empty() {
+                walked
+            } else {
+                walked
+                    .into_iter()
+                    .filter(|p| !is_excluded_path(p, &excludes))
+                    .collect()
+            };
         file_paths.extend(filtered);
     }
 

@@ -16,11 +16,18 @@
 
 ## What Is It
 - A single Rust binary that handles every file operation an LLM agent needs
-- **41 subcommands**: read, write, edit, search, replace, hash, verify, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions, edit-loop, prune-backups, semantic-merge, sparse, recipe, stat, agent-surface, watch, codemod, semantic-search
+- **45 subcommands** (SSOT: clap `Commands` / `agent-surface`): read, write, edit, search, replace, hash, verify, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, set, get, del, case, query, outline, wal-heal, wal-stats, completions, edit-loop, prune-backups, semantic-merge, sparse, recipe, stat, agent-surface, watch, codemod, semantic-search, doctor, locale, commands, scratch
 - Every write is atomic: tempfile, fsync, rename, fsync directory
 - Every response is NDJSON: one JSON object per line, machine-readable by default
 - Every file gets a BLAKE3 checksum: detect drift, verify integrity, enable optimistic locking
 
+
+## What Is New In v0.1.36 (2026-07-31)
+
+- Agent staging: `scratch init` + `.atomwrite/scratch/` for `--old-file`/`--new-file` (jail retained; no `/tmp` allowlist)
+- Error NDJSON: `ok: false` + `match_count`; fuzzy `similarity: null` on normalized strategies
+- Global `--select` / `--filter` / `--limit` for agent-native NDJSON projection (no jq required)
+- Pin agents to `^0.1.36`. **45** subcommands (SSOT). CLI + XDG only (no product `ATOMWRITE_*` knobs; no product telemetry). Agent-native stdout: `--select`/`--fields`, `--filter`, `--limit` (no global `-n`). Error envelopes always emit
 
 ## What Is New In v0.1.35 (2026-07-19)
 
@@ -31,7 +38,7 @@
 - **Semantic-merge:** conflict markers written by default; opt-out `--no-conflict-markers`
 - Local DoD (no product GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
 - Contract suite: `cargo test --test cli_e2e_v0135`
-- Pin agents to `^0.1.35`. Configuration is CLI + XDG / `.atomwrite.toml` only (no product `ATOMWRITE_*` runtime knobs; no product telemetry)
+- Pin agents to `^0.1.36` (was 0.1.35). Configuration is CLI + XDG / `.atomwrite.toml` only (no product `ATOMWRITE_*` runtime knobs; no product telemetry)
 
 ## What Is New In v0.1.34 (2026-07-19)
 
@@ -42,7 +49,7 @@
 - Global `--timeout-secs` default is **120** (was 0); pass `0` to disable; exit **124** on deadline (GNU `timeout` convention)
 - Fuzzy cascade polls cooperative cancel mid-file so the timeout works; resource caps: pattern 64 KiB, lev 8192 chars, windows 4096, growth max(4×, +16 MiB)
 - Docs fully aligned with the runtime contract; ADR-0054; pin agents to `^0.1.34`
-- Regression: `tests/cli_v0133_oneshot_fuzzy.rs` (hang < 2s). 41 subcommands unchanged; no telemetry
+- Regression: `tests/cli_v0133_oneshot_fuzzy.rs` (hang < 2s). **Historical (at v0.1.33):** 41 subcommands unchanged; no telemetry
 
 ## What Was New In v0.1.30 (2026-07-13)
 
@@ -61,7 +68,7 @@
 
 ## What Was New In v0.1.29 (2026-07-13)
 
-- **41 subcommands** (was 33): added `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch`, `codemod`, `semantic-search`
+- **Historical (at v0.1.29):** **41 subcommands** (was 33): added `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch`, `codemod`, `semantic-search`
 - Shared **fuzzy** module: 9-strategy cascade for `edit`, `replace`, `batch`, `edit-loop` — `replace --fuzzy auto|aggressive` and `--fuzzy-threshold`
 - **`best_candidate`** structured diagnostics on match failure (near-miss scores no longer discarded)
 - Cargo **features**: `core`, `ast`, `lang-*`, `watch`, `semantic`, `full` — slim core build without AST crates (stubs exit 78)
@@ -382,41 +389,58 @@ atomwrite completions fish > ~/.config/fish/completions/atomwrite.fish
 - Use `--dry-run` before destructive operations
 - Use `--expect-checksum <HASH>` for optimistic locking
 - Use `--locale <TAG>` or `atomwrite locale --set` / `locale --clear` for UI locale (`en`, `pt-BR`); NDJSON codes stay English
-- Configuration is CLI flags + XDG / `.atomwrite.toml` only — no product `ATOMWRITE_*` runtime knobs (v0.1.35)
+- Configuration is CLI flags + XDG / `.atomwrite.toml` only — no product `ATOMWRITE_*` runtime knobs (v0.1.35+)
 - Pipe stdin for `write` and `batch` commands
+- Agent-native stdout globals (all subcommands): `--select` / `--fields` (CSV top-level keys), `--filter KEY=VAL` (repeatable AND), `--limit N` (**long-only** — no global `-n`; `replace` owns short `-n`)
+- Error NDJSON always has `ok: false` and usually `match_count` — parse `exit` / `code` first; success shaping via `--filter`/`--limit` never drops error envelopes
 
 
-## Commands (30 total)
+## Commands (45 total — SSOT)
 
 ### Core I/O
 - `read` — read files with metadata, checksum, optional content
 - `write` — create or overwrite files atomically via stdin (large existing targets need `--ack-overwrite`)
 - `edit` — surgically edit by line number, text marker, or exact match
+- `edit-loop` — apply N `old`/`new` pairs from NDJSON stdin in one atomic write
 - `delete` — delete files with optional backup (`--plan` plan-only; `--confirm`/`--yes` rejected)
 - `copy` — copy files with checksum verification
 - `move` — move or rename files atomically (EXDEV copy-fallback)
 - `apply` — apply patches from stdin (unified diff, search/replace, full, markdown)
+- `scratch` — create agent staging dir under workspace (never OS `/tmp`)
+- `verify` — verify file integrity by comparing BLAKE3 checksum
 
 ### Search and replace
 - `search` — search file contents in parallel (ripgrep engine)
 - `replace` — replace text across files with atomic writes
 - `transform` — AST refactoring via ast-grep (306 languages)
+- `codemod` — multi-rule codemod campaign (YAML rules, delegates to transform)
+- `semantic-search` — offline token Jaccard search (no network, no embeddings API)
+- `semantic-merge` — three-way line-based merge (not AST/embedding) for multi-agent writes
 
 ### Inspection
 - `hash` — calculate BLAKE3 checksums
+- `stat` — metadata alias for `read --stat` (size, mode, checksum; no body)
 - `count` — count lines, files by extension
 - `diff` — compare two files (unified, stat, or changes)
 - `list` — list files in a directory tree
-- `extract` — extract fields from NDJSON input via pipe
+- `sparse` — budgeted sparse list/read (cap files and bytes for agent context)
+- `extract` — extract fields from NDJSON input via pipe (positional fields or local `--field`; **never** local `extract --select` — global `--select` only projects output keys)
 - `scope` — grammatical scoping (delete all comments, etc.)
 - `regex` — generate regex from examples
 - `calc` — math and unit conversions
+- `doctor` — diagnose environment and dependencies
+- `locale` — show resolved UI locale / persist preference (XDG)
+- `commands` — emit full command tree as JSON for agent discovery
+- `agent-surface` — agent tool surface manifesto without MCP
+- `watch` — watch filesystem events (feature `watch`)
 - `completions` — generate shell completions (bash, zsh, fish, elvish, powershell)
 
 ### Backup and recovery
 - `backup` — create timestamped backups with BLAKE3 checksums
 - `rollback` — restore from a previous backup
+- `prune-backups` — prune `.bak.YYYYMMDD_HHMMSS` backups by age or count
 - `batch` — NDJSON-driven batch operations (transactional)
+- `recipe` — named multi-step recipes (`list` / `run`)
 
 ### Structured config editors (v0.1.12, v14 Tier 3)
 - `set <PATH> <KEY_PATH> <VALUE>` — write a value at a dotted path in a TOML or JSON file. Preserves comments and key order via `toml_edit`. Auto-coerces int/bool/float/string.
@@ -445,6 +469,19 @@ echo "fn main() {}" | atomwrite --workspace . write src/main.rs
 # edit
 atomwrite --workspace . edit src/main.rs --old "old text" --new "new text"
 
+# edit-loop (N old/new pairs, one atomic write)
+printf '%s\n' '{"old":"foo","new":"bar"}' '{"old":"baz","new":"qux"}' \
+  | atomwrite --workspace . edit-loop src/version.rs
+
+# scratch — stage under .atomwrite/scratch/; never OS /tmp outside --workspace for --old-file/--new-file
+atomwrite --workspace . scratch init
+atomwrite --workspace . edit src/main.rs \
+  --old-file .atomwrite/scratch/old.txt \
+  --new-file .atomwrite/scratch/new.txt
+
+# verify
+atomwrite --workspace . verify src/main.rs abc123def456
+
 # search
 atomwrite --workspace . search 'TODO' src/ --include '*.rs'
 
@@ -472,8 +509,11 @@ atomwrite --workspace . copy src/template.rs src/new_module.rs
 # list
 atomwrite --workspace . list src/ --depth 2
 
-# extract
+# extract — positional fields or local --field; NEVER local extract --select
 atomwrite --workspace . search 'TODO' src/ | atomwrite extract path line
+atomwrite --workspace . search 'TODO' src/ | atomwrite extract --field path --field line
+# thin agent shape (global --select projects output keys only):
+atomwrite --workspace . search 'TODO' src/ --select path,line --limit 20
 
 # calc
 atomwrite calc "2 GiB to bytes"
@@ -496,6 +536,10 @@ atomwrite --workspace . backup src/config.toml
 
 # rollback
 atomwrite --workspace . rollback src/config.toml
+
+# prune-backups
+atomwrite --workspace . prune-backups --max-age-secs 86400 src/config.toml
+atomwrite --workspace . prune-backups --max-count 3 --dry-run src/config.toml
 
 # apply
 echo "new content" | atomwrite --workspace . apply src/file.txt --format full
@@ -525,6 +569,46 @@ atomwrite --workspace . wal-stats
 # wal-heal (v0.1.15)
 atomwrite --workspace . wal-heal --threshold-secs 3600 --budget-ms 100
 
+# stat
+atomwrite --workspace . stat src/lib.rs
+
+# sparse
+atomwrite --workspace . sparse list --max-files 100 --max-bytes 1048576 src/
+
+# semantic-merge (line-based, not AST)
+atomwrite --workspace . semantic-merge \
+  --base base.rs --ours ours.rs --theirs theirs.rs --output src/merged.rs
+
+# recipe
+atomwrite --workspace . recipe list
+atomwrite --workspace . recipe run --name search-replace-verify \
+  --path src --pattern OLD_TOKEN --replacement NEW_TOKEN --fuzzy auto
+
+# agent-surface
+atomwrite --workspace . agent-surface
+
+# watch (requires feature watch)
+atomwrite --workspace . watch . --debounce-ms 200 --max-events 20
+
+# codemod
+atomwrite --workspace . codemod --rules rules.yaml --dry-run src/
+
+# semantic-search
+atomwrite --workspace . semantic-search "atomic rename tempfile" src/ --k 10
+
+# doctor
+atomwrite --workspace . doctor
+atomwrite --workspace . doctor --strict
+
+# locale
+atomwrite locale
+atomwrite locale --set pt-BR
+atomwrite locale --clear
+
+# commands (full clap tree for agent discovery)
+atomwrite commands
+atomwrite commands --include-globals
+
 # completions
 atomwrite completions bash
 ```
@@ -539,6 +623,7 @@ atomwrite completions bash
 
 
 ## Exit Codes
+- Error envelopes on stdout are always NDJSON with `ok: false` (and usually `match_count`); read `exit` / `code` before treating a line as success
 - `0`: success
 - `1`: no matches found (search, not an error)
 - `4`: file not found

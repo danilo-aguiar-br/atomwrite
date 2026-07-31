@@ -5,6 +5,10 @@
 use rayon::prelude::*;
 
 /// Block-anchor locate: first/last line anchors + `TextDiff` ratio.
+///
+/// GAP-2026-023: when the pattern has a middle (len > 2), also require the
+/// middle-only ratio to meet `min_ratio` (dual-gate) so radical mid-block
+/// drift cannot ride on matching border lines alone.
 pub(crate) fn match_block_anchor(
     content: &[&str],
     pattern: &[&str],
@@ -36,9 +40,25 @@ pub(crate) fn match_block_anchor(
             } else {
                 0.0
             };
-            if ratio >= min_ratio {
-                candidates.push((i, j + 1, ratio));
+            if ratio < min_ratio {
+                continue;
             }
+            // Dual-gate middle: border anchors alone are insufficient for FP-prone blocks.
+            if pattern.len() > 2 && j > i + 1 {
+                let mid_pat = pattern[1..pattern.len() - 1].join("\n");
+                let mid_block = content[i + 1..j].join("\n");
+                let mid_diff = similar::TextDiff::from_lines(&mid_pat, &mid_block);
+                let mid_ratio = mid_diff.ratio() as f64;
+                let mid_ratio = if mid_ratio.is_finite() {
+                    mid_ratio
+                } else {
+                    0.0
+                };
+                if mid_ratio < min_ratio {
+                    continue;
+                }
+            }
+            candidates.push((i, j + 1, ratio));
         }
     }
 
@@ -51,10 +71,13 @@ pub(crate) fn match_block_anchor(
 }
 
 /// Context-aware Damerau windows with rayon bound fan-out (G-FZZ-010/078).
+///
+/// `soft_floor_delta` comes from XDG `[fuzzy].soft_floor_delta` (GAP-2026-022).
 pub(crate) fn match_context_aware(
     content: &[&str],
     pattern: &[&str],
     threshold: f64,
+    soft_floor_delta: f64,
 ) -> Option<(usize, usize, f64)> {
     if pattern.is_empty() || pattern.len() > content.len() {
         return None;
@@ -85,9 +108,8 @@ pub(crate) fn match_context_aware(
         })
         .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
     if let Some((i, j, sim)) = best {
-        if sim >= threshold
-            || sim >= threshold - crate::constants::FUZZY_CONTEXT_SOFT_FLOOR_DELTA
-        {
+        let floor = soft_floor_delta.max(0.0);
+        if sim >= threshold || sim >= threshold - floor {
             return Some((i, j, sim));
         }
     }

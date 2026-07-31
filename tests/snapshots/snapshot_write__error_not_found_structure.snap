@@ -8,6 +8,7 @@ expression: event
   "error_class": "permanent",
   "exit": 4,
   "message": "[redacted]",
+  "ok": false,
   "path": "[redacted]",
   "retryable": false,
   "suggestion": "[redacted]"

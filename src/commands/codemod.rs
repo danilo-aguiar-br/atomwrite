@@ -138,9 +138,11 @@ pub fn cmd_codemod(
                         .cloned()
                         .unwrap_or_else(|| campaign_id.clone())
                 });
-            if let Some(tagged) =
-                crate::output::ndjson_insert_field(line, "rule_id", serde_json::Value::String(rid.clone()))
-            {
+            if let Some(tagged) = crate::output::ndjson_insert_field(
+                line,
+                "rule_id",
+                serde_json::Value::String(rid.clone()),
+            ) {
                 writer.write_event(&tagged)?;
             } else {
                 writer.write_event(&v)?;
@@ -176,8 +178,7 @@ pub fn cmd_codemod(
 fn parse_rule_ids(path: &std::path::Path) -> Vec<String> {
     // Rules manifests are small; cap at the process default max_filesize so a
     // pathological path cannot force an unbounded allocation.
-    let Ok(text) =
-        crate::file_io::read_file_string(path, crate::constants::DEFAULT_MAX_FILESIZE)
+    let Ok(text) = crate::file_io::read_file_string(path, crate::constants::DEFAULT_MAX_FILESIZE)
     else {
         return Vec::new();
     };

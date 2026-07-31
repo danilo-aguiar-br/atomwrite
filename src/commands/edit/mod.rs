@@ -23,7 +23,6 @@ use crate::fuzzy::FuzzyInfo;
 use crate::ndjson_types::{EditOutput, PairResult};
 use crate::output::NdjsonWriter;
 
-
 include!("pairs.inc.rs");
 include!("single.inc.rs");
 include!("multi.inc.rs");

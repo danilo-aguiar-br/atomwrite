@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! WAL sidecar creation policy heuristics (A-002 / A-013).
 
-use std::path::Path;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 use super::{JournalOp, L1_LARGE_FILE_BYTES};
 

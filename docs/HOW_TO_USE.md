@@ -7,6 +7,33 @@
 
 
 
+## What's New in v0.1.36 (2026-07-31)
+
+- **Agent staging:** `atomwrite scratch init` creates `{workspace}/.atomwrite/scratch/` (never OS `/tmp`). Stage `--old-file`/`--new-file` there (GAP-2026-019)
+- **Error envelope:** failures emit `ok: false` + stable `match_count` (0 on miss) — check exit **before** success fields (GAP-2026-020)
+- **Stdout shaping (agent-native):** global `--select`/`--fields KEYS`, `--filter key=value` (repeatable AND), `--limit N` on every subcommand (and error path). Prefer one process over `jq`
+- **Fuzzy honesty:** normalized strategies → `similarity: null`; dual-gate `block_anchor`; XDG `[fuzzy].soft_floor_delta` / `threshold_aggressive`
+- **Content-source jail tip:** WORKSPACE_JAIL on `--old-file` suggests staging under `.atomwrite/scratch/`
+- Contract suite: `cargo test --test cli_v0136_gaps`
+- Local release gate (no product GHA): `cargo test --lib && cargo test --tests && ./scripts/check-gaps-ssot.sh && cargo clippy --all-targets -- -D warnings`
+- Pin agents to `^0.1.36`. **45** subcommands (SSOT). Config still CLI + XDG / `.atomwrite.toml` only
+- Agent-native stdout shape: `--select`/`--fields`, `--filter` (top-level equality), `--limit` (**no global `-n`** — `replace` owns `-n`). Error envelopes **always emit** (filter does not silence failures)
+- `extract`: positional fields or local `--field` (repeatable). **NEVER** `extract --select` (global `--select` only projects the emitted line; local name collides with clap)
+
+```bash
+# Staging formula
+atomwrite --workspace . scratch init
+SCR=.atomwrite/scratch
+printf %s "$OLD" >"$SCR/old.txt"
+printf %s "$NEW" >"$SCR/new.txt"
+atomwrite --workspace . edit --old-file "$SCR/old.txt" --new-file "$SCR/new.txt" src/f.rs
+
+# Compact agent parse (no jq)
+atomwrite --workspace . --select ok,error,code,match_count,suggestion \
+  edit --old missing --new x --fuzzy off src/f.rs
+atomwrite --workspace . --filter ok=false --limit 1 edit --old a --new b src/f.rs
+```
+
 ## What's New in v0.1.35 (2026-07-19)
 
 - Residual **A-*** gaps closed (gaps.md §20): suite green without `delete --yes`; large overwrite **default-deny** (`--ack-overwrite`); `watch` always emits `watch_summary`; semantic-merge conflict markers default ON; monólitos `include!` SRP splits
@@ -16,11 +43,11 @@
 - **Semantic-merge:** conflict markers written by default; opt-out `--no-conflict-markers`
 - Local DoD (no product GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
 - Contract suite: `cargo test --test cli_e2e_v0135`
-- Pin agents to `^0.1.35`. Configuration is CLI + XDG / `.atomwrite.toml` only (no product `ATOMWRITE_*` runtime knobs; no product telemetry)
+- **Historical pin** `^0.1.35` (superseded by **`^0.1.36`**). Configuration is CLI + XDG / `.atomwrite.toml` only (no product `ATOMWRITE_*` runtime knobs; no product telemetry)
 
 ## What's New in v0.1.34
 
-v0.1.34 (2026-07-19) is the **docs-complete** publish of the v0.1.33 one-shot runtime. Same binary behavior; documentation aligned. There are still **41 subcommands**.
+v0.1.34 (2026-07-19) is the **docs-complete** publish of the v0.1.33 one-shot runtime. Same binary behavior; documentation aligned. **Historical (at v0.1.34):** still **41 subcommands**.
 
 ### One-shot fuzzy + timeout default 120
 
@@ -31,7 +58,7 @@ v0.1.34 (2026-07-19) is the **docs-complete** publish of the v0.1.33 one-shot ru
 - Cooperative cancel is polled mid-fuzzy cascade
 - Caps: pattern 64 KiB; lev 8192 chars; max windows 4096; growth max(4×,+16 MiB)
 - Regression: `cargo test --test cli_v0133_oneshot_fuzzy`
-- Fuzzy still only `auto|aggressive` (`off` rejected exit 65)
+- Fuzzy modes: `--fuzzy auto|aggressive|off` where `off` = exact-only (G-010 CLOSED in v0.1.35; historical 0.1.30 rejection superseded); default remains `auto`
 - See [ADR-0054](decisions/0054-v0-1-34-oneshot-fuzzy-timeout.md) for one-shot fuzzy + timeout (exit 124 vs 143)
 
 ```bash
@@ -47,7 +74,7 @@ atomwrite --workspace . --timeout-secs 0 replace --fuzzy auto 'old' 'new' packag
 
 ## What Was New in v0.1.30
 
-v0.1.30 (2026-07-13) closes residual agent-contract gaps on top of the v0.1.29 surface. There are **41 subcommands**.
+v0.1.30 (2026-07-13) closes residual agent-contract gaps on top of the v0.1.29 surface. **Historical (at v0.1.30):** **41 subcommands**.
 
 ### Fuzzy mandatory, match_count, indent_adjusted
 
@@ -55,7 +82,7 @@ v0.1.30 (2026-07-13) closes residual agent-contract gaps on top of the v0.1.29 s
 - Multi-occurrence edits require `--replace-all`; success NDJSON includes `match_count`
 - When indent delta realigns the replacement, success NDJSON includes `indent_adjusted: true`
 - Match failures emit ranked `best_candidate`, `candidates[]`, and `diff_preview`
-- Config `[fuzzy]` is live; `mode = "off"` in `.atomwrite.toml` is rejected
+- Config `[fuzzy]` is live; `mode = "off"` in `.atomwrite.toml` is exact-only (G-010; not rejected)
 
 ```bash
 atomwrite --workspace . replace --fuzzy auto $'fn main() {\n  let x = 1;\n}' $'fn main() {\n    let x = 2;\n}' src/main.rs
@@ -546,10 +573,18 @@ atomwrite list --count-by-ext src/
 
 ### extract
 - Extract fields from NDJSON lines or text columns
+- **Local field selection:** positional `KEY…` **or** repeatable `--field KEY` (not both — exit 65)
+- **NEVER** `extract --select` — `--select` is the **global** envelope projector only (clap collision). Use:
+  - `atomwrite extract --field path --field line_number`
+  - `atomwrite --select path extract --field path` (global shape + local field)
 
 ```bash
 echo "a b c" | atomwrite extract 0 2
+printf '{"a":1,"b":2}\n' | atomwrite extract --field a
 atomwrite search 'TODO' src/ | atomwrite extract path line_number
+atomwrite search 'TODO' src/ | atomwrite extract --field path --field line_number
+# Global shape only (projects keys on the extract output line):
+printf '{"a":1,"b":2}\n' | atomwrite --select a extract --field a
 ```
 
 ### calc
@@ -763,6 +798,7 @@ atomwrite outline src/main.rs --positions
 
 ## Global Flags
 - `--workspace <PATH>` -- restrict all operations to this root directory
+- `--config <PATH>` -- explicit `.atomwrite.toml` path (overrides workspace + XDG config; fails if missing/malformed)
 - `--verbose` / `-v` -- enable tracing output on stderr
 - `--quiet` / `-q` -- suppress non-essential output
 - `--color <auto|always|never>` -- control colored output
@@ -775,7 +811,105 @@ atomwrite outline src/main.rs --positions
 - `--json-schema` -- emit JSON schema for the subcommand output
 - `--locale <en|pt-BR>` -- override display locale (en, pt-BR); use `--locale` only (no product environment variables; XDG locale preference via `atomwrite locale`)
 - `--timeout-secs <SECONDS>` (alias `--timeout`) -- global operation timeout; **default 120**; `0` disables; deadline → exit **124**
+- `--no-auto-heal` -- skip the on-startup `wal-heal` pass (G119 L3)
+- `--no-progress` -- suppress NDJSON `progress` heartbeats on long ops (batch/replace)
+- `--select KEYS` / `--fields KEYS` -- project NDJSON to top-level keys (CSV; agent-native; long-only)
+- `--filter key=value` -- keep only NDJSON events matching top-level equality (repeatable AND; applies to errors too)
+- `--limit N` -- emit at most N NDJSON events after filtering (**long-only**; **no global `-n`** — `replace` owns `-n`)
 - `--grep <REGEX>` on `read` to filter returned lines to those matching a regex
+
+
+## 45 Subcommands (SSOT)
+
+Pin agents to `^0.1.36`. SSOT via `atomwrite agent-surface` / `CANONICAL_SUBCOMMAND_COUNT` = 45; machine tree: `atomwrite commands --include-globals`.
+
+- `read` -- reads files with metadata, checksum, optional content; `--format raw` (alias `--raw`) emits raw bytes for Unix composability (G81); `--grep <REGEX>` filters returned lines
+- `write` -- creates or overwrites files atomically via stdin; `--syntax-check` validates with tree-sitter after write (G72, exit 88); large existing targets require `--ack-overwrite` (default-deny above XDG `[write].confirm_large_bytes`)
+- `edit` -- edits surgically by line number, text marker, or exact match; `--fuzzy auto|aggressive|off` where `off` = exact-only (G-010); default `auto`; success NDJSON may include `match_count` and `indent_adjusted`; `--multi` for NDJSON multi-edit
+- `search` -- searches file content in parallel (ripgrep engine); supports `--context N`, `--max-count N`, `--invert`, `--sort path`, `--fixed`, `--word`, `--case-insensitive`, `--include`, `--exclude`
+- `replace` -- replaces text across multiple files with atomic writes; `--fuzzy auto|aggressive|off` where `off` = exact-only (G-010); default `auto`; `--fuzzy-threshold`, `--progress-every`; fuzzy multi-apply is **one-pass** L→R (`apply_fuzzy_one_pass`, never re-scans inserted text); default max applies **1** if `--max-replacements` omitted (hard ceiling 10_000); if replacement **contains** pattern (fixed-string), force single apply; match failures may emit `best_candidate`
+- `hash` -- computes BLAKE3 checksums
+- `delete` -- deletes files with optional backup; `--plan` for plan-only listing; `delete --confirm` / `--yes` / `-y` are **rejected**
+- `count` -- counts lines, files by extension
+- `diff` -- compares two files (unified, stat, or changes); second path `-` reads stdin (G-003)
+- `move` -- moves or renames files atomically
+- `copy` -- copies files with checksum verification
+- `list` -- lists project file structure with metadata
+- `extract` -- extracts fields from NDJSON or text columns; positional fields or local `--field` (never local `--select`)
+- `calc` -- evaluates mathematical expressions and unit conversions (fend engine)
+- `regex` -- generates regex from examples (grex engine)
+- `transform` -- structural AST search and rewrite (ast-grep, 306 languages)
+- `scope` -- grammatical scope over code categories; `--delete` to remove matches; `--action upper|lower|titlecase|squeeze` for text transformations; `--replace-with "text"` for custom substitution; `--query` for prepared queries (comments, fn, strings, struct, etc); `--pattern` for custom AST patterns; supports Rust (30 queries), Python (13), JS/TS (11), Go (8)
+- `backup` -- creates timestamped backups with BLAKE3 checksums; `--retention` for retention period, `--dry-run` for preview
+- `rollback` -- restores from backup; `--timestamp` or `--latest` to select backup, `--verify` for checksum validation, `--dry-run` for preview
+- `apply` -- applies patches from stdin with automatic format detection (unified diff, SEARCH/REPLACE blocks, markdown-fenced, full file); `--format` to force format, `--backup` for safety, `--dry-run` for preview
+- `batch` -- executes multiple operations from NDJSON manifest (write, replace, delete, edit, hash, move, copy); supports `--transaction` for all-or-nothing
+- `completions` -- generates shell completions
+- `set` -- (v0.1.12, v14 Tier 3) writes a value at a dotted path in a TOML or JSON file via `toml_edit`; auto-coerces int/bool/float/string
+- `get` -- (v0.1.12, v14 Tier 3) reads a value at a dotted path; NDJSON: `{"type":"get","key_path","value","found","format"}`
+- `del` -- (v0.1.12, v14 Tier 3) removes a key; `--force-missing` flag treats absent keys as no-op success
+- `case` -- (v0.1.12, v14 Tier 3) renames identifiers across multiple files via `heck`; styles: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`
+- `query` -- (v0.1.12, v14 Tier 3, G72) walks a tree-sitter AST and emits nodes as NDJSON; 305 languages via `tree-sitter-language-pack`; modes: `--kinds`, `--query <KIND>`, `-Q <KIND>`, `--tree`, `--positions`
+- `outline` -- (v0.1.12, v14 Tier 3) extracts high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON
+- `wal-stats` -- (v0.1.18) inspects WAL journal state for local diagnostics and debugging; scope via `--workspace <DIR>`; NDJSON report with `terminal_committed`, `terminal_aborted`, `total_bytes`, `oldest_age_secs`
+- `wal-heal` -- (v0.1.18) removes orphan terminal journals older than `--threshold-secs` (default 3600s); wall-clock budget via `--max-duration-ms` (default 100ms)
+- `edit-loop` -- (v0.1.22) applies N `{old, new}` pairs in 1 invocation via NDJSON on stdin; supports `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`
+- `prune-backups` -- (v0.1.22) manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` files (v0.1.20 and earlier); flags `--max-age-secs <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` for safety); NDJSON output with `path`, `reason`, `action`, `total`
+- `verify` -- (v0.1.25) verify a file checksum against an expected BLAKE3 hash; delegates to `hash --verify`; exit 0 on match, exit 81 on mismatch
+- `recipe` -- (v0.1.29/v0.1.30) list/run versioned multi-step pipelines; recursive hash skips `*.bak.*`
+- `sparse` -- (v0.1.29/v0.1.30) budgeted monorepo list/read/outline; outline emits real AST kinds
+- `semantic-merge` -- (v0.1.29/v0.1.30) three-way line-based merge for multi-agent conflicts (not AST); conflict markers default ON; opt-out `--no-conflict-markers`
+- `agent-surface` -- (v0.1.29) clap-derived tool manifesto (CLI only; MCP forbidden)
+- `watch` -- (v0.1.29, feature `watch`) filesystem events with debounce/checksum/gitignore; always emits final NDJSON `type:watch_summary`
+- `codemod` -- (v0.1.29) multi-rule AST campaign with `by_rule_id` summary
+- `semantic-search` -- (v0.1.29, feature `semantic`) offline token ranking / inverted index
+- `stat` -- (v0.1.29) alias of `read --stat`
+- `doctor` -- host readiness diagnostics
+- `locale` -- show/set/clear UI locale preference (XDG); distinct from global `--locale`
+- `commands` -- emit full command tree JSON for discovery
+- `scratch` -- `scratch init` creates staging under `$WS/.atomwrite/scratch/` for `--old-file`/`--new-file` (NEVER OS `/tmp` outside workspace; exit 126 `WORKSPACE_JAIL`)
+
+
+## Agent discovery commands
+
+Host readiness and surface inventory for LLM agents. Prefer these before inventing flag lists by hand.
+
+### `doctor` — host readiness
+
+```bash
+atomwrite --workspace . doctor --strict
+```
+
+### `commands` — full command tree JSON
+
+```bash
+atomwrite --workspace . commands --include-globals
+```
+
+### `agent-surface` — clap tool manifesto
+
+```bash
+atomwrite --workspace . agent-surface --format json
+```
+
+### `locale` — show / set / clear preference
+
+```bash
+atomwrite locale
+atomwrite locale --set pt-BR
+atomwrite locale --clear
+```
+
+### `scratch init` — staging under `.atomwrite/scratch/`
+
+```bash
+atomwrite --workspace . scratch init
+# Stage content-source files here (GAP-019); never OS /tmp for --old-file/--new-file
+SCR=.atomwrite/scratch
+printf %s "$OLD" >"$SCR/old.txt"
+printf %s "$NEW" >"$SCR/new.txt"
+atomwrite --workspace . edit --old-file "$SCR/old.txt" --new-file "$SCR/new.txt" src/f.rs
+```
 
 
 ## Configuration
@@ -827,6 +961,7 @@ For interactive agent workflows, the safe default is to let `atomwrite` update t
 - Suggestions are **context-aware**: the `WorkspaceJail` suggestion changes depending on whether the user already supplied `--workspace`
 - When the workspace IS provided: `"use a path inside the workspace (<root>)"`
 - When the workspace is NOT provided: `"set --workspace <root> (XDG/config only; no environment variables)"`
+- When `--old-file`/`--new-file` content-sources are outside the jail: stage with `scratch init` under `$WS/.atomwrite/scratch/` (GAP-019); never OS `/tmp` outside `--workspace`
 - `FileImmutable` suggests `chattr -i` (Unix) or `fsutil` (Windows) to clear the immutable attribute
 - `NoMatches` guides the user to broaden the pattern and review `--include`/`--exclude` filters
 - `BinaryFile` recommends `read --stat` for metadata-only reads (no longer references the phantom `--force-text` flag that was removed in v0.1.4)
@@ -834,12 +969,17 @@ For interactive agent workflows, the safe default is to let `atomwrite` update t
 
 Example of a context-aware error envelope (when workspace is NOT provided):
 ```json
-{"error":true,"code":"WORKSPACE_JAIL","exit":126,"message":"path outside workspace jail: /etc/passwd (workspace: /home/user/project)","path":"/etc/passwd","error_class":"precondition_failed","retryable":false,"suggestion":"set --workspace <root> (XDG/config only; no environment variables)","workspace":"/home/user/project"}
+{"error":true,"ok":false,"code":"WORKSPACE_JAIL","exit":126,"message":"path outside workspace jail: /etc/passwd (workspace: /home/user/project)","path":"/etc/passwd","error_class":"precondition_failed","retryable":false,"suggestion":"set --workspace <root> (XDG/config only; no environment variables)","workspace":"/home/user/project"}
 ```
 
 Example when workspace IS provided via `--workspace /home/user/project`:
 ```json
-{"error":true,"code":"WORKSPACE_JAIL","exit":126,"message":"path outside workspace jail: /etc/passwd (workspace: /home/user/project)","path":"/etc/passwd","error_class":"precondition_failed","retryable":false,"suggestion":"use a path inside the workspace (/home/user/project)","workspace":"/home/user/project"}
+{"error":true,"ok":false,"code":"WORKSPACE_JAIL","exit":126,"message":"path outside workspace jail: /etc/passwd (workspace: /home/user/project)","path":"/etc/passwd","error_class":"precondition_failed","retryable":false,"suggestion":"use a path inside the workspace (/home/user/project)","workspace":"/home/user/project"}
+```
+
+Match failures always include stable agent sentinels (`ok: false`, `match_count: 0` on miss):
+```json
+{"error":true,"ok":false,"code":"MATCH_FAILED","exit":65,"message":"no match for pattern","path":"src/f.rs","error_class":"precondition_failed","retryable":false,"match_count":0,"suggestion":"widen the pattern or use --fuzzy auto"}
 ```
 
 
@@ -1204,21 +1344,27 @@ echo "tiny" | atomwrite --workspace . write --expect-checksum "$CS" target.rs
 echo "tiny" | atomwrite --workspace . write --expect-checksum "$CS" --allow-shrink target.rs
 ```
 
-### --old-file/--new-file for edit (GAP-2026-018)
+### --old-file/--new-file for edit (GAP-2026-018 + GAP-019 staging)
 
 Read match/replacement content from files instead of CLI arguments, bypassing kernel ARG_MAX.
 
+**Content-source paths are jail-checked** (GAP-019). Stage under the workspace via `scratch init` — never OS `/tmp` for `--old-file`/`--new-file` (that yields exit **126** `WORKSPACE_JAIL`).
+
 ```bash
-# Before: content in argv (limited to ~131 KB)
+# Before: content in argv (limited to ~131 KB) — also fragile with quotes / $ / //
 atomwrite --workspace . edit target.rs --old "$(cat old.txt)" --new "$(cat new.txt)"
 
-# v0.1.23+: content read from files (no size limit)
-atomwrite --workspace . edit target.rs --old-file old.txt --new-file new.txt
+# Canonical (v0.1.36): stage inside workspace, then edit
+atomwrite --workspace . scratch init
+SCR=.atomwrite/scratch
+printf %s "$OLD" >"$SCR/old.txt"
+printf %s "$NEW" >"$SCR/new.txt"
+atomwrite --workspace . edit target.rs --old-file "$SCR/old.txt" --new-file "$SCR/new.txt"
 
-# Multi-pair with files:
+# Multi-pair with files (also under workspace):
 atomwrite --workspace . edit target.rs \
-  --old-file a.txt --new-file a2.txt \
-  --old-file b.txt --new-file b2.txt
+  --old-file "$SCR/a.txt" --new-file "$SCR/a2.txt" \
+  --old-file "$SCR/b.txt" --new-file "$SCR/b2.txt"
 ```
 
 ### allow_hyphen_values (GAP-2026-015)

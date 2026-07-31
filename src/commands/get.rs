@@ -41,8 +41,7 @@ pub fn cmd_get(
     if !validated.exists() {
         return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
-    let content =
-        crate::file_io::read_file_string(&validated, global.effective_max_filesize())?;
+    let content = crate::file_io::read_file_string(&validated, global.effective_max_filesize())?;
 
     let (value, found, format) = match validated.extension().and_then(|s| s.to_str()) {
         Some("toml") => {

@@ -90,10 +90,24 @@
         "string",
         "null"
       ]
+    },
+    "ok": {
+      "description": "Always false on error envelopes (GAP-2026-020 agent sentinel).",
+      "type": "boolean"
+    },
+    "match_count": {
+      "description": "Match count when ambiguity is reported; 0 on MatchFailed/NoMatches (GAP-2026-020).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
     }
   },
   "required": [
     "error",
+    "ok",
     "code",
     "exit",
     "message",

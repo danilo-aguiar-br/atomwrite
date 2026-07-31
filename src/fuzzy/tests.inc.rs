@@ -229,5 +229,69 @@ mod tests {
         let opts2 = match_opts_from_section(FuzzyMode::Aggressive, Some(0.55), &section, false);
         assert!((opts2.threshold.unwrap() - 0.55).abs() < 1e-9);
         assert!(matches!(opts2.mode, FuzzyMode::Aggressive));
+        assert!((opts.soft_floor_delta - crate::constants::FUZZY_CONTEXT_SOFT_FLOOR_DELTA).abs() < 1e-9);
+    }
+
+    /// GAP-2026-021: `whitespace_normalized` must not report similarity 1.0.
+    #[test]
+    fn normalized_strategy_similarity_is_not_fake_one() {
+        let content = "hello   world\n";
+        let old = "hello world";
+        let (out, info) = match_pair(content, old, "hola mundo", FuzzyMode::Auto, None).unwrap();
+        assert!(out.contains("hola"));
+        assert!(info.fuzzy);
+        assert_ne!(
+            info.similarity,
+            Some(1.0),
+            "normalized match must not claim perfect byte identity"
+        );
+    }
+
+    /// GAP-2026-027: aggressive radical middle rewrite should not match on borders alone.
+    #[test]
+    fn block_anchor_rejects_radical_middle_when_ratio_low() {
+        let content = "fn start() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n}\n";
+        // first/last lines match anchors but middle is completely different and longer mismatch
+        let old = "fn start() {\n    totally_different_body_xxx();\n    another_unrelated_call();\n    yet_more_noise();\n}\n";
+        let err = match_pair_with(
+            content,
+            old,
+            "fn start() { evil(); }",
+            MatchOpts {
+                mode: FuzzyMode::Aggressive,
+                threshold: Some(0.95),
+                thr_aggressive: 0.95,
+                ..Default::default()
+            },
+        );
+        // High threshold + dual-gate middle should fail or not apply silent wrong patch
+        match err {
+            Ok((out, _)) => {
+                // If it matched, content must not become the evil rewrite without high similarity
+                assert!(
+                    !out.contains("evil()"),
+                    "must not apply radical replacement on weak middle"
+                );
+            }
+            Err(AtomwriteError::MatchFailed { .. }) => {}
+            Err(other) => panic!("unexpected {other:?}"),
+        }
+    }
+
+    /// GAP-2026-025: ambiguous path surfaces `best_candidate`.
+    #[test]
+    fn ambiguous_exposes_best_candidate() {
+        let err = match_pair("aa\nxx\naa\n", "aa", "bb", FuzzyMode::Auto, None).unwrap_err();
+        match err {
+            AtomwriteError::MatchAmbiguous {
+                count,
+                best_candidate: Some(bc),
+                ..
+            } => {
+                assert_eq!(count, 2);
+                assert!(bc.text.is_some() || bc.line.is_some());
+            }
+            other => panic!("expected MatchAmbiguous with best_candidate, got {other:?}"),
+        }
     }
 }

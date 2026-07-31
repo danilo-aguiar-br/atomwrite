@@ -11,7 +11,8 @@
 
 | Version | Supported          |
 |---------|--------------------|
-| 0.1.35  | Yes                |
+| 0.1.36  | Yes                |
+| 0.1.35  | Best-effort        |
 | 0.1.33  | Best-effort        |
 | 0.1.32  | Best-effort        |
 | 0.1.30  | Best-effort        |
@@ -101,13 +102,18 @@
 - **Fix**: Added `canonicalize_existing_prefix` that resolves symlinks via `std::fs::canonicalize` on the existing portion of the path before jail verification
 - **Mitigation**: Upgrade to v0.1.27; do not create symlinks inside the workspace pointing outside
 
-### No active advisories in v0.1.35
-- `cargo audit` reports 0 vulnerabilities
-- `cargo deny check` reports 4/4 OK (advisories, bans, licenses, sources)
+### No active advisories in v0.1.36
+- **Historical (at v0.1.35 audit):** `cargo audit` reported 0 vulnerabilities; re-run on current tree before publish
+- `cargo deny check` target: 4/4 OK (advisories, bans, licenses, sources)
 - All transitive dependencies with security notes have been either upgraded or replaced
 
+### Content-source paths and workspace jail (policy, not a vulnerability)
+- `--old-file` / `--new-file` content-source paths remain under the **workspace jail** (no OS `/tmp` allowlist)
+- Agents MUST stage patch bodies via `atomwrite scratch init` under `$workspace/.atomwrite/scratch/` then pass those jail-safe paths
+- A `WORKSPACE_JAIL` (exit 126) on `/tmp/...` old/new files is **intended policy** (v0.1.36 / ADR-0055), not a security hole to bypass
 
-## Dependency Security Posture (v0.1.35)
+
+## Dependency Security Posture (v0.1.36; historical baseline v0.1.35)
 - **Memory safety**: 0 unsafe code blocks in `src/` (denied via `#![deny(unsafe_code)]` in lib root)
 - **BLAKE3**: Used for checksums only, not for cryptographic security
 - **tree-sitter-language-pack**: Parsers are downloaded on first use from the official `tree-sitter` GitHub releases via the `download` feature. The downloaded parsers are dynamically loaded but not executed as code
@@ -125,11 +131,12 @@
 - Use `--workspace` to restrict operations to the project root
 - Avoid running atomwrite as root
 - Validate `--expect-checksum` in multi-agent environments
-- Review NDJSON error output for `retryable` and `suggestion` fields
+- Review NDJSON error output for `ok: false`, `retryable`, and `suggestion` fields (exit-first parse)
 - Keep atomwrite updated to the latest version
 - Audit the `batch` manifest before execution in production
 - Subscribe to repository notifications for timely security updates
 - Use `--strict-atomic` only when you understand the trade-off (forbids cross-device copy-fallback, exit 91 on EXDEV)
 - Treat orphan journals (`.atomwrite.journal.*` sidecars from a previous crash) with suspicion: inspect the target file AND the journal content before deleting the journal
 - When G72 syntax check is enabled (`--syntax-check`), do NOT pipe sensitive content through stdin on shared systems: the error envelope may echo source location and surrounding context
+- Stage agent patches with `scratch init` + `--old-file`/`--new-file` under the workspace; do not expect OS `/tmp` to be jail-exempt
 

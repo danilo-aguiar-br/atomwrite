@@ -202,8 +202,7 @@ pub fn cmd_write(
 
     let mut risk_assessment = None;
 
-    if let Some(content_risk) =
-        assess_content_risk(&content, original_bytes, new_bytes, write_cfg)
+    if let Some(content_risk) = assess_content_risk(&content, original_bytes, new_bytes, write_cfg)
     {
         crate::runtime::warn_stderr(
             global.color_mode(),

@@ -21,18 +21,18 @@
 //! `WriteStrategy::Rename` explicitly via the `strategy` field of
 //! `AtomicWriteOptions` to force the legacy behavior.
 
-mod types;
-mod write;
-mod rename_path;
-mod syntax_heuristic;
 mod inplace;
-mod time_fmt;
 #[cfg(windows)]
 mod persist_retry;
+mod rename_path;
+mod syntax_heuristic;
+mod time_fmt;
+mod types;
+mod write;
 
+pub(crate) use inplace::{create_backup, create_backup_in};
+pub use time_fmt::{epoch_to_utc, rfc3339_now};
 pub use types::{AtomicWriteOptions, WriteResult, WriteStrategy};
 pub use write::atomic_write;
-pub use time_fmt::{epoch_to_utc, rfc3339_now};
-pub(crate) use inplace::{create_backup, create_backup_in};
 
 include!("tests.inc.rs");

@@ -254,13 +254,25 @@ fn rank_into(
     }
 }
 
-fn ambiguous_err(_old: &str, count: u64) -> AtomwriteError {
+/// GAP-2026-025: surface a disambiguation hint when multiple hits exist.
+fn ambiguous_err(old: &str, count: u64, best: Option<BestCandidate>) -> AtomwriteError {
     AtomwriteError::MatchAmbiguous {
         reason: format!(
             "found {count} matches for old string; provide more context to make it unique or pass --replace-all"
         ),
         count,
-        best_candidate: None,
+        best_candidate: best
+            .or_else(|| {
+                Some(BestCandidate {
+                    text: Some(truncate_text(old)),
+                    line: None,
+                    column: None,
+                    similarity: None,
+                    strategy: Some("ambiguous".into()),
+                    diff_preview: None,
+                })
+            })
+            .map(Box::new),
     }
 }
 

@@ -8,20 +8,21 @@
 //! process-wide thread pool; parse/classify/unlink of independent journals
 //! fan out via `rayon::par_iter` (stats, heal, recover).
 
-mod journal;
+mod heal;
 pub mod heuristics;
+mod journal;
 pub mod policy;
 mod stats;
-mod heal;
 
-pub use journal::{
-    generate_op_id, journal_aborted, journal_committed, journal_path, journal_started,
-    journal_started_with_guard, JournalEntry, JournalGuard, JournalOp, L1_LARGE_FILE_BYTES,
+pub use heal::{
+    AutoHealReport, OrphanJournalReport, auto_heal_on_startup, recover_orphan_journals,
 };
-pub use stats::{compute_wal_stats, walk_journal_paths, WalDirEntry, WalStateBreakdown, WalStats};
-pub use heal::{auto_heal_on_startup, recover_orphan_journals, AutoHealReport, OrphanJournalReport};
-pub use policy::{WalPolicy, should_create_sidecar};
 pub use heuristics::heuristics_should_preserve;
-
+pub use journal::{
+    JournalEntry, JournalGuard, JournalOp, L1_LARGE_FILE_BYTES, generate_op_id, journal_aborted,
+    journal_committed, journal_path, journal_started, journal_started_with_guard,
+};
+pub use policy::{WalPolicy, should_create_sidecar};
+pub use stats::{WalDirEntry, WalStateBreakdown, WalStats, compute_wal_stats, walk_journal_paths};
 
 include!("tests.inc.rs");

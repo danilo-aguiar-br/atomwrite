@@ -93,16 +93,12 @@ fn bench_hash_file(c: &mut Criterion) {
     configure_group(&mut group);
     group.throughput(Throughput::Bytes(1024 * 1024));
     group.bench_function("1MiB", |b| {
-        b.iter(|| {
-            atomwrite::checksum::hash_file_with_len(black_box(&path), u64::MAX).unwrap()
-        })
+        b.iter(|| atomwrite::checksum::hash_file_with_len(black_box(&path), u64::MAX).unwrap())
     });
     group.finish();
 
     report_percentiles("hash_file_with_len_1MiB", 60, || {
-        black_box(
-            atomwrite::checksum::hash_file_with_len(black_box(&path), u64::MAX).unwrap(),
-        );
+        black_box(atomwrite::checksum::hash_file_with_len(black_box(&path), u64::MAX).unwrap());
     });
 }
 

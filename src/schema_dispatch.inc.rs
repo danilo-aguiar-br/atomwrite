@@ -44,6 +44,7 @@ fn emit_json_schema(command: &Commands, mut out: impl Write) -> Result<()> {
         Commands::Watch(_) => schemars::schema_for!(ndjson_types::WatchSummary),
         Commands::Codemod(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
         Commands::SemanticSearch(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
+        Commands::Scratch(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
         Commands::Doctor(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
         Commands::Locale(_) => schemars::schema_for!(ndjson_types::ProgressEvent),
         Commands::CommandsTree(_) => schemars::schema_for!(ndjson_types::ProgressEvent),

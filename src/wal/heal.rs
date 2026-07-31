@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use rayon::prelude::*;
 use serde::Serialize;
 
-use super::journal::{JournalEntry, JournalOp, JOURNAL_EXT};
+use super::journal::{JOURNAL_EXT, JournalEntry, JournalOp};
 use super::stats::{parse_journal_state, walk_journal_paths};
 
 /// Result of an auto-heal pass on startup (G119 L3).
@@ -227,9 +227,15 @@ pub fn recover_orphan_journals(dir: &Path) -> Result<Vec<OrphanJournalReport>> {
     // Independent parse per journal → parallel when multi-item.
     let parsed: Vec<Result<Option<OrphanJournalReport>>> =
         if crate::concurrency::should_parallelize(journal_paths.len()) {
-            journal_paths.par_iter().map(|path| parse_orphan(path)).collect()
+            journal_paths
+                .par_iter()
+                .map(|path| parse_orphan(path))
+                .collect()
         } else {
-            journal_paths.iter().map(|path| parse_orphan(path)).collect()
+            journal_paths
+                .iter()
+                .map(|path| parse_orphan(path))
+                .collect()
         };
 
     let mut reports = Vec::new();
@@ -292,4 +298,3 @@ pub(crate) fn parse_orphan(path: &Path) -> Result<Option<OrphanJournalReport>> {
         pid,
     }))
 }
-

@@ -6,7 +6,6 @@ pub(crate) fn find_str(haystack: &str, needle: &str) -> Option<usize> {
     memchr::memmem::find(haystack.as_bytes(), needle.as_bytes())
 }
 
-
 pub(crate) fn count_occurrences(haystack: &str, needle: &str) -> u64 {
     if needle.is_empty() {
         return 0;
@@ -23,14 +22,14 @@ pub(crate) fn count_occurrences(haystack: &str, needle: &str) -> u64 {
     count
 }
 
-
 pub(crate) fn truncate_text(s: &str) -> String {
     if s.chars().count() <= crate::constants::FUZZY_BEST_CANDIDATE_TEXT_MAX {
         return s.to_string();
     }
-    s.chars().take(crate::constants::FUZZY_BEST_CANDIDATE_TEXT_MAX).collect()
+    s.chars()
+        .take(crate::constants::FUZZY_BEST_CANDIDATE_TEXT_MAX)
+        .collect()
 }
-
 
 pub(crate) fn line_col_of_offset(content: &str, byte_offset: usize) -> (u64, u64) {
     let mut line = 1u64;
@@ -49,7 +48,6 @@ pub(crate) fn line_col_of_offset(content: &str, byte_offset: usize) -> (u64, u64
     (line, col)
 }
 
-
 pub(crate) fn byte_offset_of_line(content: &str, line_idx: usize) -> usize {
     if line_idx == 0 {
         return 0;
@@ -65,4 +63,3 @@ pub(crate) fn byte_offset_of_line(content: &str, line_idx: usize) -> usize {
     }
     content.len()
 }
-

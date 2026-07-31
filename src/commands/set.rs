@@ -59,8 +59,7 @@ pub fn cmd_set(
         return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
 
-    let original =
-        crate::file_io::read_file_string(&validated, global.effective_max_filesize())?;
+    let original = crate::file_io::read_file_string(&validated, global.effective_max_filesize())?;
 
     let (new_content, old_value, format) = match validated.extension().and_then(|s| s.to_str()) {
         Some("toml") => toml_set(&original, &args.key_path, &args.value)?,

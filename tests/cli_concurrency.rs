@@ -389,7 +389,12 @@ fn search_target_files_parallel_stable() {
     // PAR-016: --target files uses WalkParallel + sorted emit.
     let dir = tempfile::tempdir().expect("tempdir");
     let ws = dir.path().to_str().unwrap();
-    for name in ["alpha_MARK.txt", "beta_MARK.txt", "gamma_other.txt", "delta_MARK.rs"] {
+    for name in [
+        "alpha_MARK.txt",
+        "beta_MARK.txt",
+        "gamma_other.txt",
+        "delta_MARK.rs",
+    ] {
         common::create_test_file(dir.path(), name, "body\n");
     }
     let output = common::atomwrite()
@@ -417,13 +422,13 @@ fn search_target_files_parallel_stable() {
         .filter(|e| e["type"] == "file_match")
         .collect();
     assert_eq!(hits.len(), 3, "three filenames contain MARK");
-    let paths: Vec<&str> = hits
-        .iter()
-        .filter_map(|e| e["path"].as_str())
-        .collect();
+    let paths: Vec<&str> = hits.iter().filter_map(|e| e["path"].as_str()).collect();
     let mut sorted = paths.clone();
     sorted.sort();
-    assert_eq!(paths, sorted, "file_match paths must be sorted for stable NDJSON");
+    assert_eq!(
+        paths, sorted,
+        "file_match paths must be sorted for stable NDJSON"
+    );
     let summary = events
         .iter()
         .find(|e| e["type"] == "summary")
@@ -437,13 +442,7 @@ fn doctor_reports_concurrency_bound() {
     let dir = tempfile::tempdir().expect("tempdir");
     let ws = dir.path().to_str().unwrap();
     let output = common::atomwrite()
-        .args([
-            "--workspace",
-            ws,
-            "--max-concurrency",
-            "2",
-            "doctor",
-        ])
+        .args(["--workspace", ws, "--max-concurrency", "2", "doctor"])
         .output()
         .expect("doctor");
     assert!(
@@ -456,9 +455,7 @@ fn doctor_reports_concurrency_bound() {
         .iter()
         .find(|e| e["type"] == "doctor_report")
         .expect("doctor_report");
-    let checks = report["checks"]
-        .as_array()
-        .expect("checks array");
+    let checks = report["checks"].as_array().expect("checks array");
     let bound = checks
         .iter()
         .find(|c| c["name"].as_str() == Some("concurrency_bound"))
@@ -533,11 +530,12 @@ fn sparse_list_parallel_respects_max_files_and_threads() {
         .iter()
         .filter(|e| e["type"] == "sparse_entry")
         .collect();
-    assert_eq!(entries.len(), 10, "max_files clamp after parallel discovery");
-    let paths: Vec<&str> = entries
-        .iter()
-        .filter_map(|e| e["path"].as_str())
-        .collect();
+    assert_eq!(
+        entries.len(),
+        10,
+        "max_files clamp after parallel discovery"
+    );
+    let paths: Vec<&str> = entries.iter().filter_map(|e| e["path"].as_str()).collect();
     let mut sorted = paths.clone();
     sorted.sort();
     assert_eq!(paths, sorted, "sparse list emits path-sorted NDJSON");
@@ -590,11 +588,7 @@ fn doctor_checks_sorted_stable() {
     // PAR-052: independent checks fan out; NDJSON order is name-sorted.
     let dir = tempfile::tempdir().expect("tempdir");
     let output = common::atomwrite()
-        .args([
-            "--workspace",
-            dir.path().to_str().unwrap(),
-            "doctor",
-        ])
+        .args(["--workspace", dir.path().to_str().unwrap(), "doctor"])
         .output()
         .expect("doctor");
     assert!(output.status.success());
@@ -611,7 +605,10 @@ fn doctor_checks_sorted_stable() {
         .collect();
     let mut sorted = names.clone();
     sorted.sort();
-    assert_eq!(names, sorted, "doctor checks must be name-sorted after par_iter");
+    assert_eq!(
+        names, sorted,
+        "doctor checks must be name-sorted after par_iter"
+    );
     assert!(names.contains(&"concurrency_bound"));
     assert!(names.contains(&"workspace_exists"));
 }

@@ -246,8 +246,7 @@ pub fn cmd_search(
                 if !search_binary {
                     use std::io::Read;
                     if let Ok(mut f) = std::fs::File::open(entry.path()) {
-                        let mut head =
-                            vec![0u8; crate::constants::BINARY_DETECT_SIZE];
+                        let mut head = vec![0u8; crate::constants::BINARY_DETECT_SIZE];
                         if let Ok(n) = f.read(&mut head) {
                             head.truncate(n);
                             if crate::binary_detect::is_binary(&head) {

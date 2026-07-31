@@ -1,6 +1,5 @@
 ---
 source: tests/snapshot_write.rs
-assertion_line: 250
 expression: event
 ---
 {
@@ -9,6 +8,7 @@ expression: event
   "error_class": "precondition_failed",
   "exit": 126,
   "message": "[redacted]",
+  "ok": false,
   "path": "[redacted]",
   "retryable": false,
   "suggestion": "[redacted]",

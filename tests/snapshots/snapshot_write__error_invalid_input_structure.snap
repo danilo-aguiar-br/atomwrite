@@ -1,6 +1,5 @@
 ---
 source: tests/snapshot_write.rs
-assertion_line: 220
 expression: event
 ---
 {
@@ -9,6 +8,7 @@ expression: event
   "error_class": "permanent",
   "exit": 65,
   "message": "[redacted]",
+  "ok": false,
   "retryable": false,
   "suggestion": "[redacted]"
 }

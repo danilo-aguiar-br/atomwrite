@@ -75,8 +75,7 @@ pub fn compute_wal_stats(workspace: &Path) -> Result<WalStats> {
                 .par_iter()
                 .map(|path| {
                     let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-                    let (state, last_unix) =
-                        parse_journal_state(path).unwrap_or(("malformed", 0));
+                    let (state, last_unix) = parse_journal_state(path).unwrap_or(("malformed", 0));
                     (path.clone(), size, state, last_unix)
                 })
                 .collect()
@@ -85,8 +84,7 @@ pub fn compute_wal_stats(workspace: &Path) -> Result<WalStats> {
                 .iter()
                 .map(|path| {
                     let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-                    let (state, last_unix) =
-                        parse_journal_state(path).unwrap_or(("malformed", 0));
+                    let (state, last_unix) = parse_journal_state(path).unwrap_or(("malformed", 0));
                     (path.clone(), size, state, last_unix)
                 })
                 .collect()

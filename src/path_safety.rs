@@ -59,6 +59,7 @@ pub fn validate_path_with_symlink(
         return Err(AtomwriteError::WorkspaceJail {
             path: resolved,
             workspace: workspace_resolved,
+            content_source: false,
         }
         .into());
     }
@@ -73,6 +74,7 @@ pub fn validate_path_with_symlink(
             return Err(AtomwriteError::WorkspaceJail {
                 path: real_resolved,
                 workspace: real_workspace,
+                content_source: false,
             }
             .into());
         }

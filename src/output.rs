@@ -9,25 +9,68 @@ use serde::Serialize;
 
 use crate::error::{AtomwriteError, ErrorContext, ErrorJson};
 
+include!("output_shape.inc.rs");
+
 /// Buffered NDJSON writer that flushes after every line.
+///
+/// Optional agent-native shaping (`--filter` / `--select` / `--limit`) is applied
+/// only when configured; the identity path serializes without an intermediate
+/// `serde_json::Value` (memory-friendly hot path).
 pub struct NdjsonWriter<W: Write> {
     writer: BufWriter<W>,
+    shape: OutputShape,
+    emitted: u64,
 }
 
 impl<W: Write> NdjsonWriter<W> {
-    /// Create a new NDJSON writer wrapping the given output.
+    /// Create a new NDJSON writer wrapping the given output (identity shape).
     pub fn new(inner: W) -> Self {
+        Self::with_shape(inner, OutputShape::default())
+    }
+
+    /// Create a writer with agent-native stdout shaping.
+    pub fn with_shape(inner: W, shape: OutputShape) -> Self {
         Self {
             writer: BufWriter::with_capacity(crate::constants::BUF_CAPACITY, inner),
+            shape,
+            emitted: 0,
         }
     }
 
     /// Serialize a value as a single NDJSON line and flush.
     ///
+    /// When shape flags are set: filter may drop the line; select projects
+    /// top-level keys; limit stops further emission after N lines.
+    ///
     /// # Errors
     ///
     /// Returns an I/O error if serialization or writing to the underlying writer fails.
     pub fn write_event<T: Serialize>(&mut self, event: &T) -> anyhow::Result<()> {
+        if let Some(max) = self.shape.limit
+            && self.emitted >= max
+        {
+            return Ok(());
+        }
+        if self.shape.is_identity() {
+            self.write_raw_line(event)?;
+            self.emitted = self.emitted.saturating_add(1);
+            return Ok(());
+        }
+        let value = serde_json::to_value(event)?;
+        let Some(shaped) = shape_value(value, &self.shape) else {
+            return Ok(());
+        };
+        if let Some(max) = self.shape.limit
+            && self.emitted >= max
+        {
+            return Ok(());
+        }
+        self.write_raw_line(&shaped)?;
+        self.emitted = self.emitted.saturating_add(1);
+        Ok(())
+    }
+
+    fn write_raw_line<T: Serialize>(&mut self, event: &T) -> anyhow::Result<()> {
         match serde_json::to_writer(&mut self.writer, event) {
             Ok(()) => {}
             Err(e) if is_broken_pipe(&e) => {
@@ -68,6 +111,10 @@ impl<W: Write> NdjsonWriter<W> {
     /// The context controls the suggestion text for `WorkspaceJail` errors
     /// (GAP 13 fix).
     ///
+    /// Agent-native (v0.1.36 residual): error envelopes **always emit**.
+    /// `--filter` and `--limit` apply only to success events via
+    /// [`Self::write_event`]; optional `--select` may still project keys.
+    ///
     /// # Errors
     ///
     /// Returns an I/O error if writing the error JSON to the underlying writer fails.
@@ -81,7 +128,13 @@ impl<W: Write> NdjsonWriter<W> {
         if json.path.is_none() {
             json.path = path.map(|p| p.display().to_string());
         }
-        self.write_event(&json)
+        // Bypass write_event: never filter-drop or limit-swallow errors.
+        if self.shape.select.is_none() {
+            return self.write_raw_line(&json);
+        }
+        let value = serde_json::to_value(&json)?;
+        let shaped = shape_error_value(value, &self.shape);
+        self.write_raw_line(&shaped)
     }
 
     /// Flush the underlying buffer to the output stream.
@@ -120,11 +173,38 @@ pub fn write_error_json_with_context(
     path: Option<&Path>,
     ctx: &ErrorContext,
 ) -> anyhow::Result<()> {
+    write_error_json_shaped(out, err, path, ctx, &OutputShape::default())
+}
+
+/// Write a structured error applying agent-native optional `--select` projection.
+///
+/// Used by `main` so failure envelopes stay on the same stdout contract as
+/// success events. **`--filter` never drops errors** (agent-native always-emit);
+/// **`--limit` does not apply** on this path. Only `--select`/`--fields` may
+/// thin top-level keys.
+///
+/// # Errors
+///
+/// Returns an I/O error if writing fails.
+#[cold]
+pub fn write_error_json_shaped(
+    out: &mut impl Write,
+    err: &AtomwriteError,
+    path: Option<&Path>,
+    ctx: &ErrorContext,
+    shape: &OutputShape,
+) -> anyhow::Result<()> {
     let mut json = ErrorJson::from_error_with_context(err, ctx);
     if json.path.is_none() {
         json.path = path.map(|p| p.display().to_string());
     }
-    serde_json::to_writer(&mut *out, &json)?;
+    if shape.select.is_none() {
+        serde_json::to_writer(&mut *out, &json)?;
+    } else {
+        let value = serde_json::to_value(&json)?;
+        let shaped = shape_error_value(value, shape);
+        serde_json::to_writer(&mut *out, &shaped)?;
+    }
     out.write_all(b"\n")?;
     out.flush()?;
     Ok(())
@@ -368,8 +448,7 @@ mod tests {
 
     #[test]
     fn check_json_depth_limits_nesting() {
-        let shallow: serde_json::Value =
-            serde_json::from_str(r#"{"a":{"b":1}}"#).expect("fixture");
+        let shallow: serde_json::Value = serde_json::from_str(r#"{"a":{"b":1}}"#).expect("fixture");
         assert!(check_json_depth(&shallow, 3));
         assert!(!check_json_depth(&shallow, 2));
         let leaf = serde_json::Value::from(1);

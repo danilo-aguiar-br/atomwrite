@@ -32,6 +32,8 @@ pub struct MatchOpts {
     pub thr_jw: f64,
     /// XDG `[fuzzy].threshold` auto dual-gate floor.
     pub thr_auto: f64,
+    /// XDG `[fuzzy].soft_floor_delta` for context-aware near-miss (GAP-2026-022).
+    pub soft_floor_delta: f64,
     /// When true, replace every occurrence; when false, require uniqueness.
     pub replace_all: bool,
 }
@@ -45,6 +47,7 @@ impl Default for MatchOpts {
             thr_context: crate::constants::FUZZY_THRESHOLD_CONTEXT,
             thr_jw: crate::constants::FUZZY_THRESHOLD_JW,
             thr_auto: crate::constants::FUZZY_THRESHOLD_AUTO,
+            soft_floor_delta: crate::constants::FUZZY_CONTEXT_SOFT_FLOOR_DELTA,
             replace_all: false,
         }
     }
@@ -64,6 +67,7 @@ pub fn match_opts_from_section(
         thr_context: section.threshold_context,
         thr_jw: section.threshold_jw,
         thr_auto: section.threshold,
+        soft_floor_delta: section.soft_floor_delta,
         replace_all,
     }
 }

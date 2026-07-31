@@ -27,9 +27,7 @@ fn matching_blocks_len(a: &[char], b: &[char]) -> usize {
     if n == 0 {
         return 0;
     }
-    matching_blocks_len(&a[..i], &b[..j])
-        + n
-        + matching_blocks_len(&a[i + n..], &b[j + n..])
+    matching_blocks_len(&a[..i], &b[..j]) + n + matching_blocks_len(&a[i + n..], &b[j + n..])
 }
 
 fn longest_match(a: &[char], b: &[char]) -> (usize, usize, usize) {

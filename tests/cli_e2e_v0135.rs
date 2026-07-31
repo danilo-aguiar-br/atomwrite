@@ -1,8 +1,8 @@
 //! Contract e2e for atomwrite v0.1.35 residual gaps (G-024 expanded).
 #![cfg(unix)]
 
-use assert_cmd::cargo::cargo_bin;
 use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin;
 use predicates::prelude::*;
 use std::fs;
 use std::path::PathBuf;
@@ -16,10 +16,15 @@ fn bin() -> Command {
 fn doctor_strict_ok_without_feature_warns() {
     let dir = tempdir().unwrap();
     let mut cmd = bin();
-    cmd.args(["--workspace", dir.path().to_str().unwrap(), "doctor", "--strict"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("doctor_report"));
+    cmd.args([
+        "--workspace",
+        dir.path().to_str().unwrap(),
+        "doctor",
+        "--strict",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("doctor_report"));
 }
 
 #[test]
@@ -67,11 +72,16 @@ fn calc_comment_only_fails_empty() {
     // B-009: comments are skipped; comment-only stdin has no expressions → error.
     let dir = tempdir().unwrap();
     let mut cmd = bin();
-    cmd.args(["--workspace", dir.path().to_str().unwrap(), "calc", "--stdin"])
-        .write_stdin("# not an expression\n")
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains("INVALID_INPUT").or(predicate::str::contains("error")));
+    cmd.args([
+        "--workspace",
+        dir.path().to_str().unwrap(),
+        "calc",
+        "--stdin",
+    ])
+    .write_stdin("# not an expression\n")
+    .assert()
+    .failure()
+    .stdout(predicate::str::contains("INVALID_INPUT").or(predicate::str::contains("error")));
 }
 
 #[test]
@@ -79,7 +89,12 @@ fn calc_comment_then_expression_ok() {
     // B-009: comments skipped; following expression evaluates.
     let dir = tempdir().unwrap();
     bin()
-        .args(["--workspace", dir.path().to_str().unwrap(), "calc", "--stdin"])
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "calc",
+            "--stdin",
+        ])
         .write_stdin("# ignore\n2 + 2\n")
         .assert()
         .success()
@@ -144,7 +159,9 @@ fn delete_plan_only_still_exists() {
     let s = String::from_utf8_lossy(&out);
     assert!(path.exists(), "delete --plan must not delete");
     assert!(
-        s.contains("\"files_modified\":0") || s.contains("files_modified\":0") || s.contains("plan"),
+        s.contains("\"files_modified\":0")
+            || s.contains("files_modified\":0")
+            || s.contains("plan"),
         "plan/files_modified=0 expected, got {s}"
     );
 }
@@ -366,7 +383,6 @@ fn fuzzy_match_failed_code() {
                 .or(predicate::str::contains("error")),
         );
 }
-
 
 #[test]
 fn replace_binary_exits_binary_file_not_no_matches() {

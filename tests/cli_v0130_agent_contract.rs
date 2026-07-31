@@ -225,7 +225,11 @@ fn recipe_hash_skips_bak() {
 #[test]
 fn sparse_outline_emits_kind() {
     let dir = tempdir().unwrap();
-    fs::write(dir.path().join("lib.rs"), "pub fn hello() {}\nstruct Foo;\n").unwrap();
+    fs::write(
+        dir.path().join("lib.rs"),
+        "pub fn hello() {}\nstruct Foo;\n",
+    )
+    .unwrap();
     let out = bin()
         .args([
             "--workspace",
@@ -339,5 +343,8 @@ fn search_target_files() {
         .stdout
         .clone();
     let s = String::from_utf8_lossy(&out);
-    assert!(s.contains("file_match") || s.contains("unique_name_xyz"), "{s}");
+    assert!(
+        s.contains("file_match") || s.contains("unique_name_xyz"),
+        "{s}"
+    );
 }

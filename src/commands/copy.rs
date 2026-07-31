@@ -66,8 +66,7 @@ pub fn cmd_copy(
 
     // v0.1.28 / G-007: overwrite requires EXPLICIT CLI authorization
     // (--force or --backup). No product env knobs.
-    let overwrite_authorized =
-        args.force || args.backup_opts.backup == Some(true);
+    let overwrite_authorized = args.force || args.backup_opts.backup == Some(true);
     if target.exists() && !overwrite_authorized {
         return Err(AtomwriteError::InvalidInput {
             reason: format!(
@@ -127,28 +126,26 @@ pub fn cmd_copy(
             }
         }
 
-        let results: Vec<Result<CopiedMeta, anyhow::Error>> =
-            if should_parallelize(pairs.len()) {
-                pairs
-                    .par_iter()
-                    .map(|(src, dest)| {
-                        if crate::signal::is_global_shutdown() {
-                            return Err(crate::signal::cancelled_error(
-                                "copy cancelled by signal",
-                            )
-                            .into());
-                        }
-                        copy_file_atomic(src, dest, args, &workspace, max_size, resolved)
-                    })
-                    .collect()
-            } else {
-                pairs
-                    .iter()
-                    .map(|(src, dest)| {
-                        copy_file_atomic(src, dest, args, &workspace, max_size, resolved)
-                    })
-                    .collect()
-            };
+        let results: Vec<Result<CopiedMeta, anyhow::Error>> = if should_parallelize(pairs.len()) {
+            pairs
+                .par_iter()
+                .map(|(src, dest)| {
+                    if crate::signal::is_global_shutdown() {
+                        return Err(
+                            crate::signal::cancelled_error("copy cancelled by signal").into()
+                        );
+                    }
+                    copy_file_atomic(src, dest, args, &workspace, max_size, resolved)
+                })
+                .collect()
+        } else {
+            pairs
+                .iter()
+                .map(|(src, dest)| {
+                    copy_file_atomic(src, dest, args, &workspace, max_size, resolved)
+                })
+                .collect()
+        };
 
         if crate::signal::is_global_shutdown() {
             return Ok(());

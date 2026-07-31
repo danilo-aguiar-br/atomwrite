@@ -56,28 +56,20 @@ fn bench_read_file_bytes(c: &mut Criterion) {
 
     group.throughput(Throughput::Bytes(1024));
     group.bench_function(BenchmarkId::new("path", "1KiB_fs_read"), |b| {
-        b.iter(|| {
-            atomwrite::file_io::read_file_bytes(black_box(&small_path), u64::MAX).unwrap()
-        })
+        b.iter(|| atomwrite::file_io::read_file_bytes(black_box(&small_path), u64::MAX).unwrap())
     });
 
     group.throughput(Throughput::Bytes(2 * 1024 * 1024));
     group.bench_function(BenchmarkId::new("path", "2MiB_mmap"), |b| {
-        b.iter(|| {
-            atomwrite::file_io::read_file_bytes(black_box(&large_path), u64::MAX).unwrap()
-        })
+        b.iter(|| atomwrite::file_io::read_file_bytes(black_box(&large_path), u64::MAX).unwrap())
     });
     group.finish();
 
     report_percentiles("read_1KiB_fs", 200, || {
-        black_box(
-            atomwrite::file_io::read_file_bytes(black_box(&small_path), u64::MAX).unwrap(),
-        );
+        black_box(atomwrite::file_io::read_file_bytes(black_box(&small_path), u64::MAX).unwrap());
     });
     report_percentiles("read_2MiB_mmap", 40, || {
-        black_box(
-            atomwrite::file_io::read_file_bytes(black_box(&large_path), u64::MAX).unwrap(),
-        );
+        black_box(atomwrite::file_io::read_file_bytes(black_box(&large_path), u64::MAX).unwrap());
     });
 }
 

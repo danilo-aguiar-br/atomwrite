@@ -129,7 +129,11 @@ fn hash_multi_file_sorted_parallel() {
         .output()
         .expect("run");
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let events = common::parse_ndjson(&output.stdout);
     assert_eq!(events.len(), 3);
     let paths: Vec<&str> = events

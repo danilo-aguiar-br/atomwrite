@@ -87,27 +87,7 @@ fn match_indent_flexible(content: &[&str], pattern: &[&str]) -> Option<(usize, u
     None
 }
 
-fn normalize_escapes(s: &str) -> String {
-    s.replace("\\n", "\n")
-        .replace("\\t", "\t")
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\")
-}
-
-fn match_escape_normalized(content: &str, pattern: &str) -> Option<(usize, usize)> {
-    let norm_pat = normalize_escapes(pattern);
-    if norm_pat == pattern {
-        return None;
-    }
-    let norm_content = normalize_escapes(content);
-    if let Some(norm_pos) = norm_content.find(&norm_pat) {
-        let end_pos = norm_pos + norm_pat.len();
-        if end_pos <= content.len() {
-            return Some((norm_pos, end_pos));
-        }
-    }
-    None
-}
+// escape normalize + map: see escape_map.inc.rs (GAP-2026-024)
 
 fn match_trimmed_boundary(content: &[&str], pattern: &[&str]) -> Option<(usize, usize)> {
     let start = pattern.iter().position(|l| !l.trim().is_empty())?;

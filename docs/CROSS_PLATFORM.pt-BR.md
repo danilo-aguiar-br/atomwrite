@@ -7,14 +7,16 @@
 
 
 
-### Matriz de verificação (v0.1.35 honesta)
+### Matriz de verificação (v0.1.36 honesta)
 
 | Plataforma | Status |
 |------------|--------|
-| Linux x86_64 | e2e completo + suite unit/integration |
+| Linux x86_64 | e2e completo + suite unit/integration (`cli_v0136_gaps`, contrato residual de agente) |
 | Windows (`x86_64-pc-windows-gnu`) | `cargo check` no host Linux |
 | macOS (apple-darwin) | suporte `cfg` no fonte; cross-compile pode falhar sem SDK host/osxcross — prova de runtime em Mac real |
 | CI / GitHub Actions | **Não** embarcado neste repositório (somente gates locais) |
+
+**Nota v0.1.36 (todas as plataformas):** o jail do workspace para content-source (`--old-file`/`--new-file`) é agnóstico de SO — faça staging em `$WS/.atomwrite/scratch/` via `scratch init`; nunca confie em `/tmp` do SO fora do `--workspace`. Shape agent-native de stdout (`--select`/`--filter`/`--limit`) e envelopes de erro (`ok:false`) são idênticos entre plataformas.
 
 ## O Que Há de Novo na v0.1.12
 
@@ -352,11 +354,21 @@ Esta release é retrocompatível em Linux, macOS e Windows para flags existentes
 - Regressão: `cargo test --test cli_v0133_oneshot_fuzzy`
 - Veja [MIGRATION.pt-BR.md](MIGRATION.pt-BR.md#v0133-para-v0134-atual) e ADR-0054
 
-## v0.1.35 — Honest multi-OS and local gates
+## v0.1.35 — Multi-OS honesto e gates locais
 
-- Linux: full e2e + unit/integration
-- Windows-gnu: `cargo check --target x86_64-pc-windows-gnu` on Linux host
-- macOS: source-level `cfg`; cross may fail without host SDK — validate on a real Mac
-- Product repo ships **no** GitHub Actions workflows; use local DoD from `docs/TESTING.md`
-- Watch/notify and path separators are platform-specific; see A-XPLAT-001 in gaps.md §20
+- Linux: e2e completo + unit/integration
+- Windows-gnu: `cargo check --target x86_64-pc-windows-gnu` no host Linux
+- macOS: `cfg` no fonte; cross pode falhar sem SDK do host — validar em Mac real
+- O repositório de produto **não** embarca workflows GitHub Actions; use o DoD local de `docs/TESTING.pt-BR.md`
+- Watch/notify e separadores de path são específicos de plataforma; veja A-XPLAT-001 em gaps.md §20
+
+## v0.1.36 — Contrato de agente (neutro de plataforma)
+
+- Fixe agentes em `^0.1.36`; **45** subcomandos SSOT (`agent-surface` / `commands`)
+- SSOT **45** subcomandos idênticos em Linux/macOS/Windows: `agent-surface`, `apply`, `backup`, `batch`, `calc`, `case`, `codemod`, `commands`, `completions`, `copy`, `count`, `del`, `delete`, `diff`, `doctor`, `edit`, `edit-loop`, `extract`, `get`, `hash`, `list`, `locale`, `move`, `outline`, `prune-backups`, `query`, `read`, `recipe`, `regex`, `replace`, `rollback`, `scope`, `scratch`, `search`, `semantic-merge`, `semantic-search`, `set`, `sparse`, `stat`, `transform`, `verify`, `wal-heal`, `wal-stats`, `watch`, `write`. Features: `watch` precisa da feature `watch`; `semantic-search` precisa da feature `semantic`; comandos AST precisam das features default/full — mas os nomes ainda fazem parte do SSOT da superfície.
+- Jail de content-source + `scratch init` (sem allowlist de `/tmp`) — mesma política de path em Linux/macOS/Windows
+- NDJSON de erro sempre inclui `ok: false` + `match_count` estável
+- Globais `--select`/`--fields`, `--filter`, `--limit` (somente long; sem `-n` global)
+- Suite de contrato: `cargo test --test cli_v0136_gaps`; SSOT: `scripts/check-gaps-ssot.sh`
+- Veja ADR-0055 e `gaps.md` GAP-2026-019…033
 

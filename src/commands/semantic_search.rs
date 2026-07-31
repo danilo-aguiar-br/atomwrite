@@ -173,16 +173,12 @@ pub fn cmd_semantic_search(
         let scored: Vec<ScoredFile> = if should_parallelize(files.len()) {
             files
                 .par_iter()
-                .map(|path| {
-                    score_file(path, &q_tokens, min_score, max_size, build_index, shutdown)
-                })
+                .map(|path| score_file(path, &q_tokens, min_score, max_size, build_index, shutdown))
                 .collect()
         } else {
             files
                 .iter()
-                .map(|path| {
-                    score_file(path, &q_tokens, min_score, max_size, build_index, shutdown)
-                })
+                .map(|path| score_file(path, &q_tokens, min_score, max_size, build_index, shutdown))
                 .collect()
         };
 

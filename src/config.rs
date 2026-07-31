@@ -142,6 +142,9 @@ pub struct FuzzySection {
     /// Jaro-Winkler line threshold.
     #[serde(default = "default_fuzzy_jw")]
     pub threshold_jw: f64,
+    /// Context-aware soft-floor delta below threshold (GAP-2026-022; XDG `[fuzzy]`).
+    #[serde(default = "default_fuzzy_soft_floor")]
+    pub soft_floor_delta: f64,
 }
 
 fn default_fuzzy_aggressive() -> f64 {
@@ -153,6 +156,9 @@ fn default_fuzzy_context() -> f64 {
 fn default_fuzzy_jw() -> f64 {
     crate::constants::FUZZY_THRESHOLD_JW
 }
+fn default_fuzzy_soft_floor() -> f64 {
+    crate::constants::FUZZY_CONTEXT_SOFT_FLOOR_DELTA
+}
 
 impl Default for FuzzySection {
     fn default() -> Self {
@@ -162,10 +168,10 @@ impl Default for FuzzySection {
             threshold_aggressive: crate::constants::FUZZY_THRESHOLD_AGGRESSIVE,
             threshold_context: crate::constants::FUZZY_THRESHOLD_CONTEXT,
             threshold_jw: crate::constants::FUZZY_THRESHOLD_JW,
+            soft_floor_delta: crate::constants::FUZZY_CONTEXT_SOFT_FLOOR_DELTA,
         }
     }
 }
-
 
 /// Storage configuration (XDG; no process env knobs).
 #[derive(Debug, Default, serde::Deserialize)]
@@ -343,7 +349,9 @@ pub fn resolve_fuzzy(
     };
     let threshold = match cli_threshold {
         Some(t) => Some(t),
-        None if (cfg.threshold - crate::constants::FUZZY_THRESHOLD_AUTO).abs() > f64::EPSILON => Some(cfg.threshold),
+        None if (cfg.threshold - crate::constants::FUZZY_THRESHOLD_AUTO).abs() > f64::EPSILON => {
+            Some(cfg.threshold)
+        }
         None => None,
     };
     Ok((mode, threshold))

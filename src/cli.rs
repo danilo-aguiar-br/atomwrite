@@ -202,6 +202,43 @@ pub struct GlobalArgs {
         action = clap::ArgAction::SetTrue
     )]
     pub no_auto_heal: bool,
+
+    /// Project NDJSON events to top-level keys only (agent-native; comma-separated).
+    ///
+    /// Applied by the stdout writer for every subcommand. Missing keys are
+    /// omitted (no null filler). Alias: `--fields`.
+    #[arg(
+        long = "select",
+        visible_alias = "fields",
+        global = true,
+        value_name = "KEYS",
+        help = "Project NDJSON to top-level keys (CSV); alias --fields"
+    )]
+    pub select: Option<String>,
+
+    /// Keep only NDJSON events matching top-level key equality (repeatable AND).
+    ///
+    /// Expressions: `key=value`, `key==value`, or `key!=value`. Values may be
+    /// `true`/`false`/`null`/number/string. Applies to all events including errors.
+    #[arg(
+        long = "filter",
+        global = true,
+        value_name = "EXPR",
+        action = clap::ArgAction::Append,
+        help = "Filter NDJSON events by top-level key=value (repeatable AND)"
+    )]
+    pub filter: Vec<String>,
+
+    /// Emit at most N NDJSON events after filtering (agent-native token bound).
+    ///
+    /// Long-only: short `-n` is reserved by `replace --max-replacements` (`-n`).
+    #[arg(
+        long = "limit",
+        global = true,
+        value_name = "N",
+        help = "Max NDJSON events after --filter (agent-native; long-only, -n is replace)"
+    )]
+    pub limit: Option<u64>,
 }
 
 impl GlobalArgs {
@@ -359,6 +396,9 @@ pub enum Commands {
     SemanticSearch(crate::commands::semantic_search::SemanticSearchArgs),
     /// Diagnose environment and dependencies (agent host readiness)
     Doctor(crate::commands::doctor::DoctorArgs),
+
+    /// Create agent staging dir under workspace (never OS /tmp)
+    Scratch(crate::commands::scratch::ScratchArgs),
 
     /// Show resolved UI locale / persist preference (XDG)
     Locale(crate::commands::locale_cmd::LocaleArgs),

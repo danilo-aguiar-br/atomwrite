@@ -8,11 +8,7 @@ fn delete_removes_file() {
     let path = common::create_test_file(dir.path(), "gone.txt", "bye\n");
 
     let output = common::atomwrite()
-        .args([
-            "--workspace",
-            dir.path().to_str().unwrap(),
-            "delete",
-        ])
+        .args(["--workspace", dir.path().to_str().unwrap(), "delete"])
         .arg(&path)
         .output()
         .expect("run");
@@ -78,11 +74,7 @@ fn delete_not_found_exits_4() {
     let dir = tempfile::tempdir().expect("tempdir");
 
     let output = common::atomwrite()
-        .args([
-            "--workspace",
-            dir.path().to_str().unwrap(),
-            "delete",
-        ])
+        .args(["--workspace", dir.path().to_str().unwrap(), "delete"])
         .arg(dir.path().join("nonexistent.txt"))
         .output()
         .expect("run");

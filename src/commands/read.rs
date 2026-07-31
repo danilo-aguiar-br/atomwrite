@@ -156,7 +156,14 @@ fn write_raw(
 ) -> Result<()> {
     // B-006: `--format raw` always emits file bytes (TTY and non-TTY).
     // Agent NDJSON contract uses default format; `--bytes` is a no-op alias.
-    let _ = (args.bytes, path, hash, permissions_str, modified_str, is_binary);
+    let _ = (
+        args.bytes,
+        path,
+        hash,
+        permissions_str,
+        modified_str,
+        is_binary,
+    );
     writer.flush()?;
     let inner = std::io::stdout();
     let mut lock = inner.lock();

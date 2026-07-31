@@ -41,8 +41,9 @@ pub fn cmd_diff(
     let stdin_b = args.file_b.as_os_str() == "-";
     if stdin_a && stdin_b {
         return Err(AtomwriteError::InvalidInput {
-            reason: "diff: only one of FILE_A or FILE_B may be '-' (stdin); both sides cannot be stdin"
-                .into(),
+            reason:
+                "diff: only one of FILE_A or FILE_B may be '-' (stdin); both sides cannot be stdin"
+                    .into(),
         }
         .into());
     }

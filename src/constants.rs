@@ -24,6 +24,19 @@ pub const TEMPFILE_PREFIX: &str = ".atomwrite-";
 /// Suffix for atomic write tempfiles.
 pub const TEMPFILE_SUFFIX: &str = ".tmp";
 
+/// Relative directory under workspace for agent patch staging (GAP-2026-019).
+///
+/// Content-source files for `--old-file`/`--new-file` MUST live under the
+/// workspace jail. Agents stage patches at `{workspace}/{SCRATCH_DIR_REL}/…`
+/// instead of OS temp (`/tmp`), which is outside the jail by default.
+pub const SCRATCH_DIR_REL: &str = ".atomwrite/scratch";
+
+/// Canonical clap `Commands` / `agent-surface` tool count (v0.1.36+ SSOT).
+///
+/// Kept in sync by unit test against `Cli::command().get_subcommands()`.
+/// When adding a subcommand: bump this constant and agent-facing docs (45).
+pub const CANONICAL_SUBCOMMAND_COUNT: usize = 45;
+
 /// Default number of backup copies to retain.
 pub const DEFAULT_BACKUP_RETENTION: u8 = 5;
 

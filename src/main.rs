@@ -123,7 +123,13 @@ fn map_run_error(err: &anyhow::Error, cli: &atomwrite::cli::Cli) -> ExitCode {
             workspace_provided: cli.global.workspace.is_some(),
             workspace: cli.global.workspace.clone(),
         };
-        let _ = atomwrite::output::write_error_json_with_context(&mut out, aw_err, None, &ctx);
+        let shape = atomwrite::output::OutputShape::from_cli(
+            cli.global.select.as_deref(),
+            &cli.global.filter,
+            cli.global.limit,
+        )
+        .unwrap_or_default();
+        let _ = atomwrite::output::write_error_json_shaped(&mut out, aw_err, None, &ctx, &shape);
         let _ = out.flush();
         return ExitCode::from(aw_err.exit_code());
     }
@@ -134,7 +140,13 @@ fn map_run_error(err: &anyhow::Error, cli: &atomwrite::cli::Cli) -> ExitCode {
             workspace_provided: cli.global.workspace.is_some(),
             workspace: cli.global.workspace.clone(),
         };
-        let _ = atomwrite::output::write_error_json_with_context(&mut out, &aw_err, None, &ctx);
+        let shape = atomwrite::output::OutputShape::from_cli(
+            cli.global.select.as_deref(),
+            &cli.global.filter,
+            cli.global.limit,
+        )
+        .unwrap_or_default();
+        let _ = atomwrite::output::write_error_json_shaped(&mut out, &aw_err, None, &ctx, &shape);
         let _ = out.flush();
         return ExitCode::from(aw_err.exit_code());
     }

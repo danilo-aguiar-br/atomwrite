@@ -152,7 +152,8 @@ fn batch_interrupted_by_signal() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .args(["--ready-file"]).arg(&ready_path)
+        .args(["--ready-file"])
+        .arg(&ready_path)
         .spawn()
         .unwrap();
 
@@ -211,7 +212,8 @@ fn shutdown_message_on_stderr() {
             "searchable",
         ])
         .arg(dir.path())
-        .args(["--ready-file"]).arg(&ready_path)
+        .args(["--ready-file"])
+        .arg(&ready_path)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()

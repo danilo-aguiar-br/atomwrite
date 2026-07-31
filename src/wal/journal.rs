@@ -189,9 +189,8 @@ pub(crate) fn append_entry(target: &Path, entry: &JournalEntry) -> Result<()> {
         .open(&path)
         .with_context(|| format!("failed to open journal {}", path.display()))?;
     // Stream serialize (to_writer) rather than String intermediate — NDJSON rules.
-    serde_json::to_writer(&mut file, entry).with_context(|| {
-        format!("failed to serialize journal entry for {}", target.display())
-    })?;
+    serde_json::to_writer(&mut file, entry)
+        .with_context(|| format!("failed to serialize journal entry for {}", target.display()))?;
     file.write_all(b"\n")
         .with_context(|| format!("failed to write journal entry to {}", path.display()))?;
     file.sync_data()

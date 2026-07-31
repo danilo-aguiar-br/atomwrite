@@ -56,3 +56,104 @@ AGENTS.pt-BR.md
 gaps.md
 fuzz/corpus/
 .serena/
+
+# BEGIN GH_SKILL_HYGIENE
+# Managed by ~/.grok/skills/gh/scripts/pre-commit-hygiene.sh — do not hand-edit inside markers
+# Ensures agent residual, secrets, DBs, media dumps and temp dirs never enter git
+# Empty/whitespace-only patterns are rejected (never added). No *.lock patterns.
+# --- extensions ---
+*.7z
+*.log
+*.env
+*.png
+*.jpg
+# --- name contains OR extension: .bak ---
+*.bak
+*.bak.*
+*.*.bak
+*.*.bak.*
+# --- name contains OR extension: .tmp ---
+*.tmp
+*.tmp.*
+*.*.tmp
+*.*.tmp.*
+# --- name contains OR extension: .journal ---
+*.journal
+*.journal.*
+*.*.journal
+*.*.journal.*
+# --- name contains OR extension: .atomwrite_tmp ---
+*.atomwrite_tmp
+*.atomwrite_tmp.*
+*atomwrite_tmp*
+# --- name contains: _tmp ---
+*_tmp*
+# --- name contains: .atomwrite- ---
+*.atomwrite-*
+*atomwrite-*
+# --- name contains: .atom_ ---
+*.atom_*
+*atom_*
+# --- name contains: .atom- ---
+*.atom-*
+*atom-*
+# --- name contains: ._agent_tmp ---
+*._agent_tmp*
+._agent_tmp*
+# --- name contains: agent_tmp ---
+*agent_tmp*
+# --- name contains: .tmp_ ---
+*.tmp_*
+*.*.tmp_*
+# --- named files (any depth) ---
+gaps.md
+**/gaps.md
+graphrag.sqlite
+**/graphrag.sqlite
+graphrag.sqlite.enrich-queue.sqlite
+**/graphrag.sqlite.enrich-queue.sqlite
+graphrag.sqlite-wal
+**/graphrag.sqlite-wal
+.enrich-queue.sqlite
+**/.enrich-queue.sqlite
+.enrich-queue.sqlite-shm
+**/.enrich-queue.sqlite-shm
+.ingest-queue.sqlite-shm
+**/.ingest-queue.sqlite-shm
+.ingest-queue.sqlite-wal
+**/.ingest-queue.sqlite-wal
+CLAUDE.md
+/CLAUDE.md
+.commit_hash
+**/.commit_hash
+# --- directories (prefix + contents) ---
+base_*/
+docs_rules*/
+.atomwrite_*/
+.atomwrite-*/
+.atomwrite*/
+.tmp*/
+.atom_*/
+.atom-*/
+.agent_*/
+_agent_*/
+.staging*/
+.tmp_*/
+# --- exact directories + contents ---
+.setting.cyber/
+.setting.cyber/**
+docs_rules_ingest/
+docs_rules_ingest/**
+.claude/
+.claude/**
+.skill-build/
+.skill-build/**
+.enrich-overnight/
+.enrich-overnight/**
+.archive/
+.archive/**
+uploads/
+uploads/**
+docs_bugs/
+docs_bugs/**
+# END GH_SKILL_HYGIENE

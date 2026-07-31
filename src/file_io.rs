@@ -179,7 +179,9 @@ mod tests {
         let path = dir.path().join("big.txt");
         std::fs::write(&path, vec![b'x'; 64]).unwrap();
         let err = read_file_bytes(&path, 16).unwrap_err();
-        let ae = err.downcast_ref::<AtomwriteError>().expect("AtomwriteError");
+        let ae = err
+            .downcast_ref::<AtomwriteError>()
+            .expect("AtomwriteError");
         assert!(
             matches!(
                 ae,

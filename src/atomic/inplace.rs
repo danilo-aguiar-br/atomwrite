@@ -15,7 +15,11 @@ use super::time_fmt::utc_timestamp_formatted;
 /// tempfile pipeline. Reuses `content` (no second heap buffer / no re-read
 /// of the temp file) and performs a single truncate+write+fsync.
 #[cfg(unix)]
-pub(crate) fn copy_tempfile_to_target(_temp: &std::fs::File, target: &Path, content: &[u8]) -> Result<()> {
+pub(crate) fn copy_tempfile_to_target(
+    _temp: &std::fs::File,
+    target: &Path,
+    content: &[u8],
+) -> Result<()> {
     use std::io::Write;
     let mut target_file = fs::OpenOptions::new()
         .write(true)
@@ -224,4 +228,3 @@ pub(crate) fn cleanup_old_backups_in(parent: &Path, prefix_name: &str, retention
         let _ = fs::remove_file(old);
     }
 }
-

@@ -61,8 +61,6 @@
 
 rust_i18n::i18n!("locales", fallback = "en");
 
-/// Atomic file write pipeline.
-pub mod concurrency;
 pub mod atomic;
 /// Binary content detection heuristics.
 pub mod binary_detect;
@@ -74,24 +72,26 @@ pub mod cli;
 pub mod cli_args;
 /// Subcommand handler implementations.
 pub mod commands;
+/// Atomic file write pipeline.
+pub mod concurrency;
 /// Configuration file loading (`.atomwrite.toml`).
 pub mod config;
 /// Named constants for buffer sizes, thresholds, and identifiers.
 pub mod constants;
-/// Domain-specific error types.
-pub mod error;
 /// Runtime environment autodetection (WSL, container, CI, Termux, …).
 pub mod env_detect;
+/// Domain-specific error types.
+pub mod error;
 /// Smart file reading with memmap2 for large files.
 pub mod file_io;
 /// Shared 9-strategy fuzzy match cascade (edit/replace/batch/edit-loop).
 pub mod fuzzy;
 /// Shared language utilities for AST commands.
 pub mod lang_utils;
-/// UI locale detection, negotiation, and resolved language state.
-pub mod locale;
 /// Line ending detection and normalization.
 pub mod line_endings;
+/// UI locale detection, negotiation, and resolved language state.
+pub mod locale;
 /// Advisory file locking for concurrent edit protection (G54).
 pub mod lock;
 /// NDJSON output type definitions.
@@ -107,12 +107,12 @@ pub mod output;
 pub mod path_safety;
 /// Platform-specific fsync helpers.
 pub mod platform;
+/// Binary startup helpers (tracing, locale, clap error mapping).
+pub mod runtime;
 /// Graceful shutdown signal handling.
 pub mod signal;
 /// Cross-platform storage paths (XDG / ProjectDirs; no product env knobs).
 pub mod storage;
-/// Binary startup helpers (tracing, locale, clap error mapping).
-pub mod runtime;
 /// G72 — Real syntax check via `tree-sitter-language-pack` (v0.1.12).
 #[cfg(feature = "ast")]
 #[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
@@ -137,9 +137,7 @@ pub use crate::cli_args::FuzzyMode;
 pub use crate::fuzzy::{FuzzyInfo, match_pair};
 pub use crate::ndjson_types::BestCandidate;
 
-
 include!("schema_dispatch.inc.rs");
-
 
 /// Dispatch the parsed CLI to the appropriate subcommand handler.
 ///
@@ -163,7 +161,12 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
     // `--threads` / `--max-concurrency` / `0` / omit → see `concurrency::effective_threads`.
     concurrency::configure_global_pool(cli.global.threads);
 
-    let mut writer = NdjsonWriter::new(stdout);
+    let shape = crate::output::OutputShape::from_cli(
+        cli.global.select.as_deref(),
+        &cli.global.filter,
+        cli.global.limit,
+    )?;
+    let mut writer = NdjsonWriter::with_shape(stdout, shape);
     let shutdown = signal::get_or_install_handlers()?;
     // Rules Rust one-shot: global wall-clock deadline (cooperative cancel).
     signal::arm_global_timeout(cli.global.timeout_secs);
@@ -254,16 +257,14 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
             }
             commands::search::cmd_search(&args, &cli.global, &mut writer, &shutdown)
         }
-        Commands::Replace(args) => {
-            commands::replace::cmd_replace(
-                args,
-                &cli.global,
-                &mut writer,
-                &shutdown,
-                defaults,
-                fuzzy_cfg,
-            )
-        }
+        Commands::Replace(args) => commands::replace::cmd_replace(
+            args,
+            &cli.global,
+            &mut writer,
+            &shutdown,
+            defaults,
+            fuzzy_cfg,
+        ),
         Commands::Hash(args) => commands::hash::cmd_hash(args, &cli.global, stdin, &mut writer),
         Commands::Delete(args) => {
             commands::delete::cmd_delete(args, &cli.global, &mut writer, defaults)
@@ -359,16 +360,14 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
         Commands::Sparse(args) => {
             commands::sparse::cmd_sparse(args, &cli.global, &mut writer, &shutdown, defaults)
         }
-        Commands::Recipe(args) => {
-            commands::recipe::cmd_recipe(
-                args,
-                &cli.global,
-                &mut writer,
-                &shutdown,
-                defaults,
-                fuzzy_cfg,
-            )
-        }
+        Commands::Recipe(args) => commands::recipe::cmd_recipe(
+            args,
+            &cli.global,
+            &mut writer,
+            &shutdown,
+            defaults,
+            fuzzy_cfg,
+        ),
         Commands::Stat(args) => {
             let mut a = args.clone();
             a.stat = true;
@@ -399,6 +398,7 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
             &shutdown,
             defaults,
         ),
+        Commands::Scratch(args) => commands::scratch::cmd_scratch(args, &cli.global, &mut writer),
         Commands::Doctor(args) => {
             commands::doctor::cmd_doctor(args, &cli.global, &mut writer, &shutdown, defaults)
         }

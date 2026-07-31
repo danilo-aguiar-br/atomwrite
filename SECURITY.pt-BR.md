@@ -11,7 +11,8 @@
 
 | Versão  | Suportada          |
 |---------|--------------------|
-| 0.1.35  | Sim                |
+| 0.1.36  | Sim                |
+| 0.1.35  | Best-effort        |
 | 0.1.33  | Best-effort        |
 | 0.1.32  | Best-effort        |
 | 0.1.30  | Best-effort        |
@@ -101,13 +102,18 @@
 - **Correção**: Adicionada `canonicalize_existing_prefix` que resolve symlinks via `std::fs::canonicalize` na porção existente do caminho antes da verificação de jail
 - **Mitigação**: Atualize para v0.1.27; não crie symlinks dentro do workspace apontando para fora
 
-### Sem advisories ativas em v0.1.35
-- `cargo audit` reporta 0 vulnerabilidades
-- `cargo deny check` reporta 4/4 OK (advisories, bans, licenses, sources)
+### Sem advisories ativas em v0.1.36
+- **Histórico (auditoria v0.1.35):** `cargo audit` reportou 0 vulnerabilidades; reexecute no tree atual antes de publish
+- Alvo `cargo deny check`: 4/4 OK (advisories, bans, licenses, sources)
 - Todas as dependências transitivas com notas de segurança foram atualizadas ou substituídas
 
+### Paths de content-source e jail do workspace (política, não vulnerabilidade)
+- Paths de content-source de `--old-file` / `--new-file` permanecem sob o **jail do workspace** (sem allowlist de `/tmp` do SO)
+- Agentes DEVEM estagiar corpos de patch via `atomwrite scratch init` sob `$workspace/.atomwrite/scratch/` e então passar esses paths seguros no jail
+- Um `WORKSPACE_JAIL` (exit 126) em old/new sob `/tmp/...` é **política intencional** (v0.1.36 / ADR-0055), não um buraco de segurança a contornar
 
-## Postura de Segurança de Dependências (v0.1.35)
+
+## Postura de Segurança de Dependências (v0.1.36; baseline histórico v0.1.35)
 - **Segurança de memória**: 0 blocos de código unsafe em `src/` (negado via `#![deny(unsafe_code)]` na raiz da lib)
 - **BLAKE3**: Usado apenas para checksums, não para segurança criptográfica
 - **tree-sitter-language-pack**: Parsers são baixados no primeiro uso a partir das releases oficiais do `tree-sitter` no GitHub via a feature `download`. Os parsers baixados são carregados dinamicamente mas não executados como código
@@ -125,10 +131,11 @@
 - Use `--workspace` para restringir operações à raiz do projeto
 - Evite executar atomwrite como root
 - Valide `--expect-checksum` em ambientes multi-agente
-- Revise a saída de erro NDJSON para os campos `retryable` e `suggestion`
+- Revise a saída de erro NDJSON para `ok: false`, `retryable` e `suggestion` (parse exit-first)
 - Mantenha o atomwrite atualizado para a versão mais recente
 - Audite o manifesto `batch` antes da execução em produção
 - Inscreva-se em notificações do repositório para atualizações de segurança em tempo hábil
 - Use `--strict-atomic` apenas quando entender o trade-off (proíbe cross-device copy-fallback, exit 91 em EXDEV)
 - Trate journals órfãos (sidecars `.atomwrite.journal.*` de um crash anterior) com suspeita: inspecione o arquivo alvo E o conteúdo do journal antes de deletar o journal
 - Quando a verificação G72 syntax check estiver habilitada (`--syntax-check`), NÃO faça pipe de conteúdo sensível pelo stdin em sistemas compartilhados: o envelope de erro pode ecoar a localização da fonte e contexto ao redor
+- Estagie patches de agente com `scratch init` + `--old-file`/`--new-file` sob o workspace; não espere que `/tmp` do SO fique isento do jail

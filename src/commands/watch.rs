@@ -88,10 +88,7 @@ pub fn cmd_watch(
     watcher.watch(&root, RecursiveMode::Recursive)?;
 
     // CLI > XDG `[watch].debounce_ms` > constants (A-XDG-002).
-    let debounce_ms = args
-        .debounce_ms
-        .unwrap_or(watch_cfg.debounce_ms)
-        .max(1);
+    let debounce_ms = args.debounce_ms.unwrap_or(watch_cfg.debounce_ms).max(1);
     let debounce = Duration::from_millis(debounce_ms);
     // B-007 / R-XDG-007: CLI flag > XDG `[watch].idle_exit_ms` > constants default.
     let idle_ms = args.idle_exit_ms.unwrap_or(watch_cfg.idle_exit_ms);
@@ -130,7 +127,9 @@ pub fn cmd_watch(
         }
 
         // A-020: named floor so poll sleep is not a magic literal.
-        let wait = debounce.min(Duration::from_millis(crate::constants::WATCH_DEBOUNCE_FLOOR_MS));
+        let wait = debounce.min(Duration::from_millis(
+            crate::constants::WATCH_DEBOUNCE_FLOOR_MS,
+        ));
         match rx.recv_timeout(wait) {
             Ok(Ok(event)) => {
                 if !is_core_kind(&event.kind) {

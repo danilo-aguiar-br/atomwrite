@@ -314,7 +314,8 @@ fn edit_best_candidate_has_line_and_similarity_fields() {
     // fuzzy=off still emits MatchFailed; best_candidate may be null when no
     // scored near-miss exists. Assert the error envelope is structured.
     assert!(
-        combined.contains("INVALID_INPUT") || combined.contains("MATCH_FAILED")
+        combined.contains("INVALID_INPUT")
+            || combined.contains("MATCH_FAILED")
             || combined.contains("match failed")
             || combined.contains("best_candidate")
             || !output.status.success(),

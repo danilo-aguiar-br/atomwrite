@@ -2,18 +2,18 @@
 
 > Atomic file operations for LLM agents — one CLI, zero corruption
 
-atomwrite is a Rust CLI that provides 41 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
+atomwrite is a Rust CLI that provides 45 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
-**Latest release: v0.1.35** — Residual A-* closed: large overwrite **default-deny** (`--ack-overwrite`); `watch` emits `watch_summary` even with 0 events; `semantic-merge` conflict markers default ON; `delete --plan` (not `--confirm`/`--yes`); watch idle 500 ms; suite `cli_e2e_v0135` green. Pin `^0.1.35`. 41 subcommands; no telemetry; CLI+XDG config only. See `CHANGELOG.md` and gaps.md §20.
+**Latest release: v0.1.36** — Agent contract residual closed/mitigated (GAP-019…033): `scratch init` + `.atomwrite/scratch/` staging (no OS `/tmp`); error envelopes always emit `ok:false` + stable `match_count`; global agent-native stdout shape `--select`/`--fields`, `--filter`, `--limit` (no global `-n`); honest fuzzy telemetry. Pin `^0.1.36`. **45** subcommands (SSOT); no telemetry; CLI+XDG config only. See `CHANGELOG.md` and gaps.md.
 
-**Previous:** v0.1.34 docs-complete one-shot fuzzy;  v0.1.33 runtime hang fix + one-pass fuzzy; v0.1.32 docs.rs `doc_cfg` / multi-target; v0.1.30 agent surface (fuzzy mandatory, `match_count`/`indent_adjusted`, `best_candidate`, recipe bak skip, `cli_v0130_agent_contract`). See `CHANGELOG.md`.
+**Previous:** v0.1.35 residual A-* (large overwrite default-deny, watch_summary, delete --plan); v0.1.34 docs-complete one-shot fuzzy; v0.1.33 runtime hang fix + one-pass fuzzy; v0.1.32 docs.rs `doc_cfg` / multi-target; v0.1.30 agent surface. Historical **41** subcommands at v0.1.29–0.1.35. See `CHANGELOG.md`.
 
-## 41 Subcommands
+## 45 Subcommands
 
 ### Core I/O (7)
 - `read` — read files with metadata, checksum, optional content. `--mode raw|envelope` selects byte-stream vs NDJSON envelope
 - `write` — create or overwrite files atomically via stdin; large targets require `--ack-overwrite` (default-deny). `--preserve-timestamps` keeps source mtime
-- `edit` — surgically edit by line number, text marker, or exact/fuzzy match; multi-pair `--old`/`--new` with per-pair fuzzy cascade, `pair_results` and `--partial` (v0.1.15)
+- `edit` — surgically edit by line number, text marker, or exact/fuzzy match; multi-pair `--old`/`--new` with per-pair fuzzy cascade, `pair_results` and `--partial` (v0.1.15); stage `--old-file`/`--new-file` under `.atomwrite/scratch/`
 - `delete` — delete files with optional backup; plan-only via `--plan` (`--confirm`/`--yes` rejected)
 - `copy` — copy files with checksum verification
 - `move` — move or rename files atomically (EXDEV copy-fallback)
@@ -29,7 +29,7 @@ atomwrite is a Rust CLI that provides 41 subcommands for file manipulation with 
 - `count` — count lines, files by extension. `--by-size` lists largest files
 - `diff` — compare two files (unified, stat, or changes)
 - `list` — list files in a directory tree
-- `extract` — extract fields from NDJSON input via pipe
+- `extract` — extract fields from NDJSON input via pipe (local `--field` or positionals; **never** `extract --select`)
 - `scope` — grammatical scoping (delete all comments, etc.). `--lang rust` alias accepted
 - `regex` — generate regex from examples
 - `calc` — math and unit conversions
@@ -63,7 +63,7 @@ atomwrite is a Rust CLI that provides 41 subcommands for file manipulation with 
 
 Plus the G72 syntax check on `write --syntax-check` (24 languages, exit 88).
 
-### Agent surface and workflows (v0.1.29+, residual v0.1.30) (8)
+### Agent surface and workflows (v0.1.29+, residual v0.1.30/v0.1.36) (12)
 - `recipe` — list/run versioned multi-step pipelines (e.g. search→replace→hash)
 - `sparse` — budgeted monorepo list/read/outline (outline emits real AST outline_item) (`sparse list --max-files N`)
 - `semantic-merge` — line-based three-way merge for multi-agent conflicts (not AST)
@@ -72,6 +72,10 @@ Plus the G72 syntax check on `write --syntax-check` (24 languages, exit 88).
 - `codemod` — multi-rule AST campaign with `by_rule_id` summary
 - `semantic-search` — offline token ranking / inverted index (feature `semantic`; not OpenRouter embeddings)
 - `stat` — alias of `read --stat`
+- `doctor` — host readiness diagnostics (workspace/config/features/concurrency)
+- `locale` — show resolved UI locale; `--set` / `--clear` XDG preference
+- `commands` — full clap command tree as JSON for agent discovery
+- `scratch` — `scratch init` creates `{workspace}/.atomwrite/scratch/` staging (never OS `/tmp`)
 
 ### Write durability (v0.1.29)
 - `write --durability full|fast|auto` — fsync trade-offs; NDJSON `platform.durability`, `platform.rename_method`, `platform.backup_method`
@@ -109,7 +113,7 @@ Plus the G72 syntax check on `write --syntax-check` (24 languages, exit 88).
 
 ## Primary Documentation
 
-- [README](https://github.com/danilo-aguiar-br/atomwrite/blob/main/README.md): Full documentation with all 41 subcommands and examples
+- [README](https://github.com/danilo-aguiar-br/atomwrite/blob/main/README.md): Full documentation with all 45 subcommands and examples
 - [HOW_TO_USE](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/HOW_TO_USE.md): Quickstart guide
 - [COOKBOOK](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/COOKBOOK.md): Recipes for common tasks
 - [AGENTS.md](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget

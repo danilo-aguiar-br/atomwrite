@@ -42,9 +42,11 @@ pub fn cmd_apply(
     let max_stdin = global.effective_max_filesize();
     let mut patch = String::new();
     let reserve = usize::try_from(max_stdin).unwrap_or(usize::MAX);
-    patch.try_reserve(reserve).map_err(|e| AtomwriteError::InternalError {
-        reason: format!("allocation failed for patch buffer of {reserve} bytes: {e}"),
-    })?;
+    patch
+        .try_reserve(reserve)
+        .map_err(|e| AtomwriteError::InternalError {
+            reason: format!("allocation failed for patch buffer of {reserve} bytes: {e}"),
+        })?;
     stdin
         .take(max_stdin)
         .read_to_string(&mut patch)
@@ -393,7 +395,8 @@ mod tests {
     fn apply_search_replace_basic() {
         let original = "hello world\nfoo bar\n";
         let patch = "<<<<<<< SEARCH\nhello world\n=======\nhello universe\n>>>>>>> REPLACE\n";
-        let (result, blocks) = apply_search_replace(original, patch, &crate::config::FuzzySection::default()).unwrap();
+        let (result, blocks) =
+            apply_search_replace(original, patch, &crate::config::FuzzySection::default()).unwrap();
         assert_eq!(blocks, 1);
         assert!(result.contains("hello universe"));
     }

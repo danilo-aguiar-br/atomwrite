@@ -66,22 +66,21 @@ pub fn cmd_prune_backups(
     let max_age_secs = args.max_age_secs;
     let max_count = args.max_count;
     type Phase1Item = Result<(Vec<PathBuf>, Option<PruneBackupEntry>), anyhow::Error>;
-    let phase1: Vec<Phase1Item> =
-        if should_parallelize(args.paths.len()) {
-            args.paths
-                .par_iter()
-                .map(|raw_path| {
-                    collect_backups_for_target(raw_path, &workspace, max_age_secs, max_count)
-                })
-                .collect()
-        } else {
-            args.paths
-                .iter()
-                .map(|raw_path| {
-                    collect_backups_for_target(raw_path, &workspace, max_age_secs, max_count)
-                })
-                .collect()
-        };
+    let phase1: Vec<Phase1Item> = if should_parallelize(args.paths.len()) {
+        args.paths
+            .par_iter()
+            .map(|raw_path| {
+                collect_backups_for_target(raw_path, &workspace, max_age_secs, max_count)
+            })
+            .collect()
+    } else {
+        args.paths
+            .iter()
+            .map(|raw_path| {
+                collect_backups_for_target(raw_path, &workspace, max_age_secs, max_count)
+            })
+            .collect()
+    };
 
     let mut to_prune: Vec<PathBuf> = Vec::new();
     for item in phase1 {

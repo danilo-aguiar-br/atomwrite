@@ -25,7 +25,7 @@
 - No telemetry of file contents or patterns
 - Fuzzy modes remain only `auto|aggressive` (`off` rejected exit 65 since v0.1.30)
 - Regression suite: `tests/cli_v0133_oneshot_fuzzy.rs` (hang < 2s, embeds, timeout)
-- 41 subcommands unchanged
+- **Historical (at v0.1.34):** 41 subcommands unchanged
 
 ## Consequences
 - Agents may safely expand sections where NEW embeds OLD without hang risk

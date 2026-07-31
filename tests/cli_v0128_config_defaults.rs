@@ -43,11 +43,7 @@ fn config_defaults_backup_false_is_honored_without_flags() {
 
     let output = common::atomwrite()
         .env_remove("ATOMWRITE_BACKUP")
-        .args([
-            "--workspace",
-            dir.path().to_str().unwrap(),
-            "delete",
-        ])
+        .args(["--workspace", dir.path().to_str().unwrap(), "delete"])
         .arg(&path)
         .output()
         .expect("run");
@@ -118,11 +114,7 @@ fn env_atomwrite_backup_nonzero_does_not_override_config_defaults_backup_false()
 
     let output = common::atomwrite()
         .env("ATOMWRITE_BACKUP", "1")
-        .args([
-            "--workspace",
-            dir.path().to_str().unwrap(),
-            "delete",
-        ])
+        .args(["--workspace", dir.path().to_str().unwrap(), "delete"])
         .arg(&path)
         .output()
         .expect("run");
@@ -150,7 +142,7 @@ fn config_defaults_retention_caps_accumulated_backups() {
                 "--workspace",
                 dir.path().to_str().unwrap(),
                 "delete",
-                    "f.txt",
+                "f.txt",
             ])
             .output()
             .expect("run");

@@ -78,7 +78,27 @@ Todas aditivas. Nenhuma dependência existente removida.
 - Veja [docs/decisions/README.md](decisions/README.md) para decisões arquiteturais
 
 
-## v0.1.34 para v0.1.35 (Atual)
+## v0.1.35 para v0.1.36 (Atual)
+
+### O Que Muda
+
+- **Staging:** `atomwrite scratch init` e `--old-file`/`--new-file` sob `.atomwrite/scratch/` (jail em `/tmp` permanece)
+- **Envelope:** `ok: false` + `match_count` em falhas
+- **Stdout agent-native:** `--select`/`--fields`, `--filter`, `--limit` (**só long** — sem `-n` global). **Erros always-emit** mesmo com `--filter` agressivo; `--limit` só conta sucesso
+- **extract:** `--field` local (repetível) ou posicionais; `--select` global projeta a linha (não pode haver `--select` local — colide com o global). **Planos/CAPA legados que citam `extract --select` → use `extract --field`**
+- **Fuzzy:** similarity honesta; dual-gate; XDG soft_floor
+- **45** subcomandos SSOT (`Commands` / `agent-surface` / `CANONICAL_SUBCOMMAND_COUNT`)
+- Pin: `^0.1.36`
+
+### Passos
+
+1. Pin `^0.1.36`
+2. Substitua scratch em `/tmp` por `.atomwrite/scratch/`
+3. Cheque exit e `ok`/`error` antes de campos de sucesso (stdout ainda pode ter linha de erro com exit ≠ 0 sob `--filter`)
+4. Use `--select` e `--limit N` em vez de jq/`-n` quando bastar projeção top-level
+5. Gate: `cargo test --tests && ./scripts/check-gaps-ssot.sh`
+
+## v0.1.34 para v0.1.35
 
 ### O Que Muda
 
@@ -94,7 +114,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 
 ### Migração Passo a Passo
 
-1. Pin: `cargo install atomwrite --locked --version "^0.1.35"` (ou `cargo install --path . --force` a partir do fonte).
+1. **Histórico (pin 0.1.34 → 0.1.35 naquela release):** `cargo install atomwrite --locked --version "^0.1.35"` (ou `cargo install --path . --force` a partir do fonte). Linha atual é **`^0.1.36`**.
 2. Agentes que sobrescrevem arquivos grandes: adicionar `--ack-overwrite` (e opcionalmente `--require-large-ack`).
 3. Agentes que usavam `delete --confirm` como “preview”: trocar para `delete --plan`.
 4. Agentes que usavam `delete --yes` / `-y`: remover essas flags; agora falham com exit 65.
@@ -104,16 +124,17 @@ Todas aditivas. Nenhuma dependência existente removida.
 
 ### Notas de Compatibilidade
 
-- Writes não grandes, contrato fuzzy one-shot de 0.1.33/0.1.34 e a superfície de 41 subcomandos permanecem.
-- Veja gaps.md §20 para a matriz de closeout A-*.
+- Writes não grandes e o contrato fuzzy one-shot de 0.1.33/0.1.34 permanecem.
+- **Histórico (na v0.1.35):** a superfície documentada era **41** subcomandos. **Atual (v0.1.36):** SSOT é **45** (`doctor`, `locale`, `commands`, `scratch` completam a superfície) — não trate “41 permanecem” como atual.
+- Veja gaps.md §20 para a matriz de closeout A-*; veja [v0.1.35 para v0.1.36](#v0135-para-v0136-atual) para extract `--field`, shape global e staging scratch.
 
 ### Rollback
 
 - Pin de volta para `^0.1.34` se precisar restaurar large-write opt-in e stdout vazio do watch (não recomendado para agentes).
 
 ## Versão Atual
-- atomwrite está na v0.1.35
-- Este documento cobre migração de v0.1.0 a v0.1.35
+- atomwrite está na v0.1.36
+- Este documento cobre migração de v0.1.0 a v0.1.36
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
 
 
@@ -209,7 +230,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 ### Alterado
 
 - Numeração de estratégias normalizada para nove estratégias nomeadas
-- Superfície skill documenta 41 subcomandos
+- **Histórico (na v0.1.29):** superfície skill documenta 41 subcomandos
 - Release slim core ~7.7 MiB (size-gate local ≤ 15 MiB); default/full com AST ~52 MB — PRD 5–8 MB aplica-se somente ao core
 
 ### Ação de Migração
@@ -654,7 +675,7 @@ atomwrite v0.1.2 agora compila no macOS arm64 (Apple Silicon) e macOS x86_64. A 
 - Melhorias de performance
 
 ### Estabilizações Planejadas para 1.0
-- Schemas de saída NDJSON para todos os 41 subcomandos
+- **Histórico (naquela release):** schemas de saída NDJSON para todos os 41 subcomandos
 - Atribuições de exit codes
 - Strings de código de erro (`FILE_NOT_FOUND`, `STATE_DRIFT`, etc)
 - Nomes e comportamento de flags globais

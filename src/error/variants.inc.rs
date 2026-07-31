@@ -114,6 +114,9 @@ pub enum AtomwriteError {
         path: PathBuf,
         /// Workspace root used for comparison.
         workspace: PathBuf,
+        /// When true, path was a content-source (`--old-file`/`--new-file`).
+        /// Selects staging-oriented suggestion (OI-SUGGEST-ROLE / v0.1.36).
+        content_source: bool,
     },
 
     /// Symbolic link encountered when symlinks are disallowed.

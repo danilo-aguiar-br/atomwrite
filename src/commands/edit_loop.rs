@@ -86,7 +86,12 @@ pub fn cmd_edit_loop(
             if filled.starts_with(&[0xEF, 0xBB, 0xBF]) {
                 i = 3;
             }
-            while i < filled.len() && (filled[i] == b' ' || filled[i] == b'\t' || filled[i] == b'\n' || filled[i] == b'\r') {
+            while i < filled.len()
+                && (filled[i] == b' '
+                    || filled[i] == b'\t'
+                    || filled[i] == b'\n'
+                    || filled[i] == b'\r')
+            {
                 i += 1;
             }
             filled.get(i).copied()

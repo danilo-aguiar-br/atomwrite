@@ -3,6 +3,11 @@
 pub struct ErrorJson {
     /// Always true, marks this line as an error event.
     pub error: bool,
+    /// Always false on error envelopes (GAP-2026-020 agent sentinel).
+    ///
+    /// Success envelopes keep their own `status` field; agents MUST check
+    /// `error` / `ok` / process exit before reading success-only keys.
+    pub ok: bool,
     /// Machine-readable error code string.
     pub code: &'static str,
     /// Suggested process exit code.
@@ -102,10 +107,13 @@ impl ErrorJson {
         };
         let match_count = match err {
             AtomwriteError::MatchAmbiguous { count, .. } => Some(*count),
+            // GAP-2026-020: stable sentinels so agents never see "all null" success fields.
+            AtomwriteError::MatchFailed { .. } | AtomwriteError::NoMatches => Some(0),
             _ => None,
         };
         Self {
             error: true,
+            ok: false,
             code: err.error_code(),
             exit: err.exit_code(),
             message: err.to_string(),

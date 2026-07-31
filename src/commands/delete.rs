@@ -369,7 +369,9 @@ fn process_one_delete(
     retention: u8,
 ) -> DeleteItem {
     if crate::signal::is_global_shutdown() {
-        return DeleteItem::Err(crate::signal::cancelled_error("delete cancelled by signal").into());
+        return DeleteItem::Err(
+            crate::signal::cancelled_error("delete cancelled by signal").into(),
+        );
     }
 
     let path_str = file_path.display().to_string();

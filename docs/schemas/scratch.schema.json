@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "scratch",
+  "description": "NDJSON success envelope for `scratch init` (agent staging dir under workspace jail).",
+  "type": "object",
+  "required": ["ok", "status", "command", "action", "path", "relative", "already_existed"],
+  "properties": {
+    "ok": { "type": "boolean", "const": true },
+    "status": { "type": "string", "const": "ok" },
+    "command": { "type": "string", "const": "scratch" },
+    "action": { "type": "string", "const": "init" },
+    "path": { "type": "string", "description": "Absolute path created" },
+    "relative": { "type": "string", "description": "Path relative to workspace" },
+    "already_existed": { "type": "boolean" }
+  },
+  "additionalProperties": true
+}

@@ -139,9 +139,7 @@ fn skip_if_missing_linker(target: &str, output: &std::process::Output) -> bool {
         "xcrun",
     ];
     if linker_hints.iter().any(|h| stderr.contains(h)) {
-        eprintln!(
-            "skipping: target {target} installed but host cannot link it:\n{stderr}"
-        );
+        eprintln!("skipping: target {target} installed but host cannot link it:\n{stderr}");
         return true;
     }
     false

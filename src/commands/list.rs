@@ -101,10 +101,7 @@ pub fn cmd_list(
     // GAP-110: return FILE_NOT_FOUND when any root does not exist
     for root in &roots {
         if !root.exists() {
-            return Err(crate::error::AtomwriteError::NotFound {
-                path: root.clone(),
-            }
-            .into());
+            return Err(crate::error::AtomwriteError::NotFound { path: root.clone() }.into());
         }
     }
 

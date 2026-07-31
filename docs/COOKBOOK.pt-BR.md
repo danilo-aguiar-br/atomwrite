@@ -7,6 +7,78 @@
 
 
 
+## O Que Há de Novo na v0.1.36 (2026-07-31)
+
+- Pin `^0.1.36`. **45** subcomandos (SSOT via `agent-surface`)
+- Shape agent-native: `--select`/`--fields`, `--filter`, `--limit` (**sem `-n` global**). Erros sempre emitem
+- Staging: `atomwrite --workspace "$WS" scratch init` e `--old-file`/`--new-file` sob `.atomwrite/scratch/`
+- Loops finos sem jq: `atomwrite --select ok,error,code --filter 'ok=false' --limit 1 <cmd>`
+- GAP-019…033 fechados/mitigados (jail de content-source + erros `ok:false` + fuzzy honesto)
+
+### Novas Receitas (v0.1.36)
+
+- **Como Estagiar um Patch com scratch init** -- `--old-file`/`--new-file` dentro do jail
+- **Como Projetar NDJSON com --select/--filter/--limit** -- shape agent-native sem jq
+- **Como Passar `$VAR` Literal com Heredoc entre Aspas Simples** -- conteúdo seguro no shell
+- **Como Descobrir Prontidão do Host com doctor + commands** -- bootstrap de agente
+- **Como Fazer Shrink Intencional com --allow-shrink** -- override da guarda de shrink
+- **Como Usar Replace Aggressive Só Depois de --dry-run** -- edições em massa fail-closed
+
+## 45 Subcomandos (SSOT)
+
+As receitas abaixo cobrem caminhos comuns de agente; a superfície completa são **45** ferramentas (`CANONICAL_SUBCOMMAND_COUNT` / `atomwrite agent-surface`). Descoberta:
+
+```bash
+atomwrite agent-surface
+atomwrite commands --include-globals
+```
+
+- `agent-surface` — inventário de ferramentas derivado do clap (manifesto anti-MCP)
+- `apply` — aplica patches da stdin (unified, search/replace, full, markdown)
+- `backup` — cria backups com timestamp e checksums BLAKE3
+- `batch` — lote multi-op via NDJSON (transação opcional)
+- `calc` — expressões matemáticas e conversões de unidade
+- `case` — renomeia identificadores em arquivos (`--subvert` + estilo `--to`)
+- `codemod` — campanha codemod multi-regra em YAML (delega ao transform)
+- `commands` — emite a árvore clap completa em JSON para descoberta do agente
+- `completions` — gera completions de shell (bash, zsh, fish, elvish, powershell)
+- `copy` — copia arquivos com verificação de checksum
+- `count` — conta linhas, matches ou arquivos por extensão
+- `del` — remove uma chave de arquivo de config estruturado (TOML/JSON)
+- `delete` — apaga arquivos com backup opcional (`--plan` só planeja)
+- `diff` — compara dois arquivos (unified, stat ou changes)
+- `doctor` — diagnostica ambiente e prontidão do host
+- `edit` — edita cirurgicamente por linha, marcador ou match exato
+- `edit-loop` — aplica N pares `old`/`new` da stdin NDJSON em um write atômico
+- `extract` — extrai campos de NDJSON via pipe (`--field` local; **nunca** `--select` local)
+- `get` — lê um valor em caminho pontilhado em TOML/JSON
+- `hash` — calcula checksums BLAKE3
+- `list` — lista arquivos em uma árvore de diretórios
+- `locale` — mostra / define / limpa preferência de locale da UI (XDG)
+- `move` — move ou renomeia arquivos atomicamente (fallback de cópia em EXDEV)
+- `outline` — extrai estrutura AST de alto nível (funções, classes, …)
+- `prune-backups` — remove backups `.bak.*` por idade ou contagem
+- `query` — percorre AST tree-sitter e emite nós como NDJSON
+- `read` — lê arquivos com metadados, checksum e conteúdo opcional
+- `recipe` — receitas multi-passo nomeadas (`list` / `run`)
+- `regex` — gera regex a partir de exemplos
+- `replace` — substitui texto em arquivos com writes atômicos
+- `rollback` — restaura um arquivo a partir de um backup anterior
+- `scope` — escopo gramatical (apagar comentários, transformar case, …)
+- `scratch` — staging sob `.atomwrite/scratch/`; nunca `/tmp` do SO fora do workspace (exit 126)
+- `search` — busca conteúdo de arquivos em paralelo (engine ripgrep)
+- `semantic-merge` — merge de 3 vias line-based (não AST/embedding)
+- `semantic-search` — busca offline por Jaccard de tokens (sem rede)
+- `set` — grava um valor em caminho pontilhado em TOML/JSON
+- `sparse` — list/read esparso orçado para janelas de contexto de agente
+- `stat` — alias de metadados de `read --stat` (sem corpo)
+- `transform` — refatoração AST via ast-grep
+- `verify` — verifica integridade do arquivo por checksum BLAKE3
+- `wal-heal` — remove journals WAL terminais obsoletos (seguro, idempotente)
+- `wal-stats` — snapshot de telemetria WAL (contagens, idade, estimativa de reclaim)
+- `watch` — observa eventos do sistema de arquivos (feature `watch`)
+- `write` — cria ou sobrescreve arquivos atomicamente via stdin
+
 ## O Que Há de Novo na v0.1.35 (2026-07-19)
 
 - Gaps residuais **A-*** fechados (gaps.md §20): suite verde sem `delete --yes`; sobrescrita grande **default-deny** (`--ack-overwrite`); `watch` sempre emite `watch_summary`; markers de conflito do semantic-merge default ON; monólitos fatiados com `include!` (SRP)
@@ -16,11 +88,11 @@
 - **Semantic-merge:** markers de conflito gravados por padrão; opt-out `--no-conflict-markers`
 - DoD local (sem GitHub Actions de produto): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
 - Suite de contrato: `cargo test --test cli_e2e_v0135`
-- Pin de agentes em `^0.1.35`. Configuração somente CLI + XDG / `.atomwrite.toml` (sem knobs `ATOMWRITE_*` de produto; sem telemetria de produto)
+- Pin histórico `^0.1.35` (substituído por **`^0.1.36`**). Configuração somente CLI + XDG / `.atomwrite.toml` (sem knobs `ATOMWRITE_*` de produto; sem telemetria de produto)
 
 ## O Que Há de Novo na v0.1.34
 
-A v0.1.34 (2026-07-19) é a publicação docs-complete do runtime one-shot da v0.1.33: multi-apply fuzzy é **one-pass** E→D (`apply_fuzzy_one_pass`); máximo de applies padrão **1**; embeds forçam apply único; global `--timeout-secs` / `--timeout` **padrão 120** (`0` desabilita, prazo esgotado exit **124**). **41 subcomandos**.
+A v0.1.34 (2026-07-19) é a publicação docs-complete do runtime one-shot da v0.1.33: multi-apply fuzzy é **one-pass** E→D (`apply_fuzzy_one_pass`); máximo de applies padrão **1**; embeds forçam apply único; global `--timeout-secs` / `--timeout` **padrão 120** (`0` desabilita, prazo esgotado exit **124**). **Histórico (na v0.1.34):** **41 subcomandos**.
 
 ### Novas Receitas (v0.1.34)
 
@@ -128,7 +200,114 @@ atomwrite --workspace . semantic-merge \
 
 ```bash
 echo critical | atomwrite --workspace . write --durability full config.toml
-echo scratch | atomwrite --workspace . write --durability fast /tmp/ephemeral-out.txt
+# Saída efêmera permanece dentro do jail do workspace (nunca /tmp do SO)
+atomwrite --workspace . scratch init
+echo scratch | atomwrite --workspace . write --durability fast .atomwrite/scratch/ephemeral-out.txt
+# Ou um diretório de staging relativo ao workspace:
+mkdir -p ./tmp-agent
+echo scratch | atomwrite --workspace . write --durability fast ./tmp-agent/ephemeral-out.txt
+```
+
+## Como Estagiar um Patch com scratch init
+
+- Caminhos content-source de `--old-file`/`--new-file` passam pelo jail (GAP-019)
+- Nunca estagie sob `/tmp` do SO — exit **126** `WORKSPACE_JAIL`
+- Staging canônico: `{workspace}/.atomwrite/scratch/` via `scratch init`
+
+```bash
+atomwrite --workspace . scratch init
+SCR=.atomwrite/scratch
+printf %s "$OLD" >"$SCR/old.txt"
+printf %s "$NEW" >"$SCR/new.txt"
+atomwrite --workspace . edit --old-file "$SCR/old.txt" --new-file "$SCR/new.txt" src/f.rs
+```
+
+## Como Projetar NDJSON com --select/--filter/--limit
+
+- Flags globais de shape aplicam-se a todo subcomando (e ao path de erro)
+- `--select`/`--fields` projetam chaves top-level; `--filter` é igualdade top-level (AND repetível)
+- `--limit N` é **long-only** (sem `-n` global); erros sempre emitem mesmo sob filter
+
+```bash
+# Parse compacto de agente sem jq
+atomwrite --workspace . --select ok,error,code,match_count,suggestion \
+  edit --old missing --new x --fuzzy off src/f.rs
+
+# Só a primeira falha
+atomwrite --workspace . --filter ok=false --limit 1 \
+  edit --old a --new b src/f.rs
+
+# Projeta campos de sucesso em hits de search
+atomwrite --workspace . --select path,line_number,text --limit 20 \
+  search 'TODO' src/
+```
+
+## Como Passar `$VAR` Literal com Heredoc entre Aspas Simples
+
+- Aspas duplas e heredocs sem aspas expandem variáveis do shell
+- Delimitador de heredoc entre aspas simples preserva `$VAR`, backticks e `//` literalmente
+- Prefira `--old-file`/`--new-file` para patches multi-linha (ainda estagie sob o workspace)
+
+```bash
+# $VAR literal e metacaracteres do shell — sem expansão
+atomwrite --workspace . edit src/config.sh --old 'export PATH=$PATH' --new 'export PATH=$HOME/bin:$PATH'
+
+# Corpo multi-linha literal via heredoc com aspas simples → arquivo estagiado
+atomwrite --workspace . scratch init
+SCR=.atomwrite/scratch
+cat >"$SCR/old.txt" <<'EOF'
+# install
+curl -fsSL https://example.com | sh
+export TOKEN=$SECRET
+EOF
+cat >"$SCR/new.txt" <<'EOF'
+# install
+curl -fsSL https://example.com | sh
+export TOKEN=$SECRET
+# pinned
+EOF
+atomwrite --workspace . edit docs/install.md \
+  --old-file "$SCR/old.txt" --new-file "$SCR/new.txt"
+```
+
+## Como Descobrir Prontidão do Host com doctor + commands
+
+- `doctor` reporta prontidão de host/workspace/features em um objeto NDJSON
+- `commands` emite a árvore completa do clap para descoberta de agente
+- Combine com `agent-surface` para o manifesto de tools (anti-MCP)
+
+```bash
+atomwrite --workspace . doctor --strict
+atomwrite --workspace . commands --include-globals
+atomwrite --workspace . agent-surface --format json
+```
+
+## Como Fazer Shrink Intencional com --allow-shrink
+
+- A guarda de shrink bloqueia writes que reduzem >50% quando `--expect-checksum` está ativo
+- Passe `--allow-shrink` só quando o truncamento for intencional
+
+```bash
+CS=$(atomwrite --workspace . read target.rs | jaq -r '.checksum')
+# Bloqueado sem a flag quando stdin é bem menor:
+echo "tiny" | atomwrite --workspace . write --expect-checksum "$CS" target.rs
+# Rewrite com shrink intencional:
+echo "tiny" | atomwrite --workspace . write --expect-checksum "$CS" --allow-shrink target.rs
+```
+
+## Como Usar Replace Aggressive Só Depois de --dry-run
+
+- `--fuzzy aggressive` é poderoso e pode over-match; nunca aplique em massa às cegas
+- Sempre pré-visualize com `--dry-run` primeiro; inspecione o NDJSON e só então aplique
+
+```bash
+# Só prévia
+atomwrite --workspace . replace --dry-run --fuzzy aggressive \
+  'legacy_api(' 'new_api(' packages/ --include '*.rs'
+
+# Aplique só depois que o envelope do dry-run parecer correto
+atomwrite --workspace . replace --fuzzy aggressive --progress-every 50 \
+  'legacy_api(' 'new_api(' packages/ --include '*.rs'
 ```
 
 ## Como Instalar Slim vs Full
@@ -147,17 +326,20 @@ cargo install --path . --locked --force
 
 - Falhas de match podem emitir `best_candidate` (line, similarity, strategy, text, diff_preview)
 - Use o near-miss para corrigir `old` sem reler o arquivo inteiro
-- Exact-only não é suportado; use auto/aggressive e MATCH_AMBIGUOUS / best_candidate
+- `--fuzzy off` = exact-only (G-010); o padrão permanece `auto`. Prefira auto/aggressive para recuperação via MATCH_AMBIGUOUS / best_candidate
 
 ```bash
 # Capture o envelope de erro no near-miss (exit 65 / MatchFailed)
+atomwrite --workspace . scratch init
 atomwrite --workspace . replace --fuzzy auto \
   'fn main(){let x=1;}' 'fn main(){let x=2;}' src/main.rs \
-  | jaq '{exit: .exit, best: .best_candidate}'
+  | tee .atomwrite/scratch/miss.json \
+  | jaq '{exit: .exit, best: .best_candidate, ok: .ok, match_count: .match_count}'
 
 # Retente com o texto do candidato (ou snippet ajustado do diff_preview)
 atomwrite --workspace . replace --fuzzy auto \
-  "$(jaq -r '.best_candidate.text' < /tmp/miss.json)" 'fn main() { let x = 2; }' src/main.rs
+  "$(jaq -r '.best_candidate.text' < .atomwrite/scratch/miss.json)" \
+  'fn main() { let x = 2; }' src/main.rs
 ```
 
 ## Como Inspecionar rename_method e durability
@@ -170,8 +352,9 @@ atomwrite --workspace . replace --fuzzy auto \
 echo payload | atomwrite --workspace . write --durability full config.toml \
   | jaq '{durability: .platform.durability, rename_method: .platform.rename_method, backup_method: .platform.backup_method, fsync: .platform.fsync}'
 
-# Caminho rápido para saída efêmera
-echo scratch | atomwrite --workspace . write --durability fast /tmp/ephemeral-out.txt \
+# Caminho rápido para saída efêmera (relativo ao workspace; jail mantido)
+atomwrite --workspace . scratch init
+echo scratch | atomwrite --workspace . write --durability fast .atomwrite/scratch/ephemeral-out.txt \
   | jaq -r '.platform | "\(.durability) \(.rename_method)"'
 ```
 

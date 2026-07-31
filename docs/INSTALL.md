@@ -3,18 +3,79 @@
 [Leia em Português](INSTALL.pt-BR.md)
 
 - Complete instructions for installing atomwrite on Linux, macOS, and Windows
-- Current target version: v0.1.35 (one-shot fuzzy, timeout default 120, exit 124 on deadline, recipes, sparse, semantic-merge, 41 subcommands; slim/full feature builds)
+- Current target version: v0.1.36 (agent-contract residual: scratch staging, stdout `--select`/`--filter`/`--limit`, error `ok:false` always-emit; **45** subcommands; slim/full feature builds)
 - Sections ordered by platform, with prerequisites and troubleshooting
 
 
+## What's New in v0.1.36
+
+- Agent-contract residual: `scratch init`, content-source jail, global `--select`/`--fields`, `--filter`, `--limit` (long-only; **no global `-n`**)
+- Error envelopes **always emit** (`ok:false`); `--filter` does not silence failures
+- SSOT surface: **45** subcommands — `atomwrite agent-surface` / `CANONICAL_SUBCOMMAND_COUNT`
+- Pin agents to `^0.1.36`. Suite: `cargo test --test cli_v0136_gaps`. ADR-0055
+
+## 45 Subcommands (SSOT)
+
+After install, discover the full surface with:
+
+```bash
+atomwrite agent-surface
+atomwrite commands --include-globals
+atomwrite doctor --strict
+```
+
+Compact inventory of all **45** names (`CANONICAL_SUBCOMMAND_COUNT`):
+
+- `agent-surface` — clap-derived tool manifesto (anti-MCP)
+- `apply` — apply patches from stdin (auto format detect)
+- `backup` — timestamped backups with BLAKE3
+- `batch` — multi-op NDJSON manifest runner
+- `calc` — math / unit expressions (fend)
+- `case` — identifier rename styles (heck)
+- `codemod` — multi-rule AST campaign
+- `commands` — full command-tree JSON discovery
+- `completions` — shell completion scripts
+- `copy` — copy with checksum verification
+- `count` — lines / files-by-extension counts
+- `del` — remove dotted key in TOML/JSON
+- `delete` — delete files (backup by default)
+- `diff` — compare two files (or stdin)
+- `doctor` — host readiness diagnostics
+- `edit` — surgical edit (line / marker / match)
+- `edit-loop` — N `{old,new}` pairs in one invoke
+- `extract` — fields from NDJSON / text columns
+- `get` — read dotted path in TOML/JSON
+- `hash` — BLAKE3 checksums
+- `list` — project file tree with metadata
+- `locale` — UI locale preference (XDG)
+- `move` — atomic move / rename
+- `outline` — high-level AST structure
+- `prune-backups` — cleanup legacy `.bak.*` files
+- `query` — tree-sitter AST walk as NDJSON
+- `read` — file read with metadata
+- `recipe` — list/run multi-step pipelines
+- `regex` — generate regex from examples (grex)
+- `replace` — multi-file text replace (atomic)
+- `rollback` — restore from backup
+- `scope` — grammatical / AST scope edits
+- `scratch` — workspace staging for content sources
+- `search` — parallel content search (ripgrep)
+- `semantic-merge` — three-way line-based merge
+- `semantic-search` — offline token ranking (feature `semantic`)
+- `set` — write dotted path in TOML/JSON
+- `sparse` — budgeted monorepo list/read/outline
+- `stat` — alias of `read --stat`
+- `transform` — structural AST rewrite (ast-grep)
+- `verify` — BLAKE3 checksum verification
+- `wal-heal` — remove orphan terminal WAL journals
+- `wal-stats` — WAL journal diagnostics
+- `watch` — filesystem events (feature `watch`)
+- `write` — atomic create/overwrite via stdin
+
 ## What's New in v0.1.35
 
-- Docs-complete publish of the v0.1.33 one-shot runtime (same binary behavior)
-- Global `--timeout-secs` (alias `--timeout`) **default 120** (was 0); `0` disables; deadline → exit **124**
-- Fuzzy multi-apply is **one-pass** L→R on original content (`apply_fuzzy_one_pass`); never re-scans inserted text
-- Default max fuzzy applies = **1** if `--max-replacements` omitted; hard ceiling 10_000; embeds force single apply
-- ADR-0054; suite `cargo test --test cli_v0133_oneshot_fuzzy`
-- Pin `^0.1.35` / 41 subcommands
+- Residual A-* gaps; large overwrite `--ack-overwrite`; watch_summary; semantic-merge markers default ON
+- Historical pin `^0.1.35` (superseded by 0.1.36). One-shot fuzzy / timeout 120 / exit 124 from 0.1.33–0.1.34 remain
 
 ## What's New in v0.1.12
 
@@ -61,7 +122,7 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 
 ### Test Coverage
 
-- 700+ tests listed (v0.1.35 working tree; suite `cli_v0133_oneshot_fuzzy`)
+- 700+ tests listed (v0.1.36 working tree; suite `cli_v0133_oneshot_fuzzy`)
 - ADRs in `docs/decisions/` through 0054
 - 38 JSON schemas in `docs/schemas/`
 - See [docs/decisions/README.md](decisions/README.md) for architectural decisions
@@ -75,8 +136,8 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Install atomwrite v0.1.35 from crates.io
-cargo install atomwrite --locked --version "^0.1.35"
+# Install atomwrite v0.1.36 from crates.io
+cargo install atomwrite --locked --version "^0.1.36"
 # Or from a local clone:
 # cargo install --path . --locked --force
 
@@ -90,8 +151,8 @@ atomwrite --version
 # Install build tools
 sudo dnf install rust cargo gcc
 
-# Install atomwrite v0.1.35 from crates.io
-cargo install atomwrite --locked --version "^0.1.35"
+# Install atomwrite v0.1.36 from crates.io
+cargo install atomwrite --locked --version "^0.1.36"
 # Or from a local clone:
 # cargo install --path . --locked --force
 ```
@@ -101,8 +162,8 @@ cargo install atomwrite --locked --version "^0.1.35"
 ```bash
 sudo pacman -S rust
 
-# Install atomwrite v0.1.35 from crates.io
-cargo install atomwrite --locked --version "^0.1.35"
+# Install atomwrite v0.1.36 from crates.io
+cargo install atomwrite --locked --version "^0.1.36"
 # Or from a local clone:
 # cargo install --path . --locked --force
 ```
@@ -117,8 +178,8 @@ cargo install atomwrite --locked --version "^0.1.35"
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Install atomwrite v0.1.35 from crates.io
-cargo install atomwrite --locked --version "^0.1.35"
+# Install atomwrite v0.1.36 from crates.io
+cargo install atomwrite --locked --version "^0.1.36"
 # Or from a local clone:
 # cargo install --path . --locked --force
 
@@ -151,8 +212,8 @@ cargo install --path . --locked --force
 rustup default stable
 rustup target add x86_64-pc-windows-msvc
 
-# Install atomwrite v0.1.35 from crates.io
-cargo install atomwrite --locked --version "^0.1.35"
+# Install atomwrite v0.1.36 from crates.io
+cargo install atomwrite --locked --version "^0.1.36"
 
 # Verify (expect NDJSON output)
 atomwrite --version
@@ -206,8 +267,8 @@ the file in the locking application and retry.
 ## Installing Specific Versions
 
 ```bash
-# Recommended: crates.io pin for v0.1.35
-cargo install atomwrite --locked --version "^0.1.35"
+# Recommended: crates.io pin for v0.1.36
+cargo install atomwrite --locked --version "^0.1.36"
 
 # From a local clone / working tree
 cargo install --path . --locked --force
@@ -216,7 +277,7 @@ cargo install --path . --locked --force
 cargo install atomwrite --locked --version 0.1.28
 
 # Force reinstall of the crates.io pin
-cargo install atomwrite --locked --version "^0.1.35" --force
+cargo install atomwrite --locked --version "^0.1.36" --force
 ```
 
 The `--locked` flag ensures `Cargo.lock` is honored, guaranteeing a reproducible
@@ -247,15 +308,15 @@ The release binary is at `target/release/atomwrite` (or `atomwrite.exe` on
 Windows).
 
 
-## Slim vs Full Feature Builds (v0.1.35)
+## Slim vs Full Feature Builds (v0.1.36)
 
-v0.1.35 exposes Cargo features so you can trade AST size for a slim agent binary.
+v0.1.36 exposes Cargo features so you can trade AST size for a slim agent binary.
 
 | Profile | Command | Approx size | Notes |
 |---|---|---|---|
-| slim (`core` only) | `cargo install atomwrite --locked --version "^0.1.35" --no-default-features --features core` | ~7.7 MiB | local size-gate ≤15 MiB |
-| default (full AST subset) | `cargo install atomwrite --locked --version "^0.1.35"` | ~52 MB | `core` + `ast` + `lang-rust` + `lang-ts` + `lang-py` |
-| `full` | `cargo install atomwrite --locked --version "^0.1.35" --features full` | ~52 MB+ | default + `lang-full` + `watch` + `semantic` |
+| slim (`core` only) | `cargo install atomwrite --locked --version "^0.1.36" --no-default-features --features core` | ~7.7 MiB | local size-gate ≤15 MiB |
+| default (full AST subset) | `cargo install atomwrite --locked --version "^0.1.36"` | ~52 MB | `core` + `ast` + `lang-rust` + `lang-ts` + `lang-py` |
+| `full` | `cargo install atomwrite --locked --version "^0.1.36" --features full` | ~52 MB+ | default + `lang-full` + `watch` + `semantic` |
 
 ### Feature flags
 
@@ -271,15 +332,15 @@ v0.1.35 exposes Cargo features so you can trade AST size for a slim agent binary
 
 ```bash
 # Slim agent install (agent-friendly)
-cargo install atomwrite --locked --version "^0.1.35" --no-default-features --features core
+cargo install atomwrite --locked --version "^0.1.36" --no-default-features --features core
 
 # Default/full install with AST
-cargo install atomwrite --locked --version "^0.1.35"
+cargo install atomwrite --locked --version "^0.1.36"
 
 # Default plus watch + all languages
-cargo install atomwrite --locked --version "^0.1.35" --features full
+cargo install atomwrite --locked --version "^0.1.36" --features full
 
-# Verify installation (41 subcommands in --help)
+# Verify installation (45 subcommands in --help)
 atomwrite --version
 atomwrite --help
 ```
@@ -358,7 +419,7 @@ This release introduces a new safety layer called **intention guards** and renam
 
 ### Statistics
 
-- 700+ tests listed (v0.1.35 working tree)
+- 700+ tests listed (v0.1.36 working tree)
 - 11 GAP-2026 closed
 - 3 Windows cross-compile targets green
 - ADRs in `docs/decisions/` through 0054; 38 JSON schemas

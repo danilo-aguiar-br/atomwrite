@@ -180,8 +180,24 @@ pub struct SearchArgs {
 /// Arguments for the extract subcommand.
 #[derive(Args, Debug)]
 pub struct ExtractArgs {
-    /// Field names or indices to extract.
+    /// Field names or indices to extract (positional).
     pub fields: Vec<String>,
+
+    /// Local field list (agent-native; v0.1.36 residual).
+    ///
+    /// Prefer one of: positional fields **or** `--field`, not both (exit 65).
+    ///
+    /// **Not** global `--select` / `--fields`: those project the whole NDJSON
+    /// envelope after extract. This flag chooses input columns before emit.
+    /// (`--select` cannot be local — it collides with the global shape flag.)
+    #[arg(
+        long = "field",
+        value_name = "FIELD",
+        num_args = 1,
+        action = clap::ArgAction::Append,
+        help = "Local field to extract (repeatable; not global --select; do not combine with positionals)"
+    )]
+    pub field: Vec<String>,
 
     /// Delimiter for text mode (default: whitespace).
     #[arg(

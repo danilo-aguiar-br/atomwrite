@@ -99,9 +99,7 @@ pub fn cmd_semantic_merge(
 ) -> Result<()> {
     let start = std::time::Instant::now();
     if shutdown.is_shutdown() {
-        return Err(
-            crate::signal::cancelled_error("semantic-merge cancelled before read").into(),
-        );
+        return Err(crate::signal::cancelled_error("semantic-merge cancelled before read").into());
     }
     let workspace = global.resolve_workspace()?;
     let max = global.effective_max_filesize();
@@ -124,9 +122,10 @@ pub fn cmd_semantic_merge(
     let ours = ours?;
     let theirs = theirs?;
     if shutdown.is_shutdown() {
-        return Err(
-            crate::signal::cancelled_error("semantic-merge cancelled after parallel reads").into(),
-        );
+        return Err(crate::signal::cancelled_error(
+            "semantic-merge cancelled after parallel reads",
+        )
+        .into());
     }
 
     let cb = checksum::hash_bytes(base.as_bytes());

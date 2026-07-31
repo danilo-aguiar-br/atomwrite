@@ -75,10 +75,9 @@ pub fn cmd_case(
     // G-029/G-040: clap requires `--subvert`; this is defense-in-depth only (no "yet").
     if args.subvert.is_empty() {
         return Err(crate::error::AtomwriteError::InvalidInput {
-            reason:
-                "--subvert OLD NEW is required (pair of identifiers to rename). Example: \
+            reason: "--subvert OLD NEW is required (pair of identifiers to rename). Example: \
                      atomwrite case --to snake --subvert myVar my_var src/"
-                    .into(),
+                .into(),
         }
         .into());
     }

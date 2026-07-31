@@ -25,7 +25,7 @@
 - `src/checksum.rs` — cálculo de hash BLAKE3 para arquivos e slices de bytes (usa memmap2 para arquivos grandes)
 - `src/file_io.rs` — leitura inteligente de arquivos com memmap2 automático acima de 1 MiB
 - `src/platform.rs` — durabilidade e rename por plataforma: `Durability` full|fast|auto; Linux `renameat2` com fallback para rename; macOS `F_FULLFSYNC` em full; o write reporta no NDJSON `platform.durability` e `platform.rename_method`
-- `src/fuzzy.rs` — cascata compartilhada de 9 estratégias de match (exato, whitespace, indent, Jaro-Winkler, unicode_normalized, …) usada por edit, replace, batch, edit-loop; multi-apply **one-pass** (`apply_fuzzy_one_pass`) no conteúdo original (nunca reescaneia texto inserido); embeds de pattern dentro de replacement forçam apply único; default max applies = 1; teto 10_000; cancel cooperativo polled no meio da cascata; caps (pattern 64 KiB, lev 8192 chars, janelas 4096, crescimento max(4×, +16 MiB)); expõe `match_count` e `indent_adjusted` no EditOutput (residual v0.1.30; contrato one-shot v0.1.33/0.1.34)
+- `src/fuzzy.rs` — cascata compartilhada de 9 estratégias de match (exato, whitespace, indent, Jaro-Winkler, unicode_normalized, …) usada por edit, replace, batch, edit-loop; multi-apply **one-pass** (`apply_fuzzy_one_pass`) no conteúdo original (nunca reescaneia texto inserido); embeds de pattern dentro de replacement forçam apply único; default max applies = 1; teto 10_000; cancel cooperativo polled no meio da cascata; caps (pattern 64 KiB, lev 8192 chars, janelas 4096, crescimento max(4×, +16 MiB)); expõe `match_count` e `indent_adjusted` no EditOutput (residual v0.1.30; contrato one-shot v0.1.33/0.1.34); **honestidade v0.1.36:** estratégias normalizadas emitem `similarity: null` (não 1.0 falso); dual-gate em `block_anchor`; soft-floor de `context_aware` via XDG `[fuzzy].soft_floor_delta` (padrão 0.05)
 
 ### Segurança e Validação
 - `src/path_safety.rs` — jail do workspace: path traversal, symlinks, FIFO/device, nomes reservados Windows (COM0–9/LPT0–9), NFC, helper de path longo `\\?\`
@@ -42,8 +42,9 @@
 - `src/syntax_check.rs` — verificação de sintaxe REAL via `tree-sitter-language-pack`. Substitui a heurística de balanceamento de colchetes do v0.1.11. Suporta 24 linguagens out-of-the-box. Faz fallback para heurística legada em extensões desconhecidas. 16 testes unitários.
 
 ### Saída
-- `src/output.rs` — escritor NDJSON com tratamento de broken-pipe (SIGPIPE-safe)
+- `src/output.rs` — escritor NDJSON com tratamento de broken-pipe (SIGPIPE-safe); shape global de runtime (`--select`/`--fields`, `--filter`, `--limit`) aplicada na emissão — **não** são campos de schema
 - `src/ndjson_types.rs` — definições de tipos de saída com derivação de JSON Schema via schemars
+- `src/error/` — envelope de erro sempre emite `ok: false` (obrigatório) mais `match_count` em falhas de match (0 na maioria das falhas); `best_candidate` opcional em miss/ambiguidade
 - `src/constants.rs` — constantes nomeadas para tamanhos de buffer, thresholds e códigos de saída
 
 ### Utilitários
@@ -55,7 +56,7 @@
 - `src/reflink.rs` — helper de reflink (copy-on-write) via `reflink-copy`
 
 ### Handlers de Subcomando
-- `src/commands/` — 41 implementações de subcomando (handlers + aliases), cada uma no próprio módulo quando aplicável
+- `src/commands/` — **45** implementações de subcomando (handlers + aliases; SSOT `CANONICAL_SUBCOMMAND_COUNT` / `agent-surface`), cada uma no próprio módulo quando aplicável
 - Cada handler recebe args parseados, config global, escritor NDJSON e sinal de shutdown
 - Todos os handlers seguem a mesma assinatura: `fn cmd_*(args, global, writer, shutdown) -> Result<()>`
 - **Baseline v0.1.11 (22)**: read, write, edit, search, replace, hash, delete, count, diff, move, copy, list, extract, calc, regex, transform, scope, batch, backup, rollback, apply, completions
@@ -65,6 +66,8 @@
 - **Adicionados em v0.1.25 (1)**: verify
 - **Adicionados em v0.1.29 (8)**: recipe, sparse, semantic-merge, agent-surface, watch, codemod, semantic-search, stat (alias de `read --stat`)
 - **Módulos de comando v0.1.29**: `recipe.rs`, `sparse.rs`, `semantic_merge.rs`, `agent_surface.rs`, `watch.rs`, `codemod.rs`, `semantic_search.rs`
+- **Host / descoberta (completa 41 → 45)**: `doctor` (diagnóstico do host), `locale` (locale resolvido + preferência XDG), `commands` (manifesto da árvore de comandos), `scratch` (`scratch init` de staging sob `.atomwrite/scratch/`)
+- Nota histórica: **41** era a superfície documentada até o closeout residual v0.1.35; **SSOT atual é 45**
 
 ### Features Cargo (v0.1.29+)
 - `core` — binário slim sem AST/watch/semantic (meta PRD 5–8 MiB; medido ~7,7 MiB release)
@@ -289,6 +292,7 @@ Adições v0.1.12:
 - 0049 — config viva encanada: `load_config` chamado uma única vez em `lib.rs::run()`, `DefaultsSection` propagado a cada handler mutante (v0.1.28)
 - 0050 — guard de stdin-tty: `main.rs` calcula `stdin.is_terminal()` (std `IsTerminal`, Rust >= 1.70) e propaga `stdin_is_tty` até `cmd_edit`; modos consumidores de stdin falham rápido com exit 65 em vez de bloquear indefinidamente (v0.1.28)
 - 0054 — contrato one-shot fuzzy: multi-apply one-pass, embeds forçam apply único, default max applies 1, `--timeout-secs` default 120 / exit 124, cancel polled no meio do fuzzy, caps de recurso (runtime v0.1.33; docs completas v0.1.34)
+- 0055 — contrato agent-first v0.1.36 (GAP-2026-019…033): jail do workspace em paths de content-source + staging scratch; NDJSON de erro `ok: false` + `match_count`; fuzzy normalizado `similarity: null`; dual-gate `block_anchor`; XDG `[fuzzy].soft_floor_delta`; globais `--select`/`--filter`/`--limit`; skills EN/PT com fórmulas de staging (ver `docs/decisions/0055-v0-1-36-agent-contract-gaps.pt-BR.md`)
 
 
 ## Arquitetura de Testes
@@ -298,6 +302,7 @@ Adições v0.1.12:
 - Testes property-based via `proptest` para checksum e backup
 - Gate de cross-compile via `tests/cross_compile_check.rs`
 - Testes de snapshot via `insta` para saída NDJSON estável
+- Contrato de agente v0.1.36: `tests/cli_v0136_gaps.rs` + `scripts/check-gaps-ssot.sh`
 
 ## Contratos residuais v0.1.35 (notas de arquitetura)
 
@@ -308,4 +313,12 @@ Adições v0.1.12:
 - SRP: monólitos secundários fatiados via `include!`.
 - Observabilidade: somente `init_tracing` — diagnósticos locais em stderr; sem telemetria de produto.
 - Config: knobs de produto só CLI + XDG / `.atomwrite.toml`.
+
+## Contrato de agente v0.1.36 (ADR-0055)
+
+- Superfície SSOT **45** subcomandos (`doctor`, `locale`, `commands`, `scratch` completam o salto 41→45).
+- Envelope de erro sempre `ok: false` (obrigatório); `match_count` presente (0 na maioria das falhas de match).
+- Honestidade fuzzy: estratégias normalizadas → `similarity: null`; dual-gate `block_anchor`; soft-floor via XDG `[fuzzy].soft_floor_delta` (padrão 0.05) em `context_aware`.
+- Paths de content-source (`--old-file`/`--new-file`) permanecem sob o jail do workspace; agentes estagiam via `scratch init` → `.atomwrite/scratch/` (política, não vulnerabilidade).
+- Flags de shape global (`--select`/`--fields`, `--filter`, `--limit`) remodelam stdout em runtime; não são campos de schema NDJSON; erros always-emit sob `--filter`.
 

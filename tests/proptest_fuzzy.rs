@@ -82,4 +82,39 @@ proptest! {
             prop_assert!(sim > 0.0, "successful match must have positive similarity");
         }
     }
+
+    // GAP-2026-027: unrelated random strings must not fuzzy-match under Aggressive.
+    #[test]
+    fn unrelated_strings_do_not_false_positive_aggressive(
+        content in "[A-Z]{20,40}",
+        old in "[a-z]{20,40}",
+        new_text in "[a-z]{1,10}",
+    ) {
+        // Distinct alphabets: content upper, pattern lower — no shared tokens.
+        prop_assume!(!content.to_lowercase().contains(&old));
+        prop_assume!(!old.is_empty());
+        let result = match_pair(&content, &old, &new_text, FuzzyMode::Aggressive, None);
+        prop_assert!(
+            result.is_err(),
+            "unrelated content/old must not match under Aggressive default: {:?}",
+            result.as_ref().map(|(_, i)| &i.strategy)
+        );
+    }
+
+    // GAP-2026-027 / dual-gate: shared borders + radical middle rewrite must not match at high thr.
+    #[test]
+    fn radical_middle_rewrite_rejected_at_high_threshold(
+        mid_a in "[a-z]{12,20}",
+        mid_b in "[a-z]{12,20}",
+    ) {
+        prop_assume!(mid_a != mid_b);
+        let content = format!("HEADER_LINE_START\n{mid_a}\nFOOTER_LINE_END\n");
+        let old = format!("HEADER_LINE_START\n{mid_b}\nFOOTER_LINE_END\n");
+        let result = match_pair(&content, &old, "X", FuzzyMode::Aggressive, Some(0.90));
+        prop_assert!(
+            result.is_err(),
+            "radical middle with shared borders must fail at thr=0.90, got {:?}",
+            result.as_ref().map(|(_, i)| (&i.strategy, i.similarity))
+        );
+    }
 }

@@ -121,8 +121,7 @@ pub fn cmd_outline(
     if !validated.exists() {
         return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
-    let content =
-        crate::file_io::read_file_bytes(&validated, global.effective_max_filesize())?;
+    let content = crate::file_io::read_file_bytes(&validated, global.effective_max_filesize())?;
 
     let lang_name = crate::commands::query::resolve_language_name(
         args.language.as_deref(),

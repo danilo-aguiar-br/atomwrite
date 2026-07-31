@@ -6,7 +6,6 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-
 /// Per-heuristic outcome: true = preserve the sidecar, false = clean it.
 pub type Decision = bool;
 

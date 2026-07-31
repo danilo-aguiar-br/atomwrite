@@ -10,15 +10,15 @@
 
 use std::io::Write;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Args;
 use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::cli::GlobalArgs;
 use crate::locale::{
-    available_tags, clear_persisted_preference, negotiate_to_idioma, parse_cli_locale,
-    preference_path, read_persisted_preference, resolved_state, write_persisted_preference, Idioma,
+    Idioma, available_tags, clear_persisted_preference, negotiate_to_idioma, parse_cli_locale,
+    preference_path, read_persisted_preference, resolved_state, write_persisted_preference,
 };
 use crate::output::NdjsonWriter;
 use crate::signal::ShutdownSignal;
@@ -27,7 +27,11 @@ use crate::signal::ShutdownSignal;
 #[derive(Args, Debug, Default)]
 pub struct LocaleArgs {
     /// Persist a UI locale preference for future runs (`en` or `pt-BR`).
-    #[arg(long, value_name = "TAG", help = "Persist locale preference (en, pt-BR)")]
+    #[arg(
+        long,
+        value_name = "TAG",
+        help = "Persist locale preference (en, pt-BR)"
+    )]
     pub set: Option<String>,
 
     /// Clear the persisted XDG locale preference.
@@ -76,9 +80,7 @@ pub fn cmd_locale(
     if args.clear {
         let path = clear_persisted_preference()?;
         preference_action = Some("cleared".into());
-        note = Some(
-            "persisted preference cleared; takes effect on the next invocation".into(),
-        );
+        note = Some("persisted preference cleared; takes effect on the next invocation".into());
         tracing::info!(?path, "locale preference cleared");
     } else if let Some(raw) = args.set.as_deref() {
         let tag = parse_cli_locale(raw).map_err(|e| anyhow::anyhow!(e))?;

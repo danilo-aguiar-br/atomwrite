@@ -189,7 +189,10 @@ pub fn sort_parallel<T: Ord + Send>(items: &mut [T]) {
 }
 
 /// Sort with a custom comparator (same threshold as [`sort_parallel`]).
-pub fn sort_by_parallel<T: Send>(items: &mut [T], cmp: impl Fn(&T, &T) -> std::cmp::Ordering + Sync) {
+pub fn sort_by_parallel<T: Send>(
+    items: &mut [T],
+    cmp: impl Fn(&T, &T) -> std::cmp::Ordering + Sync,
+) {
     if items.len() >= PAR_SORT_THRESHOLD {
         items.par_sort_unstable_by(cmp);
     } else {
@@ -318,11 +321,7 @@ mod tests {
 
     #[test]
     fn sort_paths_parallel_orders_small_lists() {
-        let mut paths = vec![
-            PathBuf::from("c"),
-            PathBuf::from("a"),
-            PathBuf::from("b"),
-        ];
+        let mut paths = vec![PathBuf::from("c"), PathBuf::from("a"), PathBuf::from("b")];
         sort_paths_parallel(&mut paths);
         assert_eq!(
             paths,

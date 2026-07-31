@@ -8,6 +8,43 @@
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.36] - 2026-07-31
+
+### Added
+- Error envelope sentinel `ok: false` on all `ErrorJson` lines (GAP-2026-020)
+- Stable `match_count: 0` on `MatchFailed` / `NoMatches` error envelopes
+- `MatchAmbiguous.best_candidate` populated for agent disambiguation (GAP-2026-025)
+- XDG `[fuzzy].soft_floor_delta` wired into context-aware matching (GAP-2026-022)
+- Escape-normalized match with original-byte offset map (`escape_map.inc.rs`, GAP-2026-024)
+- Canonical scratch relative path constant `SCRATCH_DIR_REL = ".atomwrite/scratch"` (GAP-2026-019)
+- Locale suggestions EN/pt-BR mention staging under `.atomwrite/scratch/` for jail escapes
+- Content-source-specific jail suggestion (`suggestion.workspace-jail-content-source`) when `--old-file`/`--new-file` escapes the jail
+- Global agent-native stdout shaping: `--select`/`--fields`, repeatable `--filter key=value`, `--limit N` (zero-cost identity path when unset; **no global `-n`**)
+- Error envelopes always emit under shape flags (`--filter` does not silence failures; `--limit` is success-only)
+- `extract --field` (local field selection; **not** local `--select` — that name collides with global shape; global `--select` still projects the emitted line). Agents/skills must never teach `extract --select`
+- Subcommand `scratch init` creates `{workspace}/.atomwrite/scratch` (idempotent; never opens OS `/tmp`)
+- Fuzzy `collect.inc.rs` SRP extract for non-overlapping range scan
+- proptest FP oracle (unrelated strings + radical-middle dual-gate)
+- Local gate script `scripts/check-gaps-ssot.sh` (no product GHA)
+- ADR-0055 agent-first contract (EN + pt-BR); skills EN/PT staging / anti-`--strategy` / `$` literal / shrink / multi-root / shape formulas
+- Integration suite `tests/cli_v0136_gaps.rs`
+
+### Changed
+- Version **0.1.36**
+- Normalized fuzzy strategies emit `similarity: null` instead of fake `1.0` (GAP-2026-021)
+- `collect_all` single robust scan via `collect.inc.rs` (GAP-2026-026)
+- `block_anchor` dual-gates middle ratio when pattern has a middle (GAP-2026-023)
+- `docs/schemas/error-output.schema.json` requires `ok`
+- Aggressive default threshold **0.50** re-evaluated with FP corpus; dual-gate keeps FP=0 — default retained; override via XDG `[fuzzy].threshold_aggressive`
+- Subcommand surface **45** (SSOT: `Commands` enum / `agent-surface`; includes `scratch`, `doctor`, `locale`, `commands`, `stat`, `verify`, …). Constant `CANONICAL_SUBCOMMAND_COUNT` + unit test
+
+### Fixed
+- GAP-2026-019…033 inventory closed or mitigated per class (jail/shrink remain policy)
+- Agent “all-null” success-field probe on error envelopes
+
+### Security
+- Workspace jail on `--old-file`/`--new-file` **retained** (no global `/tmp` allowlist)
+
 ## [0.1.35] - 2026-07-19
 
 ### Added
@@ -146,7 +183,7 @@
 ### Changed
 - Default fixed-string `replace` uses fuzzy=auto after exact multi-match misses (breaking vs 0.1.28 exact-only exit 1)
 - Strategy numbering normalized to nine named strategies
-- Skill surface documents 41 subcommands (was 33)
+- **At release:** skill surface documents 41 subcommands (was 33)
 
 ### Fixed
 - Match failures no longer discard near-miss scores
@@ -1149,7 +1186,8 @@
 - Release profile with LTO, single codegen unit, symbol stripping, and panic=abort
 
 
-[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.35...HEAD
+[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.36...HEAD
+[0.1.36]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.35...v0.1.36
 [0.1.35]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.34...v0.1.35
 [0.1.34]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.33...v0.1.34
 [0.1.33]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.32...v0.1.33

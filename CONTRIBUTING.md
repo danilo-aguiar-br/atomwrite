@@ -48,14 +48,16 @@ cargo build --release --features full
 - Check Windows cross-compile when touching platform code: `cargo check --target x86_64-pc-windows-gnu`
 - Install from path after substantive changes: `cargo install --path . --force`
 - Optional contract suite for residual agent surface: `cargo test --test cli_e2e_v0135`
+- Optional v0.1.36 agent-contract suite: `cargo test --test cli_v0136_gaps`
+- Optional gaps SSOT: `bash scripts/check-gaps-ssot.sh`
 - Optional slim surface: `cargo test --no-default-features --features core`
 - Optional format check: `cargo fmt -- --check`
 - Optional docs lint: `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`
 - Optional supply-chain checks: `cargo audit` and `cargo deny check`
 
 ### Current release pin
-- Current public version is `0.1.35`
-- Pin consumers and agents to `^0.1.35`
+- Current public version is `0.1.36`
+- Pin consumers and agents to `^0.1.36`
 - Keep version strings consistent across `Cargo.toml`, README, CHANGELOG, and skills
 
 
@@ -112,6 +114,8 @@ cargo build --release --features full
 - Add or update JSON schemas under `docs/schemas/` for new NDJSON envelopes
 - Add an ADR under `docs/decisions/` for non-trivial design choices
 - Update `llms.txt`, `llms.pt-BR.txt`, and `llms-full.txt` when primary docs change
+- When the CLI surface changes: bump `CANONICAL_SUBCOMMAND_COUNT`, the **45**-row inventories in README/AGENTS/`llms*`, `docs/schemas/README.md`, and run `scripts/check-gaps-ssot.sh`
+- When agent contract gaps close: update `gaps.md` status, ADR, HOW_TO_USE, COOKBOOK, MIGRATION, TESTING, and both skills in the same delivery
 - Note: `gaps.md` is local audit notes and is not public packaging documentation
 - Exclude private notes such as `docs_rules/`, `gaps.md`, and local agent memory from release packaging expectations
 
@@ -144,7 +148,7 @@ cargo build --release --features full
   - `cargo package --list` / dry-run publish as needed
   - `cargo install --path . --force`
 - Publish to crates.io only after local DoD is green
-- Current release line is `0.1.35`; consumers should pin `^0.1.35`
+- Current release line is `0.1.36`; consumers should pin `^0.1.36`
 
 
 ## Recognition

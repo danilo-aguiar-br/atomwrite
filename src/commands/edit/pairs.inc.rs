@@ -12,6 +12,29 @@ fn strip_file_trailing_newline(s: String) -> String {
     }
 }
 
+/// Validate a content-source path (`--old-file`/`--new-file`) and tag jail role.
+fn validate_content_source(
+    path: &std::path::Path,
+    workspace: &std::path::Path,
+) -> Result<std::path::PathBuf> {
+    crate::path_safety::validate_path(path, workspace).map_err(|e| {
+        match e.downcast::<crate::error::AtomwriteError>() {
+            Ok(crate::error::AtomwriteError::WorkspaceJail {
+                path,
+                workspace,
+                ..
+            }) => crate::error::AtomwriteError::WorkspaceJail {
+                path,
+                workspace,
+                content_source: true,
+            }
+            .into(),
+            Ok(other) => other.into(),
+            Err(other) => other,
+        }
+    })
+}
+
 fn resolve_edit_pairs(
     args: &EditArgs,
     workspace: &Path,
@@ -49,8 +72,8 @@ fn resolve_edit_pairs(
                 pairs
                     .par_iter()
                     .map(|(of, nf)| {
-                        let of_path = crate::path_safety::validate_path(of, workspace)?;
-                        let nf_path = crate::path_safety::validate_path(nf, workspace)?;
+                        let of_path = validate_content_source(of, workspace)?;
+                        let nf_path = validate_content_source(nf, workspace)?;
                         // Independent dual-file I/O within each pair.
                         let (old_raw, new_raw) = rayon::join(
                             || crate::file_io::read_file_string(&of_path, max_size),
@@ -66,8 +89,8 @@ fn resolve_edit_pairs(
                 pairs
                     .iter()
                     .map(|(of, nf)| {
-                        let of_path = crate::path_safety::validate_path(of, workspace)?;
-                        let nf_path = crate::path_safety::validate_path(nf, workspace)?;
+                        let of_path = validate_content_source(of, workspace)?;
+                        let nf_path = validate_content_source(nf, workspace)?;
                         // Even single-pair: dual independent reads via join.
                         let (old_raw, new_raw) = rayon::join(
                             || crate::file_io::read_file_string(&of_path, max_size),

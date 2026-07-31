@@ -2,11 +2,11 @@
 
 > Atomic file operations for LLM agents — one CLI, zero corruption
 
-atomwrite is a Rust CLI that provides 41 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
+atomwrite is a Rust CLI that provides 45 subcommands for file manipulation with atomic write guarantees. Every write uses tempfile + fsync + rename + directory fsync. Every response is NDJSON with BLAKE3 checksums. Built for LLM agents that need reliable, structured file operations without corruption risk.
 
-**Latest release: v0.1.35** — Residual A-* closed: large overwrite **default-deny** (`--ack-overwrite`); `watch` emits `watch_summary` even with 0 events; `semantic-merge` conflict markers default ON; `delete --plan` (not `--confirm`/`--yes`); watch idle 500 ms; suite `cli_e2e_v0135` green. Pin `^0.1.35`. 41 subcommands; no telemetry; CLI+XDG config only. See `CHANGELOG.md` and gaps.md §20.
+**Latest release: v0.1.36** — Agent contract residual closed/mitigated (GAP-019…033): `scratch init` + `.atomwrite/scratch/` staging (no OS `/tmp`); error envelopes always emit `ok:false` + stable `match_count`; global agent-native stdout shape `--select`/`--fields`, `--filter`, `--limit` (no global `-n`); honest fuzzy telemetry. Pin `^0.1.36`. **45** subcommands (SSOT); no telemetry; CLI+XDG config only. See `CHANGELOG.md` and gaps.md.
 
-**Previous:** v0.1.34 docs-complete one-shot fuzzy;  v0.1.33 runtime hang fix + one-pass fuzzy; v0.1.32 docs.rs `doc_cfg` / multi-target; v0.1.30 agent surface (fuzzy mandatory, `match_count`/`indent_adjusted`, `best_candidate`, recipe bak skip, `cli_v0130_agent_contract`). See `CHANGELOG.md`.
+**Previous:** v0.1.35 residual A-* (large overwrite default-deny, watch_summary, delete --plan); v0.1.34 docs-complete one-shot fuzzy; v0.1.33 runtime hang fix + one-pass fuzzy; v0.1.32 docs.rs `doc_cfg` / multi-target; v0.1.30 agent surface. Historical **41** subcommands at v0.1.29–0.1.35. See `CHANGELOG.md`.
 
 ## Installation
 
@@ -16,12 +16,12 @@ cargo install atomwrite
 
 Parsers for 305 languages are NOT bundled; they are downloaded on first use by `tree-sitter-language-pack` and cached in `~/.cache/tree-sitter-language-pack/parsers/`. Install footprint stays small (~5-10 MB vs 1+ GB if all 305 parsers were bundled).
 
-## 41 Subcommands
+## 45 Subcommands
 
 ### Core I/O
 - `read` -- read files with metadata, checksum, optional content. `--mode raw|envelope` selects byte-stream vs NDJSON envelope (v0.1.20)
 - `write` -- create or overwrite files atomically via stdin; large targets require `--ack-overwrite` (default-deny). `--preserve-timestamps` keeps source mtime (v0.1.20)
-- `edit` -- surgically edit by line number, text marker, or exact/fuzzy match; multi-pair `--old`/`--new` has per-pair fuzzy + `pair_results` + `--partial` (v0.1.15)
+- `edit` -- surgically edit by line number, text marker, or exact/fuzzy match; multi-pair `--old`/`--new` has per-pair fuzzy + `pair_results` + `--partial` (v0.1.15); stage `--old-file`/`--new-file` under `.atomwrite/scratch/` (GAP-019)
 - `delete` -- delete files with optional backup; plan-only via `--plan` (`--confirm`/`--yes` rejected)
 - `copy` -- copy files with checksum verification (reflink on APFS/btrfs/XFS)
 - `move` -- move or rename files atomically (EXDEV copy-fallback)
@@ -29,7 +29,7 @@ Parsers for 305 languages are NOT bundled; they are downloaded on first use by `
 
 ### Search and replace
 - `search` -- search file contents in parallel (ripgrep engine). `--no-begin-end` disables anchor emission (v0.1.20)
-- `replace` -- replace text across files with atomic writes; `--fuzzy auto|aggressive` (off rejected since v0.1.30) and `--fuzzy-threshold`; **one-pass** multi-apply on original content (never re-scans inserted text); default max applies = **1**; if replacement embeds pattern → force 1 apply; reports `strategy`/`similarity`/`match_count`/`indent_adjusted`; match errors may include `best_candidate`
+- `replace` -- replace text across files with atomic writes; `--fuzzy auto|aggressive|off` (`off` = exact-only, G-010; default `auto`) and `--fuzzy-threshold`; **one-pass** multi-apply on original content (never re-scans inserted text); default max applies = **1**; if replacement embeds pattern → force 1 apply; reports `strategy`/`similarity`/`match_count`/`indent_adjusted`; match errors may include `best_candidate`
 - `transform` -- AST refactoring via ast-grep (306 languages)
 
 ### Inspection
@@ -37,7 +37,7 @@ Parsers for 305 languages are NOT bundled; they are downloaded on first use by `
 - `count` -- count lines, files by extension. `--by-size` lists the largest files (v0.1.20)
 - `diff` -- compare two files (unified, stat, or changes)
 - `list` -- list files in a directory tree
-- `extract` -- extract fields from NDJSON input via pipe
+- `extract` -- extract fields from NDJSON input via pipe (local `--field` or positionals; **never** `extract --select` — global `--select` only projects the emitted line)
 - `scope` -- grammatical scoping (delete all comments, etc.). `--lang rust` alias accepted (v0.1.20)
 - `regex` -- generate regex from examples
 - `calc` -- math and unit conversions
@@ -70,7 +70,7 @@ Parsers for 305 languages are NOT bundled; they are downloaded on first use by `
 - `outline <PATH> [--kind <KIND>] [--positions]` -- extract high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON.
 - `write --syntax-check` -- G72 REAL syntax check via tree-sitter. 24 languages covered. Exit 88 with first error line/column/kind/message.
 
-### Agent surface and workflows (v0.1.29)
+### Agent surface and workflows (v0.1.29+, residual v0.1.30/v0.1.36)
 - `recipe` -- list/run versioned multi-step pipelines (e.g. search→replace→hash)
 - `sparse` -- budgeted monorepo list/read/outline (real AST outline_item) (`sparse list --max-files N`)
 - `semantic-merge` -- line-based three-way merge for multi-agent conflicts (not AST)
@@ -79,9 +79,14 @@ Parsers for 305 languages are NOT bundled; they are downloaded on first use by `
 - `codemod` -- multi-rule AST campaign with `by_rule_id` summary
 - `semantic-search` -- offline token ranking / inverted index (feature `semantic`; not OpenRouter embeddings)
 - `stat` -- alias of `read --stat`
+- `doctor` -- host readiness diagnostics (workspace/config/features/concurrency; `--strict`)
+- `locale` -- show resolved UI locale; `--set` / `--clear` XDG preference
+- `commands` -- full clap command tree as JSON for agent discovery (`--include-globals`)
+- `scratch` -- `scratch init` creates `{workspace}/.atomwrite/scratch/` staging (never OS `/tmp`; GAP-019)
 - `write --durability full|fast|auto` -- fsync trade-offs; NDJSON reports `platform.durability`, `platform.rename_method`, `platform.backup_method`
 - Linux `renameat2` with rename fallback; macOS `F_FULLFSYNC` under durability `full`
 - Cargo features: `core` / `ast` / `lang-*` / `watch` / `semantic` / `full` — slim build: `cargo build --release --no-default-features --features core`
+- Global agent-native shape (v0.1.36): `--select`/`--fields`, `--filter`, `--limit` (long-only; no global `-n`); error envelopes always emit `ok:false`
 
 ## v0.1.20 — Intention Guards (New Safety Layer)
 
@@ -146,6 +151,7 @@ Every command outputs **NDJSON** (one JSON object per line) to stdout. The last 
 ## Key Flags
 
 - `--workspace <DIR>` -- workspace root for path jail validation (REQUIRED for file ops)
+- `--config <PATH>` (global) -- explicit `.atomwrite.toml` path (overrides workspace + XDG)
 - `--expect-checksum <HASH>` -- optimistic locking for concurrent edits
 - `--require-backup <N>` (v0.1.20) -- intention guard: refuse if fewer than N backups exist
 - `--confirm` (v0.1.20) -- intention guard: prompt before mutating
@@ -163,6 +169,11 @@ Every command outputs **NDJSON** (one JSON object per line) to stdout. The last 
 - `--positions` (query, outline) -- include start_line/start_column/byte_offset in AST output
 - `--line-ending lf|crlf|cr|auto` -- normalize line endings
 - `--timeout-secs <SECONDS>` (global) -- global operation timeout; default **120**; pass `0` to disable; exit **124** on deadline
+- `--no-auto-heal` (global) -- skip startup wal-heal pass (G119 L3)
+- `--no-progress` (global) -- suppress NDJSON progress heartbeats on long ops
+- `--select KEYS` / `--fields KEYS` (global, v0.1.36) -- project NDJSON to top-level keys (CSV)
+- `--filter key=value` (global, v0.1.36) -- keep NDJSON events by top-level equality (repeatable AND)
+- `--limit N` (global, v0.1.36) -- max NDJSON events after filter (**long-only**; no global `-n`)
 - `--grep <REGEX>` (read) -- filter returned lines to those matching a regex
 - `--head N` / `--tail N` (read) -- read first/last N lines
 - `--lines START:END` (read) -- partial read with 1-based inclusive range
@@ -206,7 +217,7 @@ Every command outputs **NDJSON** (one JSON object per line) to stdout. The last 
 
 ## Environment Variables
 
-- v0.1.35: **no product environment knobs**. Use CLI flags + XDG / `.atomwrite.toml` only.
+- v0.1.35+: **no product environment knobs**. Use CLI flags + XDG / `.atomwrite.toml` only.
 - Doctor may observe host env for diagnostics (allowlist); not a configuration API.
 
 
@@ -282,11 +293,28 @@ atomwrite --workspace . rollback src/config.rs
 
 # Apply a unified diff from stdin
 cat patch.diff | atomwrite --workspace . apply src/file.rs
+
+# v0.1.36: agent discovery
+atomwrite --workspace . doctor --strict
+atomwrite --workspace . commands --include-globals
+atomwrite --workspace . agent-surface --format json
+atomwrite locale
+atomwrite --workspace . scratch init
+
+# v0.1.36: stage patch inside jail, then edit
+SCR=.atomwrite/scratch
+printf %s "$OLD" >"$SCR/old.txt"
+printf %s "$NEW" >"$SCR/new.txt"
+atomwrite --workspace . edit --old-file "$SCR/old.txt" --new-file "$SCR/new.txt" src/f.rs
+
+# v0.1.36: agent-native NDJSON shape (no jq required)
+atomwrite --workspace . --select ok,error,code,match_count --filter ok=false --limit 1 \
+  edit --old missing --new x --fuzzy off src/f.rs
 ```
 
 ## Primary Documentation
 
-- [README](https://github.com/danilo-aguiar-br/atomwrite/blob/main/README.md): Full documentation with all 28 commands and examples
+- [README](https://github.com/danilo-aguiar-br/atomwrite/blob/main/README.md): Full documentation with all 45 subcommands and examples
 - [HOW_TO_USE](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/HOW_TO_USE.md): Quickstart guide
 - [COOKBOOK](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/COOKBOOK.md): Recipes for common tasks
 - [AGENTS.md](https://github.com/danilo-aguiar-br/atomwrite/blob/main/docs/AGENTS.md): Agent discovery file with output contract and token budget

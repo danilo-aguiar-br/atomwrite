@@ -190,6 +190,7 @@ pub fn handle_clap_parse_error(clap_err: clap::Error) -> ExitCode {
             let suggestion = enrich_clap_suggestion(&msg);
             let ej = crate::error::ErrorJson {
                 error: true,
+                ok: false,
                 code: "ARGUMENT_PARSE_ERROR",
                 exit: 2,
                 message: msg,
