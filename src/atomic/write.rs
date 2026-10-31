@@ -25,12 +25,62 @@ use super::types::{AtomicWriteOptions, WriteResult, WriteStrategy};
 /// Returns `AtomwriteError::Io` if creating, writing, or renaming the tempfile fails.
 /// Returns `AtomwriteError::PermissionDenied` if the target directory is not writable.
 /// Returns `AtomwriteError::DiskFull` if the filesystem runs out of space during write.
-#[tracing::instrument(skip_all, fields(path = %target.display()))]
+/// Returns `AtomwriteError::LockTimeout` (exit 83) if another process holds the
+/// advisory lock of the target for longer than `LOCK_ACQUIRE_TIMEOUT_MS`.
+///
+/// # Examples
+///
+/// ```
+/// use atomwrite::atomic::{AtomicWriteOptions, atomic_write};
+/// use atomwrite::checksum::hash_bytes;
+///
+/// let dir = tempfile::tempdir()?;
+/// let target = dir.path().join("notes.txt");
+/// let opts = AtomicWriteOptions {
+///     backup: false,
+///     ..Default::default()
+/// };
+///
+/// let first = atomic_write(&target, b"v1\n", &opts, dir.path())?;
+/// assert_eq!(first.bytes_written, 3);
+/// assert_eq!(first.checksum, hash_bytes(b"v1\n"));
+/// assert!(first.checksum_before.is_none());
+///
+/// let second = atomic_write(&target, b"v2\n", &opts, dir.path())?;
+/// assert_eq!(second.checksum_before, Some(first.checksum));
+/// assert_eq!(std::fs::read_to_string(&target)?, "v2\n");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
 pub fn atomic_write(
     target: &Path,
     content: &[u8],
     opts: &AtomicWriteOptions,
     workspace: &Path,
+) -> Result<WriteResult> {
+    atomic_write_based(target, content, opts, workspace, None)
+}
+
+/// Write content atomically, refusing to overwrite a file that changed after the
+/// caller read it.
+///
+/// For read-modify-write verbs: `expected_base` is the BLAKE3 hex checksum of the
+/// content the new content was computed from. Under the advisory lock the
+/// current file is hashed and compared; a different file (or a missing one)
+/// fails with `AtomwriteError::StateDrift` (exit 82, retryable) and writes
+/// nothing. This is the net for filesystems without `flock` and for callers that
+/// did not hold the lock while reading. `None` behaves like [`atomic_write`].
+///
+/// # Errors
+///
+/// Same as [`atomic_write`], plus `AtomwriteError::StateDrift` (exit 82) when the
+/// file no longer matches `expected_base`.
+#[tracing::instrument(skip_all, fields(path = %target.display()))]
+pub fn atomic_write_based(
+    target: &Path,
+    content: &[u8],
+    opts: &AtomicWriteOptions,
+    workspace: &Path,
+    expected_base: Option<&str>,
 ) -> Result<WriteResult> {
     let start = Instant::now();
 
@@ -39,13 +89,45 @@ pub fn atomic_write(
     let resolved_durability = opts.durability.resolve(&target);
     let mut backup_method_used: Option<&'static str> = None;
 
+    // Step 1-lock: R23 — create the parent first (the lock sidecar lives in
+    // it), then take the advisory lock BEFORE anything reads the target.
+    // `_lock` lives to the end of the function: it covers the rename, the
+    // directory fsync and the commit, and releases on every error path.
+    ensure_parent_dir(&target)?;
+    let _lock =
+        crate::lock::acquire_exclusive(&target, crate::config::tuning().lock_acquire_timeout_ms)?;
+
+    // Step 1-base: the caller computed the new content from the file as it read
+    // it. Under the lock, refuse to overwrite a file that has changed since.
+    // Checked before any journal is opened so a refusal leaves nothing behind.
+    if let Some(expected) = expected_base {
+        let actual = if target.exists() {
+            Some(checksum::hash_file(&target, u64::MAX)?)
+        } else {
+            None
+        };
+        if actual.as_deref() != Some(expected) {
+            return Err(crate::error::AtomwriteError::StateDrift {
+                path: target,
+                expected: expected.to_string(),
+                actual: actual
+                    .unwrap_or_else(|| crate::constants::MISSING_FILE_CHECKSUM.to_string()),
+            }
+            .into());
+        }
+    }
+
     // Step 1a: G119 L1 — decide whether to create a sidecar at all. The
     // heuristic short-circuits for trivial writes (small file in a git
     // dir, plain write, set/del). This is the first line of defence
     // against sidecar pollution and prevents 60-80% of unnecessary
     // sidecar writes in agent LLM workloads.
+    // H3 throttles creation only (and only after L1 said yes), so a flood of
+    // writes in one process stops opening journals instead of leaving them
+    // behind after the commit.
     let sidecar_wanted =
-        crate::wal::should_create_sidecar(&target, crate::wal::JournalOp::Write, opts.wal_policy);
+        crate::wal::should_create_sidecar(&target, crate::wal::JournalOp::Write, opts.wal_policy)
+            && !crate::wal::creation_throttled(opts.wal_policy);
 
     // Step 1b: G114 — append a `Started` WAL entry. On crash, the
     // orphan journal surfaces `expected_new_checksum` for recovery.
@@ -127,6 +209,23 @@ pub fn atomic_write(
             }
         }
     };
+    // `--strict-atomic` promises a single atomic step. The rename path delivers
+    // it, and it also refuses the EXDEV copy fallback on its own. The in-place
+    // path cannot: it truncates and rewrites the same inode, so a crash between
+    // the two leaves a half-written file. Refusing it here keeps the flag's
+    // promise true wherever the strategy was chosen for us.
+    if opts.strict_atomic && matches!(strategy, WriteStrategy::InPlace) {
+        return Err(crate::error::AtomwriteError::ExdevFallbackDisabled {
+            path: target,
+            reason: if is_symlink {
+                "the target is a symlink, so the write must keep the existing inode"
+            } else {
+                "the target has more than one hardlink, so the write must keep the existing inode"
+            }
+            .into(),
+        }
+        .into());
+    }
     if matches!(strategy, WriteStrategy::InPlace) {
         if let Some(n) = hardlink_nlink {
             tracing::info!(
@@ -165,21 +264,7 @@ pub fn atomic_write(
         None
     };
 
-    // Step 5: create parent directories
-    if let Some(parent) = target.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("cannot create directories for {}", target.display()))?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = fs::set_permissions(
-                    parent,
-                    fs::Permissions::from_mode(crate::constants::DIR_PERMISSIONS),
-                );
-            }
-        }
-    }
+    // Step 5: parent directories already exist (see `ensure_parent_dir`).
 
     // Step 5.5: G72 — optional post-write syntax check.
     // v0.1.12: real tree-sitter parse via `crate::syntax_check`. Falls
@@ -242,12 +327,27 @@ pub fn atomic_write(
 
     // Step 6–9: dispatch by strategy
     let (exdev_fallback, rename_method_used) = match strategy {
-        WriteStrategy::Rename => write_rename_path(
+        WriteStrategy::Rename => match write_rename_path(
             target.as_path(),
             content,
             opts.strict_atomic,
             resolved_durability,
-        )?,
+        ) {
+            Ok(done) => done,
+            Err(e) => {
+                // A cooperative cancel raised on the rename path happens before
+                // the rename: the target is intact and the tempfile is removed
+                // on drop, so the journal has nothing to recover. Every other
+                // failure keeps it for `wal-heal`.
+                if matches!(
+                    e.downcast_ref::<crate::error::AtomwriteError>(),
+                    Some(crate::error::AtomwriteError::Cancelled { .. })
+                ) {
+                    wal_guard.discard();
+                }
+                return Err(e);
+            }
+        },
         WriteStrategy::InPlace | WriteStrategy::CopyBack => (
             write_inplace_path(target.as_path(), content)?,
             strategy.as_str(),
@@ -269,7 +369,9 @@ pub fn atomic_write(
 
     // Step 11: restore permissions
     if let Some(ref meta) = original_meta {
-        let _ = fs::set_permissions(&target, meta.permissions());
+        if let Err(e) = fs::set_permissions(&target, meta.permissions()) {
+            tracing::warn!(path = %target.display(), error = %e, "permission restore failed");
+        }
     }
 
     // Step 12: G39 — restore xattrs on the freshly written target
@@ -281,7 +383,9 @@ pub fn atomic_write(
 
     // Step 13: restore timestamps
     if opts.preserve_timestamps && original_meta.is_some() {
-        let _ = platform::preserve_timestamps(&target, mtime, atime);
+        if let Err(e) = platform::preserve_timestamps(&target, mtime, atime) {
+            tracing::warn!(path = %target.display(), error = %e, "timestamp restore failed");
+        }
     }
 
     let checksum = checksum::hash_bytes(content);
@@ -291,7 +395,10 @@ pub fn atomic_write(
     // We ignore errors here (best-effort) since the file is already on disk
     // and a recovery-time report will surface any orphan.
     if let Some(ref op_id) = wal_op_id_opt {
-        let _ = crate::wal::journal_committed(&target, op_id);
+        crate::best_effort::best_effort(
+            crate::wal::journal_committed(&target, op_id),
+            "append Committed journal entry",
+        );
         wal_guard.release();
     } else {
         // No WAL was created (best-effort fallback) — guard is inert.
@@ -338,4 +445,26 @@ pub fn atomic_write(
         rename_method: rename_method_used,
         backup_method: backup_method_used,
     })
+}
+
+/// Step 5: create missing parent directories (mode `DIR_PERMISSIONS` on Unix).
+fn ensure_parent_dir(target: &Path) -> Result<()> {
+    if let Some(parent) = target.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("cannot create directories for {}", target.display()))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                crate::best_effort::best_effort(
+                    fs::set_permissions(
+                        parent,
+                        fs::Permissions::from_mode(crate::constants::DIR_PERMISSIONS),
+                    ),
+                    "set mode on created parent directory",
+                );
+            }
+        }
+    }
+    Ok(())
 }

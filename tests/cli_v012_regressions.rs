@@ -135,6 +135,7 @@ fn search_invalid_regex_emits_json_envelope() {
     );
 }
 
+#[cfg(feature = "ast")]
 #[test]
 fn scope_delete_rust_comments_no_orphan_whitespace() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -269,12 +270,9 @@ fn read_with_grep_filters_lines() {
 fn completions_install_bash_creates_xdg_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let xdg_data = dir.path().join("xdg");
-    // SAFETY: setting env var in test process before forking atomwrite child
-    unsafe {
-        std::env::set_var("XDG_DATA_HOME", &xdg_data);
-    }
 
     let output = common::atomwrite()
+        .env("XDG_DATA_HOME", &xdg_data)
         .args(["completions", "bash", "--install"])
         .output()
         .expect("completions install");
@@ -325,6 +323,13 @@ fn jail_suggestion_mentions_workspace_flag() {
 fn gap13_jail_suggestion_when_workspace_supplied_says_inside() {
     // GAP 13: when workspace IS provided (via --workspace), the suggestion
     // must say "inside the workspace" rather than re-prompting the flag.
+    //
+    // The suggestion is catalog text, and the catalog is chosen from the UI
+    // language, so the assertion names the language it asserts instead of
+    // inheriting whichever locale the host happens to run under. Without the
+    // pin, the same code is asserted in English on one machine and served in
+    // Portuguese on another, and the failure describes the host rather than the
+    // behaviour. `--locale` only affects message text, never the jail decision.
     let dir = tempfile::tempdir().expect("tempdir");
     let outside_dir = tempfile::tempdir().expect("tempdir");
     let outside = outside_dir.path().join("foo.txt");
@@ -332,12 +337,13 @@ fn gap13_jail_suggestion_when_workspace_supplied_says_inside() {
 
     let output = common::atomwrite()
         .args([
+            "--locale",
+            "en",
             "--workspace",
             dir.path().to_str().unwrap(),
             "read",
             outside.to_str().unwrap(),
         ])
-        .env_remove("ATOMWRITE_LANG")
         .output()
         .expect("read");
 

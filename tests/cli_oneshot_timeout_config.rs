@@ -2,13 +2,15 @@
 
 //! One-shot CLI rules: global --timeout-secs / --config / --no-progress.
 
+mod common;
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::tempdir;
 
 #[test]
 fn timeout_secs_alias_timeout_accepted() {
-    let mut cmd = Command::cargo_bin("atomwrite").unwrap();
+    let mut cmd = common::hermetic(Command::cargo_bin("atomwrite").unwrap());
     cmd.args(["--timeout", "30", "doctor"])
         .assert()
         .success()
@@ -17,7 +19,7 @@ fn timeout_secs_alias_timeout_accepted() {
 
 #[test]
 fn timeout_secs_flag_accepted() {
-    let mut cmd = Command::cargo_bin("atomwrite").unwrap();
+    let mut cmd = common::hermetic(Command::cargo_bin("atomwrite").unwrap());
     cmd.args(["--timeout-secs", "30", "doctor"])
         .assert()
         .success()
@@ -28,7 +30,7 @@ fn timeout_secs_flag_accepted() {
 fn config_missing_is_hard_error() {
     let dir = tempdir().unwrap();
     let missing = dir.path().join("does-not-exist.toml");
-    let mut cmd = Command::cargo_bin("atomwrite").unwrap();
+    let mut cmd = common::hermetic(Command::cargo_bin("atomwrite").unwrap());
     cmd.args([
         "--config",
         missing.to_str().unwrap(),
@@ -46,7 +48,7 @@ fn config_explicit_loads() {
     let dir = tempdir().unwrap();
     let cfg = dir.path().join("custom.toml");
     std::fs::write(&cfg, "[defaults]\nbackup = false\nretention = 2\n").unwrap();
-    let mut cmd = Command::cargo_bin("atomwrite").unwrap();
+    let mut cmd = common::hermetic(Command::cargo_bin("atomwrite").unwrap());
     cmd.args([
         "--config",
         cfg.to_str().unwrap(),
@@ -62,7 +64,7 @@ fn config_explicit_loads() {
 
 #[test]
 fn no_progress_flag_accepted() {
-    let mut cmd = Command::cargo_bin("atomwrite").unwrap();
+    let mut cmd = common::hermetic(Command::cargo_bin("atomwrite").unwrap());
     cmd.args(["--no-progress", "doctor"])
         .assert()
         .success()
@@ -71,7 +73,7 @@ fn no_progress_flag_accepted() {
 
 #[test]
 fn help_documents_timeout_and_config() {
-    let mut cmd = Command::cargo_bin("atomwrite").unwrap();
+    let mut cmd = common::hermetic(Command::cargo_bin("atomwrite").unwrap());
     cmd.arg("--help")
         .assert()
         .success()

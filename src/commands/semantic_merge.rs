@@ -35,6 +35,10 @@ use crate::signal::ShutdownSignal;
 with optional first/last-line anchoring. This is NOT AST merge and NOT embedding merge."
 )]
 pub struct SemanticMergeArgs {
+    /// Refuse the cross-device copy-then-rename fallback (exit 91).
+    #[command(flatten)]
+    pub strict: crate::cli_args::StrictAtomicArgs,
+
     /// Common ancestor file.
     #[arg(long, value_hint = ValueHint::FilePath)]
     pub base: PathBuf,
@@ -50,7 +54,7 @@ pub struct SemanticMergeArgs {
     /// Fail with exit 65 on conflicts.
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub fail_on_conflict: bool,
-    /// Write conflict markers into the output file (A-MERGE-001: default true).
+    /// Write conflict markers into the output file (default: true).
     ///
     /// Pass `--write-conflict-markers false` or `--no-conflict-markers` for
     /// prefer-ours without markers (NDJSON still lists `conflicts[]`).
@@ -62,19 +66,23 @@ pub struct SemanticMergeArgs {
     /// Optimistic lock on output.
     #[arg(long)]
     pub expect_checksum: Option<String>,
+    /// Report the planned merge and write nothing.
+    #[arg(long, help = "Report the planned merge and write nothing", action = clap::ArgAction::SetTrue)]
+    pub dry_run: bool,
     /// Shared backup flags for the output write.
     #[command(flatten)]
     pub backup_opts: crate::cli_args::BackupOpts,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
-struct SemanticMergeResult {
+pub(crate) struct SemanticMergeResult {
     r#type: &'static str,
     status: String,
     output: String,
     checksum_base: String,
     checksum_ours: String,
     checksum_theirs: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     checksum_output: Option<String>,
     conflicts: Vec<MergeConflict>,
     elapsed_ms: u64,
@@ -89,6 +97,20 @@ struct MergeConflict {
 }
 
 /// Run line-based three-way merge.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::Cancelled` when shutdown is requested before the reads or right after
+/// them.
+/// Returns `AtomwriteError::WorkspaceJail` when `--base`, `--ours`, `--theirs` or `--output`
+/// escapes the workspace.
+/// Returns `AtomwriteError::NotFound` when an input file does not exist, and
+/// `AtomwriteError::FileTooLarge` when one exceeds the effective max filesize.
+/// Returns `AtomwriteError::MergeConflict` with `--fail-on-conflict` when the line aligner leaves
+/// conflicting regions; the merged record is published as the one terminal event.
+/// Returns `AtomwriteError::StateDrift` when `--expect-checksum` does not match the output on disk.
+/// Returns `AtomwriteError::Io` when an input cannot be read or the output cannot be written.
+/// Returns `AtomwriteError::BrokenPipe` when the consumer closes the NDJSON stream.
 #[tracing::instrument(skip_all, fields(command = "semantic-merge"))]
 pub fn cmd_semantic_merge(
     args: &SemanticMergeArgs,
@@ -146,7 +168,18 @@ pub fn cmd_semantic_merge(
     };
 
     if args.fail_on_conflict && !conflicts.is_empty() {
-        writer.write_event(&SemanticMergeResult {
+        // v0.1.36: a conflicted merge is a domain result, not malformed input.
+        // Emit the event with the regions, then fail with MERGE_CONFLICT (84).
+        let conflict_count = conflicts.len() as u64;
+        let failure = AtomwriteError::MergeConflict {
+            count: conflict_count,
+            path: out_p.clone(),
+        };
+        // The event states the failure itself (`ok: false`, `code`,
+        // `conflict_count`) and is the one terminal event of the run, so the
+        // stream never shows `ok: true` followed by the error that contradicts
+        // it, nor a second envelope for the same conflict.
+        let result = SemanticMergeResult {
             r#type: "semantic_merge",
             status: "conflict".into(),
             output: out_p.display().to_string(),
@@ -156,11 +189,8 @@ pub fn cmd_semantic_merge(
             checksum_output: None,
             conflicts,
             elapsed_ms: start.elapsed().as_millis() as u64,
-        })?;
-        return Err(AtomwriteError::InvalidInput {
-            reason: "semantic-merge conflicts present".into(),
-        }
-        .into());
+        };
+        return Err(writer.publish_failure(&result, failure.into()));
     }
 
     if let Some(ref exp) = args.expect_checksum {
@@ -177,6 +207,21 @@ pub fn cmd_semantic_merge(
         }
     }
 
+    if args.dry_run {
+        let plan = crate::ndjson_types::DryRunPlan {
+            r#type: "plan",
+            operation: "semantic-merge".into(),
+            path: out_p.display().to_string(),
+            would_modify: !merged.is_empty(),
+            details: Some(format!("status {status}, {} conflict(s)", conflicts.len())),
+            // A merge of two memory documents is structured data, not a shell
+            // payload, so the content patterns do not describe it.
+            risk_assessment: None,
+        };
+        writer.write_event(&plan)?;
+        return Ok(());
+    }
+
     let resolved = resolve_backup(&args.backup_opts, defaults);
     let opts = AtomicWriteOptions {
         backup: resolved.backup,
@@ -184,7 +229,7 @@ pub fn cmd_semantic_merge(
         preserve_timestamps: false,
         backup_output_dir: None,
         strategy: None,
-        strict_atomic: false,
+        strict_atomic: args.strict.strict_atomic,
         syntax_check: false,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup: resolved.keep,

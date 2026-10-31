@@ -350,6 +350,7 @@ fn locale_flag_does_not_alter_json_output() {
     );
 }
 
+#[cfg(feature = "ast")]
 #[test]
 fn scope_lang_alias_works() {
     // GAP-2026-003 v0.1.20: `--lang` is now a valid alias for
@@ -378,6 +379,7 @@ fn scope_lang_alias_works() {
     );
 }
 
+#[cfg(feature = "ast")]
 #[test]
 fn scope_language_long_form_still_works() {
     // Regression: explicit --language must keep working post-rename.

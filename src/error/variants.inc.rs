@@ -10,6 +10,19 @@ pub enum AtomwriteError {
         path: PathBuf,
     },
 
+    /// A pattern operand matched no name.
+    ///
+    /// Kept apart from [`Self::NotFound`] on purpose: `cat '*.rs'` that matches
+    /// nothing is not a missing file, and saying "file not found: *.rs" sends
+    /// the caller looking for the wrong thing. The exit code stays
+    /// [`crate::constants::EXIT_NOT_FOUND`] because "nothing carries that name"
+    /// is the same verdict a shell gives.
+    #[error("no file matches the pattern: {pattern}")]
+    GlobNoMatches {
+        /// Pattern operand that matched no name under its directory.
+        pattern: PathBuf,
+    },
+
     /// Caller-provided input failed validation.
     #[error("invalid input: {reason}")]
     InvalidInput {
@@ -207,12 +220,19 @@ pub enum AtomwriteError {
         count: u32,
     },
 
-    /// `EXDEV` (cross-device rename) occurred and `--strict-atomic` was set,
-    /// so copy-fallback was disabled by the caller.
-    #[error("cross-device rename on {path} and --strict-atomic forbids fallback")]
+    /// The write cannot be a single atomic step and `--strict-atomic` was set.
+    ///
+    /// Two cases raise it. `EXDEV` (cross-device rename) is the original one:
+    /// the temp file and the target sit on different filesystems. The other is a
+    /// target that the auto-detected strategy can only write in place (a
+    /// hardlink or a symlink target): keeping the inode means truncate + write,
+    /// which is not atomic against a crash.
+    #[error("--strict-atomic forbids the non-atomic write of {path}: {reason}")]
     ExdevFallbackDisabled {
-        /// File path involved in the cross-device rename.
+        /// File path that could not be written atomically.
         path: PathBuf,
+        /// Why the single atomic step is not available.
+        reason: String,
     },
 
     /// Copy-back write (in-place inode-preserving strategy) failed BLAKE3
@@ -236,8 +256,9 @@ pub enum AtomwriteError {
     /// A `--old`/`--new` pair in multi-pair edit mode failed to match (G117).
     ///
     /// Carries per-pair diagnostics so agents can locate the failing pair
-    /// without bisecting the batch. Reuses the `INVALID_INPUT` code and
-    /// exit 65 of [`Self::InvalidInput`].
+    /// without bisecting the batch. A pair that does not match is a match
+    /// failure, so it carries the `MATCH_FAILED` code of [`Self::MatchFailed`]
+    /// and the exit 65 shared with [`Self::InvalidInput`].
     #[error("edit pair {index} of {total} failed: {reason}")]
     EditPairFailed {
         /// 1-based index of the pair that failed to match.
@@ -250,6 +271,115 @@ pub enum AtomwriteError {
         pair_results: Box<Vec<PairResult>>,
         /// Closest near-miss for the failing pair (v0.1.29 P0-2).
         best_candidate: Option<Box<BestCandidate>>,
+    },
+
+    /// Three-way merge found overlapping edits it could not align by line
+    /// index (v0.1.36).
+    ///
+    /// This is a **domain result**, not malformed input: `base`, `ours` and
+    /// `theirs` are all valid files that disagree on the same lines. Exit 84
+    /// / `MERGE_CONFLICT`, class permanent. The conflict count travels in
+    /// `MergeConflict::count` so the caller reads it from the envelope
+    /// instead of re-parsing the human message.
+    #[error("merge conflict: {count} conflicting region(s) for {path}")]
+    MergeConflict {
+        /// Number of conflicting regions the line aligner could not resolve.
+        count: u64,
+        /// Output path the merge would have written.
+        path: PathBuf,
+    },
+
+    /// `edit-loop --partial` wrote the pairs that matched while others did not
+    /// (v0.1.36, exit changed in v0.1.37).
+    ///
+    /// Partial application is a **domain verdict**: the file IS written with
+    /// the pairs that matched, so a zero exit would hide the miss from the
+    /// caller. Exit 87 / `EDIT_LOOP_PARTIAL`, class permanent. Without
+    /// `--partial` an unmatched pair aborts the batch with
+    /// [`Self::EditPairFailed`] (exit 65) and nothing is written.
+    #[error("edit-loop partial: {unmatched} of {total} pair(s) did not match")]
+    EditLoopPartial {
+        /// Number of pairs that did not match.
+        unmatched: u64,
+        /// Total number of pairs read from stdin.
+        total: u64,
+    },
+
+    /// `doctor --strict` found a check that failed or warned (v0.1.37).
+    ///
+    /// A settled host verdict, not a bug: the report event already carries
+    /// every check, so the error only carries the totals. Exit 1 (the generic
+    /// failure status, the one the command always returned), class
+    /// `precondition_failed` because the host must change before a re-run.
+    #[error("doctor: {failed} check(s) failed and {warned} warned (strict mode)")]
+    DoctorChecksFailed {
+        /// Number of checks whose status is `fail`.
+        failed: u64,
+        /// Number of checks whose status is `warn`.
+        warned: u64,
+    },
+
+    /// A companion flag the operation cannot proceed without was omitted
+    /// (v0.1.36).
+    ///
+    /// Carries `flag` as its own field so the caller re-runs with the flag
+    /// instead of scraping the human message. Exit 65 / `INVALID_INPUT`,
+    /// matching the [`Self::InvalidInput`] family.
+    #[error("missing required flag {flag}: {reason}")]
+    MissingFlag {
+        /// Flag literal including leading dashes (e.g. `--recursive`).
+        flag: String,
+        /// Description of why the flag is required.
+        reason: String,
+    },
+
+    /// A `batch --transaction` rollback failed partway, leaving the tree in a
+    /// state that is neither pre-transaction nor fully reverted (v0.1.36).
+    ///
+    /// Exit 80 / `TRANSACTION_ROLLBACK_FAILED`, class **permanent**. The
+    /// condition is a disk-side failure, not malformed input, so it must not
+    /// report as [`Self::InvalidInput`]. Permanent and not retryable on
+    /// purpose: re-running the reversal against a half-applied tree can
+    /// destroy the backups the caller still needs, so the recovery path is
+    /// inspecting the WAL journal, never a blind retry.
+    #[error("transaction rollback failed, tree may be partially reverted: {reason}")]
+    TransactionRollbackFailed {
+        /// Description of why the rollback could not finish.
+        reason: String,
+    },
+
+    /// The tree-sitter grammar for a language is not on this host and the
+    /// download that would fetch it did not happen (v0.1.37).
+    ///
+    /// Exit 69 / `GRAMMAR_UNAVAILABLE`, class `precondition_failed`: the
+    /// operation needs a grammar, the grammar needs the network the first time,
+    /// and neither is a defect of the file being read. Before this variant the
+    /// condition arrived as [`Self::InternalError`] — exit 255 with "isto é um
+    /// bug" in the suggestion — which told the agent the tool was broken when
+    /// the host was merely offline.
+    #[error("grammar {language} is not available: {reason}")]
+    GrammarUnavailable {
+        /// tree-sitter language name the verb asked for.
+        language: String,
+        /// Why the grammar could not be obtained.
+        reason: String,
+    },
+
+    /// Two flags the caller combined cannot both hold at once (v0.1.37).
+    ///
+    /// Exit 2 / `ARGUMENT_PARSE_ERROR`, the code the shell and `clap` already
+    /// give a malformed command line. [`Self::InvalidInput`] is 65, which the
+    /// contract reserves for a target the run could not act on, so reusing it
+    /// for "these flags do not go together" told an agent the file was wrong
+    /// when the command was.
+    #[error("{flag} cannot be combined with {other}: {reason}")]
+    UnsupportedCombination {
+        /// The flag that cannot be honoured in this combination.
+        flag: String,
+        /// The other flag in the combination.
+        other: String,
+        /// What the combination would have to mean, and cannot.
+        reason: String,
     },
 }
 

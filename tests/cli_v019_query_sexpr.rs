@@ -9,6 +9,8 @@
 //! go through `tree_sitter::Query::new`, kind-filter patterns keep the
 //! legacy literal-compare path.
 
+#![cfg(feature = "ast")]
+
 mod common;
 
 fn write_rust_sample(dir: &std::path::Path) -> std::path::PathBuf {

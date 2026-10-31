@@ -1,46 +1,47 @@
-# ADR-0051 — v0.1.29 gap close, surface de agente e honestidade de binário
+# ADR-0051 — v0.1.29 gap close, agent surface and binary honesty
 
-- Status: Aceito
-- Data: 2026-07-13
-- Decisores: mantenedor atomwrite
+> **Status: Superseded in v0.1.37 for `--fuzzy off`.** `--fuzzy off` is accepted and means exact-only; a miss exits 65 `MATCH_FAILED` (measured with `edit a.txt --old zzz --new bar --fuzzy off`).
 
-
-## Contexto
-- O gaps.md da 0.1.28 listava P0–P3 e residuais de auditoria
-- O monólito AST gerava cerca de 52 MB no release default
-- O PRD prometia 5–8 MB auto-contido
-- Agentes pediam fuzzy no replace, diagnóstico de match e pipelines nomeados
-- MCP foi re-escopado como proibido; a surface é CLI via agent-surface
+- Status: Accepted
+- Date: 2026-07-13
+- Deciders: atomwrite maintainer
 
 
-## Decisão
-- Fechar P0–P3 e residuais na 0.1.29 no working tree
-- Extrair cascata fuzzy compartilhada em src/fuzzy.rs para edit e replace
-- Emitir best_candidate em falhas de match (exit 65)
-- Fatiar Cargo features: core, ast, lang-*, watch, semantic, full
-- Declarar meta PRD 5–8 MB como alvo do build core, não do default com AST
-- Local size-gate: slim core no máximo 15 MiB
-- Implementar recipe com dispatch real search-replace-hash
-- Implementar write --durability, Linux renameat2, stat, sparse, semantic-merge
-- Foundation P3: watch com debounce/checksum/gitignore, semantic-search Jaccard offline, codemod com by_rule_id
-- Regenerar schemas NDJSON e atualizar documentação EN/PT da raiz e de docs/
+## Context
+- The 0.1.28 gaps.md listed P0–P3 items and audit residuals
+- The AST monolith produced about 52 MB in the default release
+- The PRD promised a self-contained 5–8 MB binary
+- Agents asked for fuzzy in replace, match diagnostics and named pipelines
+- The surface is subprocess integration, a CLI with NDJSON output through agent-surface
 
 
-## Consequências
-- Agentes devem pin cargo install --path . --force até publicar crates.io 0.1.29
-- Pipelines exact-only no replace precisavam de --fuzzy off na 0.1.29; na 0.1.30 off é rejeitado (ver ADR-0052)
-- Build slim omite AST e retorna exit 78 nos stubs
-- Documentação histórica que cita 33 subcomandos permanece em seções de versões antigas
-- Seções Current na época da 0.1.29 apontavam para 0.1.29; a 0.1.30 residual superou Current via ADR-0052
+## Decision
+- Close P0–P3 and the residuals in 0.1.29 in the working tree
+- Extract the shared fuzzy cascade into src/fuzzy.rs for edit and replace
+- Emit best_candidate on match failures (exit 65)
+- Slice the Cargo features: core, ast, lang-*, watch, semantic, full
+- Declare the PRD goal of 5–8 MB as the target of the core build, not of the default build with AST
+- Local size gate: slim core at most 15 MiB
+- Implement recipe with real search-replace-hash dispatch
+- Implement write --durability, Linux renameat2, stat, sparse, semantic-merge
+- P3 foundation: watch with debounce/checksum/gitignore, offline Jaccard semantic-search, codemod with by_rule_id
+- Regenerate the NDJSON schemas and update the EN/PT documentation at the root and in docs/
 
 
-## Alternativas rejeitadas
-- Publicar MCP server — proibido pelas rules do projeto
-- Embedding OpenRouter no semantic-search — P3 permanece offline e local
-- Mentir que o default release tem 5–8 MB — honestidade no CHANGELOG e README
+## Consequences
+- Agents must pin `cargo install --path . --force` until 0.1.29 is published on crates.io
+- Exact-only pipelines in replace needed --fuzzy off in 0.1.29, and in 0.1.30 off is rejected (see ADR-0052)
+- The slim build omits AST and returns exit 78 in the stubs
+- Historical documentation that cites 33 subcommands stays in sections for old versions
+- The Current sections at the time of 0.1.29 pointed to 0.1.29, and the 0.1.30 residual superseded Current through ADR-0052
 
 
-## Ver também / See also
+## Rejected alternatives
+- OpenRouter embeddings in semantic-search — P3 stays offline and local
+- Claiming that the default release is 5–8 MB — honesty in the CHANGELOG and README
+
+
+## See also
 - [gaps.md](../../gaps.md)
 - [CHANGELOG.md](../../CHANGELOG.md)
 - [MIGRATION.md](../MIGRATION.md)

@@ -1,34 +1,110 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "atomwrite outline subcommand output",
-  "description": "Streamed NDJSON output of `atomwrite outline` — emits one `outline_item` per structural node (function/struct/enum/etc.) followed by a final `outline_summary` line.",
-  "oneOf": [
-    {
-      "type": "object",
-      "required": ["type", "path", "language", "kind", "name", "signature", "start_line", "end_line"],
-      "properties": {
-        "type": { "const": "outline_item" },
-        "path": { "type": "string" },
-        "language": { "type": "string" },
-        "kind": { "type": "string", "description": "Tree-sitter node kind (function_item, struct_item, class_definition, ...)." },
-        "name": { "type": "string", "description": "Identifier name (best-effort from name field or first named child)." },
-        "signature": { "type": "string", "description": "First line of the node, trimmed (e.g. `fn add(a: i32, b: i32) -> i32`)." },
-        "start_line": { "type": "integer", "minimum": 1 },
-        "end_line": { "type": "integer", "minimum": 1 }
-      },
-      "additionalProperties": false
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OutlineSummary",
+  "description": "Terminal event of `outline`: item count for one file.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string"
     },
-    {
-      "type": "object",
-      "required": ["type", "path", "language", "items", "elapsed_ms"],
-      "properties": {
-        "type": { "const": "outline_summary" },
-        "path": { "type": "string" },
-        "language": { "type": "string" },
-        "items": { "type": "integer", "minimum": 0, "description": "Number of structural items emitted." },
-        "elapsed_ms": { "type": "integer", "minimum": 0 }
-      },
-      "additionalProperties": false
+    "path": {
+      "type": "string"
+    },
+    "language": {
+      "type": "string"
+    },
+    "items": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "items_truncated": {
+      "description": "Items that were emitted with a cut `signature` field.\n\nThe item itself is in the stream: only `signature` was shortened, at\n`OUTLINE_SIGNATURE_MAX_BYTES` or at the first line. This never means\nan item was left out.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "items_omitted": {
+      "description": "Items the `--limit` budget kept out of the stream.\n\nDistinct from `items_truncated`, which counts cut signatures, not\nmissing items.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "ok": {
+      "description": "Outcome of the run, stamped by the writer",
+      "type": "boolean"
+    },
+    "code": {
+      "description": "Machine error code, present when ok is false",
+      "type": "string"
+    },
+    "exit": {
+      "description": "Process exit status, present when ok is false",
+      "type": "integer",
+      "minimum": 0
+    },
+    "target_resolved": {
+      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+      "type": "string"
+    },
+    "target_source": {
+      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+      "type": "string",
+      "enum": [
+        "argv",
+        "workspace",
+        "stdin"
+      ]
+    },
+    "workspace_source": {
+      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+      "type": "string",
+      "enum": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "records_suppressed": {
+      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_budget_dropped": {
+      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_planned": {
+      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+      "type": "boolean"
+    },
+    "truncated_records": {
+      "description": "Records the writer cut this run, counted once per record",
+      "type": "integer",
+      "minimum": 0
     }
+  },
+  "required": [
+    "type",
+    "path",
+    "language",
+    "items",
+    "elapsed_ms"
   ]
 }

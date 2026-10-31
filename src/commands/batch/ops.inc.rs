@@ -9,6 +9,7 @@ fn execute_op(
     no_backup: bool,
     backup_explicit: bool,
     retention: u8,
+    strict_atomic: bool,
     fuzzy_mode: crate::cli::FuzzyMode,
     fuzzy_threshold: Option<f64>,
     fuzzy_cfg: &crate::config::FuzzySection,
@@ -23,6 +24,7 @@ fn execute_op(
             no_backup,
             backup_explicit,
             retention,
+            strict_atomic,
         ),
         "replace" => execute_replace(
             op,
@@ -33,10 +35,11 @@ fn execute_op(
             no_backup,
             backup_explicit,
             retention,
+            strict_atomic,
             fuzzy_mode,
             fuzzy_threshold,
-                    fuzzy_cfg,
-                ),
+            fuzzy_cfg,
+        ),
         "delete" => execute_delete(
             op,
             workspace,
@@ -56,10 +59,11 @@ fn execute_op(
             no_backup,
             backup_explicit,
             retention,
+            strict_atomic,
             fuzzy_mode,
             fuzzy_threshold,
-                    fuzzy_cfg,
-                ),
+            fuzzy_cfg,
+        ),
         "hash" => execute_hash(op, workspace, max_size),
         "move" => execute_move(op, workspace, dry_run),
         "copy" => execute_copy(
@@ -71,11 +75,13 @@ fn execute_op(
             no_backup,
             backup_explicit,
             retention,
+            strict_atomic,
         ),
         _ => bail!("unsupported batch operation: {}", op.op),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_write(
     op: &BatchOp,
     workspace: &std::path::Path,
@@ -84,6 +90,7 @@ fn execute_write(
     no_backup: bool,
     backup_explicit: bool,
     retention: u8,
+    strict_atomic: bool,
 ) -> Result<String> {
     let target = op.resolve_file_path()?;
     let content = op
@@ -104,7 +111,7 @@ fn execute_write(
         preserve_timestamps: false,
         backup_output_dir: None,
         strategy: None,
-        strict_atomic: false,
+        strict_atomic,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup,
         durability: crate::platform::Durability::Auto,
@@ -126,6 +133,7 @@ fn execute_replace(
     no_backup: bool,
     backup_explicit: bool,
     retention: u8,
+    strict_atomic: bool,
     fuzzy_mode: crate::cli::FuzzyMode,
     fuzzy_threshold: Option<f64>,
     fuzzy_cfg: &crate::config::FuzzySection,
@@ -145,6 +153,11 @@ fn execute_replace(
 
     let path = std::path::Path::new(path_str);
     let validated = crate::path_safety::validate_path(path, workspace)?;
+    // A1: lock BEFORE reading, hold it to the commit.
+    let _update_lock = validated
+        .exists()
+        .then(|| crate::lock::acquire_for_update(&validated))
+        .transpose()?;
     let content = crate::file_io::read_file_string(&validated, max_size)
         .with_context(|| format!("cannot read {}", validated.display()))?;
 
@@ -162,7 +175,10 @@ fn execute_replace(
             false,
         ) {
             Ok((edited, _)) => edited,
-            Err(_) => content.clone(),
+            // Only "no match" means zero replacements; a cancel, an oversize
+            // refusal or an ambiguous match must reach the caller.
+            Err(crate::error::AtomwriteError::MatchFailed { .. }) => content.clone(),
+            Err(e) => return Err(e.into()),
         }
     };
     if new_content == content {
@@ -183,7 +199,7 @@ fn execute_replace(
         preserve_timestamps: false,
         backup_output_dir: None,
         strategy: None,
-        strict_atomic: false,
+        strict_atomic,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup,
         durability: crate::platform::Durability::Auto,
@@ -250,6 +266,7 @@ fn execute_edit(
     no_backup: bool,
     backup_explicit: bool,
     retention: u8,
+    strict_atomic: bool,
     fuzzy_mode: crate::cli::FuzzyMode,
     fuzzy_threshold: Option<f64>,
     fuzzy_cfg: &crate::config::FuzzySection,
@@ -263,6 +280,11 @@ fn execute_edit(
 
     let path = std::path::Path::new(path_str);
     let validated = crate::path_safety::validate_path(path, workspace)?;
+    // A1: lock BEFORE reading, hold it to the commit.
+    let _update_lock = validated
+        .exists()
+        .then(|| crate::lock::acquire_for_update(&validated))
+        .transpose()?;
     let content = crate::file_io::read_file_string(&validated, max_size)
         .with_context(|| format!("cannot read {}", validated.display()))?;
 
@@ -275,19 +297,18 @@ fn execute_edit(
         return Ok(format!("would edit {path_str}"));
     }
 
-    let edited =
-        match crate::fuzzy::match_pair_cfg(
-            &content,
-            old,
-            new,
-            fuzzy_mode,
-            fuzzy_threshold,
-            fuzzy_cfg,
-            false,
-        ) {
-            Ok((e, _)) => e,
-            Err(e) => return Err(e.into()),
-        };
+    let edited = match crate::fuzzy::match_pair_cfg(
+        &content,
+        old,
+        new,
+        fuzzy_mode,
+        fuzzy_threshold,
+        fuzzy_cfg,
+        false,
+    ) {
+        Ok((e, _)) => e,
+        Err(e) => return Err(e.into()),
+    };
     let checksum_before = checksum::hash_bytes(content.as_bytes());
     let opts = AtomicWriteOptions {
         backup: !no_backup && (op.backup || keep_backup || backup_explicit),
@@ -296,7 +317,7 @@ fn execute_edit(
         preserve_timestamps: false,
         backup_output_dir: None,
         strategy: None,
-        strict_atomic: false,
+        strict_atomic,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup,
         durability: crate::platform::Durability::Auto,
@@ -357,11 +378,14 @@ fn execute_move(op: &BatchOp, workspace: &std::path::Path, dry_run: bool) -> Res
     }
     std::fs::rename(&source, &dest)
         .with_context(|| format!("cannot move {source_str} to {dest_str}"))?;
+    // The rename is only durable once both parent directories are flushed.
     if let Some(parent) = dest.parent() {
-        let _ = crate::platform::fsync_dir(parent);
+        crate::platform::fsync_dir(parent)
+            .with_context(|| format!("cannot flush destination directory of {dest_str}"))?;
     }
     if let Some(parent) = source.parent() {
-        let _ = crate::platform::fsync_dir(parent);
+        crate::platform::fsync_dir(parent)
+            .with_context(|| format!("cannot flush source directory of {source_str}"))?;
     }
     Ok(format!("moved {source_str} to {dest_str}"))
 }
@@ -376,6 +400,7 @@ fn execute_copy(
     no_backup: bool,
     backup_explicit: bool,
     retention: u8,
+    strict_atomic: bool,
 ) -> Result<String> {
     let source_str = op
         .source
@@ -418,7 +443,7 @@ fn execute_copy(
         preserve_timestamps: false,
         backup_output_dir: None,
         strategy: None,
-        strict_atomic: false,
+        strict_atomic,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup,
         durability: crate::platform::Durability::Auto,

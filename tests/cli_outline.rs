@@ -5,6 +5,8 @@
 //! Covers high-level structure extraction via tree-sitter:
 //! functions, classes, structs, enums, traits.
 
+#![cfg(feature = "ast")]
+
 mod common;
 
 fn write_rust(dir: &std::path::Path) -> std::path::PathBuf {

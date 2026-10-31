@@ -4,7 +4,7 @@ mod common;
 
 #[cfg(unix)]
 #[test]
-fn sigpipe_exits_141_or_signal_13() {
+fn sigpipe_handler_ends_the_run_with_exit_141() {
     use std::io::Write;
     use std::os::unix::process::ExitStatusExt;
     use std::process::Stdio;
@@ -14,7 +14,7 @@ fn sigpipe_exits_141_or_signal_13() {
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
 
-    let mut child = std::process::Command::new(&bin)
+    let mut child = common::hermetic(std::process::Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "write"])
         .arg(&target)
         .stdin(Stdio::piped())
@@ -23,29 +23,30 @@ fn sigpipe_exits_141_or_signal_13() {
         .spawn()
         .expect("spawn");
 
+    // Close the read end of the output pipe BEFORE the child receives its input.
+    // The child can only write its result after reading stdin, so every write it
+    // makes lands on a broken pipe; closing afterwards would race the child's
+    // write and let it finish with exit 0 on a loaded host.
+    drop(child.stdout.take());
+
     if let Some(ref mut stdin) = child.stdin {
         let _ = stdin.write_all(b"sigpipe test content\n");
         let _ = stdin.flush();
     }
     drop(child.stdin.take());
 
-    drop(child.stdout.take());
-
     let status = child.wait().expect("wait");
 
-    let ok = if let Some(code) = status.code() {
-        code == 0 || code == 141
-    } else if let Some(sig) = status.signal() {
-        sig == 13
-    } else {
-        false
-    };
-
-    assert!(
-        ok,
-        "expected exit 0, exit 141, or killed by SIGPIPE(13), got {:?}",
-        status
+    // The contract is a graceful exit with `EXIT_BROKEN_PIPE`: the SIGPIPE
+    // handler raises the cooperative cancel and the write fails with
+    // `BrokenPipe`, so the run unwinds (every `Drop` runs). A kill by signal 13
+    // would skip the cleanup, and exit 0 would mean the write was swallowed.
+    assert_eq!(
+        status.code(),
+        Some(141),
+        "expected exit 141, got {status:?}"
     );
+    assert_eq!(status.signal(), None, "the process must not die by SIGPIPE");
 }
 
 #[cfg(unix)]
@@ -65,7 +66,7 @@ fn sigint_during_search_exits_130() {
     }
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let mut child = Command::new(&bin)
+    let mut child = common::hermetic(Command::new(&bin))
         .args([
             "--workspace",
             dir.path().to_str().unwrap(),
@@ -105,7 +106,7 @@ fn sigterm_during_search_exits_143() {
     }
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let mut child = Command::new(&bin)
+    let mut child = common::hermetic(Command::new(&bin))
         .args([
             "--workspace",
             dir.path().to_str().unwrap(),
@@ -147,7 +148,7 @@ fn batch_interrupted_by_signal() {
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
     let ready_path = dir.path().join("ready");
-    let mut child = Command::new(&bin)
+    let mut child = common::hermetic(Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -204,7 +205,7 @@ fn shutdown_message_on_stderr() {
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
     let ready_path = dir.path().join("ready");
 
-    let child = Command::new(&bin)
+    let child = common::hermetic(Command::new(&bin))
         .args([
             "--workspace",
             dir.path().to_str().unwrap(),

@@ -10,7 +10,6 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 serde_json = "1"
-serde = { version = "1", features = ["derive"] }
 atomwrite = { path = ".." }
 
 [workspace]

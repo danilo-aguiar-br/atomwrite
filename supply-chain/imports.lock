@@ -1,2 +1,6 @@
 
 # cargo-vet imports lock
+
+[[unpublished.atomwrite]]
+version = "0.1.37"
+audited_as = "0.1.36"

@@ -1,5 +1,57 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Included by replace.rs (A-MONO-001).
+//
+// Running the replace: setup, the parallel per-file worker and the join.
+// The event consumer and the terminal record live in replace_finish.inc.rs, and
+// the per-file read and replace steps in replace_file.inc.rs.
+
+include!("replace_file.inc.rs");
+
+/// Read-only inputs every walker worker needs, resolved once before the walk.
+struct ReplaceJob {
+    pattern: Regex,
+    pattern_text: Arc<str>,
+    replacement: Arc<str>,
+    max_replacements: Option<usize>,
+    preserve_case: bool,
+    use_regex: bool,
+    word: bool,
+    fuzzy_opts: fuzzy::MatchOpts,
+    dry_run: bool,
+    preview: bool,
+    backup: bool,
+    keep_backup: bool,
+    retention: u8,
+    preserve_timestamps: bool,
+    strict_atomic: bool,
+    expect_checksum: Option<Arc<str>>,
+    max_size: u64,
+    workspace: Arc<std::path::Path>,
+    progress_every: u64,
+    quiet: u8,
+    no_progress: bool,
+    /// The `[write]` policy, shared by every worker for risk assessment.
+    write_cfg: Arc<crate::config::WriteSection>,
+    /// R4: set by the consumer on exit; workers stop and never write after it.
+    stop: std::sync::atomic::AtomicBool,
+}
+
+/// Outcome of applying the replacement to the content of one file.
+struct FileReplacement<'a> {
+    replaced: Cow<'a, str>,
+    count: u64,
+    /// Matches the file had beyond `--max-replacements`, so the summary can
+    /// say how much of the file the limit left untouched.
+    suppressed: u64,
+    /// `(fuzzy, strategy, similarity, strategies_tried)` when the fuzzy cascade made the edit.
+    fuzzy_meta: Option<(bool, String, Option<f64>, u64)>,
+    word_ignored: bool,
+    /// The deadline or a signal fired inside the file.
+    cancelled: bool,
+    /// The cascade refused the file (for example above the fuzzy content cap);
+    /// reported as a failed file, never as "no match".
+    failure: Option<anyhow::Error>,
+}
 
 fn run_replace(
     args: &ReplaceArgs,
@@ -8,6 +60,7 @@ fn run_replace(
     shutdown: &ShutdownSignal,
     defaults: &crate::config::DefaultsSection,
     fuzzy_cfg: &crate::config::FuzzySection,
+    write_cfg: &crate::config::WriteSection,
 ) -> Result<()> {
     let start = Instant::now();
     let workspace = global.resolve_workspace()?;
@@ -20,501 +73,510 @@ fn run_replace(
     let canonical_paths =
         crate::commands::path_resolution::resolve_paths_against_workspace(&args.paths, &workspace)?;
 
+    // A root the caller named and the run never reached is a caller mistake,
+    // not a scan failure: it is counted before the walk and only the roots
+    // that exist are walked.
+    let (canonical_paths, missing_roots) =
+        crate::commands::path_resolution::split_missing_roots(canonical_paths);
+    tracing::debug!(
+        present = canonical_paths.len(),
+        missing = missing_roots.len(),
+        "replace roots partitioned"
+    );
+
     let pattern = compile_pattern(args)?;
+
+    if canonical_paths.is_empty() {
+        let mut failures = crate::ndjson_types::FailureTally::default();
+        failures.record_missing_roots(&missing_roots);
+        let first_binary_path = std::sync::Mutex::new(None);
+        return finish_replace(
+            ReplaceTotals {
+                total_replacements: 0,
+                replacements_suppressed: 0,
+                files_matched: 0,
+                files_visited: 0,
+                files_skipped: 0,
+                binary_rejects: 0,
+                files_total: 0,
+                failures,
+                missing_roots,
+                walk_quit: false,
+            },
+            &first_binary_path,
+            args.dry_run,
+            args.preview,
+            shutdown,
+            writer,
+            start,
+        );
+    }
 
     let walker = build_walker(args, &canonical_paths, global)?;
 
     // v0.1.30: pre-count eligible files so progress has total/rate/eta.
     // Skip entirely when progress is off (avoids a full double-walk).
     // When needed, use WalkParallel so --threads applies (build() ignores threads).
-    let progress_wanted =
-        args.progress_every > 0 && !global.no_progress && global.quiet == 0;
+    let progress_wanted = args.progress_every > 0 && !global.no_progress && global.quiet == 0;
     let precount = if progress_wanted {
         let paths = crate::concurrency::collect_files_parallel(&walker);
         paths.len() as u64
     } else {
         0
     };
-    let files_total = Arc::new(AtomicU64::new(precount));
     let walker = build_walker(args, &canonical_paths, global)?;
 
     let (tx, rx) =
         crossbeam_channel::bounded::<ReplaceEvent>(crate::concurrency::event_channel_cap());
 
-    // Per-run counters. Ordering::Relaxed: independent tallies; final loads
-    // run after the parallel join (no data-publication barrier needed).
-    let files_visited = Arc::new(AtomicU64::new(0));
-    let files_modified = Arc::new(AtomicU64::new(0));
-    let files_skipped = Arc::new(AtomicU64::new(0));
-    let total_replacements = Arc::new(AtomicU64::new(0));
-    // G-027: count binary rejections separately from generic I/O failures.
-    let binary_rejects = Arc::new(AtomicU64::new(0));
-    let first_binary_path: Arc<std::sync::Mutex<Option<PathBuf>>> =
-        Arc::new(std::sync::Mutex::new(None));
+    let counters = Arc::new(ReplaceCounters::new(precount));
+    let job = Arc::new(build_replace_job(
+        args, global, &workspace, defaults, fuzzy_cfg, write_cfg, pattern,
+    )?);
+    let walker_thread = spawn_replace_walker(
+        walker,
+        Arc::clone(&job),
+        Arc::clone(&counters),
+        tx,
+        shutdown.flag(),
+    );
 
-    let fv = Arc::clone(&files_visited);
-    let fm = Arc::clone(&files_modified);
-    let fs_skip = Arc::clone(&files_skipped);
-    let tr = Arc::clone(&total_replacements);
-    let binary_rejects_w = Arc::clone(&binary_rejects);
-    let first_binary_w = Arc::clone(&first_binary_path);
-    let ft = Arc::clone(&files_total);
-    let replacement: Arc<str> = args.replacement.clone().into();
-    let max_replacements = args.max_replacements;
-    let dry_run = args.dry_run;
-    let preview = args.preview;
+    let drained = drain_replace_events(&rx, writer, shutdown, start);
+    crate::concurrency::join_walker(rx, &job.stop, walker_thread);
+    let mut failures = drained?;
+    // An ignore file the walk half-reads is a hole too, and `ignore` never
+    // reports it by itself.
+    crate::concurrency::record_ignore_file_failures_into(&canonical_paths, &mut failures);
+    failures.record_missing_roots(&missing_roots);
+
+    finish_replace(
+        ReplaceTotals {
+            total_replacements: counters.total_replacements.load(Ordering::Relaxed),
+            replacements_suppressed: counters.replacements_suppressed.load(Ordering::Relaxed),
+            files_matched: counters.files_modified.load(Ordering::Relaxed),
+            files_visited: counters.files_visited.load(Ordering::Relaxed),
+            files_skipped: counters.files_skipped.load(Ordering::Relaxed),
+            binary_rejects: counters.binary_rejects.load(Ordering::Relaxed),
+            files_total: counters.files_total.load(Ordering::Relaxed),
+            failures,
+            missing_roots,
+            walk_quit: counters
+                .walk_quit
+                .load(std::sync::atomic::Ordering::Acquire),
+        },
+        &counters.first_binary_path,
+        args.dry_run,
+        args.preview,
+        shutdown,
+        writer,
+        start,
+    )
+}
+
+/// Resolve every per-worker input once, before the walk starts.
+fn build_replace_job(
+    args: &ReplaceArgs,
+    global: &GlobalArgs,
+    workspace: &std::path::Path,
+    defaults: &crate::config::DefaultsSection,
+    fuzzy_cfg: &crate::config::FuzzySection,
+    write_cfg: &crate::config::WriteSection,
+    pattern: Regex,
+) -> Result<ReplaceJob> {
     let resolved = resolve_backup(&args.backup_opts, defaults);
-    let backup = resolved.backup;
-    let keep_backup = resolved.keep;
-    let retention = resolved.retention;
-    let ws: Arc<std::path::Path> = Arc::from(workspace.as_path());
-    let expect_ck: Option<Arc<str>> = args.expect_checksum.clone().map(Into::into);
-
-    let max_size = global.effective_max_filesize();
-    let shutdown_flag = shutdown.flag();
-    let preserve_timestamps = args.preserve_timestamps;
-    let preserve_case = args.preserve_case;
-    let use_regex = args.regex;
     let (fuzzy_mode, fuzzy_threshold) =
         crate::config::resolve_fuzzy(args.fuzzy, args.fuzzy_threshold, fuzzy_cfg)?;
-    let word_flag = args.word;
-    let progress_every = args.progress_every;
-    let quiet = global.quiet;
-    let no_progress = global.no_progress;
-    let pattern_owned: Arc<str> = args.pattern.clone().into();
-    let fuzzy_opts = fuzzy::match_opts_from_section(
-        fuzzy_mode,
-        fuzzy_threshold,
-        fuzzy_cfg,
-        false,
-    );
-    let walker_thread = std::thread::spawn(move || {
+    Ok(ReplaceJob {
+        pattern,
+        pattern_text: args.pattern.clone().into(),
+        replacement: args.replacement.clone().into(),
+        max_replacements: args.max_replacements,
+        preserve_case: args.preserve_case,
+        use_regex: args.regex,
+        word: args.word,
+        fuzzy_opts: fuzzy::match_opts_from_section(fuzzy_mode, fuzzy_threshold, fuzzy_cfg, false),
+        dry_run: args.dry_run,
+        preview: args.preview,
+        backup: resolved.backup,
+        keep_backup: resolved.keep,
+        retention: resolved.retention,
+        preserve_timestamps: args.preserve_timestamps,
+        strict_atomic: args.strict.strict_atomic,
+        expect_checksum: args.expect_checksum.clone().map(Into::into),
+        max_size: global.effective_max_filesize(),
+        workspace: Arc::from(workspace),
+        progress_every: args.progress_every,
+        write_cfg: Arc::new(write_cfg.clone()),
+        quiet: global.quiet,
+        no_progress: global.no_progress,
+        stop: std::sync::atomic::AtomicBool::new(false),
+    })
+}
+
+/// Run the parallel walk on a dedicated thread; dropping `tx` ends the event stream.
+fn spawn_replace_walker(
+    walker: ignore::WalkBuilder,
+    job: Arc<ReplaceJob>,
+    counters: Arc<ReplaceCounters>,
+    tx: crossbeam_channel::Sender<ReplaceEvent>,
+    shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
         walker.build_parallel().run(|| {
-            let pattern = pattern.clone();
-            let pattern_owned = Arc::clone(&pattern_owned);
-            let replacement = Arc::clone(&replacement);
+            let job = Arc::clone(&job);
+            let counters = Arc::clone(&counters);
             let tx = tx.clone();
-            let fv = Arc::clone(&fv);
-            let fm = Arc::clone(&fm);
-            let fs_skip = Arc::clone(&fs_skip);
-            let tr = Arc::clone(&tr);
-            let binary_rejects_w = Arc::clone(&binary_rejects_w);
-            let first_binary_w = Arc::clone(&first_binary_w);
-            let ft = Arc::clone(&ft);
-            let ws = Arc::clone(&ws);
-            let expect_ck = expect_ck.clone();
             let shutdown_flag = Arc::clone(&shutdown_flag);
-
-            Box::new(move |entry| {
-                if shutdown_flag.load(Ordering::Acquire) {
-                    return ignore::WalkState::Quit;
-                }
-
-                let entry = match entry {
-                    Ok(e) => e,
-                    Err(_) => return ignore::WalkState::Continue,
-                };
-
-                if !entry.file_type().is_some_and(|ft| ft.is_file()) {
-                    return ignore::WalkState::Continue;
-                }
-
-                let visited = fv.fetch_add(1, Ordering::Relaxed) + 1;
-                if progress_every > 0
-                    && visited.is_multiple_of(progress_every)
-                    && quiet == 0
-                    && !no_progress
-                {
-                    let _ = tx.send(ReplaceEvent::Progress {
-                        done: visited,
-                        total: ft.load(Ordering::Relaxed),
-                    });
-                }
-
-                let path = entry.path().to_path_buf();
-                let _span = tracing::debug_span!("process_file", path = %path.display()).entered();
-
-                // Validate path against workspace jail BEFORE processing
-                if crate::path_safety::validate_path(&path, &ws).is_err() {
-                    fs_skip.fetch_add(1, Ordering::Relaxed);
-                    let _ = tx.send(ReplaceEvent::Error {
-                        path,
-                        kind: ReplaceErrorKind::JailViolation,
-                    });
-                    return ignore::WalkState::Continue;
-                }
-
-                let content = match crate::file_io::read_file_string(&path, max_size) {
-                    Ok(c) => c,
-                    Err(_) => {
-                        fs_skip.fetch_add(1, Ordering::Relaxed);
-                        return ignore::WalkState::Continue;
-                    }
-                };
-
-                // G-015 / G-027: refuse binary content with permanent BINARY_FILE taxonomy.
-                if crate::binary_detect::is_binary(content.as_bytes()) {
-                    fs_skip.fetch_add(1, Ordering::Relaxed);
-                    binary_rejects_w.fetch_add(1, Ordering::Relaxed);
-                    if let Ok(mut guard) = first_binary_w.lock() {
-                        if guard.is_none() {
-                            *guard = Some(path.clone());
-                        }
-                    }
-                    let _ = tx.send(ReplaceEvent::Error {
-                        path,
-                        kind: ReplaceErrorKind::BinaryRejected,
-                    });
-                    return ignore::WalkState::Continue;
-                }
-
-                let mut fuzzy_meta: Option<(bool, String, Option<f64>, u64)> = None;
-                let mut word_ignored = false;
-                let (replaced, count) = if use_regex {
-                    apply_replacement(
-                        &pattern,
-                        &content,
-                        &replacement,
-                        max_replacements,
-                        preserve_case,
-                    )
-                } else {
-                    // Fixed string: exact multi first, then fuzzy cascade if zero hits.
-                    let (exact, exact_count) = apply_replacement(
-                        &pattern,
-                        &content,
-                        &replacement,
-                        max_replacements,
-                        preserve_case,
-                    );
-                    if exact_count > 0 {
-                        (exact, exact_count)
-                    } else {
-                        // v0.1.33 one-shot: never re-scan inserted replacement text.
-                        // Default max applies = 1; pat⊂rep forces 1; hard ceiling applies.
-                        if word_flag {
-                            word_ignored = true;
-                        }
-                        if shutdown_flag.load(Ordering::Acquire) {
-                            return ignore::WalkState::Quit;
-                        }
-                        match fuzzy::apply_fuzzy_one_pass(
-                            &content,
-                            pattern_owned.as_ref(),
-                            replacement.as_ref(),
-                            fuzzy_opts,
-                            max_replacements,
-                        ) {
-                            Ok(result) => {
-                                if result.applied > 0 {
-                                    if let Some(info) = result.info {
-                                        fuzzy_meta = Some((
-                                            info.fuzzy,
-                                            info.strategy,
-                                            info.similarity,
-                                            info.strategies_tried,
-                                        ));
-                                    }
-                                    (std::borrow::Cow::Owned(result.edited), result.applied)
-                                } else {
-                                    (std::borrow::Cow::Borrowed(content.as_str()), 0)
-                                }
-                            }
-                            Err(crate::error::AtomwriteError::Cancelled { .. }) => {
-                                return ignore::WalkState::Quit;
-                            }
-                            Err(_) => (std::borrow::Cow::Borrowed(content.as_str()), 0),
-                        }
-                    }
-                };
-
-                if count == 0 {
-                    fs_skip.fetch_add(1, Ordering::Relaxed);
-                    return ignore::WalkState::Continue;
-                }
-
-                tr.fetch_add(count, Ordering::Relaxed);
-
-                let checksum_before = checksum::hash_bytes(content.as_bytes());
-
-                if let Some(ref expected) = expect_ck {
-                    if checksum_before != **expected {
-                        // Receiver may have dropped during shutdown — send failure is expected
-                        let _ = tx.send(ReplaceEvent::Error {
-                            path,
-                            kind: ReplaceErrorKind::StateDrift {
-                                expected: expected.to_string(),
-                                actual: checksum_before,
-                            },
-                        });
-                        return ignore::WalkState::Continue;
-                    }
-                }
-
-                if dry_run {
-                    let _ = tx.send(ReplaceEvent::DryRun {
-                        path,
-                        replacements: count,
-                    });
-                    fm.fetch_add(1, Ordering::Relaxed);
-                    return ignore::WalkState::Continue;
-                }
-
-                if preview {
-                    let diff = similar::TextDiff::from_lines(&content, &replaced);
-                    let unified = diff.unified_diff().to_string();
-                    let _ = tx.send(ReplaceEvent::Preview {
-                        path,
-                        replacements: count,
-                        diff: unified,
-                    });
-                    fm.fetch_add(1, Ordering::Relaxed);
-                    return ignore::WalkState::Continue;
-                }
-
-                let opts = AtomicWriteOptions {
-                    backup,
-                    retention,
-                    preserve_timestamps,
-                    backup_output_dir: None,
-                    strategy: None,
-                    strict_atomic: false,
-                    syntax_check: false,
-                    wal_policy: crate::wal::WalPolicy::Auto,
-                    // GAP-105: retain backup when --backup is explicitly active
-                    keep_backup: keep_backup || backup,
-                    durability: crate::platform::Durability::Auto,
-                };
-
-                match atomic_write(&path, replaced.as_bytes(), &opts, &ws) {
-                    Ok(result) => {
-                        fm.fetch_add(1, Ordering::Relaxed);
-                        let (fuzzy, strategy, similarity, strategies_tried) = match fuzzy_meta {
-                            Some((f, s, sim, tried)) => (Some(f), Some(s), sim, Some(tried)),
-                            None => (Some(false), Some("exact".into()), None, Some(1)),
-                        };
-                        let _ = tx.send(ReplaceEvent::Replaced {
-                            path,
-                            replacements: count,
-                            bytes_before: content.len() as u64,
-                            bytes_after: replaced.len() as u64,
-                            checksum_before,
-                            checksum_after: result.checksum,
-                            elapsed_ms: result.elapsed_ms,
-                            mtime_preserved: preserve_timestamps,
-                            fuzzy,
-                            strategy,
-                            similarity,
-                            strategies_tried,
-                            word_ignored: if word_ignored { Some(true) } else { None },
-                        });
-                    }
-                    Err(e) => {
-                        let _ = tx.send(ReplaceEvent::Error {
-                            path,
-                            kind: ReplaceErrorKind::WriteFailure(format!("{e:#}")),
-                        });
-                    }
-                }
-
-                ignore::WalkState::Continue
-            })
+            Box::new(move |entry| visit_entry(&job, &counters, &tx, &shutdown_flag, entry))
         });
-    });
+    })
+}
 
-    for event in rx {
-        if shutdown.is_shutdown() {
-            break;
+/// Process one walk entry: gates, replacement, then delivery of the result.
+fn visit_entry(
+    job: &ReplaceJob,
+    counters: &ReplaceCounters,
+    tx: &crossbeam_channel::Sender<ReplaceEvent>,
+    shutdown_flag: &Arc<std::sync::atomic::AtomicBool>,
+    entry: std::result::Result<ignore::DirEntry, ignore::Error>,
+) -> ignore::WalkState {
+    if shutdown_flag.load(Ordering::Acquire)
+        || job.stop.load(Ordering::Acquire)
+        || crate::output::limit_reached()
+    {
+        counters
+            .walk_quit
+            .store(true, std::sync::atomic::Ordering::Release);
+        return ignore::WalkState::Quit;
+    }
+
+    let entry = match entry {
+        Ok(e) => e,
+        Err(walk_error) => {
+            if let Some((path, error)) = crate::error::AtomwriteError::from_walk_error(&walk_error)
+            {
+                crate::best_effort::send_to_consumer(
+                    tx,
+                    ReplaceEvent::Error {
+                        path,
+                        kind: ReplaceErrorKind::Failed(error.into()),
+                    },
+                );
+            }
+            return ignore::WalkState::Continue;
+        }
+    };
+
+    if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+        return ignore::WalkState::Continue;
+    }
+
+    let visited = counters.files_visited.fetch_add(1, Ordering::Relaxed) + 1;
+    if job.progress_every > 0
+        && visited.is_multiple_of(job.progress_every)
+        && job.quiet == 0
+        && !job.no_progress
+    {
+        crate::best_effort::send_to_consumer(
+            tx,
+            ReplaceEvent::Progress {
+                done: visited,
+                total: counters.files_total.load(Ordering::Relaxed),
+            },
+        );
+    }
+
+    let path = entry.path().to_path_buf();
+    let _span = tracing::debug_span!("process_file", path = %path.display()).entered();
+
+    let Some(mut content) = read_candidate(job, counters, tx, &path) else {
+        return ignore::WalkState::Continue;
+    };
+
+    // A1: the first read is lock free, because most files of a tree do not
+    // match. A file that does match and is about to be written is locked,
+    // checked against what was read, and redone on fresh content when another
+    // writer got there first. `update_lock` keeps that lock across the redo.
+    let mut update_lock = None;
+    loop {
+        // v0.1.36: the deadline must fire INSIDE the file, not only at
+        // the next file boundary. One check point per file polls the
+        // same flag the outer loop already watches, but per work block
+        // of matches, so an 800 MB file no longer overruns the budget.
+        let mut cancel = crate::signal::CancelCheck::for_matches(Arc::clone(shutdown_flag));
+        let mut outcome = replace_in_content(job, &content, &mut cancel);
+
+        if let Some(error) = outcome.failure.take() {
+            counters.files_skipped.fetch_add(1, Ordering::Relaxed);
+            crate::best_effort::send_to_consumer(
+                tx,
+                ReplaceEvent::Error {
+                    path,
+                    kind: ReplaceErrorKind::Failed(error),
+                },
+            );
+            return ignore::WalkState::Continue;
         }
 
-        match event {
-            ReplaceEvent::Replaced {
+        if outcome.cancelled {
+            // Publish the cooperative stop exactly once and re-raise the
+            // outer flag so `Quit` propagates to the other walker workers.
+            shutdown_flag.store(true, Ordering::Release);
+            counters
+                .walk_quit
+                .store(true, std::sync::atomic::Ordering::Release);
+            return ignore::WalkState::Quit;
+        }
+
+        if outcome.count == 0 {
+            counters.files_skipped.fetch_add(1, Ordering::Relaxed);
+            return ignore::WalkState::Continue;
+        }
+
+        // `--limit` is a work budget: the claim happens BEFORE the counters move
+        // and before any write, so a run with many walk workers rewrites exactly
+        // the number it may report instead of counting work it then discards.
+        if !crate::output::claim_work() {
+            // The budget is spent: this entry is dropped without being
+            // rewritten, which is the walk being cut.
+            counters
+                .walk_quit
+                .store(true, std::sync::atomic::Ordering::Release);
+            return ignore::WalkState::Quit;
+        }
+        let count = outcome.count;
+        let suppressed = outcome.suppressed;
+        counters
+            .total_replacements
+            .fetch_add(count, Ordering::Relaxed);
+        counters
+            .replacements_suppressed
+            .fetch_add(suppressed, Ordering::Relaxed);
+
+        let redone = update_lock.is_some();
+        match deliver_replacement(job, counters, tx, path.clone(), &content, outcome, redone) {
+            Delivery::Done => return ignore::WalkState::Continue,
+            Delivery::Stale => {
+                counters
+                    .total_replacements
+                    .fetch_sub(count, Ordering::Relaxed);
+                counters
+                    .replacements_suppressed
+                    .fetch_sub(suppressed, Ordering::Relaxed);
+                match crate::lock::acquire_for_update(&path) {
+                    Ok(guard) => update_lock = Some(guard),
+                    Err(error) => {
+                        crate::best_effort::send_to_consumer(
+                            tx,
+                            ReplaceEvent::Error {
+                                path,
+                                kind: ReplaceErrorKind::Failed(error),
+                            },
+                        );
+                        return ignore::WalkState::Continue;
+                    }
+                }
+                let Some(fresh) = read_candidate(job, counters, tx, &path) else {
+                    return ignore::WalkState::Continue;
+                };
+                content = fresh;
+            }
+        }
+    }
+}
+
+/// What became of a replacement handed to [`deliver_replacement`].
+enum Delivery {
+    /// Reported or written; nothing left to do for this file.
+    Done,
+    /// The file changed after it was read; the caller redoes it under the lock.
+    Stale,
+}
+
+/// Report a mismatch between `--expect-checksum` and `actual` as a drift error.
+///
+/// Returns `true` when the event was sent and the caller must stop this file.
+fn report_expect_drift(
+    job: &ReplaceJob,
+    tx: &crossbeam_channel::Sender<ReplaceEvent>,
+    path: &std::path::Path,
+    actual: &str,
+) -> bool {
+    let Some(ref expected) = job.expect_checksum else {
+        return false;
+    };
+    if actual == &**expected {
+        return false;
+    }
+    crate::best_effort::send_to_consumer(
+        tx,
+        ReplaceEvent::Error {
+            path: path.to_path_buf(),
+            kind: ReplaceErrorKind::StateDrift {
+                expected: expected.to_string(),
+                actual: actual.to_owned(),
+            },
+        },
+    );
+    true
+}
+
+/// Hand a successful replacement to the consumer: drift check, plan, preview or write.
+///
+/// A write takes the file lock first and checks that the file still is what
+/// `content` was read from; if not it returns [`Delivery::Stale`] so the caller
+/// redoes the replacement. `redone` means the caller already holds the lock on
+/// fresh content, so a second mismatch is reported by the writer as drift.
+fn deliver_replacement(
+    job: &ReplaceJob,
+    counters: &ReplaceCounters,
+    tx: &crossbeam_channel::Sender<ReplaceEvent>,
+    path: PathBuf,
+    content: &str,
+    outcome: FileReplacement<'_>,
+    redone: bool,
+) -> Delivery {
+    let FileReplacement {
+        replaced,
+        count,
+        fuzzy_meta,
+        word_ignored,
+        ..
+    } = outcome;
+    let checksum_before = checksum::hash_bytes(content.as_bytes());
+
+    // Dry-run and preview never take the lock, so they check the content they
+    // read. The write path checks again under the lock, below.
+    if (job.dry_run || job.preview) && report_expect_drift(job, tx, &path, &checksum_before) {
+        return Delivery::Done;
+    }
+
+    // Risk only: `replace` rewrites matches inside the file, so a shorter
+    // result is the substitution working and not a whole-content overwrite.
+    // Assessed before the dry-run and preview branches, because those are the
+    // runs an agent reads to decide whether to write at all.
+    let risk_assessment = crate::commands::write_guards::assess_content_risk(
+        replaced.as_bytes(),
+        content.len() as u64,
+        replaced.len() as u64,
+        &job.write_cfg,
+    );
+
+    if job.dry_run {
+        crate::best_effort::send_to_consumer(
+            tx,
+            ReplaceEvent::DryRun {
                 path,
-                replacements,
-                bytes_before,
-                bytes_after,
-                checksum_before,
-                checksum_after,
-                elapsed_ms,
-                mtime_preserved,
-                fuzzy,
-                strategy,
-                similarity,
-                strategies_tried,
-                word_ignored,
-            } => {
-                let path_str = path.display().to_string();
-                writer.write_event(&ReplaceResult {
-                    r#type: "replaced",
-                    path: path_str,
-                    replacements,
-                    bytes_before,
-                    bytes_after,
+                replacements: count,
+                risk_assessment,
+            },
+        );
+        counters.files_modified.fetch_add(1, Ordering::Relaxed);
+        return Delivery::Done;
+    }
+
+    if job.preview {
+        let diff = similar::TextDiff::from_lines(content, &replaced);
+        let unified = diff.unified_diff().to_string();
+        crate::best_effort::send_to_consumer(
+            tx,
+            ReplaceEvent::Preview {
+                path,
+                replacements: count,
+                diff: unified,
+                risk_assessment,
+            },
+        );
+        counters.files_modified.fetch_add(1, Ordering::Relaxed);
+        return Delivery::Done;
+    }
+
+    // The consumer may have given up while this file was being rewritten.
+    if job.stop.load(Ordering::Acquire) {
+        return Delivery::Done;
+    }
+
+    // A1: lock, then make sure the file still is what was read.
+    let _update_lock = match crate::lock::acquire_for_update(&path) {
+        Ok(lock) => lock,
+        Err(error) => {
+            crate::best_effort::send_to_consumer(
+                tx,
+                ReplaceEvent::Error {
+                    path,
+                    kind: ReplaceErrorKind::Failed(error),
+                },
+            );
+            return Delivery::Done;
+        }
+    };
+    if !redone && checksum::hash_file(&path, u64::MAX).ok().as_deref() != Some(&checksum_before) {
+        return Delivery::Stale;
+    }
+    // Compare the expected checksum here, under the lock, against the content
+    // the file holds now: checking before the lock left a TOCTOU window.
+    if report_expect_drift(job, tx, &path, &checksum_before) {
+        return Delivery::Done;
+    }
+
+    let opts = AtomicWriteOptions {
+        backup: job.backup,
+        retention: job.retention,
+        preserve_timestamps: job.preserve_timestamps,
+        backup_output_dir: None,
+        strategy: None,
+        strict_atomic: job.strict_atomic,
+        syntax_check: false,
+        wal_policy: crate::wal::WalPolicy::Auto,
+        // ADR-0038: only --keep-backup retains the file. Deriving retention
+        // from `backup` kept a `.bak` on every run, because `[defaults].backup`
+        // resolves to true and `[defaults]` is not an operator opt-in.
+        keep_backup: job.keep_backup,
+        durability: crate::platform::Durability::Auto,
+    };
+
+    match crate::atomic::atomic_write_based(
+        &path,
+        replaced.as_bytes(),
+        &opts,
+        &job.workspace,
+        Some(&checksum_before),
+    ) {
+        Ok(result) => {
+            counters.files_modified.fetch_add(1, Ordering::Relaxed);
+            let (fuzzy, strategy, similarity, strategies_tried) = match fuzzy_meta {
+                Some((f, s, sim, tried)) => (Some(f), Some(s), sim, Some(tried)),
+                None => (Some(false), Some("exact".into()), None, Some(1)),
+            };
+            crate::best_effort::send_to_consumer(
+                tx,
+                ReplaceEvent::Replaced {
+                    path,
+                    replacements: count,
+                    bytes_before: content.len() as u64,
+                    bytes_after: replaced.len() as u64,
                     checksum_before,
-                    checksum_after,
-                    elapsed_ms,
-                    mtime_preserved: Some(mtime_preserved),
+                    checksum_after: result.checksum,
+                    elapsed_ms: result.elapsed_ms,
+                    mtime_preserved: job.preserve_timestamps,
                     fuzzy,
                     strategy,
                     similarity,
                     strategies_tried,
-                    word_ignored,
-                })?;
-            }
-            ReplaceEvent::Progress { done, total } => {
-                let elapsed = start.elapsed().as_secs_f64();
-                let rate = if elapsed > 0.0 {
-                    done as f64 / elapsed
-                } else {
-                    0.0
-                };
-                let eta_ms = if rate > 0.0 && total > done {
-                    Some(((total - done) as f64 / rate * 1000.0) as u64)
-                } else {
-                    None
-                };
-                writer.write_event(&ProgressEvent {
-                    r#type: "progress",
-                    done,
-                    total,
-                    rate_per_s: Some(rate),
-                    eta_ms,
-                    phase: "replace".into(),
-                })?;
-            }
-            ReplaceEvent::DryRun { path, replacements } => {
-                writer.write_event(&DryRunPlan {
-                    r#type: "plan",
-                    operation: "replace".into(),
-                    path: path.display().to_string(),
-                    would_modify: true,
-                    details: Some(format!("{replacements} replacements")),
-                })?;
-            }
-            ReplaceEvent::Preview {
-                path,
-                replacements,
-                diff,
-            } => {
-                writer.write_event(&crate::ndjson_types::ReplacePreview {
-                    r#type: "preview",
-                    path: path.display().to_string(),
-                    replacements,
-                    diff,
-                })?;
-            }
-            ReplaceEvent::Error { path, kind } => {
-                let (message, error_class, retryable) = match kind {
-                    ReplaceErrorKind::StateDrift { expected, actual } => (
-                        format!("state drift: expected {expected}, got {actual}"),
-                        crate::error::ErrorClass::Conflict.as_str(),
-                        true,
-                    ),
-                    ReplaceErrorKind::WriteFailure(msg) => {
-                        (msg, crate::error::ErrorClass::Transient.as_str(), true)
-                    }
-                    ReplaceErrorKind::BinaryRejected => (
-                        "binary file rejected for text replace (G-015/G-027)".to_string(),
-                        crate::error::ErrorClass::Permanent.as_str(),
-                        false,
-                    ),
-                    ReplaceErrorKind::JailViolation => (
-                        "path escapes workspace jail; use --workspace to set a different root"
-                            .to_string(),
-                        crate::error::ErrorClass::Permanent.as_str(),
-                        false,
-                    ),
-                };
-                writer.write_event(&crate::ndjson_types::ReplaceErrorEvent {
-                    status: "error",
-                    path: path.display().to_string(),
-                    message,
-                    error_class,
-                    retryable,
-                })?;
-            }
+                    word_ignored: if word_ignored { Some(true) } else { None },
+                    risk_assessment,
+                },
+            );
+        }
+        Err(e) => {
+            crate::best_effort::send_to_consumer(
+                tx,
+                ReplaceEvent::Error {
+                    path,
+                    kind: ReplaceErrorKind::Failed(e),
+                },
+            );
         }
     }
-
-    if let Err(panic_payload) = walker_thread.join() {
-        std::panic::resume_unwind(panic_payload);
-    }
-
-    let total_repl = total_replacements.load(Ordering::Relaxed);
-    let matched = files_modified.load(Ordering::Relaxed);
-    // B-002g / R-DRY-001: dry-run / preview must not claim disk mutations.
-    let modified_count = crate::commands::summary_metrics::files_modified_for_summary(
-        matched,
-        dry_run || preview,
-    );
-
-    writer.write_event(&Summary {
-        r#type: "summary",
-        files_visited: files_visited.load(Ordering::Relaxed),
-        files_matched: matched,
-        files_modified: modified_count,
-        files_skipped: Some(files_skipped.load(Ordering::Relaxed)),
-        total_matches: None,
-        total_replacements: Some(total_repl),
-        elapsed_ms: start.elapsed().as_millis() as u64,
-    })?;
-
-    if total_repl == 0 {
-        // G-027: all-binary / binary-only skips must not look like NO_MATCHES + retryable.
-        let binaries = binary_rejects.load(Ordering::Relaxed);
-        if binaries > 0 && files_modified.load(Ordering::Relaxed) == 0 {
-            let path = first_binary_path
-                .lock()
-                .ok()
-                .and_then(|g| g.clone())
-                .unwrap_or_else(|| PathBuf::from("."));
-            return Err(crate::error::AtomwriteError::BinaryFile { path }.into());
-        }
-        return Err(crate::error::AtomwriteError::NoMatches.into());
-    }
-
-    Ok(())
-}
-
-enum ReplaceEvent {
-    Replaced {
-        path: PathBuf,
-        replacements: u64,
-        bytes_before: u64,
-        bytes_after: u64,
-        checksum_before: String,
-        checksum_after: String,
-        elapsed_ms: u64,
-        mtime_preserved: bool,
-        fuzzy: Option<bool>,
-        strategy: Option<String>,
-        similarity: Option<f64>,
-        strategies_tried: Option<u64>,
-        word_ignored: Option<bool>,
-    },
-    Progress {
-        done: u64,
-        total: u64,
-    },
-    DryRun {
-        path: PathBuf,
-        replacements: u64,
-    },
-    Preview {
-        path: PathBuf,
-        replacements: u64,
-        diff: String,
-    },
-    Error {
-        path: PathBuf,
-        kind: ReplaceErrorKind,
-    },
-}
-
-enum ReplaceErrorKind {
-    StateDrift { expected: String, actual: String },
-    WriteFailure(String),
-    /// G-027: binary content is a permanent precondition, not a transient write failure.
-    BinaryRejected,
-    JailViolation,
+    Delivery::Done
 }

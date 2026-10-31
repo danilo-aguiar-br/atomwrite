@@ -14,12 +14,18 @@ use super::time_fmt::utc_timestamp_formatted;
 /// EXDEV fallback: write the in-memory payload already produced for the
 /// tempfile pipeline. Reuses `content` (no second heap buffer / no re-read
 /// of the temp file) and performs a single truncate+write+fsync.
+///
+/// The tempfile itself is owned by the caller's `NamedTempFile`, which
+/// removes exactly that path on drop. This function never scans the
+/// directory: a prefix sweep would delete tempfiles of concurrent processes.
+/// # Errors
+///
+/// Returns an I/O error when the target cannot be opened, when a chunk write
+/// or the final fsync fails. The target keeps whatever prefix the failed write
+/// already flushed, because this fallback exists precisely for a filesystem
+/// that cannot rename over it.
 #[cfg(unix)]
-pub(crate) fn copy_tempfile_to_target(
-    _temp: &std::fs::File,
-    target: &Path,
-    content: &[u8],
-) -> Result<()> {
+pub(crate) fn copy_content_to_target(target: &Path, content: &[u8]) -> Result<()> {
     use std::io::Write;
     let mut target_file = fs::OpenOptions::new()
         .write(true)
@@ -33,25 +39,12 @@ pub(crate) fn copy_tempfile_to_target(
             target.display()
         )
     })?;
-    platform::fsync_file(&target_file).ok();
-    let _ = target_file;
-
-    // Remove the tempfile on disk (its path was inside the parent dir).
-    // persist() left it on disk with a .tmp.* name; we don't have a handle
-    // to it here, so we rely on the caller to clean up via the
-    // tempfile-in-parent pattern. Cleanup is best-effort: ignore errors.
-    if let Some(parent) = target.parent() {
-        if let Ok(entries) = fs::read_dir(parent) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                if let Some(name) = name.to_str() {
-                    if name.starts_with(crate::constants::TEMPFILE_PREFIX) {
-                        let _ = fs::remove_file(entry.path());
-                    }
-                }
-            }
-        }
-    }
+    platform::fsync_file(&target_file).with_context(|| {
+        format!(
+            "cannot flush target for copy fallback: {}",
+            target.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -60,6 +53,13 @@ pub(crate) fn copy_tempfile_to_target(
 /// Uses `ftruncate(0)` + `write_all` + `sync_data` on the existing fd.
 /// NOT atomic against a crash between truncate and write — for full crash
 /// recovery, use `WriteStrategy::CopyBack` with the journal sidecar.
+///
+/// # Errors
+///
+/// Returns an I/O error when the target cannot be opened for writing, when
+/// `ftruncate(0)` fails, when a write or flush fails, or when `sync_data`
+/// fails. A failure after the truncate leaves the file shortened and is
+/// reported to the caller as such, which is why the journal sidecar exists.
 pub(crate) fn write_inplace_path(target: &Path, content: &[u8]) -> Result<bool> {
     use std::io::Write;
     let mut file = fs::OpenOptions::new()
@@ -78,7 +78,8 @@ pub(crate) fn write_inplace_path(target: &Path, content: &[u8]) -> Result<bool> 
         .with_context(|| format!("in-place write failed for {}", target.display()))?;
     file.flush()
         .with_context(|| format!("in-place flush failed for {}", target.display()))?;
-    let _ = file.sync_data();
+    file.sync_data()
+        .with_context(|| format!("in-place sync failed for {}", target.display()))?;
     Ok(false)
 }
 
@@ -110,7 +111,7 @@ pub(crate) fn create_backup_in(
     let now = utc_timestamp_formatted();
     // file_name() returns None only for root "/" — empty string is safe for backup naming
     let filename = target.file_name().unwrap_or_default().to_string_lossy();
-    let backup_name = format!("{filename}.bak.{now}");
+    let backup_name = format!("{filename}{}{now}", crate::constants::BACKUP_INFIX);
 
     let backup_path = match output_dir {
         Some(dir) => {
@@ -134,7 +135,10 @@ pub(crate) fn create_backup_in(
     // overwrite, and the test harness can produce timestamp collisions
     // (second-level resolution). Cleanup is best-effort.
     if backup_path.exists() {
-        let _ = std::fs::remove_file(&backup_path);
+        crate::best_effort::best_effort(
+            std::fs::remove_file(&backup_path),
+            "remove stale backup before reflink",
+        );
     }
     reflink_copy::reflink_or_copy(target, &backup_path)
         .with_context(|| format!("cannot create backup at {}", backup_path.display()))?;
@@ -203,16 +207,22 @@ pub(crate) fn delete_backup_quietly(path: &Path) {
 
 /// Prune old backups that share the given `prefix` in the given directory.
 pub(crate) fn cleanup_old_backups_in(parent: &Path, prefix_name: &str, retention: u8) {
-    let prefix = format!("{prefix_name}.bak.");
+    let prefix = format!("{prefix_name}{}", crate::constants::BACKUP_INFIX);
 
     let mut backups: Vec<std::path::PathBuf> = match fs::read_dir(parent) {
         Ok(entries) => entries
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with(&prefix))
+                // Only atomwrite's own backups: `<name>` + infix + a valid
+                // timestamp. A user file such as `<name>.bak.0-note` is never
+                // ours to delete.
+                p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                    n.strip_prefix(&prefix).is_some_and(|stamp| {
+                        !stamp.contains(crate::constants::BACKUP_INFIX)
+                            && crate::commands::is_backup_timestamp_name(n)
+                    })
+                })
             })
             .collect(),
         Err(_) => return,
@@ -225,6 +235,7 @@ pub(crate) fn cleanup_old_backups_in(parent: &Path, prefix_name: &str, retention
     backups.sort();
     let to_remove = backups.len() - retention as usize;
     for old in &backups[..to_remove] {
-        let _ = fs::remove_file(old);
+        // Retention pruning is best-effort: a leftover old backup is harmless.
+        crate::best_effort::best_effort(fs::remove_file(old), "prune old backup");
     }
 }

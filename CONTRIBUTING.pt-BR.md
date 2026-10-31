@@ -3,7 +3,8 @@
 
 # Contribuindo com o atomwrite
 
-> Contribua com a CLI atômica em que agentes confiam para edições duráveis
+
+- Contribua com a CLI atômica em que agentes confiam para edições duráveis
 
 
 ## Bem-vindo
@@ -25,7 +26,8 @@
 
 ## Setup de Desenvolvimento
 ### Pré-requisitos
-- Instale Rust 1.88 ou posterior (edition 2024; MSRV declarado em `Cargo.toml`)
+- Instale Rust 1.90 ou posterior (edition 2024; MSRV declarado em `Cargo.toml` como `rust-version = "1.90"`)
+- O `rust-toolchain.toml` local seleciona o canal 1.94 com `rustfmt` e `clippy`, e o MSRV continua 1.90
 - Instale Git
 - Instale `rustfmt` e `clippy` via a toolchain ativa (`rust-toolchain.toml`)
 
@@ -40,24 +42,33 @@ cargo build --release --no-default-features --features core
 cargo build --release --features full
 ```
 
+### Política de MSRV
+- O MSRV é o campo `rust-version` do `Cargo.toml` (1.90 hoje, subido de 1.89 porque o `ast-grep-core` 0.51 e o `tree-sitter` 0.27 exigem, veja a ADR-0075)
+- Subir o MSRV é mudança de versão minor, nunca patch, e o CHANGELOG a lista
+- Mantenha `README.md`, `docs/INSTALL.md` e `docs/CROSS_PLATFORM.md` em sincronia com o `Cargo.toml` quando ele mudar
+
 ### Definição de pronto local
-- Este produto CLI não usa workflows de GitHub Actions do produto como gate de release
+- Todo gate roda localmente na sua máquina, não existe automação remota
 - Valide localmente antes de cada PR e release
-- Rode testes de biblioteca e integração: `cargo test --lib --tests`
+- Rode testes de biblioteca e integração com as features padrão: `cargo test --lib --tests`
 - Rode clippy com warnings negados: `cargo clippy --all-targets -- -D warnings`
 - Verifique cross-compile Windows ao tocar código de plataforma: `cargo check --target x86_64-pc-windows-gnu`
 - Instale a partir do path após mudanças substantivas: `cargo install --path . --force`
 - Suite opcional de contrato residual de agente: `cargo test --test cli_e2e_v0135`
 - Suite opcional de contrato de agente v0.1.36: `cargo test --test cli_v0136_gaps`
-- SSOT opcional de gaps: `bash scripts/check-gaps-ssot.sh`
-- Superfície slim opcional: `cargo test --no-default-features --features core`
-- Checagem opcional de formatação: `cargo fmt -- --check`
-- Lint opcional de docs: `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`
-- Checagens opcionais de supply-chain: `cargo audit` e `cargo deny check`
+- Suites opcionais de contrato de agente v0.1.37: `cargo test --test cli_v0137_envelope --test cli_v0137_dominio --test cli_v0137_agent_native --test cli_v0137_artefato --test cli_v0137_etd --test cli_v0137_cancel`
+- O status de um gap vive no ADR que o possui; nota local de auditoria nunca é portão de release
+- Perfil slim: `cargo test --no-default-features --features core` fica verde em 131 alvos de teste, porque todo teste que exercita `scope`, `transform`, `outline` ou `query` carrega `#[cfg(feature = "ast")]` e é pulado nesse build
+- Para provar que o build slim compila, rode `cargo xtask check-features` (roda `cargo check --locked --no-default-features` nos conjuntos `core` e `core,watch` e para na primeira falha), e rode a suíte de testes com as features padrão
+- Suites opcionais da v0.1.37 para o verbo `config` e os guardas de código-fonte: `cargo test --test cli_v0137_config_verb --test cli_v0137_hardcode_guard --test cli_v0137_retry_guards --test cli_v0137_let_underscore_guard --test cli_v0137_terminal_event`
+- Suites opcionais de documentação: `cargo test --test docs_consistency --test docs_exit_codes`
+- Checagem de formatação: `cargo fmt -- --check`
+- Lint de docs: `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`
+- Checagens de supply-chain, rode antes do bump de versão e não depois de escrever a documentação: `cargo audit` e `cargo deny check`
 
 ### Pin da release atual
-- A versão pública atual é `0.1.36`
-- Fixe consumidores e agentes em `^0.1.36`
+- A linha de release desta árvore é `0.1.37`, que ainda está em preparação, e o crates.io carrega a `0.1.36` até a `0.1.37` ser publicada
+- Fixe consumidores e agentes em `^0.1.36` hoje e em `^0.1.37` quando essa versão sair
 - Mantenha strings de versão consistentes em `Cargo.toml`, README, CHANGELOG e skills
 
 
@@ -85,6 +96,16 @@ cargo build --release --features full
 - Responda ao feedback de review com prontidão
 - Faça squash dos commits quando os maintainers pedirem
 
+### Checklist do pull request
+- [ ] `cargo fmt -- --check` passa
+- [ ] `cargo clippy --all-targets -- -D warnings` passa
+- [ ] `cargo test --lib --tests` passa com as features padrão
+- [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` passa
+- [ ] `cargo audit` e `cargo deny check` passam
+- [ ] README, CHANGELOG e os dois espelhos `.pt-BR` estão atualizados
+- [ ] Os schemas NDJSON e a ADR estão atualizados quando o contrato muda
+- [ ] Nenhum número não medido foi adicionado à documentação
+
 
 ## Testes
 - Adicione testes para toda nova feature e bug fix
@@ -101,6 +122,14 @@ cargo build --release --features full
 - Veja [docs/TESTING.pt-BR.md](docs/TESTING.pt-BR.md) para categorias e perfis
 - Não invente nem cole contagens de testes não medidas na documentação
 
+### Testes herméticos e guardas de código-fonte
+- Todo teste que roda o binário passa por `common::hermetic(...)` (`tests/common/mod.rs`), que dá ao filho `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` e `APPDATA` vazios e fixa `LANG` em `en_US.UTF-8`
+- O cache XDG continua o real de propósito, para os parsers AST não serem baixados de novo a cada teste
+- Um teste que precisa da própria config redireciona `HOME` e `XDG_*` depois de chamar `hermetic`
+- Os guardas de código-fonte quebram o build: `tests/cli_v0137_hardcode_guard.rs` proíbe literais de duração, o infixo `.bak.`, nomes de sidecar e números de unidade de tempo fora de `constants*`, além de `env::var` e `Command::new` em qualquer código de produção, e proíbe qualquer arquivo `.sh` e qualquer diretório `.github`
+- `tests/cli_v0137_let_underscore_guard.rs` proíbe `let _ =`, `.unwrap()`, `.expect(`, `unreachable!`, `panic!`, `todo!` e `unimplemented!` em código de produção
+- Os dois guardas mantêm as listas de exceção vazias, então código novo deve cumpri-los em vez de adicionar uma exceção
+
 
 ## Documentação
 - Mantenha o inglês como idioma canônico da documentação pública
@@ -109,14 +138,15 @@ cargo build --release --features full
 - Atualize `README.md` e `README.pt-BR.md` quando comandos ou orientação de instalação mudarem
 - Atualize `docs/AGENTS.md` e `docs/AGENTS.pt-BR.md` quando o contrato de agente mudar
 - Atualize `CHANGELOG.md` e `CHANGELOG.pt-BR.md` para toda mudança visível ao usuário
+- Traduções: o pt-BR é a única tradução, escrita com todos os acentos, e as strings da interface vivem em `locales/en.toml` e `locales/pt-BR.toml` com paridade de chaves garantida por `tests/locale_parity.rs`
 - Siga Keep a Changelog e Semantic Versioning
 - Atualize skills em `skills/atomwrite-en/` e `skills/atomwrite-pt/` quando contratos operacionais mudarem
 - Adicione ou atualize JSON schemas em `docs/schemas/` para novos envelopes NDJSON
 - Adicione um ADR em `docs/decisions/` para escolhas de design não triviais
 - Atualize `llms.txt`, `llms.pt-BR.txt` e `llms-full.txt` quando a documentação principal mudar
-- Quando a superfície da CLI mudar: atualize `CANONICAL_SUBCOMMAND_COUNT`, inventários de **45** em README/AGENTS/`llms*`, `docs/schemas/README.md` e rode `scripts/check-gaps-ssot.sh`
-- Quando gaps de contrato de agente fecharem: atualize status em `gaps.md`, ADR, HOW_TO_USE, COOKBOOK, MIGRATION, TESTING e as duas skills na mesma entrega
-- Nota: `gaps.md` são notas locais de auditoria e não fazem parte da documentação pública de empacotamento
+- Quando a superfície da CLI mudar: atualize `CANONICAL_SUBCOMMAND_COUNT`, os inventários de 47 em README/AGENTS/`llms*` e `docs/schemas/README.md`
+- Quando gaps de contrato de agente fecharem: atualize o status no ADR que possui o gap, HOW_TO_USE, COOKBOOK, MIGRATION, TESTING e as duas skills na mesma entrega
+- Nota: o inventário de gaps é nota local não versionada, então o status corrente vive na série de ADRs e nunca nessa nota
 - Exclua notas privadas como `docs_rules/`, `gaps.md` e memória local de agentes das expectativas de empacotamento de release
 
 
@@ -140,15 +170,22 @@ cargo build --release --features full
 - O versionamento segue Semantic Versioning 2.0.0
 - Entradas de changelog seguem Keep a Changelog em EN e pt-BR
 - Tags usam o formato `vX.Y.Z`
-- Valide com a DoD local; este produto não depende de GitHub Actions do produto como gate de release
+- Valide com a DoD local, todo gate roda localmente
 - Checagens sugeridas pré-publicação:
   - `cargo test --lib --tests`
   - `cargo clippy --all-targets -- -D warnings`
   - `cargo check --target x86_64-pc-windows-gnu`
+  - `cargo xtask check-features`
+  - `cargo audit` e `cargo deny check`
   - `cargo package --list` / dry-run de publish conforme necessário
   - `cargo install --path . --force`
-- Publique no crates.io somente após a DoD local estar verde
-- A linha de release atual é `0.1.36`; consumidores devem fixar `^0.1.36`
+- Publique no crates.io somente após a DoD local estar verde, e o crates.io continua carregando a `0.1.36` até o publish da `0.1.37` acontecer
+- A linha de release atual é `0.1.37`; consumidores devem fixar `^0.1.36` hoje e `^0.1.37` quando ela for publicada
+
+
+## Código de Conduta
+- Todo contribuidor segue o [Código de Conduta](CODE_OF_CONDUCT.pt-BR.md)
+- Reporte violações como descrito na seção Aplicação desse documento
 
 
 ## Reconhecimento

@@ -1,20 +1,20 @@
-# ADR-0046: Retrofit resolve-first no diff
+# ADR-0046: adaptação do diff à convenção de resolver primeiro
 
-- **Status**: Aceito
-- **Date**: 2026-06-21
-- **Context**: O subcomando `diff` foi implementado antes do ADR-0027 (convenção resolve-first) ser estabelecida na v0.1.18. Quando o ADR-0027 foi adotado, os seguintes comandos foram retrofitados: write, edit, copy, apply, move, rollback, set, del, case, replace. O `diff` foi omitido dessa lista porque era considerado read-only e não mutante. Porém, a convenção resolve-first se aplica a TODOS os comandos que fazem I/O de arquivo — não apenas escritas — porque: (1) paths relativos devem resolver contra `--workspace` para consistência de API, (2) paths escapando o jail do workspace devem ser rejeitados com `WORKSPACE_JAIL` (exit 126) independente da intenção de leitura/escrita, e (3) agentes esperam semântica uniforme de paths em todos os subcomandos. O bug se manifestava como `FILE_NOT_FOUND` (exit 4) ao chamar `diff a.txt b.txt` com `--workspace /path/to/dir` mesmo quando ambos os arquivos existiam dentro do workspace.
+- Status: Aceito
+- Data: 2026-06-21
+- Contexto: O subcomando `diff` foi implementado antes de o ADR-0027 (convenção de resolver primeiro) ser estabelecido na v0.1.18. Quando o ADR-0027 foi adotado, os seguintes comandos foram adaptados: write, edit, copy, apply, move, rollback, set, del, case, replace. O comando `diff` ficou fora dessa lista porque foi considerado somente leitura e não mutador. No entanto, a convenção de resolver primeiro se aplica a TODOS os comandos que fazem I/O de arquivos, não apenas escritas, porque: (1) caminhos relativos precisam ser resolvidos contra `--workspace` por consistência da API, (2) caminhos que escapam do jail do workspace precisam ser rejeitados com `WORKSPACE_JAIL` (exit 126) independentemente da intenção de leitura ou escrita, e (3) os agentes esperam semântica de caminho uniforme em todos os subcomandos. O bug se manifestava como `FILE_NOT_FOUND` (exit 4) ao chamar `diff a.txt b.txt` com `--workspace /path/to/dir`, mesmo com os dois arquivos existindo dentro do workspace.
 
-- **Decision**: Adicionar `global.resolve_workspace()` + `path_safety::validate_path()` para ambos `file_a` e `file_b` no topo de `cmd_diff()`, antes de qualquer chamada a `read_file_string()`. O mesmo padrão de 3 linhas usado por todos os outros comandos desde a v0.1.18.
+- Decisão: Adicionar `global.resolve_workspace()` + `path_safety::validate_path()` para `file_a` e `file_b` no topo do `cmd_diff()`, antes de qualquer chamada a `read_file_string()`. É o mesmo padrão de 3 linhas usado por todos os outros comandos desde a v0.1.18.
 
-- **Consequences**:
-  - **+** `diff` agora resolve paths relativos contra `--workspace`, consistente com todos os outros subcomandos.
-  - **+** Paths escapando o jail do workspace são rejeitados com `WORKSPACE_JAIL` (exit 126) em vez de `FILE_NOT_FOUND` confuso.
-  - **+** Agentes não precisam mais de lógica especial de prefixação de path para `diff`.
-  - **+** Conformidade total com ADR-0027 e ADR-0030.
-  - **-** (nenhuma) A mudança é puramente aditiva e retrocompatível: paths absolutos dentro do workspace continuam funcionando.
+- Consequências:
+  - + O `diff` agora resolve caminhos relativos contra `--workspace`, de forma consistente com todos os outros subcomandos.
+  - + Caminhos que escapam do jail do workspace são rejeitados com `WORKSPACE_JAIL` (exit 126) em vez de um confuso `FILE_NOT_FOUND`.
+  - + Os agentes não precisam mais de lógica especial de prefixo de caminho para o `diff`.
+  - + Conformidade total com o ADR-0027 e o ADR-0030.
+  - - (nenhuma) A mudança é puramente aditiva e retrocompatível: caminhos absolutos dentro do workspace continuam funcionando.
 
-- **Alternatives considered**:
-  1. **Deixar diff como está e documentar a exceção.** Rejeitado: inconsistência é fonte recorrente de erros de agentes e o fix é trivial (3 linhas).
-  2. **Apenas resolver mas pular validação de jail para comandos read-only.** Rejeitado: validação de jail previne ataques de escape de path via symlink mesmo em modo read-only.
+- Alternativas consideradas:
+  1. Deixar o diff como está e documentar a exceção. Rejeitado: a inconsistência é uma fonte recorrente de erros dos agentes, e a correção é trivial (3 linhas).
+  2. Apenas resolver, mas pular a validação do jail para comandos somente leitura. Rejeitado: a validação do jail previne ataques de escape de caminho baseados em symlink mesmo no modo somente leitura.
 
-- **Trigger to revisit**: Se um novo subcomando read-only for adicionado, aplicar o mesmo padrão resolve-first desde o primeiro commit (lição aprendida deste gap).
+- Gatilho para revisitar: Se um novo subcomando somente leitura for adicionado, aplicar o mesmo padrão de resolver primeiro desde o primeiro commit (lição aprendida com este gap).

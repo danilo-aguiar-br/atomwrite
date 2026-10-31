@@ -6,28 +6,62 @@
 //! write pipeline, NDJSON output types, fuzzy matching, path safety, and
 //! subcommand handlers for agent-first file operations.
 //!
+//! # Examples
+//!
+//! Write a file atomically (tempfile, fsync, rename) and check its BLAKE3 checksum:
+//!
+//! ```
+//! use atomwrite::atomic::{AtomicWriteOptions, atomic_write};
+//! use atomwrite::checksum::hash_bytes;
+//!
+//! let dir = tempfile::tempdir()?;
+//! let target = dir.path().join("notes.txt");
+//! let opts = AtomicWriteOptions {
+//!     backup: false,
+//!     ..Default::default()
+//! };
+//! let result = atomic_write(&target, b"hello\n", &opts, dir.path())?;
+//! assert_eq!(result.checksum, hash_bytes(b"hello\n"));
+//! assert_eq!(std::fs::read_to_string(&target)?, "hello\n");
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
 //! # Features
 //!
-//! - `core` — baseline library surface (always on via `default`)
-//! - `ast` — tree-sitter / ast-grep based query, outline, transform, syntax check
-//! - `lang-rust` / `lang-ts` / `lang-py` / `lang-go` — language markers for AST features
+//! - `core` — baseline library surface, part of `default`
+//! - `ast` — tree-sitter and ast-grep based query, outline, transform and syntax check
+//! - `lang-rust`, `lang-ts`, `lang-py`, `lang-go` — language markers for the AST features
 //! - `lang-full` — enables all language markers
-//! - `watch` — filesystem watch subcommand (`notify`)
-//! - `semantic` — semantic search/merge experimental surface
-//! - `full` — convenience meta-feature (`default` + `lang-full` + `watch` + `semantic`)
+//! - `watch` — the `watch` subcommand (`notify`), opt-in
+//! - `full` — `default` plus `lang-full` plus `watch`
+//! - `i18n-cjk`, `i18n-rtl`, `i18n-europe`, `i18n-full` — placeholders for optional locale packs
 //! - `slow-tests` — opt-in longer property tests
 //!
-//! Feature-gated items are auto-tagged on docs.rs via `doc_cfg` (see `# Safety`).
+//! The default features are `core`, `ast`, `lang-rust`, `lang-ts` and `lang-py`.
+//! Feature-gated items are tagged on docs.rs via `doc_cfg` (see `# docs.rs`).
+//!
+//! # MSRV
+//!
+//! Rust 1.90, edition 2024.
+//!
+//! # Stability
+//!
+//! The supported interface is the `atomwrite` CLI and its NDJSON contract. The
+//! library API is an implementation detail and may change between 0.x
+//! versions: release 0.1.37 failed 10 `cargo-semver-checks` major checks
+//! against 0.1.36, listed in `docs/MIGRATION.md`.
 //!
 //! # Safety
 //!
-//! This crate denies `unsafe` in library code (`#![deny(unsafe_code)]`).
+//! This crate denies `unsafe` code (`#![deny(unsafe_code)]`). Only the
+//! `signal` and `platform` modules opt back in, for operating-system calls.
 //!
-//! **docs.rs / rustdoc nightly:** docs.rs builds with nightly and passes
-//! `--cfg docsrs`. Under that cfg this crate enables
-//! `#![feature(doc_cfg)]` so feature/platform gates appear as badges in HTML.
-//! `doc_auto_cfg` was **removed** (merged into `doc_cfg` in October 2025;
-//! rust-lang/rust#138907). Do not reintroduce `feature(doc_auto_cfg)`.
+//! # docs.rs
+//!
+//! docs.rs builds with nightly and passes `--cfg docsrs`. Under that cfg this
+//! crate enables `#![feature(doc_cfg)]` so feature and platform gates appear as
+//! badges in the HTML. Do not reintroduce `feature(doc_auto_cfg)`: it was merged
+//! into `doc_cfg` in October 2025 (rust-lang/rust#138907).
 //! Local validation:
 //!
 //! ```text
@@ -53,8 +87,12 @@
 #![deny(clippy::ptr_arg)]
 #![deny(clippy::needless_borrow)]
 #![deny(clippy::cloned_instead_of_copied)]
-#![warn(rustdoc::private_intra_doc_links)]
-#![warn(rustdoc::invalid_html_tags)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(rustdoc::invalid_html_tags)]
+#![deny(rustdoc::bare_urls)]
+#![deny(rustdoc::redundant_explicit_links)]
+#![deny(rustdoc::unescaped_backticks)]
+#![deny(rustdoc::invalid_rust_codeblocks)]
 #![warn(clippy::doc_markdown)]
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::needless_return)]
@@ -62,6 +100,8 @@
 rust_i18n::i18n!("locales", fallback = "en");
 
 pub mod atomic;
+/// Best-effort helper for failures that may be ignored on purpose.
+pub mod best_effort;
 /// Binary content detection heuristics.
 pub mod binary_detect;
 /// BLAKE3 checksum computation.
@@ -72,7 +112,7 @@ pub mod cli;
 pub mod cli_args;
 /// Subcommand handler implementations.
 pub mod commands;
-/// Atomic file write pipeline.
+/// Bounded concurrency and multi-core fan-out.
 pub mod concurrency;
 /// Configuration file loading (`.atomwrite.toml`).
 pub mod config;
@@ -84,15 +124,21 @@ pub mod env_detect;
 pub mod error;
 /// Smart file reading with memmap2 for large files.
 pub mod file_io;
-/// Shared 9-strategy fuzzy match cascade (edit/replace/batch/edit-loop).
+/// Shared fuzzy match cascade (edit/replace/batch/edit-loop).
 pub mod fuzzy;
+/// Typed loading of a tree-sitter grammar (one decision for three verbs).
+#[cfg(feature = "ast")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
+pub mod grammar;
 /// Shared language utilities for AST commands.
+#[cfg(feature = "ast")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
 pub mod lang_utils;
 /// Line ending detection and normalization.
 pub mod line_endings;
 /// UI locale detection, negotiation, and resolved language state.
 pub mod locale;
-/// Advisory file locking for concurrent edit protection (G54).
+/// Advisory file locking for concurrent edit protection.
 pub mod lock;
 /// NDJSON output type definitions.
 pub mod ndjson;
@@ -107,22 +153,28 @@ pub mod output;
 pub mod path_safety;
 /// Platform-specific fsync helpers.
 pub mod platform;
+/// Retry with exponential backoff, full jitter and a hard deadline.
+pub mod retry;
 /// Binary startup helpers (tracing, locale, clap error mapping).
 pub mod runtime;
 /// Graceful shutdown signal handling.
 pub mod signal;
+/// Stdin reader that stops waiting once the run is cancelled.
+pub mod stdin_cancel;
 /// Cross-platform storage paths (XDG / ProjectDirs; no product env knobs).
 pub mod storage;
-/// G72 — Real syntax check via `tree-sitter-language-pack` (v0.1.12).
+/// Syntax check via `tree-sitter-language-pack`.
 #[cfg(feature = "ast")]
 #[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
 pub mod syntax_check;
 #[cfg(not(feature = "ast"))]
 #[path = "syntax_check_stub.rs"]
 pub mod syntax_check;
-/// G114 — Write-Ahead Log (WAL) sidecar for crash recovery (v0.1.12).
+/// Write-Ahead Log (WAL) sidecar for crash recovery.
 pub mod wal;
-/// Extended attribute (xattr) save and restore for atomic writes (G39).
+/// Include and exclude glob compilation shared by every verb (typed `INVALID_INPUT`).
+pub mod walk_globs;
+/// Extended attribute (xattr) save and restore for atomic writes.
 pub mod xattr_restore;
 
 use std::io::{Read, Write};
@@ -130,6 +182,7 @@ use std::io::{Read, Write};
 use anyhow::Result;
 
 use crate::cli::{Cli, Commands};
+use crate::error::AtomwriteError;
 use crate::output::NdjsonWriter;
 
 // Re-export fuzzy cascade for property tests and external reuse (v0.1.29).
@@ -138,15 +191,39 @@ pub use crate::fuzzy::{FuzzyInfo, match_pair};
 pub use crate::ndjson_types::BestCandidate;
 
 include!("schema_dispatch.inc.rs");
+include!("lib_dispatch.inc.rs");
 
 /// Dispatch the parsed CLI to the appropriate subcommand handler.
 ///
 /// # Errors
 ///
 /// Returns the error from whichever subcommand handler fails.
-pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) -> Result<()> {
+pub fn run(
+    cli: &Cli,
+    stdin: impl Read + Send + 'static,
+    stdout: impl Write,
+    stdin_is_tty: bool,
+) -> Result<()> {
     if cli.global.json_schema {
         return emit_json_schema(&cli.command, stdout);
+    }
+    // `--print-schema` reached here only in the one case the early path defers:
+    // the flag sat AFTER the command name and carried no value. A flag placed
+    // after the command is not a discovery invocation — the caller was running
+    // a command — and the previous behaviour answered the listing, silently
+    // replacing the operation that was asked for.
+    //
+    // The field cannot be dead: a declared arg that nothing reads is a promise
+    // the parser keeps and the program ignores, and clap would accept the flag
+    // here only for the binary to drop it. It is read here to say so.
+    if cli.global.print_schema.is_some() {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: "`--print-schema` must precede the command name; placed after a command it \
+                     would replace that command with a schema dump. Run `atomwrite --print-schema` \
+                     (no command) to list every schema, or `atomwrite --print-schema NAME` to emit one"
+                .to_string(),
+        }
+        .into());
     }
     if let Commands::Completions(args) = &cli.command {
         return generate_completions(args, stdout);
@@ -156,271 +233,97 @@ pub fn run(cli: &Cli, stdin: impl Read, stdout: impl Write, stdin_is_tty: bool) 
         tracing::debug!("--json is a no-op; output is always NDJSON");
     }
 
-    // Parallelism modus operandi: always size the process-wide rayon pool
-    // (and share the same bound with ignore WalkParallel via helpers).
-    // `--threads` / `--max-concurrency` / `0` / omit → see `concurrency::effective_threads`.
-    concurrency::configure_global_pool(cli.global.threads);
-
-    let shape = crate::output::OutputShape::from_cli(
-        cli.global.select.as_deref(),
-        &cli.global.filter,
-        cli.global.limit,
-    )?;
+    // Single construction point for the data-channel shape. `from_global_args`
+    // supersedes `from_cli` here so every global shaping flag (projection,
+    // filtering, the universal data operations, redaction, encoding, diff) is
+    // decided in one place instead of being added here per flag.
+    // The work budget is armed before any verb can collect a list: `--limit` is
+    // a bound on the WORK, not on the printing, so collection reads what is left
+    // before it touches the disk.
+    crate::output::arm_limit(cli.global.limit);
+    let shape = crate::output::OutputShape::from_global_args(&cli.global)?;
     let mut writer = NdjsonWriter::with_shape(stdout, shape);
     let shutdown = signal::get_or_install_handlers()?;
     // Rules Rust one-shot: global wall-clock deadline (cooperative cancel).
     signal::arm_global_timeout(cli.global.timeout_secs);
     let workspace = cli.global.resolve_workspace()?;
+    // ETD step 2: the workspace is ambient when `--workspace` is absent, so
+    // every terminal envelope says whether the root came from argv or the cwd.
+    writer.set_workspace(if cli.global.workspace.is_some() {
+        "argv"
+    } else {
+        "cwd"
+    });
+    // Every stdin reader goes through this adapter, so a blocked read gives up
+    // when the deadline or a signal cancels the run (see `stdin_cancel`).
+    let mut stdin = stdin_cancel::CancellableStdin::new(stdin, shutdown.flag());
+    // `--join` reads its table from stdin here, once, before any command runs.
+    writer.load_joins(
+        &mut stdin,
+        stdin_is_tty,
+        crate::output::command_consumes_stdin(&cli.command),
+    )?;
+    // `config` runs BEFORE the config load: a broken file must never stop the
+    // verb that repairs it (exit 78 would fire before the dispatch otherwise).
+    if let Commands::Config(args) = &cli.command {
+        let result = run_config_verb(args, &cli.global, &mut writer, &workspace);
+        return finish_run(result, &mut writer, &shutdown);
+    }
     let config = crate::config::load_config(&workspace, cli.global.config.as_deref())?;
-    crate::config::validate_fuzzy(&config.fuzzy)?;
-    crate::config::validate_write(&config.write)?;
-    crate::config::validate_search_section(&config.search)?;
-    let defaults = &config.defaults;
-    let write_cfg = &config.write;
-    let watch_cfg = &config.watch;
-    let fuzzy_cfg = &config.fuzzy;
-    let search_cfg = &config.search;
+    crate::config::validate_all(&config)?;
+    crate::config::install_tuning(&config);
 
-    // G119 L3 — autonomous startup `wal-heal` pass. Walks the workspace
-    // once, removes every `Committed`/`Aborted` sidecar older than
-    // `threshold_secs` (default 3600s = 1h), and is bounded by a
-    // 100ms wall-clock budget so the per-invocation overhead is
-    // predictable. Disabled via `--no-auto-heal` or
-    // Use CLI `--no-auto-heal` for tight local loops and benchmarks.
-    // `Started` journals are NEVER removed automatically — they are the
-    // orphans worth operator attention.
-    if !cli.global.no_auto_heal {
-        match crate::wal::auto_heal_on_startup(
-            &workspace,
-            crate::constants::DEFAULT_WAL_HEAL_THRESHOLD_SECS,
-            crate::constants::DEFAULT_WAL_HEAL_MAX_DURATION_MS,
-        ) {
-            Ok(report) if report.removed > 0 || report.malformed > 0 => {
-                tracing::info!(
-                    removed = report.removed,
-                    preserved = report.preserved,
-                    malformed = report.malformed,
-                    bytes_reclaimed = report.bytes_reclaimed,
-                    "G119 L3: startup wal-heal reaped stale sidecars"
-                );
-            }
-            Ok(_) => {
-                tracing::debug!("G119 L3: startup wal-heal found nothing to reap");
-            }
-            Err(e) => {
-                // Best-effort: a failed heal pass must never block the
-                // actual subcommand. Operators see the warning on stderr.
-                tracing::warn!(
-                    error = %e,
-                    workspace = %workspace.display(),
-                    "G119 L3: startup wal-heal failed; continuing without reaping"
-                );
-            }
-        }
+    // Parallelism: record the worker bound (shared with ignore WalkParallel via
+    // helpers) and build the process-wide rayon pool only for commands that can
+    // reach it; `read` and the other single-file verbs spawn no pool threads.
+    // `--threads` / `--max-concurrency` / `0` / omit → see `concurrency::effective_threads`.
+    // It runs after the config load because `[concurrency]` bounds the automatic count.
+    concurrency::plan_global_pool(&cli.command, cli.global.threads);
+
+    startup_wal_heal(&cli.command, &workspace, cli.global.no_auto_heal);
+
+    // `--input-schema` answers before any command work starts; it returns
+    // without the terminal cancel point below, exactly as it did when it sat
+    // inside the dispatch table.
+    if let Commands::Batch(args) = &cli.command
+        && args.input_schema
+    {
+        return commands::batch::emit_input_schema(&mut writer);
     }
 
-    let result = match &cli.command {
-        Commands::Read(args) => commands::read::cmd_read(args, &cli.global, &mut writer),
-        Commands::Write(args) => commands::write::cmd_write(
-            args,
-            &cli.global,
-            stdin,
-            &mut writer,
-            &shutdown,
-            defaults,
-            write_cfg,
-        ),
-        Commands::Edit(args) => commands::edit::cmd_edit(
-            args,
-            &cli.global,
-            stdin,
-            &mut writer,
-            &workspace,
-            defaults,
-            fuzzy_cfg,
-            stdin_is_tty,
-        ),
-        Commands::Search(args) => {
-            // A-019: apply XDG [search] defaults when CLI still has constant defaults.
-            let mut args = args.clone();
-            if args.max_filesize == crate::constants::DEFAULT_SEARCH_MAX_FILESIZE_BYTES {
-                args.max_filesize = search_cfg.max_filesize;
-            }
-            if args.max_columns == crate::constants::DEFAULT_SEARCH_MAX_COLUMNS {
-                args.max_columns = search_cfg.max_columns;
-            }
-            if args.context == 0 && search_cfg.context > 0 {
-                args.context = search_cfg.context as usize;
-            }
-            if search_cfg.smart_case && !args.case_insensitive {
-                args.smart_case = true;
-            }
-            commands::search::cmd_search(&args, &cli.global, &mut writer, &shutdown)
-        }
-        Commands::Replace(args) => commands::replace::cmd_replace(
-            args,
-            &cli.global,
-            &mut writer,
-            &shutdown,
-            defaults,
-            fuzzy_cfg,
-        ),
-        Commands::Hash(args) => commands::hash::cmd_hash(args, &cli.global, stdin, &mut writer),
-        Commands::Delete(args) => {
-            commands::delete::cmd_delete(args, &cli.global, &mut writer, defaults)
-        }
-        Commands::Count(args) => commands::count::cmd_count(args, &cli.global, &mut writer),
-        Commands::Diff(args) => commands::diff::cmd_diff(args, &cli.global, stdin, &mut writer),
-        Commands::Move(args) => {
-            commands::r#move::cmd_move(args, &cli.global, &mut writer, defaults)
-        }
-        Commands::Copy(args) => commands::copy::cmd_copy(args, &cli.global, &mut writer, defaults),
-        Commands::List(args) => commands::list::cmd_list(args, &cli.global, &mut writer),
-        Commands::Extract(args) => commands::extract::cmd_extract(args, stdin, &mut writer),
-        Commands::Calc(args) => commands::calc::cmd_calc(args, stdin, &mut writer),
-        Commands::Regex(args) => commands::regex_gen::cmd_regex(args, stdin, &mut writer),
-        Commands::Transform(args) => {
-            commands::transform::cmd_transform(args, &cli.global, &mut writer, &shutdown, defaults)
-        }
-        Commands::Batch(args) => {
-            if args.input_schema {
-                return commands::batch::emit_input_schema(&mut writer);
-            }
-            commands::batch::cmd_batch(
-                &cli.global,
-                stdin,
-                &mut writer,
-                args.dry_run,
-                args.transaction,
-                args.file.as_deref(),
-                &shutdown,
-                &args.backup_opts,
-                defaults,
-                fuzzy_cfg,
-            )
-        }
-        Commands::Scope(args) => {
-            commands::scope::cmd_scope(args, &cli.global, &mut writer, &shutdown, defaults)
-        }
-        Commands::Backup(args) => commands::backup::cmd_backup(args, &cli.global, &mut writer),
-        Commands::Rollback(args) => {
-            commands::rollback::cmd_rollback(args, &cli.global, &mut writer, defaults)
-        }
-        Commands::Apply(args) => {
-            commands::apply::cmd_apply(args, &cli.global, stdin, &mut writer, defaults, fuzzy_cfg)
-        }
-        Commands::Set(args) => commands::set::cmd_set(args, &cli.global, &mut writer, defaults),
-        Commands::Get(args) => commands::get::cmd_get(args, &cli.global, &mut writer),
-        Commands::Del(args) => commands::del::cmd_del(args, &cli.global, &mut writer, defaults),
-        Commands::Case(args) => commands::case::cmd_case(args, &cli.global, &mut writer, defaults),
-        Commands::Query(args) => commands::query::cmd_query(args, &cli.global, &mut writer),
-        Commands::Outline(args) => commands::outline::cmd_outline(args, &cli.global, &mut writer),
-        Commands::WalStats(args) => {
-            commands::wal_stats::cmd_wal_stats(args, &cli.global, &mut writer)
-        }
-        Commands::WalHeal(args) => {
-            commands::wal_stats::cmd_wal_heal(args, &cli.global, &mut writer)
-        }
-        Commands::PruneBackups(args) => {
-            commands::prune_backups::cmd_prune_backups(args, &cli.global, &mut writer)
-        }
-        Commands::EditLoop(args) => {
-            // Pass the already-locked `stdin` from `run()`'s argument
-            // instead of re-locking with `std::io::stdin().lock()`. The
-            // latter is a deadlock: `Stdin::lock` is non-recursive, so
-            // attempting to re-acquire it from the same thread that
-            // holds it (via `main.rs:106 stdin.lock()`) blocks forever.
-            // See audit 2026-06-17.
-            commands::edit_loop::cmd_edit_loop(
-                args,
-                &cli.global,
-                stdin,
-                &mut writer,
-                defaults,
-                fuzzy_cfg,
-            )
-        }
-        Commands::Verify(args) => {
-            let hash_args = cli_args::HashArgs {
-                paths: vec![args.path.clone()],
-                verify: Some(args.checksum.clone()),
-                stdin: false,
-                recursive: false,
-                exclude: Vec::new(),
-            };
-            commands::hash::cmd_hash(&hash_args, &cli.global, stdin, &mut writer)
-        }
-        Commands::SemanticMerge(args) => commands::semantic_merge::cmd_semantic_merge(
-            args,
-            &cli.global,
-            &mut writer,
-            &shutdown,
-            defaults,
-        ),
-        Commands::Sparse(args) => {
-            commands::sparse::cmd_sparse(args, &cli.global, &mut writer, &shutdown, defaults)
-        }
-        Commands::Recipe(args) => commands::recipe::cmd_recipe(
-            args,
-            &cli.global,
-            &mut writer,
-            &shutdown,
-            defaults,
-            fuzzy_cfg,
-        ),
-        Commands::Stat(args) => {
-            let mut a = args.clone();
-            a.stat = true;
-            commands::read::cmd_read(&a, &cli.global, &mut writer)
-        }
-        Commands::AgentSurface(args) => commands::agent_surface::cmd_agent_surface(
-            args,
-            &cli.global,
-            &mut writer,
-            &shutdown,
-            defaults,
-        ),
-        Commands::Watch(args) => commands::watch::cmd_watch(
-            args,
-            &cli.global,
-            &mut writer,
-            &shutdown,
-            defaults,
-            watch_cfg,
-        ),
-        Commands::Codemod(args) => {
-            commands::codemod::cmd_codemod(args, &cli.global, &mut writer, &shutdown, defaults)
-        }
-        Commands::SemanticSearch(args) => commands::semantic_search::cmd_semantic_search(
-            args,
-            &cli.global,
-            &mut writer,
-            &shutdown,
-            defaults,
-        ),
-        Commands::Scratch(args) => commands::scratch::cmd_scratch(args, &cli.global, &mut writer),
-        Commands::Doctor(args) => {
-            commands::doctor::cmd_doctor(args, &cli.global, &mut writer, &shutdown, defaults)
-        }
-        Commands::Locale(args) => {
-            commands::locale_cmd::cmd_locale(args, &cli.global, &mut writer, &shutdown, defaults)
-        }
-        Commands::CommandsTree(args) => commands::command_tree::cmd_commands_tree(
-            args,
-            &cli.global,
-            &mut writer,
-            &shutdown,
-            defaults,
-        ),
-        Commands::Completions(_) => unreachable!("completions handled in prescan_json_schema"),
-    };
+    let result = dispatch_command(
+        cli,
+        stdin,
+        stdin_is_tty,
+        &mut writer,
+        &shutdown,
+        &workspace,
+        &config,
+    );
 
-    let _ = writer.flush();
-    result
+    // Single terminal-cancel point for every scanning verb. Before this, each
+    // verb decided for itself what an interrupted run should say: `replace`
+    // emitted the cancel envelope, while `search`, `hash`, `count`, `copy` and
+    // `list` emitted nothing at all and `transform`, `scope`, `case` and
+    // `batch` emitted a partial summary that reads like a finished run. A
+    // consumer could not tell an interrupted run from a short one without
+    // knowing which verb it had called.
+    //
+    // The envelope is emitted HERE, from one observation of the shutdown
+    // signal, so the deadline verdict, the signal name and the prose always
+    // describe the same cause. Events the scan did emit before the cancel stay
+    // on the channel: the agent keeps what was found AND learns the scan was
+    // cut short, instead of being asked to choose between the two.
+    //
+    // A run that was cancelled is terminal, so the record goes out even when
+    // shaping flags are active. `--filter`, `--select` and `--limit` describe
+    // how to shape a complete answer; letting them drop the cancel would put
+    // the interrupted run back into the shape of a finished one, which is the
+    // defect this point exists to remove.
+    finish_run(result, &mut writer, &shutdown)
 }
 
 fn generate_completions(args: &cli::CompletionsArgs, mut out: impl Write) -> Result<()> {
-    use clap::CommandFactory;
     let shell = match args.shell {
         cli::ShellType::Bash => clap_complete::Shell::Bash,
         cli::ShellType::Zsh => clap_complete::Shell::Zsh,
@@ -437,27 +340,52 @@ fn generate_completions(args: &cli::CompletionsArgs, mut out: impl Write) -> Res
             .ok_or_else(|| anyhow::anyhow!("cannot determine XDG data directory (storage)"))?;
 
         let (subdir, filename) = match args.shell {
-            cli::ShellType::Bash => ("bash-completion/completions", "atomwrite"),
-            cli::ShellType::Zsh => ("zsh/site-functions", "_atomwrite"),
-            cli::ShellType::Fish => ("fish/vendor_completions.d", "atomwrite.fish"),
-            cli::ShellType::PowerShell => ("powershell/Completions", "_atomwrite.ps1"),
-            cli::ShellType::Elvish => ("elvish/lib", "atomwrite.elv"),
+            cli::ShellType::Bash => crate::constants::COMPLETION_BASH,
+            cli::ShellType::Zsh => crate::constants::COMPLETION_ZSH,
+            cli::ShellType::Fish => crate::constants::COMPLETION_FISH,
+            cli::ShellType::PowerShell => crate::constants::COMPLETION_POWERSHELL,
+            cli::ShellType::Elvish => crate::constants::COMPLETION_ELVISH,
         };
 
         let install_dir = xdg_data.join(subdir);
+        // A denied directory is exit 13 `PERMISSION_DENIED` and a vanished one
+        // is `NOT_FOUND`, through the same classifier every other verb uses.
+        // `anyhow::anyhow!` here erased the kind and the run answered 255
+        // `INTERNAL_ERROR` with "this is a bug", which blames the tool for a
+        // permission the operator can fix.
         std::fs::create_dir_all(&install_dir)
-            .map_err(|e| anyhow::anyhow!("cannot create {}: {e}", install_dir.display()))?;
+            .map_err(|e| AtomwriteError::from_io_at(&install_dir, e))?;
         let install_path = install_dir.join(filename);
 
         let mut file = std::fs::File::create(&install_path)
-            .map_err(|e| anyhow::anyhow!("cannot create {}: {e}", install_path.display()))?;
-        clap_complete::generate(shell, &mut cli::Cli::command(), "atomwrite", &mut file);
+            .map_err(|e| AtomwriteError::from_io_at(&install_path, e))?;
+        file.write_all(&render_completions(shell))
+            .map_err(|e| AtomwriteError::from_io_at(&install_path, e))?;
 
-        let path_str = install_path.display().to_string();
-        writeln!(out, "{{\"type\":\"installed\",\"path\":\"{path_str}\"}}")?;
+        let event = CompletionsInstalled {
+            r#type: "installed",
+            path: install_path.display().to_string(),
+        };
+        // Through the writer, so the event carries the same `ok` verdict and
+        // `target_resolved` / `target_source` as every other success envelope.
+        let mut writer = NdjsonWriter::new(out);
+        writer.set_target(event.path.clone(), "argv");
+        writer.write_event(&event)?;
+        writer.flush()?;
         Ok(())
     } else {
-        clap_complete::generate(shell, &mut cli::Cli::command(), "atomwrite", &mut out);
+        // `clap_complete::generate` panics on a failed write, so it renders to
+        // memory and the write goes out here, where a closed reader is an error.
+        out.write_all(&render_completions(shell))?;
+        out.flush()?;
         Ok(())
     }
+}
+
+/// Render the completion script of `shell` in memory.
+fn render_completions(shell: clap_complete::Shell) -> Vec<u8> {
+    use clap::CommandFactory;
+    let mut script = Vec::new();
+    clap_complete::generate(shell, &mut cli::Cli::command(), "atomwrite", &mut script);
+    script
 }

@@ -4,11 +4,29 @@
   "description": "Periodic progress heartbeat for long batch/replace jobs (v0.1.29 P1-3).",
   "type": "object",
   "properties": {
+    "type": {
+      "description": "Event type discriminator (`\"progress\"`).",
+      "type": "string"
+    },
     "done": {
       "description": "Items completed so far.",
       "type": "integer",
       "format": "uint64",
       "minimum": 0
+    },
+    "total": {
+      "description": "Total items known (0 if unknown).",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "rate_per_s": {
+      "description": "Throughput estimate (items per second).",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
     },
     "eta_ms": {
       "description": "Estimated remaining milliseconds.",
@@ -21,24 +39,6 @@
     },
     "phase": {
       "description": "Phase label (e.g. `replace`, `batch`).",
-      "type": "string"
-    },
-    "rate_per_s": {
-      "description": "Throughput estimate (items per second).",
-      "type": [
-        "number",
-        "null"
-      ],
-      "format": "double"
-    },
-    "total": {
-      "description": "Total items known (0 if unknown).",
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
-    },
-    "type": {
-      "description": "Event type discriminator (`\"progress\"`).",
       "type": "string"
     }
   },

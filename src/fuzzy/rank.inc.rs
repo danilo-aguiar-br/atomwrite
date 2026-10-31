@@ -14,11 +14,7 @@ fn mini_diff(expected: &str, found: &str) -> Option<String> {
             break;
         }
     }
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn consider_best(
@@ -61,6 +57,14 @@ fn push_candidate(
     if similarity < BEST_CANDIDATE_MIN {
         return;
     }
+    // A full list only admits strictly better candidates; skip the diff otherwise.
+    if cands.len() >= MAX_CANDIDATES
+        && cands
+            .last()
+            .is_some_and(|c| c.similarity.unwrap_or(0.0) >= similarity)
+    {
+        return;
+    }
     cands.push(BestCandidate {
         text: Some(truncate_text(text)),
         line: Some(line),
@@ -88,6 +92,10 @@ fn push_candidate(
 ///
 /// `matched_regions` should be the concatenation of the file slices that will
 /// be replaced. For pre-match / exact-unknown callers, pass `content`.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::InvalidInput` when `new` carries `\'` or `\"` that neither `old` nor `matched_regions` contains, which blocks the write as transport escape drift.
 pub fn guard_escape_drift(
     old: &str,
     new: &str,
@@ -118,7 +126,6 @@ pub fn guard_escape_drift(
     Ok(())
 }
 
-
 fn leading_ws(s: &str) -> &str {
     let trimmed = s.trim_start();
     &s[..s.len() - trimmed.len()]
@@ -136,7 +143,7 @@ pub fn apply_indent_delta_block(matched_lines: &[&str], new: &str) -> String {
         return new.to_string();
     }
     let new_base = leading_ws(new_lines[0]);
-    let mut out = String::with_capacity(new.len() + 16);
+    let mut out = String::with_capacity(new.len() + crate::constants::FUZZY_REINDENT_SLACK_BYTES);
     for (i, line) in new_lines.iter().enumerate() {
         if i > 0 {
             out.push('\n');
@@ -181,10 +188,23 @@ fn preserve_unicode_in_replacement(matched: &str, new: &str) -> String {
 }
 
 /// Rank best near-miss for diagnostics (always-on, including exact residual).
+///
+/// Diagnostic only: when the global shutdown flag is set the ranking stops and
+/// returns what it had found so far (the cascade itself reports the cancel).
+///
+/// # Examples
+///
+/// ```
+/// use atomwrite::fuzzy::rank_best_candidate;
+///
+/// let content = "fn main() {\n    let total = 1;\n}\n";
+/// let best = rank_best_candidate(content, "let totl = 1;").expect("a candidate");
+/// assert_eq!(best.line, Some(2));
+/// ```
 pub fn rank_best_candidate(content: &str, old: &str) -> Option<BestCandidate> {
     let mut best: Option<BestCandidate> = None;
     let mut cands: Vec<BestCandidate> = Vec::new();
-    rank_into(content, old, &mut best, &mut cands);
+    rank_standalone(content, old, &mut best, &mut cands);
     best
 }
 
@@ -192,7 +212,7 @@ pub fn rank_best_candidate(content: &str, old: &str) -> Option<BestCandidate> {
 pub fn rank_candidates(content: &str, old: &str) -> Vec<BestCandidate> {
     let mut best: Option<BestCandidate> = None;
     let mut cands: Vec<BestCandidate> = Vec::new();
-    rank_into(content, old, &mut best, &mut cands);
+    rank_standalone(content, old, &mut best, &mut cands);
     if cands.is_empty() {
         if let Some(b) = best {
             cands.push(b);
@@ -201,25 +221,46 @@ pub fn rank_candidates(content: &str, old: &str) -> Vec<BestCandidate> {
     cands
 }
 
-fn rank_into(
+/// Public-helper entry: split lines, rank, and log (not propagate) a cancel.
+fn rank_standalone(
     content: &str,
     old: &str,
     best: &mut Option<BestCandidate>,
     cands: &mut Vec<BestCandidate>,
 ) {
-    let old_lines: Vec<&str> = old.lines().collect();
-    let content_lines: Vec<&str> = content.lines().collect();
+    let outcome = collect_lines(old).and_then(|old_lines| {
+        let content_lines = collect_lines(content)?;
+        rank_into(&content_lines, &old_lines, old, best, cands)
+    });
+    if let Err(err) = outcome {
+        tracing::debug!(%err, "fuzzy candidate ranking stopped early");
+    }
+}
+
+/// Rank near-misses of `old` over pre-split lines (shared with the cascade).
+///
+/// # Errors
+///
+/// Returns [`AtomwriteError::Cancelled`] when the global shutdown flag is set.
+fn rank_into(
+    content_lines: &[&str],
+    old_lines: &[&str],
+    old: &str,
+    best: &mut Option<BestCandidate>,
+    cands: &mut Vec<BestCandidate>,
+) -> std::result::Result<(), AtomwriteError> {
     if old_lines.is_empty() || content_lines.is_empty() {
-        return;
+        return Ok(());
     }
     // JW per line for single-line old
     if old_lines.len() == 1 {
         let needle = old_lines[0].trim();
+        let mut poll = CancelPoll::lines();
         for (i, line) in content_lines.iter().enumerate() {
+            poll.tick()?;
             let score = strsim::jaro_winkler(line.trim(), needle);
             if score >= BEST_CANDIDATE_MIN {
-                let off = byte_offset_of_line(content, i);
-                let (line_n, col) = line_col_of_offset(content, off);
+                let (line_n, col) = line_start_position(i);
                 consider_best(best, line, line_n, col, score, "context_aware_jw", old);
                 push_candidate(cands, line, line_n, col, score, "context_aware_jw", old);
             }
@@ -231,27 +272,34 @@ fn rank_into(
         if pat_joined.chars().count() <= crate::constants::FUZZY_MAX_LEVENSHTEIN_CHARS {
             let plen = old_lines.len();
             let last = content_lines.len() - plen;
+            let mut poll = CancelPoll::heavy();
             for (n, i) in (0..=last).enumerate() {
                 if n >= crate::constants::FUZZY_MAX_WINDOWS {
                     break;
                 }
-                if n % 64 == 0 && crate::signal::is_global_shutdown() {
-                    break;
-                }
+                poll.tick()?;
                 let window_joined = content_lines[i..i + plen].join("\n");
                 if window_joined.chars().count() > crate::constants::FUZZY_MAX_LEVENSHTEIN_CHARS {
                     continue;
                 }
                 let sim = strsim::normalized_damerau_levenshtein(&pat_joined, &window_joined);
                 if sim >= BEST_CANDIDATE_MIN {
-                    let off = byte_offset_of_line(content, i);
-                    let (line_n, col) = line_col_of_offset(content, off);
+                    let (line_n, col) = line_start_position(i);
                     consider_best(best, &window_joined, line_n, col, sim, "context_aware", old);
-                    push_candidate(cands, &window_joined, line_n, col, sim, "context_aware", old);
+                    push_candidate(
+                        cands,
+                        &window_joined,
+                        line_n,
+                        col,
+                        sim,
+                        "context_aware",
+                        old,
+                    );
                 }
             }
         }
     }
+    Ok(())
 }
 
 /// GAP-2026-025: surface a disambiguation hint when multiple hits exist.
@@ -275,4 +323,3 @@ fn ambiguous_err(old: &str, count: u64, best: Option<BestCandidate>) -> Atomwrit
             .map(Box::new),
     }
 }
-

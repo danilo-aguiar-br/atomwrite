@@ -1,7 +1,1210 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "codemod",
-  "description": "NDJSON/agent envelope for `codemod` (G-042 minimal published schema; additionalProperties allowed for evolution).",
+  "title": "CodemodOutput",
+  "description": "Records of `atomwrite codemod`: the start event, every record of each rule tagged with `rule_id`, and the terminal summary.",
   "type": "object",
-  "additionalProperties": true
+  "anyOf": [
+    {
+      "title": "CodemodStartEvent",
+      "description": "`codemod` campaign start envelope.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Event type discriminator: `\"codemod\"`.",
+          "type": "string"
+        },
+        "phase": {
+          "description": "Phase label (`\"start\"`).",
+          "type": "string"
+        },
+        "rules": {
+          "description": "Rules file path.",
+          "type": "string"
+        },
+        "rule_ids": {
+          "description": "Parsed rule ids from the manifest.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rule_id": {
+          "description": "Campaign id (rules file stem).",
+          "type": "string"
+        },
+        "dry_run": {
+          "description": "Whether mutations are suppressed.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "phase",
+        "rules",
+        "rule_ids",
+        "rule_id",
+        "dry_run"
+      ]
+    },
+    {
+      "title": "TransformRuleBegin",
+      "description": "Multi-rule transform: rule boundary marker.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Event type discriminator: `\"rule_begin\"`.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Optional rule id from YAML (null when omitted).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "language": {
+          "description": "Language of the rule.",
+          "type": "string"
+        },
+        "rule_id": {
+          "description": "Rule the record was written for",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "language"
+      ]
+    },
+    {
+      "title": "TransformRuleError",
+      "description": "Multi-rule transform: rule failure (partial success continues).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Event type discriminator: `\"rule_error\"`.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Optional rule id from YAML.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "description": "Error message.",
+          "type": "string"
+        },
+        "rule_id": {
+          "description": "Rule the record was written for",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "error"
+      ]
+    },
+    {
+      "title": "TransformResult",
+      "description": "NDJSON output for a structural AST-based code transform.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Event type discriminator.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path of the transformed file.",
+          "type": "string"
+        },
+        "language": {
+          "description": "Language used for AST parsing.",
+          "type": "string"
+        },
+        "matches": {
+          "description": "Number of AST pattern matches found.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "replacements": {
+          "description": "Number of AST rewrites applied.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "bytes_before": {
+          "description": "File size in bytes before transform.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "bytes_after": {
+          "description": "File size in bytes after transform.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "checksum_before": {
+          "description": "BLAKE3 checksum before transform.",
+          "type": "string"
+        },
+        "checksum_after": {
+          "description": "BLAKE3 checksum after transform.",
+          "type": "string"
+        },
+        "elapsed_ms": {
+          "description": "Operation duration in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "risk_assessment": {
+          "description": "Local diagnostic for a payload that looks destructive (B-013).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WriteRiskAssessment"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rule_id": {
+          "description": "Rule the record was written for",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "language",
+        "matches",
+        "replacements",
+        "bytes_before",
+        "bytes_after",
+        "checksum_before",
+        "checksum_after",
+        "elapsed_ms"
+      ]
+    },
+    {
+      "title": "CancelledEvent",
+      "description": "Cooperative cancel envelope (v0.1.29 P0-4).\n\nTerminal record of an interrupted operation. Three fields answer the three\nquestions a consumer asks, and none of them requires reading the human text:\n`deadline_exceeded` says whether the global `--timeout-secs` budget elapsed,\n`signal` names the signal when one arrived, and `reason` carries the prose.\n\nBuild one with [`CancelledEvent::from_shutdown`] rather than by hand, so the\nmachine-readable verdict and the prose can never describe different causes.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Event type discriminator (`\"cancelled\"`).",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path being written when cancel was observed, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Human-readable cancel reason.",
+          "type": "string"
+        },
+        "signal": {
+          "description": "Signal name when known (`SIGINT`, `SIGTERM`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deadline_exceeded": {
+          "description": "True when the global `--timeout-secs` deadline elapsed.\n\nAlways serialized, never skipped: an omitted field cannot be told apart\nfrom a false one by a consumer, and the whole point of the field is that\nthe deadline case is decidable without parsing `reason`.",
+          "type": "boolean"
+        },
+        "rule_id": {
+          "description": "Rule the record was written for",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "reason",
+        "deadline_exceeded"
+      ]
+    },
+    {
+      "title": "CodemodSummaryEvent",
+      "description": "Final `codemod` summary.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Event type discriminator: `\"codemod_summary\"`.",
+          "type": "string"
+        },
+        "rules": {
+          "description": "Rules file path.",
+          "type": "string"
+        },
+        "rule_id": {
+          "description": "Campaign id.",
+          "type": "string"
+        },
+        "dry_run": {
+          "description": "Dry-run flag.",
+          "type": "boolean"
+        },
+        "by_rule_id": {
+          "description": "Stats keyed by rule id.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/CodemodRuleStats"
+          }
+        },
+        "transform_summary": {
+          "description": "Terminal record the delegated `transform` run published.\n\nFolded in instead of printed beside this line, so the campaign still\nends in exactly one terminal record."
+        },
+        "ok": {
+          "description": "Outcome of the run, stamped by the writer",
+          "type": "boolean"
+        },
+        "code": {
+          "description": "Machine error code, present when ok is false",
+          "type": "string"
+        },
+        "exit": {
+          "description": "Process exit status, present when ok is false",
+          "type": "integer",
+          "minimum": 0
+        },
+        "target_resolved": {
+          "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+          "type": "string"
+        },
+        "target_source": {
+          "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+          "type": "string",
+          "enum": [
+            "argv",
+            "workspace",
+            "stdin"
+          ]
+        },
+        "workspace_source": {
+          "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+          "type": "string",
+          "enum": [
+            "argv",
+            "cwd"
+          ]
+        },
+        "records_suppressed": {
+          "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_budget_dropped": {
+          "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_planned": {
+          "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+          "type": "boolean"
+        },
+        "truncated_records": {
+          "description": "Records the writer cut this run, counted once per record",
+          "type": "integer",
+          "minimum": 0
+        },
+        "suggestion_lang": {
+          "description": "UI language the catalogue-derived `suggestion` was rendered in (B4).\n\nThe two human strings on this envelope do not share a source: `message`\nis built from the error variant, which is English by contract, while\n`suggestion` comes from the i18n catalogue and follows the resolved UI\nlanguage. One envelope can therefore carry an English `message` and a\nPortuguese `suggestion`. Without this field a consumer cannot tell which\nlanguage the suggestion is in, and cannot decide whether to re-render\nit. `code` and every other field stay machine literals.",
+          "type": "string"
+        },
+        "pairs_applied": {
+          "description": "Pairs that were written to the target before the error (v0.1.37).\n\nAlways `0` for the all-or-nothing `EditPairFailed` abort (nothing is\nwritten) and `total - unmatched` for `edit-loop --partial`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pairs_unmatched": {
+          "description": "Pairs that did not match in a partial `edit-loop` run (v0.1.36).\n\n`pairs_total` already exists above for the multi-pair edit family and\nis reused by this variant instead of being duplicated.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "missing_flag": {
+          "description": "Flag literal the operation required but did not receive (v0.1.36).\n\nPresent only for [`AtomwriteError::MissingFlag`]; the duplicate `code`\non that variant is deliberate — callers branch on `missing_flag` and\nstill see the `INVALID_INPUT` family in `code`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Human-readable error message.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Filesystem path related to the error, if applicable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error_class": {
+          "description": "Error class: transient, conflict, `precondition_failed`, or permanent.",
+          "type": "string"
+        },
+        "retryable": {
+          "description": "Whether a retry may resolve this error.",
+          "type": "boolean"
+        },
+        "suggestion": {
+          "description": "Optional actionable suggestion for the caller.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "description": "Workspace root used for jail validation, if applicable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failed_pair_index": {
+          "description": "1-based index of the failed `--old`/`--new` pair (multi-pair edit, G117).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pairs_total": {
+          "description": "Total number of `--old`/`--new` pairs in the invocation.\n\nEmitted by multi-pair edit (G117) and by a partial `edit-loop` run\n(v0.1.36) — one key, two producers.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pair_results": {
+          "description": "Per-pair diagnostics up to and including the failed pair (multi-pair edit, G117).\nPairs after the failure were never attempted and are absent.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/PairResult"
+          }
+        },
+        "best_candidate": {
+          "description": "Closest near-miss when a match cascade fails (v0.1.29 P0-2).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BestCandidate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidates": {
+          "description": "Additional near-miss candidates for `did_you_mean` (v0.1.30).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/BestCandidate"
+          }
+        },
+        "match_count": {
+          "description": "Match count when ambiguity is reported (v0.1.30).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "similar_paths": {
+          "description": "Similar basenames when path is missing (v0.1.30).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "conflict_count": {
+          "description": "Number of conflicting regions a three-way merge could not align (v0.1.36).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "rules",
+        "rule_id",
+        "dry_run",
+        "by_rule_id"
+      ]
+    },
+    {
+      "title": "Summary",
+      "description": "Aggregate summary emitted at the end of multi-file operations.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Event type discriminator.",
+          "type": "string"
+        },
+        "files_visited": {
+          "description": "Total files examined.\n\n`search --target files` counts the files the walk handed over, and\n`copy` counts the sources it examined, so a copy that failed is counted\nhere and in `files_failed` instead of disappearing.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "files_matched": {
+          "description": "Files that contributed at least one published answer record.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "files_modified": {
+          "description": "Files actually modified: rewritten by `replace`, `transform`, `case`,\n`scope` or `codemod`, deleted by `delete`, copied by `copy`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "files_planned": {
+          "description": "Files a dry run would have modified.\n\nPresent only on a dry run: `files_modified` stays at zero because no\nbyte changed, and this is the blast radius the caller asked to see. It\nis never a claim that the write happened.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "files_skipped": {
+          "description": "Files the run did not answer: binary detection, size cap, no match,\nunchanged after a rewrite or an unreadable file. Which of these apply\ndepends on the verb, and the verb's own section in `HOW_TO_USE` says.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "offset_skipped": {
+          "description": "Answer records `search` paged out because `--offset` skipped them.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "matches_suppressed": {
+          "description": "Files where `search --max-count` cut at least one match.\n\nEach file counted here hid at least one more match, so the number is a\nfloor on what the page left out, not an exact count of the remainder.\nThe ceiling is on records, not on reading: to prove that a file held\nmore, the search reads at most one match past the ceiling in that file.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "replacements_suppressed": {
+          "description": "Occurrences `replace --max-replacements` left unchanged.\n\nThe verb counts every occurrence of `old` before it applies the ceiling,\nso this is exact and the agent can size the second run from it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "below_min_score": {
+          "description": "Lines `semantic-search --min-score` discarded for scoring below it.\n\nA zero-match answer with a high floor is otherwise indistinguishable from\na tree that has nothing to say about the query.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "files_read": {
+          "description": "Files opened and read, the stage between the walk handing a path over\nand the scoring that decides whether it answers.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "files_budget_dropped": {
+          "description": "Items the `--limit` budget cut before the verb worked on them.\n\nThe unit is the one the verb produces: files for a verb that walks\npaths, records for a verb that streams them.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "files_total": {
+          "description": "Files the progress precount found eligible, published only when that\nprecount ran (`--progress-every` on and quiet off); it is the total the\nrun is working through, not the page it published.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "binary_rejects": {
+          "description": "Files refused because they hold binary content, a subset of\n`files_skipped` that lets the agent tell a binary refusal from a size cap\nor an unchanged rewrite.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "total_matches": {
+          "description": "Answer records actually published, after `--limit` and `--offset`; for\n`transform` and `transform --rules` it is the replacements performed,\nand for `scope` it is the scopes matched across every file.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "total_replacements": {
+          "description": "Total replacements performed across all files.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "total_bytes": {
+          "description": "Bytes the run left on disk or moved: the size after a rewrite, the size\ncopied, or the size hashed, depending on the verb.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "elapsed_ms": {
+          "description": "Operation duration in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "walker_stopped_early": {
+          "description": "Present and true when the walker itself quit before the tree ended.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "rule_id": {
+          "description": "Rule the record was written for",
+          "type": "string"
+        },
+        "ok": {
+          "description": "Outcome of the run, stamped by the writer",
+          "type": "boolean"
+        },
+        "code": {
+          "description": "Machine error code, present when ok is false",
+          "type": "string"
+        },
+        "exit": {
+          "description": "Process exit status, present when ok is false",
+          "type": "integer",
+          "minimum": 0
+        },
+        "target_resolved": {
+          "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+          "type": "string"
+        },
+        "target_source": {
+          "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+          "type": "string",
+          "enum": [
+            "argv",
+            "workspace",
+            "stdin"
+          ]
+        },
+        "workspace_source": {
+          "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+          "type": "string",
+          "enum": [
+            "argv",
+            "cwd"
+          ]
+        },
+        "records_suppressed": {
+          "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+          "type": "boolean"
+        },
+        "truncated_records": {
+          "description": "Records the writer cut this run, counted once per record",
+          "type": "integer",
+          "minimum": 0
+        },
+        "suggestion_lang": {
+          "description": "UI language the catalogue-derived `suggestion` was rendered in (B4).\n\nThe two human strings on this envelope do not share a source: `message`\nis built from the error variant, which is English by contract, while\n`suggestion` comes from the i18n catalogue and follows the resolved UI\nlanguage. One envelope can therefore carry an English `message` and a\nPortuguese `suggestion`. Without this field a consumer cannot tell which\nlanguage the suggestion is in, and cannot decide whether to re-render\nit. `code` and every other field stay machine literals.",
+          "type": "string"
+        },
+        "pairs_applied": {
+          "description": "Pairs that were written to the target before the error (v0.1.37).\n\nAlways `0` for the all-or-nothing `EditPairFailed` abort (nothing is\nwritten) and `total - unmatched` for `edit-loop --partial`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pairs_unmatched": {
+          "description": "Pairs that did not match in a partial `edit-loop` run (v0.1.36).\n\n`pairs_total` already exists above for the multi-pair edit family and\nis reused by this variant instead of being duplicated.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "missing_flag": {
+          "description": "Flag literal the operation required but did not receive (v0.1.36).\n\nPresent only for [`AtomwriteError::MissingFlag`]; the duplicate `code`\non that variant is deliberate — callers branch on `missing_flag` and\nstill see the `INVALID_INPUT` family in `code`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Human-readable error message.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Filesystem path related to the error, if applicable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error_class": {
+          "description": "Error class: transient, conflict, `precondition_failed`, or permanent.",
+          "type": "string"
+        },
+        "retryable": {
+          "description": "Whether a retry may resolve this error.",
+          "type": "boolean"
+        },
+        "suggestion": {
+          "description": "Optional actionable suggestion for the caller.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "description": "Workspace root used for jail validation, if applicable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failed_pair_index": {
+          "description": "1-based index of the failed `--old`/`--new` pair (multi-pair edit, G117).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pairs_total": {
+          "description": "Total number of `--old`/`--new` pairs in the invocation.\n\nEmitted by multi-pair edit (G117) and by a partial `edit-loop` run\n(v0.1.36) — one key, two producers.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pair_results": {
+          "description": "Per-pair diagnostics up to and including the failed pair (multi-pair edit, G117).\nPairs after the failure were never attempted and are absent.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/PairResult"
+          }
+        },
+        "best_candidate": {
+          "description": "Closest near-miss when a match cascade fails (v0.1.29 P0-2).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BestCandidate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidates": {
+          "description": "Additional near-miss candidates for `did_you_mean` (v0.1.30).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/BestCandidate"
+          }
+        },
+        "match_count": {
+          "description": "Match count when ambiguity is reported (v0.1.30).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "similar_paths": {
+          "description": "Similar basenames when path is missing (v0.1.30).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "conflict_count": {
+          "description": "Number of conflicting regions a three-way merge could not align (v0.1.36).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "files_visited",
+        "files_matched",
+        "elapsed_ms"
+      ]
+    },
+    {
+      "title": "ErrorJson",
+      "description": "Serializable error envelope emitted as a single NDJSON line.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "description": "Always true, marks this line as an error event.",
+          "type": "boolean"
+        },
+        "ok": {
+          "description": "Always false on error envelopes (GAP-2026-020 agent sentinel).\n\nSuccess envelopes keep their own `status` field; agents MUST check\n`error` / `ok` / process exit before reading success-only keys.",
+          "type": "boolean"
+        },
+        "code": {
+          "description": "Machine-readable error code string.",
+          "type": "string"
+        },
+        "exit": {
+          "description": "Suggested process exit code.",
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "message": {
+          "description": "Human-readable error message.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Filesystem path related to the error, if applicable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error_class": {
+          "description": "Error class: transient, conflict, `precondition_failed`, or permanent.",
+          "type": "string"
+        },
+        "retryable": {
+          "description": "Whether a retry may resolve this error.",
+          "type": "boolean"
+        },
+        "suggestion": {
+          "description": "Optional actionable suggestion for the caller.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "description": "Workspace root used for jail validation, if applicable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failed_pair_index": {
+          "description": "1-based index of the failed `--old`/`--new` pair (multi-pair edit, G117).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pairs_total": {
+          "description": "Total number of `--old`/`--new` pairs in the invocation.\n\nEmitted by multi-pair edit (G117) and by a partial `edit-loop` run\n(v0.1.36) — one key, two producers.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pair_results": {
+          "description": "Per-pair diagnostics up to and including the failed pair (multi-pair edit, G117).\nPairs after the failure were never attempted and are absent.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/PairResult"
+          }
+        },
+        "best_candidate": {
+          "description": "Closest near-miss when a match cascade fails (v0.1.29 P0-2).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BestCandidate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidates": {
+          "description": "Additional near-miss candidates for `did_you_mean` (v0.1.30).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/BestCandidate"
+          }
+        },
+        "match_count": {
+          "description": "Match count when ambiguity is reported (v0.1.30).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "similar_paths": {
+          "description": "Similar basenames when path is missing (v0.1.30).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "conflict_count": {
+          "description": "Number of conflicting regions a three-way merge could not align (v0.1.36).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "missing_flag": {
+          "description": "Flag literal the operation required but did not receive (v0.1.36).\n\nPresent only for [`AtomwriteError::MissingFlag`]; the duplicate `code`\non that variant is deliberate — callers branch on `missing_flag` and\nstill see the `INVALID_INPUT` family in `code`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pairs_unmatched": {
+          "description": "Pairs that did not match in a partial `edit-loop` run (v0.1.36).\n\n`pairs_total` already exists above for the multi-pair edit family and\nis reused by this variant instead of being duplicated.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pairs_applied": {
+          "description": "Pairs that were written to the target before the error (v0.1.37).\n\nAlways `0` for the all-or-nothing `EditPairFailed` abort (nothing is\nwritten) and `total - unmatched` for `edit-loop --partial`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "suggestion_lang": {
+          "description": "UI language the catalogue-derived `suggestion` was rendered in (B4).\n\nThe two human strings on this envelope do not share a source: `message`\nis built from the error variant, which is English by contract, while\n`suggestion` comes from the i18n catalogue and follows the resolved UI\nlanguage. One envelope can therefore carry an English `message` and a\nPortuguese `suggestion`. Without this field a consumer cannot tell which\nlanguage the suggestion is in, and cannot decide whether to re-render\nit. `code` and every other field stay machine literals.",
+          "type": "string"
+        },
+        "target_resolved": {
+          "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+          "type": "string"
+        },
+        "target_source": {
+          "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+          "type": "string",
+          "enum": [
+            "argv",
+            "workspace",
+            "stdin"
+          ]
+        },
+        "workspace_source": {
+          "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+          "type": "string",
+          "enum": [
+            "argv",
+            "cwd"
+          ]
+        },
+        "records_suppressed": {
+          "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_budget_dropped": {
+          "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_planned": {
+          "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+          "type": "boolean"
+        },
+        "truncated_records": {
+          "description": "Records the writer cut this run, counted once per record",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "error",
+        "ok",
+        "code",
+        "exit",
+        "message",
+        "error_class",
+        "retryable",
+        "suggestion_lang"
+      ]
+    }
+  ],
+  "$defs": {
+    "WriteRiskAssessment": {
+      "description": "GAP-2026-011 L1/L6: Local diagnostics describing why a write was classified\nas risky (G-031: not product telemetry). Emitted in `WriteOutput.risk_assessment`\nwhen the size delta exceeds the user-configured `--risk-threshold`.",
+      "type": "object",
+      "properties": {
+        "original_bytes": {
+          "description": "File size before the write.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "new_bytes": {
+          "description": "New file size after the write.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "size_delta_pct": {
+          "description": "|new - original| / original * 100.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "risk_level": {
+          "description": "\"low\" (<70%) | \"medium\" (70-89%) | \"high\" (>=90%).",
+          "type": "string"
+        },
+        "guard_triggered": {
+          "description": "Which guard triggered the assessment (always \"size\" for L1).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "original_bytes",
+        "new_bytes",
+        "size_delta_pct",
+        "risk_level",
+        "guard_triggered"
+      ]
+    },
+    "CodemodRuleStats": {
+      "description": "Per-rule aggregate inside `codemod_summary.by_rule_id`.",
+      "type": "object",
+      "properties": {
+        "matches": {
+          "description": "AST matches produced by the rule, summed over its files.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "files": {
+          "description": "Distinct files touched by the rule.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "matches",
+        "files"
+      ]
+    },
+    "PairResult": {
+      "description": "Outcome of matching a single `--old`/`--new` pair in multi-pair edit mode.\n\nEmitted in `pair_results` on both success and error envelopes so agents\ncan verify each pair objectively without re-running the edit (G117).\nIn the default all-or-nothing mode, pairs after the first failure are\nnever attempted and are absent from the array.",
+      "type": "object",
+      "properties": {
+        "index": {
+          "description": "1-based position of the pair in the `--old`/`--new` invocation order.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "matched": {
+          "description": "Whether the pair matched and was applied to the content.",
+          "type": "boolean"
+        },
+        "strategy": {
+          "description": "Matching strategy that succeeded (e.g. `exact`, `whitespace_normalized`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "similarity": {
+          "description": "Similarity score of the fuzzy match, 0.0-1.0 (block-anchor and context-aware only).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "source": {
+          "description": "Source of the match/replacement content: `\"arg\"` or `\"file\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "index",
+        "matched"
+      ]
+    },
+    "BestCandidate": {
+      "description": "Closest near-miss when a fuzzy/exact match fails (v0.1.29 P0-2).\n\nAgents use this to correct `old` without re-reading the full file.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "description": "Snippet of the best matching region (truncated to 500 chars).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line": {
+          "description": "1-based line of the candidate start in the file.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "column": {
+          "description": "1-based column of the candidate start.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "similarity": {
+          "description": "Similarity score 0.0–1.0 of the best attempt.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "strategy": {
+          "description": "Strategy that produced this candidate score.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diff_preview": {
+          "description": "Optional short unified-diff style preview.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
 }

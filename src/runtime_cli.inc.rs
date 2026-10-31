@@ -12,21 +12,34 @@ pub fn stderr_color_enabled(mode: ColorMode) -> bool {
     }
 }
 
-/// Emit a human warning on stderr (never on stdout).
+/// Emit a human warning on the diagnostic channel (never on the data channel).
 ///
-/// G-026: only when stderr is a TTY (agents parse NDJSON on stdout; non-TTY
-/// must not mix human risk lines). Color respects CLI `ColorMode`.
-pub fn warn_stderr(mode: ColorMode, message: impl AsRef<str>) {
-    use std::io::IsTerminal;
-    if !std::io::stderr().is_terminal() {
-        return;
-    }
-    let msg = message.as_ref();
-    if stderr_color_enabled(mode) {
-        eprintln!("\x1b[33mwarning:\x1b[0m {msg}");
-    } else {
-        eprintln!("warning: {msg}");
-    }
+/// The warning travels through the log subsystem, so it inherits two things it
+/// used to ignore: the `-q` / `-qq` silence levels (an agent that asked for
+/// quiet gets quiet) and the single stderr sink. ANSI is owned by the tracing
+/// fmt layer, which is initialized with the same [`ColorMode`]; painting escape
+/// codes here would double-color and would bypass the JSON file sink.
+///
+/// # Telling the two channels apart
+///
+/// A merged stream (`2>&1`) carries diagnostics and payload in one place, so the
+/// split has to be decidable from the record itself. It is: every diagnostic
+/// carries `level` and `timestamp`, and no payload has ever carried either.
+/// A constant `channel` marker would be a stronger criterion, but
+/// `tracing-subscriber` exposes no way to inject a constant field into its JSON
+/// formatter, so declaring one here would publish a key nothing stamps — a
+/// promise the reader cannot rely on, which is worse than no key at all.
+/// The discriminator that really holds is guarded by
+/// `diagnostic_records_are_distinguishable_from_payload` in the CLI tests.
+///
+/// `_mode` stays in the signature because callers already hold the resolved
+/// color policy and one source of truth beats two.
+pub fn warn_stderr(_mode: ColorMode, message: impl AsRef<str>) {
+    tracing::warn!(
+        target: "atomwrite::warning",
+        warning = %message.as_ref(),
+        "command completed with a warning"
+    );
 }
 
 fn extract_clap_tip(msg: &str) -> Option<String> {
@@ -77,65 +90,69 @@ pub fn enrich_clap_suggestion(msg: &str) -> Option<String> {
 /// schema dump even when remaining argv would fail validation (e.g. missing
 /// required path). Full parse still goes through Clap for all normal paths.
 pub fn prescan_json_schema() -> Option<String> {
-    let args: Vec<String> = std::env::args().collect();
+    // `args_os` + lossy: `env::args()` panics on a non-UTF-8 argument, and the
+    // comparisons below only look for ASCII names.
+    let args: Vec<String> = std::env::args_os()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
     if !args.iter().any(|a| a == "--json-schema") {
         return None;
     }
-    const SUBCOMMANDS: &[&str] = &[
-        "read",
-        "write",
-        "edit",
-        "search",
-        "replace",
-        "hash",
-        "delete",
-        "count",
-        "diff",
-        "move",
-        "copy",
-        "list",
-        "extract",
-        "calc",
-        "regex",
-        "transform",
-        "scope",
-        "batch",
-        "backup",
-        "rollback",
-        "apply",
-        "completions",
-        "prune-backups",
-        "edit-loop",
-        "get",
-        "set",
-        "del",
-        "outline",
-        "query",
-        "case",
-        "semantic-merge",
-        "sparse",
-        "recipe",
-        "stat",
-        "agent-surface",
-        "watch",
-        "codemod",
-        "semantic-search",
-        "verify",
-        "wal-stats",
-        "wal-heal",
-        "doctor",
-        "locale",
-        "progress",
-        "error",
-        "best-candidate",
-        "cancelled",
-    ];
     for arg in &args[1..] {
-        if SUBCOMMANDS.contains(&arg.as_str()) {
+        if crate::SUBCOMMANDS.contains(&arg.as_str()) {
             return Some(arg.clone());
         }
     }
     None
+}
+
+/// Early `--print-schema` path: emit a schema, or list the names, before clap.
+///
+/// Two forms, both answered without a subcommand, so discovery never depends on
+/// a subcommand happening to parse:
+/// - `--print-schema` alone lists every available schema name as one NDJSON
+///   line per name, alphabetically ordered.
+/// - `--print-schema NAME` emits that schema on the data channel.
+///
+/// The decision of WHETHER to answer belongs to
+/// [`crate::plan_print_schema`], which sees the whole argv and therefore knows
+/// whether the flag sat before or after the command token. This function only
+/// writes.
+///
+/// An unknown name is reported on the data channel as an error envelope with a
+/// machine code, exactly like every other usage error. It used to exit 1 with
+/// an empty stdout, which a consumer cannot tell apart from a schema that
+/// happened to be empty, and which contradicts this project's rule that the
+/// data channel carries the failure and not silence.
+///
+/// # Errors
+///
+/// Returns an error only when writing to stdout fails; an unknown name is an
+/// ordinary error envelope, not an I/O failure.
+pub fn prescan_print_schema(argv: &[String]) -> anyhow::Result<Option<ExitCode>> {
+    let name = match crate::plan_print_schema(argv) {
+        crate::PrintSchemaPlan::Defer => return Ok(None),
+        crate::PrintSchemaPlan::List => crate::SCHEMA_LIST_REQUEST.to_string(),
+        crate::PrintSchemaPlan::Print(name) => name,
+    };
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    if crate::emit_schema_by_name(&name, &mut out)? {
+        return Ok(Some(ExitCode::from(0)));
+    }
+    let err = crate::error::AtomwriteError::InvalidInput {
+        reason: format!(
+            "unknown schema name {name:?}; run `--print-schema` with no name to list every \
+             schema this build publishes"
+        ),
+    };
+    let ctx = crate::error::ErrorContext::default();
+    let shape = crate::output::OutputShape::default();
+    let written = crate::output::write_error_json_shaped(&mut out, &err, None, &ctx, &shape)
+        .and_then(|()| out.flush().map_err(anyhow::Error::from));
+    Ok(Some(ExitCode::from(
+        crate::best_effort::settle_error_report(written, err.exit_code()),
+    )))
 }
 
 /// Map an `anyhow::Error` chain to an I/O error kind when present.
@@ -155,11 +172,9 @@ pub fn io_to_atomwrite_error(
 ) -> crate::error::AtomwriteError {
     let msg = format!("{err:#}");
     match kind {
-        std::io::ErrorKind::PermissionDenied => {
-            crate::error::AtomwriteError::PermissionDenied {
-                path: extract_path_from_message(&msg),
-            }
-        }
+        std::io::ErrorKind::PermissionDenied => crate::error::AtomwriteError::PermissionDenied {
+            path: extract_path_from_message(&msg),
+        },
         std::io::ErrorKind::NotFound => crate::error::AtomwriteError::NotFound {
             path: extract_path_from_message(&msg),
         },
@@ -183,7 +198,13 @@ pub fn handle_clap_parse_error(clap_err: clap::Error) -> ExitCode {
     use clap::error::ErrorKind;
     match clap_err.kind() {
         ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
-            clap_err.exit();
+            // `Error::exit` ignores a failed write, so a closed reader looked
+            // like success; print here and settle the status instead.
+            let written = clap_err.print().map_err(anyhow::Error::from);
+            ExitCode::from(crate::best_effort::settle_error_report(
+                written,
+                clap_err.exit_code() as u8,
+            ))
         }
         _ => {
             let msg = clap_err.to_string();
@@ -206,14 +227,22 @@ pub fn handle_clap_parse_error(clap_err: clap::Error) -> ExitCode {
                 candidates: None,
                 match_count: None,
                 similar_paths: None,
+                // v0.1.37 envelope fields — a clap parse error carries none of them.
+                conflict_count: None,
+                missing_flag: None,
+                pairs_unmatched: None,
+                pairs_applied: None,
+                suggestion_lang: crate::locale::resolved_language().as_str(),
             };
             let mut out = io::stdout().lock();
-            if let Err(e) = serde_json::to_writer(&mut out, &ej) {
-                let _ = writeln!(io::stderr(), "atomwrite: failed to write error JSON: {e}");
-            }
-            let _ = out.write_all(b"\n");
-            let _ = out.flush();
-            ExitCode::from(2)
+            // `io::Error::from` keeps the original kind of a failed write, so a
+            // closed reader is still recognised as a broken pipe.
+            let written = serde_json::to_writer(&mut out, &ej)
+                .map_err(io::Error::from)
+                .and_then(|()| out.write_all(b"\n"))
+                .and_then(|()| out.flush())
+                .map_err(anyhow::Error::from);
+            ExitCode::from(crate::best_effort::settle_error_report(written, 2))
         }
     }
 }

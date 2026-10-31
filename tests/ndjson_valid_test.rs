@@ -36,7 +36,7 @@ fn ndjson_search_output_valid() {
     std::fs::write(dir.path().join("test.txt"), "needle in haystack\n").unwrap();
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args([
             "--workspace",
             dir.path().to_str().unwrap(),
@@ -62,7 +62,7 @@ fn ndjson_hash_output_valid() {
     std::fs::write(&f, "hello\n").unwrap();
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "hash"])
         .arg(&f)
         .output()
@@ -79,7 +79,7 @@ fn ndjson_list_output_valid() {
     std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "list"])
         .arg(dir.path())
         .output()
@@ -98,7 +98,7 @@ fn ndjson_diff_output_valid() {
     std::fs::write(&b, "line1\nline3\n").unwrap();
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "diff"])
         .arg(&a)
         .arg(&b)
@@ -118,7 +118,7 @@ fn ndjson_write_output_valid() {
     let target = dir.path().join("out.txt");
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let mut child = std::process::Command::new(&bin)
+    let mut child = common::hermetic(std::process::Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "write"])
         .arg(&target)
         .stdin(Stdio::piped())
@@ -145,7 +145,7 @@ fn ndjson_read_output_valid() {
     std::fs::write(&f, "content\n").unwrap();
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "read"])
         .arg(&f)
         .output()
@@ -162,7 +162,7 @@ fn ndjson_edit_output_valid() {
     std::fs::write(&f, "old_value\n").unwrap();
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args([
             "--workspace",
             dir.path().to_str().unwrap(),
@@ -186,7 +186,7 @@ fn ndjson_replace_output_valid() {
     std::fs::write(dir.path().join("rep.txt"), "find_me here\n").unwrap();
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args([
             "--workspace",
             dir.path().to_str().unwrap(),
@@ -213,7 +213,7 @@ fn ndjson_count_output_valid() {
     std::fs::write(dir.path().join("c.txt"), "line\n").unwrap();
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "count"])
         .arg(dir.path())
         .output()
@@ -230,7 +230,7 @@ fn ndjson_backup_output_valid() {
     std::fs::write(&f, "backup me\n").unwrap();
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "backup"])
         .arg(&f)
         .output()
@@ -252,7 +252,7 @@ fn ndjson_copy_output_valid() {
     std::fs::write(&src, "copy me\n").unwrap();
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "copy"])
         .arg(&src)
         .arg(&dst)
@@ -271,7 +271,7 @@ fn ndjson_move_output_valid() {
     std::fs::write(&src, "move me\n").unwrap();
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "move"])
         .arg(&src)
         .arg(&dst)
@@ -289,7 +289,7 @@ fn ndjson_delete_output_valid() {
     std::fs::write(&f, "delete me\n").unwrap();
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "delete"])
         .arg(&f)
         .output()
@@ -314,7 +314,7 @@ fn ndjson_batch_output_valid() {
     })]);
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let mut child = std::process::Command::new(&bin)
+    let mut child = common::hermetic(std::process::Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "batch"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -337,7 +337,7 @@ fn ndjson_batch_output_valid() {
 #[test]
 fn ndjson_calc_output_valid() {
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args(["calc", "2+2"])
         .output()
         .unwrap();
@@ -349,7 +349,7 @@ fn ndjson_calc_output_valid() {
 #[test]
 fn ndjson_regex_output_valid() {
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args(["regex", "abc", "def", "ghi"])
         .output()
         .unwrap();
@@ -365,7 +365,7 @@ fn ndjson_rollback_not_found_valid() {
     std::fs::write(&f, "no backup\n").unwrap();
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let output = std::process::Command::new(&bin)
+    let output = common::hermetic(std::process::Command::new(&bin))
         .args([
             "--workspace",
             dir.path().to_str().unwrap(),
@@ -385,10 +385,10 @@ fn ndjson_apply_output_valid() {
     let f = dir.path().join("apply.txt");
     std::fs::write(&f, "line1\nline2\n").unwrap();
 
-    let patch = "<<<< SEARCH\nline2\n==== \nline2_replaced\n>>>> REPLACE";
+    let patch = "<<<<<<< SEARCH\nline2\n=======\nline2_replaced\n>>>>>>> REPLACE";
 
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let mut child = std::process::Command::new(&bin)
+    let mut child = common::hermetic(std::process::Command::new(&bin))
         .args(["--workspace", dir.path().to_str().unwrap(), "apply"])
         .arg(&f)
         .stdin(std::process::Stdio::piped())
@@ -415,7 +415,7 @@ fn ndjson_extract_output_valid() {
     let input = r#"{"path":"a.txt","line":1}
 {"path":"b.txt","line":2}"#;
 
-    let mut child = std::process::Command::new(&bin)
+    let mut child = common::hermetic(std::process::Command::new(&bin))
         .args(["extract", "path", "line"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

@@ -89,14 +89,41 @@ pub fn cmd_copy(
     }
 
     let max_size = global.effective_max_filesize();
+    // A directory the walk cannot open is a hole in the copied set, so the walk
+    // records it instead of dropping the subtree in silence.
+    let failures: std::sync::Arc<std::sync::Mutex<crate::ndjson_types::FailureTally>> =
+        std::sync::Arc::new(std::sync::Mutex::new(
+            crate::ndjson_types::FailureTally::default(),
+        ));
+    let failures_in_walk = std::sync::Arc::clone(&failures);
+    // Sources the run examined, which is what `files_visited` reports: the
+    // copies that landed are `files_modified`, and the ones that did not are
+    // `files_failed`, so the three counters add up to what the run saw.
+    let examined: u64;
+    let mut copied_bytes: u64 = 0;
     if source.is_file() {
+        examined = 1;
         let out = copy_file_atomic(&source, &target, args, &workspace, max_size, resolved)?;
+        copied_bytes = out.bytes as u64;
         emit_copied(writer, &out, start)?;
     } else if source.is_dir() && args.recursive {
-        let mut walker = ignore::WalkBuilder::new(&source);
-        walker.hidden(true).git_ignore(false);
-        crate::concurrency::apply_walk_threads(&mut walker, global.threads);
-        let files = crate::concurrency::collect_files_parallel(&walker);
+        // A copy that skipped dotfiles would not be a copy, so the shared walker
+        // runs in the always-hidden flavor.
+        // An ignore file the walk half-reads is a hole too, and `ignore` never
+        // reports it by itself.
+        crate::concurrency::record_ignore_file_failures(
+            std::slice::from_ref(&source),
+            Some(&failures),
+        );
+        let walker = crate::commands::build_scoped_walker_flavored(
+            std::slice::from_ref(&source),
+            global,
+            crate::commands::WalkerFlavor::WholeTree,
+            &[],
+            &[],
+        )?;
+        let files =
+            crate::concurrency::collect_files_parallel_tallied(&walker, Some(failures_in_walk));
         let mut pairs: Vec<(PathBuf, PathBuf)> = files
             .into_iter()
             .map(|src| {
@@ -106,6 +133,9 @@ pub fn cmd_copy(
             })
             .collect();
         pairs.sort_by(|a, b| a.0.cmp(&b.0)); // small lists; large trees already sorted by collect
+        // `--limit` bounds the work, so the copy fan-out starts from a cut list.
+        crate::output::cap_collected(&mut pairs);
+        examined = pairs.len() as u64;
 
         // Unique parents, then parallel create_dir_all (independent I/O).
         let mut parents: Vec<PathBuf> = pairs
@@ -131,9 +161,10 @@ pub fn cmd_copy(
                 .par_iter()
                 .map(|(src, dest)| {
                     if crate::signal::is_global_shutdown() {
-                        return Err(
-                            crate::signal::cancelled_error("copy cancelled by signal").into()
-                        );
+                        return Err(crate::signal::cancelled_error(
+                            crate::signal::current_cancel_reason(),
+                        )
+                        .into());
                     }
                     copy_file_atomic(src, dest, args, &workspace, max_size, resolved)
                 })
@@ -151,8 +182,21 @@ pub fn cmd_copy(
             return Ok(());
         }
 
-        for result in results {
-            emit_copied(writer, &result?, start)?;
+        // A copy that failed is a hole in the copied set, not the end of the
+        // run: the files already copied stay, and the terminal says how many
+        // could not be. Aborting here dropped the summary the consumer reads
+        // the verdict off.
+        for ((src, _dest), result) in pairs.iter().zip(results) {
+            match result {
+                Ok(out) => {
+                    copied_bytes = copied_bytes.saturating_add(out.bytes as u64);
+                    emit_copied(writer, &out, start)?;
+                }
+                Err(err) => failures
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .record(src, err),
+            }
         }
     } else {
         return Err(AtomwriteError::InvalidInput {
@@ -161,6 +205,43 @@ pub fn cmd_copy(
         .into());
     }
 
+    emit_copy_summary(writer, failures, start, examined, copied_bytes)
+}
+
+/// Close a `copy` run with its terminal record.
+///
+/// Unconditional: a copied list without a terminal leaves the consumer unable
+/// to tell a complete run from one the budget cut short.
+fn emit_copy_summary(
+    writer: &mut NdjsonWriter<impl Write>,
+    failures: std::sync::Arc<std::sync::Mutex<crate::ndjson_types::FailureTally>>,
+    start: Instant,
+    examined: u64,
+    total_bytes: u64,
+) -> Result<()> {
+    let tally = match std::sync::Arc::try_unwrap(failures) {
+        Ok(mutex) => mutex.into_inner().unwrap_or_default(),
+        Err(arc) => std::mem::take(&mut *arc.lock().unwrap_or_else(|e| e.into_inner())),
+    };
+    let copied = writer.emitted_count();
+    let (summary, first) = tally.into_summary(crate::ndjson_types::Summary {
+        r#type: "summary",
+        files_visited: examined,
+        files_matched: copied,
+        files_modified: Some(copied),
+        files_skipped: None,
+        total_matches: None,
+        total_replacements: None,
+        total_bytes: Some(total_bytes),
+        files_budget_dropped: Some(crate::output::budget_dropped()).filter(|n| *n > 0),
+        elapsed_ms: start.elapsed().as_millis() as u64,
+        walker_stopped_early: crate::output::limit_reached().then_some(true),
+        ..crate::ndjson_types::Summary::default()
+    });
+    if let Some(err) = first {
+        return Err(writer.publish_failure(&summary, err));
+    }
+    writer.write_terminal(&summary)?;
     Ok(())
 }
 
@@ -206,7 +287,7 @@ fn copy_file_atomic(
         preserve_timestamps: args.preserve,
         backup_output_dir: None,
         strategy: None,
-        strict_atomic: false,
+        strict_atomic: args.strict.strict_atomic,
         wal_policy: crate::wal::WalPolicy::Auto,
         // GAP-104: retain backup on disk when a backup was actually created
         keep_backup: resolved.keep || resolved.backup,
@@ -215,21 +296,24 @@ fn copy_file_atomic(
 
     let result = atomic_write(target, &content, &opts, workspace)?;
 
-    // GAP-103: preserve source permissions after atomic write
-    #[cfg(unix)]
+    // `--preserve` is an explicit request: a failure to carry the source
+    // permissions or times over must reach the caller, not vanish.
     if args.preserve {
-        if let Ok(src_meta) = std::fs::metadata(source) {
-            let _ = std::fs::set_permissions(target, src_meta.permissions());
-        }
-    }
-
-    // GAP-133: preserve source mtime/atime after atomic write
-    if args.preserve {
-        if let Ok(src_meta) = std::fs::metadata(source) {
-            let mtime = filetime::FileTime::from_last_modification_time(&src_meta);
-            let atime = filetime::FileTime::from_last_access_time(&src_meta);
-            let _ = filetime::set_file_times(target, atime, mtime);
-        }
+        let src_meta = std::fs::metadata(source).with_context(|| {
+            format!(
+                "cannot stat {} to preserve its attributes",
+                source.display()
+            )
+        })?;
+        // GAP-103: preserve source permissions after atomic write
+        #[cfg(unix)]
+        std::fs::set_permissions(target, src_meta.permissions())
+            .with_context(|| format!("cannot preserve permissions on {}", target.display()))?;
+        // GAP-133: preserve source mtime/atime after atomic write
+        let mtime = filetime::FileTime::from_last_modification_time(&src_meta);
+        let atime = filetime::FileTime::from_last_access_time(&src_meta);
+        filetime::set_file_times(target, atime, mtime)
+            .with_context(|| format!("cannot preserve timestamps on {}", target.display()))?;
     }
 
     if result.checksum != source_hash {

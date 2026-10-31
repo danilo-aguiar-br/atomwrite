@@ -3,10 +3,12 @@ source: tests/snapshot_write.rs
 expression: event
 ---
 {
-  "dry_run": false,
-  "elapsed_ms": "[redacted]",
-  "failed": 0,
+  "type": "summary",
   "operations": 1,
   "succeeded": 1,
-  "type": "summary"
+  "failed": 0,
+  "dry_run": false,
+  "elapsed_ms": "[redacted]",
+  "ok": true,
+  "workspace_source": "argv"
 }

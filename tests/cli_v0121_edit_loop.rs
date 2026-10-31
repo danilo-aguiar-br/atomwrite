@@ -20,7 +20,7 @@ fn run_edit_loop(
     extra: &[&str],
 ) -> std::process::Output {
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
-    let mut cmd = Command::new(&bin);
+    let mut cmd = common::hermetic(Command::new(&bin));
     cmd.args(["--workspace", dir.to_str().unwrap(), "edit-loop"])
         .arg(target)
         .args(extra)
@@ -59,29 +59,60 @@ fn edit_loop_applies_all_pairs_atomically() {
 }
 
 #[test]
-fn edit_loop_reports_unmatched_pairs() {
+fn edit_loop_partial_reports_unmatched_pairs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let target = dir.path().join("file.txt");
     std::fs::write(&target, "alpha\n").expect("seed");
 
     let ndjson = "{\"old\":\"alpha\",\"new\":\"ALPHA\"}\n{\"old\":\"missing\",\"new\":\"X\"}\n";
 
-    let output = run_edit_loop(dir.path(), &target, ndjson, &[]);
-    assert!(
-        output.status.success(),
-        "stderr={}",
+    let output = run_edit_loop(dir.path(), &target, ndjson, &["--partial"]);
+    // v0.1.37: with --partial a batch with a miss is a domain verdict (87), not
+    // exit 0. The pairs that matched are still applied.
+    assert_eq!(
+        output.status.code(),
+        Some(87),
+        "partial batch must exit 87, stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
 
     let ndjson_out = common::parse_ndjson(&output.stdout);
-    let summary = ndjson_out
-        .iter()
-        .find(|e| e["type"] == "result")
-        .expect("summary");
+    // One terminal event: the summary itself carries the failure verdict, and
+    // no second error envelope follows it.
+    let failed: Vec<_> = ndjson_out.iter().filter(|e| e["ok"] == false).collect();
+    assert_eq!(failed.len(), 1, "one terminal event, got {ndjson_out:?}");
+    let summary = failed[0];
+    assert_eq!(summary["type"], "result");
     assert_eq!(summary["pairs_total"], 2);
     assert_eq!(summary["pairs_applied"], 1);
     assert_eq!(summary["pairs_unmatched"], 1);
     assert_eq!(summary["action"], "edit_loop");
+    assert_eq!(summary["code"], "EDIT_LOOP_PARTIAL");
+    assert_eq!(summary["exit"], 87);
+    assert_eq!(summary["error_class"], "permanent");
+    assert_eq!(summary["retryable"], false);
+}
+
+#[test]
+fn edit_loop_default_aborts_and_writes_nothing_when_a_pair_misses() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let target = dir.path().join("file.txt");
+    std::fs::write(&target, "alpha\n").expect("seed");
+
+    let ndjson = "{\"old\":\"alpha\",\"new\":\"ALPHA\"}\n{\"old\":\"missing\",\"new\":\"X\"}\n";
+
+    // v0.1.37: without --partial the batch is all-or-nothing, like `edit`.
+    let output = run_edit_loop(dir.path(), &target, ndjson, &[]);
+    assert_eq!(output.status.code(), Some(65));
+    assert_eq!(std::fs::read_to_string(&target).expect("read"), "alpha\n");
+    let envelope = common::parse_ndjson(&output.stdout)
+        .into_iter()
+        .find(|e| e["ok"] == false)
+        .expect("error envelope");
+    assert_eq!(envelope["code"], "MATCH_FAILED");
+    assert_eq!(envelope["exit"], 65);
+    assert_eq!(envelope["pairs_applied"], 0);
+    assert_eq!(envelope["failed_pair_index"], 2);
 }
 
 #[test]
@@ -157,10 +188,13 @@ fn edit_loop_empty_file_reports_unmatched() {
 
     let ndjson = "{\"old\":\"foo\",\"new\":\"bar\"}\n";
 
-    let output = run_edit_loop(dir.path(), &target, ndjson, &[]);
-    assert!(
-        output.status.success(),
-        "stderr={}",
+    let output = run_edit_loop(dir.path(), &target, ndjson, &["--partial"]);
+    // v0.1.37: with --partial, zero matched pairs is the plain "found nothing"
+    // verdict — NO_MATCHES, exit 1, nothing written.
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "no pair matched, stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
     let ndjson_out = common::parse_ndjson(&output.stdout);
@@ -169,6 +203,12 @@ fn edit_loop_empty_file_reports_unmatched() {
         .find(|e| e["type"] == "result")
         .expect("summary");
     assert_eq!(summary["pairs_unmatched"], 1);
+    let envelope = ndjson_out
+        .iter()
+        .find(|e| e["ok"] == false)
+        .expect("error envelope");
+    assert_eq!(envelope["code"], "NO_MATCHES");
+    assert_eq!(envelope["exit"], 1);
 }
 
 #[test]
@@ -210,8 +250,15 @@ fn edit_loop_pair_results_have_matched_field() {
 
     let ndjson = "{\"old\":\"alpha\",\"new\":\"A\"}\n{\"old\":\"missing\",\"new\":\"X\"}\n";
 
-    let output = run_edit_loop(dir.path(), &target, ndjson, &[]);
-    assert!(output.status.success());
+    let output = run_edit_loop(dir.path(), &target, ndjson, &["--partial"]);
+    // v0.1.37: with `--partial` one miss is a partial verdict (exit 87),
+    // but `pair_results` must still enumerate both pairs with their `matched`.
+    assert_eq!(
+        output.status.code(),
+        Some(87),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let ndjson_out = common::parse_ndjson(&output.stdout);
     let summary = ndjson_out
         .iter()

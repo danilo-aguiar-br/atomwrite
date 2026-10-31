@@ -41,49 +41,92 @@ pub fn h2_lru_within_cap(workspace_committed_count: u64, age_rank: u64) -> Decis
 /// are created in the last 60 seconds, return `true` to suppress
 /// further creation attempts. The counter is process-local via a
 /// static `AtomicU64` of the start-of-window timestamp.
+///
+/// H3 is a CREATION-time vote only: it is consulted by
+/// [`crate::wal::creation_throttled`] when a journal is about to be
+/// opened. It must never be consulted when a committed journal is released,
+/// otherwise every journal past the K-th of a multi-file run would outlive
+/// its successful write.
 pub fn h3_rate_limit() -> Decision {
-    let max_per_min: u64 = crate::constants::WAL_RATE_LIMIT_DEFAULT;
-    if max_per_min == 0 {
-        return false;
-    }
-    // Process-local rate window. Function-local `static` (not `const`) so
-    // every call shares one address — interior-mutable atomics must never
-    // live in `const` (each use site would get a fresh counter).
-    //
-    // Ordering::Relaxed is intentional: this is a best-effort throttle for
-    // agent floods, not a data-publication barrier. Concurrent threads may
-    // briefly overshoot the cap; absolute accuracy is not required.
-    // Window reset uses compare_exchange so two threads that both observe
-    // an expired window do not clobber each other's start/count with plain
-    // stores (still Relaxed — no cross-field happens-before needed).
-    static WINDOW_START: AtomicU64 = AtomicU64::new(0);
-    static WINDOW_COUNT: AtomicU64 = AtomicU64::new(0);
+    // Process-local window. A `static` (not `const`) so every call shares one
+    // address — interior-mutable atomics must never live in `const` (each use
+    // site would get a fresh counter).
+    static GLOBAL: RateWindow = RateWindow::new();
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let start = WINDOW_START.load(Ordering::Relaxed);
-    if now.saturating_sub(start) >= 60 {
-        match WINDOW_START.compare_exchange(start, now, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => {
-                WINDOW_COUNT.store(1, Ordering::Relaxed);
-                return false;
-            }
-            Err(_) => {
-                // Another thread already opened a new window; fall through
-                // to increment the shared count under the new start.
-            }
-        }
-    }
-    let count = WINDOW_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-    count > max_per_min
+    GLOBAL.hit(now, crate::constants::WAL_RATE_LIMIT_DEFAULT)
 }
 
-/// H4 — Opt-out sentinel: a `.atomwrite_no_wal` file in the target
-/// directory disables sidecar creation for that directory tree.
+/// Fixed-length counting window behind [`h3_rate_limit`].
+///
+/// Kept as a type, with the clock passed in, so a test can drive its own
+/// instance deterministically instead of racing the process-wide one.
+///
+/// `Ordering::Relaxed` is intentional: this is a best-effort throttle for
+/// agent floods, not a data-publication barrier. Concurrent threads may
+/// briefly overshoot the cap; absolute accuracy is not required. The window
+/// reset uses `compare_exchange` so two threads that both observe an expired
+/// window do not clobber each other's start/count with plain stores.
+#[derive(Debug)]
+pub struct RateWindow {
+    start: AtomicU64,
+    count: AtomicU64,
+}
+
+impl RateWindow {
+    /// An empty window; the first hit opens one.
+    pub const fn new() -> Self {
+        Self {
+            start: AtomicU64::new(0),
+            count: AtomicU64::new(0),
+        }
+    }
+
+    /// Record one event at `now_secs` (Unix seconds). Returns `true` when more
+    /// than `max_per_window` events fell in the current window, i.e. throttle.
+    /// A `max_per_window` of 0 disables the limit.
+    pub fn hit(&self, now_secs: u64, max_per_window: u64) -> bool {
+        if max_per_window == 0 {
+            return false;
+        }
+        let start = self.start.load(Ordering::Relaxed);
+        if now_secs.saturating_sub(start) >= crate::constants::WAL_RATE_WINDOW_SECS {
+            match self
+                .start
+                .compare_exchange(start, now_secs, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => {
+                    self.count.store(1, Ordering::Relaxed);
+                    return false;
+                }
+                Err(_) => {
+                    // Another thread already opened a new window; fall through
+                    // to increment the shared count under the new start.
+                }
+            }
+        }
+        self.count.fetch_add(1, Ordering::Relaxed) + 1 > max_per_window
+    }
+}
+
+impl Default for RateWindow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// H4 — Keep sentinel: a `.atomwrite_keep_wal` file in the target directory
+/// PRESERVES the sidecars written there.
+///
+/// The legacy name `.atomwrite_no_wal` is honoured too, because it always had
+/// this exact effect: a directory holding it kept its journal, the opposite of
+/// what the name promised. Both names preserve; neither disables the WAL.
 pub fn h4_sentinel(target: &Path) -> Decision {
     let dir = target.parent().unwrap_or_else(|| Path::new("."));
-    dir.join(".atomwrite_no_wal").exists()
+    dir.join(crate::constants::WAL_KEEP_SENTINEL).exists()
+        || dir.join(crate::constants::WAL_LEGACY_SENTINEL).exists()
 }
 
 /// H5 — Archive threshold: sidecars older than N days are candidates
@@ -96,12 +139,16 @@ pub fn h5_archive(journal_committed_at_unix: u64) -> Decision {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let age_days = now.saturating_sub(journal_committed_at_unix) / 86_400;
+    let age_days = now.saturating_sub(journal_committed_at_unix) / crate::constants::SECS_PER_DAY;
     age_days >= archive_days
 }
 
-/// Compose all 5 L4 heuristics into a single decision. Returns `true`
-/// when AT LEAST ONE heuristic votes to PRESERVE the sidecar.
+/// Compose the RELEASE-time L4 heuristics (H1, H2, H4, H5) into a single
+/// decision. Returns `true` when AT LEAST ONE heuristic votes to PRESERVE the
+/// sidecar of a write that already committed.
+///
+/// H3 is deliberately absent: it throttles journal creation (see
+/// [`h3_rate_limit`]) and has no say once the write succeeded.
 pub fn heuristics_should_preserve(
     target: &Path,
     journal_committed_at_unix: u64,
@@ -110,7 +157,6 @@ pub fn heuristics_should_preserve(
 ) -> bool {
     h1_ttl(journal_committed_at_unix)
         || h2_lru_within_cap(workspace_committed_count, age_rank)
-        || h3_rate_limit()
         || h4_sentinel(target)
         || h5_archive(journal_committed_at_unix)
 }

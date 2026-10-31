@@ -22,10 +22,12 @@ use crate::concurrency::should_parallelize;
 use crate::error::AtomwriteError;
 use crate::output::NdjsonWriter;
 
-/// Per-file semantic score bag (hits + optional index tokens).
+/// Per-file semantic score bag (hits + optional index tokens + lines kept
+/// out by `--min-score`).
 type ScoredFile = (
     Vec<(f64, String, u64, String)>,
     Vec<crate::ndjson_types::SemanticIndexToken>,
+    u64,
 );
 use crate::path_safety::validate_path;
 use crate::signal::ShutdownSignal;
@@ -52,7 +54,7 @@ pub struct SemanticSearchArgs {
     #[arg(long, value_hint = ValueHint::DirPath)]
     pub index_dir: Option<PathBuf>,
 
-    /// Include atomwrite backup paths (`*.bak.*`) in ranking (A-008b).
+    /// Include atomwrite backup paths (`*.bak.*`) in ranking.
     /// Default: exclude backups so agents do not edit sidecars.
     #[arg(
         long,
@@ -63,6 +65,16 @@ pub struct SemanticSearchArgs {
 }
 
 /// Rank lines by token overlap with the query (offline, no embeddings).
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::InvalidInput` when the query is empty or produces no tokens.
+/// Returns `AtomwriteError::WorkspaceJail` when a root or `--index-dir` escapes the workspace.
+/// Returns `AtomwriteError::Io` when the index directory cannot be created, the index file cannot
+/// be written, or a root cannot be resolved.
+/// Returns `AtomwriteError::BrokenPipe` when the consumer closes the NDJSON stream.
+/// Returns the first walk failure, published as an `ok: false` summary, when a file under a root
+/// could not be read for a reason other than a content rejection.
 #[tracing::instrument(skip_all, fields(command = "semantic-search"))]
 pub fn cmd_semantic_search(
     args: &SemanticSearchArgs,
@@ -95,9 +107,8 @@ pub fn cmd_semantic_search(
     // Optional offline inverted index: token -> list of path\tline\tsnippet
     let mut index: HashMap<String, Vec<(String, u64, String)>> = HashMap::new();
     if let Some(ref idir) = args.index_dir {
-        let idir = validate_path(idir, &workspace).unwrap_or_else(|_| workspace.join(idir));
-        let _ = std::fs::create_dir_all(&idir);
-        let idx_file = idir.join("tokens.ndjson");
+        let idir = prepare_index_dir(idir, &workspace)?;
+        let idx_file = idir.join(crate::constants::SEMANTIC_INDEX_FILE);
         if idx_file.is_file() {
             if let Ok(text) = crate::file_io::read_file_string(&idx_file, max_size) {
                 for line in text.lines() {
@@ -121,6 +132,18 @@ pub fn cmd_semantic_search(
     }
 
     let mut hits: Vec<(f64, String, u64, String)> = Vec::new();
+    // Scored lines the `--min-score` floor kept out of the ranking, so a run
+    // that returns nothing says whether the corpus was empty or the floor.
+    let mut below_min_score: u64 = 0;
+    // Files the ranking scored. The inverted-index path reads no file, so it
+    // stays `None` there instead of claiming a scan it never did.
+    let mut files_scanned: Option<u64> = None;
+    // Declared outside both branches: the summary reports it either way, and
+    // the inverted-index path reads no file, so it stays empty there.
+    let failures: std::sync::Arc<std::sync::Mutex<crate::ndjson_types::FailureTally>> =
+        std::sync::Arc::new(std::sync::Mutex::new(
+            crate::ndjson_types::FailureTally::default(),
+        ));
     if backend == "inverted-index" && !index.is_empty() {
         let mut cand: HashMap<(String, u64), (f64, String)> = HashMap::new();
         for tok in &q_tokens {
@@ -137,6 +160,8 @@ pub fn cmd_semantic_search(
             let score = if qn == 0.0 { 0.0 } else { overlap / qn };
             if score >= args.min_score {
                 hits.push((score, path, line, snip));
+            } else {
+                below_min_score += 1;
             }
         }
     } else {
@@ -151,13 +176,22 @@ pub fn cmd_semantic_search(
         let mut files = if roots.is_empty() {
             Vec::new()
         } else {
-            let mut wb = ignore::WalkBuilder::new(&roots[0]);
-            for r in roots.iter().skip(1) {
-                wb.add(r);
-            }
-            wb.git_ignore(true);
-            crate::concurrency::apply_walk_threads(&mut wb, global.threads);
-            crate::concurrency::collect_files_parallel(&wb)
+            // Dotfiles hold meaning for a semantic search, so the shared walker
+            // runs in the always-hidden flavor.
+            // An ignore file the walk half-reads is a hole too, and `ignore`
+            // never reports it by itself.
+            crate::concurrency::record_ignore_file_failures(&roots, Some(&failures));
+            let wb = crate::commands::build_scoped_walker_flavored(
+                &roots,
+                global,
+                crate::commands::WalkerFlavor::AlwaysVisitHidden,
+                &[],
+                &[],
+            )?;
+            crate::concurrency::collect_files_parallel_tallied(
+                &wb,
+                Some(std::sync::Arc::clone(&failures)),
+            )
         };
         crate::concurrency::sort_paths_parallel(&mut files);
 
@@ -165,43 +199,72 @@ pub fn cmd_semantic_search(
         if !args.include_backups {
             files.retain(|p| !crate::commands::is_backup_path(p));
         }
+        // `--limit` bounds the work: scoring stops at the budget instead of
+        // reading the whole tree to print `k` results from the top.
+        crate::output::cap_collected(&mut files);
 
         // Stage 2 — CPU: tokenize + Jaccard per file in parallel.
         let q_tokens = Arc::new(q_tokens);
         let min_score = args.min_score;
         let build_index = args.index_dir.is_some();
+        // A file the ranking could not read is a hole in the ranking, and the
+        // agent has to know that the answer is partial.
         let scored: Vec<ScoredFile> = if should_parallelize(files.len()) {
             files
                 .par_iter()
-                .map(|path| score_file(path, &q_tokens, min_score, max_size, build_index, shutdown))
+                .map(|path| {
+                    score_file(
+                        path,
+                        &q_tokens,
+                        min_score,
+                        max_size,
+                        build_index,
+                        shutdown,
+                        &failures,
+                    )
+                })
                 .collect()
         } else {
             files
                 .iter()
-                .map(|path| score_file(path, &q_tokens, min_score, max_size, build_index, shutdown))
+                .map(|path| {
+                    score_file(
+                        path,
+                        &q_tokens,
+                        min_score,
+                        max_size,
+                        build_index,
+                        shutdown,
+                        &failures,
+                    )
+                })
                 .collect()
         };
 
+        // Captured before `scored` is consumed: it is the reach of the scan.
+        files_scanned = Some(scored.len() as u64);
         let mut built: Vec<crate::ndjson_types::SemanticIndexToken> = Vec::new();
-        for (file_hits, file_built) in scored {
+        for (file_hits, file_built, file_below) in scored {
             hits.extend(file_hits);
             built.extend(file_built);
+            below_min_score += file_below;
         }
 
         if let Some(ref idir) = args.index_dir {
-            let idir = validate_path(idir, &workspace).unwrap_or_else(|_| workspace.join(idir));
-            let _ = std::fs::create_dir_all(&idir);
-            let idx_file = idir.join("tokens.ndjson");
-            if let Ok(mut f) = std::fs::File::create(&idx_file) {
-                for rec in &built {
-                    if let Ok(line) = serde_json::to_string(rec) {
-                        let _ = writeln!(f, "{line}");
-                    }
-                }
-            }
+            let idir = prepare_index_dir(idir, &workspace)?;
+            write_index(&idir.join(crate::constants::SEMANTIC_INDEX_FILE), &built)?;
         }
     }
+    let (failed_count, failed_items, first_failure) = match std::sync::Arc::try_unwrap(failures) {
+        Ok(mutex) => mutex.into_inner().unwrap_or_default().into_parts(),
+        Err(arc) => {
+            std::mem::take(&mut *arc.lock().unwrap_or_else(|e| e.into_inner())).into_parts()
+        }
+    };
     hits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    // The ranking size before the `k` cut, so `results < hits_before_cut`
+    // proves truncation and the equality proves nothing was cut.
+    let hits_before_cut = hits.len() as u64;
     hits.truncate(args.k as usize);
     let total = hits.len();
     for (rank, (score, path, line, snippet)) in hits.into_iter().enumerate() {
@@ -215,13 +278,56 @@ pub fn cmd_semantic_search(
             backend,
         })?;
     }
-    writer.write_event(&crate::ndjson_types::SemanticSummaryEvent {
+    let files_failed = (failed_count > 0).then_some(failed_count);
+    let summary = crate::ndjson_types::SemanticSummaryEvent {
         r#type: "semantic_summary",
         query: args.query.clone(),
         k: args.k,
         results: total,
         backend,
-    })?;
+        files_failed,
+        partial: crate::ndjson_types::partial_of(files_failed),
+        errors: (!failed_items.is_empty()).then_some(failed_items),
+        files_scanned,
+        hits_before_cut: Some(hits_before_cut),
+        below_min_score: Some(below_min_score).filter(|n| *n > 0),
+        files_budget_dropped: Some(crate::output::budget_dropped()).filter(|n| *n > 0),
+        // The walk collects the whole tree and only then slices the ranking,
+        // so it never cuts its own walk. Reporting the writer's budget here
+        // said "stopped early" on a walk that read every file; the truncation
+        // is visible in `results` against `k`.
+        walker_stopped_early: None,
+    };
+    // A run that answered publishes the answer: the hits are usable, and the
+    // hole is what `partial` and `errors` are for. Failing the run here threw
+    // away every hit the moment one subtree could not be read, which is the
+    // rule `search` already keeps.
+    if let Some(err) = first_failure
+        && total == 0
+    {
+        return Err(writer.publish_failure(&summary, err));
+    }
+    writer.write_terminal(&summary)?;
+    Ok(())
+}
+
+/// Validate `--index-dir` against the workspace jail and create it.
+///
+/// A validation failure (jail violation, symlink escape) is returned as is:
+/// it must never be turned into permission to use the directory.
+fn prepare_index_dir(idir: &Path, workspace: &Path) -> Result<std::path::PathBuf> {
+    let idir = validate_path(idir, workspace)?;
+    std::fs::create_dir_all(&idir).map_err(|source| AtomwriteError::Io { source })?;
+    Ok(idir)
+}
+
+/// Rewrite the inverted index file with every token record built this run.
+fn write_index(idx_file: &Path, built: &[crate::ndjson_types::SemanticIndexToken]) -> Result<()> {
+    let mut f = std::fs::File::create(idx_file).map_err(|source| AtomwriteError::Io { source })?;
+    for rec in built {
+        let line = serde_json::to_string(rec)?;
+        writeln!(f, "{line}").map_err(|source| AtomwriteError::Io { source })?;
+    }
     Ok(())
 }
 
@@ -232,15 +338,26 @@ fn score_file(
     max_size: u64,
     build_index: bool,
     shutdown: &ShutdownSignal,
+    failures: &std::sync::Mutex<crate::ndjson_types::FailureTally>,
 ) -> ScoredFile {
     let mut hits = Vec::new();
     let mut built = Vec::new();
+    let mut below = 0u64;
     if shutdown.is_shutdown() {
-        return (hits, built);
+        return (hits, built, below);
     }
     let content = match crate::file_io::read_file_string(path, max_size) {
         Ok(c) => c,
-        Err(_) => return (hits, built),
+        Err(e) => {
+            // Too large, binary or not UTF-8 is a file the caller told the
+            // ranking to leave alone; anything else is a hole.
+            if !crate::output::is_content_rejection(&e)
+                && let Ok(mut tally) = failures.lock()
+            {
+                tally.record(path, e);
+            }
+            return (hits, built, below);
+        }
     };
     let path_str = path.display().to_string();
     for (i, line) in content.lines().enumerate() {
@@ -249,7 +366,10 @@ fn score_file(
             continue;
         }
         if build_index {
-            let snip: String = line.chars().take(200).collect();
+            let snip: String = line
+                .chars()
+                .take(crate::constants::SEMANTIC_SNIPPET_CHARS)
+                .collect();
             for t in &tokens {
                 built.push(crate::ndjson_types::SemanticIndexToken {
                     t: t.clone(),
@@ -265,11 +385,15 @@ fn score_file(
                 score,
                 path_str.clone(),
                 (i as u64) + 1,
-                line.chars().take(200).collect(),
+                line.chars()
+                    .take(crate::constants::SEMANTIC_SNIPPET_CHARS)
+                    .collect(),
             ));
+        } else {
+            below += 1;
         }
     }
-    (hits, built)
+    (hits, built, below)
 }
 
 fn tokenize(s: &str) -> HashSet<String> {

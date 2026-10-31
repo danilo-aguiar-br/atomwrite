@@ -16,6 +16,14 @@ pub enum ErrorClass {
 
 impl ErrorClass {
     /// Return the string representation for NDJSON serialization.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use atomwrite::error::ErrorClass;
+    ///
+    /// assert_eq!(ErrorClass::PreconditionFailed.as_str(), "precondition_failed");
+    /// ```
     #[inline]
     pub const fn as_str(&self) -> &'static str {
         match self {

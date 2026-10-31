@@ -4,67 +4,28 @@
   "description": "Serializable error envelope emitted as a single NDJSON line.",
   "type": "object",
   "properties": {
-    "best_candidate": {
-      "description": "Closest near-miss when a match cascade fails (v0.1.29 P0-2).",
-      "anyOf": [
-        {
-          "$ref": "#/$defs/BestCandidate"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "code": {
-      "description": "Machine-readable error code string.",
-      "type": "string"
-    },
     "error": {
       "description": "Always true, marks this line as an error event.",
       "type": "boolean"
     },
-    "error_class": {
-      "description": "Error class: transient, conflict, `precondition_failed`, or permanent.",
+    "ok": {
+      "description": "Always false on error envelopes (GAP-2026-020 agent sentinel).\n\nSuccess envelopes keep their own `status` field; agents MUST check\n`error` / `ok` / process exit before reading success-only keys.",
+      "type": "boolean"
+    },
+    "code": {
+      "description": "Machine-readable error code string.",
       "type": "string"
     },
     "exit": {
       "description": "Suggested process exit code.",
       "type": "integer",
       "format": "uint8",
-      "maximum": 255,
-      "minimum": 0
-    },
-    "failed_pair_index": {
-      "description": "1-based index of the failed `--old`/`--new` pair (multi-pair edit, G117).",
-      "type": [
-        "integer",
-        "null"
-      ],
-      "format": "uint64",
-      "minimum": 0
+      "minimum": 0,
+      "maximum": 255
     },
     "message": {
       "description": "Human-readable error message.",
       "type": "string"
-    },
-    "pair_results": {
-      "description": "Per-pair diagnostics up to and including the failed pair (multi-pair edit, G117).\nPairs after the failure were never attempted and are absent.",
-      "type": [
-        "array",
-        "null"
-      ],
-      "items": {
-        "$ref": "#/$defs/PairResult"
-      }
-    },
-    "pairs_total": {
-      "description": "Total number of `--old`/`--new` pairs in the invocation (multi-pair edit, G117).",
-      "type": [
-        "integer",
-        "null"
-      ],
-      "format": "uint64",
-      "minimum": 0
     },
     "path": {
       "description": "Filesystem path related to the error, if applicable.",
@@ -72,6 +33,10 @@
         "string",
         "null"
       ]
+    },
+    "error_class": {
+      "description": "Error class: transient, conflict, `precondition_failed`, or permanent.",
+      "type": "string"
     },
     "retryable": {
       "description": "Whether a retry may resolve this error.",
@@ -91,17 +56,155 @@
         "null"
       ]
     },
-    "ok": {
-      "description": "Always false on error envelopes (GAP-2026-020 agent sentinel).",
-      "type": "boolean"
-    },
-    "match_count": {
-      "description": "Match count when ambiguity is reported; 0 on MatchFailed/NoMatches (GAP-2026-020).",
+    "failed_pair_index": {
+      "description": "1-based index of the failed `--old`/`--new` pair (multi-pair edit, G117).",
       "type": [
         "integer",
         "null"
       ],
       "format": "uint64",
+      "minimum": 0
+    },
+    "pairs_total": {
+      "description": "Total number of `--old`/`--new` pairs in the invocation.\n\nEmitted by multi-pair edit (G117) and by a partial `edit-loop` run\n(v0.1.36) — one key, two producers.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "pair_results": {
+      "description": "Per-pair diagnostics up to and including the failed pair (multi-pair edit, G117).\nPairs after the failure were never attempted and are absent.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/PairResult"
+      }
+    },
+    "best_candidate": {
+      "description": "Closest near-miss when a match cascade fails (v0.1.29 P0-2).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BestCandidate"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "candidates": {
+      "description": "Additional near-miss candidates for `did_you_mean` (v0.1.30).",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/BestCandidate"
+      }
+    },
+    "match_count": {
+      "description": "Match count when ambiguity is reported (v0.1.30).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "similar_paths": {
+      "description": "Similar basenames when path is missing (v0.1.30).",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "conflict_count": {
+      "description": "Number of conflicting regions a three-way merge could not align (v0.1.36).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "missing_flag": {
+      "description": "Flag literal the operation required but did not receive (v0.1.36).\n\nPresent only for [`AtomwriteError::MissingFlag`]; the duplicate `code`\non that variant is deliberate — callers branch on `missing_flag` and\nstill see the `INVALID_INPUT` family in `code`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pairs_unmatched": {
+      "description": "Pairs that did not match in a partial `edit-loop` run (v0.1.36).\n\n`pairs_total` already exists above for the multi-pair edit family and\nis reused by this variant instead of being duplicated.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "pairs_applied": {
+      "description": "Pairs that were written to the target before the error (v0.1.37).\n\nAlways `0` for the all-or-nothing `EditPairFailed` abort (nothing is\nwritten) and `total - unmatched` for `edit-loop --partial`.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "suggestion_lang": {
+      "description": "UI language the catalogue-derived `suggestion` was rendered in (B4).\n\nThe two human strings on this envelope do not share a source: `message`\nis built from the error variant, which is English by contract, while\n`suggestion` comes from the i18n catalogue and follows the resolved UI\nlanguage. One envelope can therefore carry an English `message` and a\nPortuguese `suggestion`. Without this field a consumer cannot tell which\nlanguage the suggestion is in, and cannot decide whether to re-render\nit. `code` and every other field stay machine literals.",
+      "type": "string"
+    },
+    "target_resolved": {
+      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+      "type": "string"
+    },
+    "target_source": {
+      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+      "type": "string",
+      "enum": [
+        "argv",
+        "workspace",
+        "stdin"
+      ]
+    },
+    "workspace_source": {
+      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+      "type": "string",
+      "enum": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "records_suppressed": {
+      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_budget_dropped": {
+      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_planned": {
+      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+      "type": "boolean"
+    },
+    "truncated_records": {
+      "description": "Records the writer cut this run, counted once per record",
+      "type": "integer",
       "minimum": 0
     }
   },
@@ -112,24 +215,58 @@
     "exit",
     "message",
     "error_class",
-    "retryable"
+    "retryable",
+    "suggestion_lang"
   ],
   "$defs": {
+    "PairResult": {
+      "description": "Outcome of matching a single `--old`/`--new` pair in multi-pair edit mode.\n\nEmitted in `pair_results` on both success and error envelopes so agents\ncan verify each pair objectively without re-running the edit (G117).\nIn the default all-or-nothing mode, pairs after the first failure are\nnever attempted and are absent from the array.",
+      "type": "object",
+      "properties": {
+        "index": {
+          "description": "1-based position of the pair in the `--old`/`--new` invocation order.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "matched": {
+          "description": "Whether the pair matched and was applied to the content.",
+          "type": "boolean"
+        },
+        "strategy": {
+          "description": "Matching strategy that succeeded (e.g. `exact`, `whitespace_normalized`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "similarity": {
+          "description": "Similarity score of the fuzzy match, 0.0-1.0 (block-anchor and context-aware only).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "source": {
+          "description": "Source of the match/replacement content: `\"arg\"` or `\"file\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "index",
+        "matched"
+      ]
+    },
     "BestCandidate": {
       "description": "Closest near-miss when a fuzzy/exact match fails (v0.1.29 P0-2).\n\nAgents use this to correct `old` without re-reading the full file.",
       "type": "object",
       "properties": {
-        "column": {
-          "description": "1-based column of the candidate start.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
-        },
-        "diff_preview": {
-          "description": "Optional short unified-diff style preview.",
+        "text": {
+          "description": "Snippet of the best matching region (truncated to 500 chars).",
           "type": [
             "string",
             "null"
@@ -137,6 +274,15 @@
         },
         "line": {
           "description": "1-based line of the candidate start in the file.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "column": {
+          "description": "1-based column of the candidate start.",
           "type": [
             "integer",
             "null"
@@ -159,56 +305,14 @@
             "null"
           ]
         },
-        "text": {
-          "description": "Snippet of the best matching region (truncated to 500 chars).",
+        "diff_preview": {
+          "description": "Optional short unified-diff style preview.",
           "type": [
             "string",
             "null"
           ]
         }
       }
-    },
-    "PairResult": {
-      "description": "Outcome of matching a single `--old`/`--new` pair in multi-pair edit mode.\n\nEmitted in `pair_results` on both success and error envelopes so agents\ncan verify each pair objectively without re-running the edit (G117).\nIn the default all-or-nothing mode, pairs after the first failure are\nnever attempted and are absent from the array.",
-      "type": "object",
-      "properties": {
-        "index": {
-          "description": "1-based position of the pair in the `--old`/`--new` invocation order.",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "matched": {
-          "description": "Whether the pair matched and was applied to the content.",
-          "type": "boolean"
-        },
-        "similarity": {
-          "description": "Similarity score of the fuzzy match, 0.0-1.0 (block-anchor and context-aware only).",
-          "type": [
-            "number",
-            "null"
-          ],
-          "format": "double"
-        },
-        "source": {
-          "description": "Source of the match/replacement content: `\"arg\"` or `\"file\"`.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "strategy": {
-          "description": "Matching strategy that succeeded (e.g. `exact`, `whitespace_normalized`).",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "index",
-        "matched"
-      ]
     }
   }
 }

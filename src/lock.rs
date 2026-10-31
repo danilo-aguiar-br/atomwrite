@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Advisory file locking for concurrent edit protection (G54).
+//! Advisory file locking for concurrent edit protection (G54, R23).
 //!
 //! Workload: I/O-bound (flock/fcntl on one path).
 //! Parallelism: none — RAII lock serialises writers on a single target. Cross-
@@ -11,34 +11,62 @@
 //! silently lost. The `--expect-checksum` flag (exit 82) detects this
 //! *after* it happens, but does not prevent it.
 //!
-//! This module adds proactive protection via `nix::fcntl::flock` on Unix
-//! (which wraps `flock(2)`) and a no-op stub on Windows. The lock is held
-//! for the duration of the atomic write and released on Drop (RAII).
+//! This module adds proactive protection via `std::fs::File::try_lock`, which
+//! wraps `flock(2)` on Unix and `LockFileEx` on Windows, so both platforms
+//! serialise writers the same way with no extra crate and no `unsafe`.
+//!
+//! # What the lock covers
+//!
+//! A write that is computed from the file it replaces (edit, replace, set, del,
+//! case, apply, transform, scope, `config set`, `write --append`, and the
+//! `batch` ops that read) loses a concurrent update unless the lock is taken
+//! **before** it reads. Those verbs call [`acquire_for_update`](crate::lock::acquire_for_update) first and hold
+//! the guard until the write is committed, so concurrent writers are serialised:
+//! each one reads the result of the one before it and every update survives.
+//!
+//! [`crate::atomic::atomic_write`] takes the same lock itself. The lock is
+//! re-entrant **per thread**: while a thread holds a guard for a path, a second
+//! [`acquire_exclusive`](crate::lock::acquire_exclusive) for that path on the same thread returns a nested guard
+//! at once instead of blocking on its own `flock`. The real lock is released
+//! when the last guard drops. A second thread of the same process asks the OS
+//! and waits, as another process would.
+//!
+//! A verb that does not take the lock first still gets no silent loss when it
+//! passes the checksum of the content it read to the writer
+//! (`atomic_write_based`): the writer compares it with the file under the lock
+//! and fails with `STATE_DRIFT` (exit 82, retryable)
+//! instead of overwriting. That is also the net on filesystems without `flock`.
+//! A write of content that does not depend on the old file (plain `write`,
+//! `copy`, `move`, `rollback`) overwrites by design and takes the lock only
+//! around the commit.
 //!
 //! **Limitations**:
 //! - `flock(2)` is per-process on some systems; on NFS, `flock` is silently
 //!   ignored. We document this as a known limitation and recommend
-//!   `--expect-checksum` as the additional safety net on NFS.
+//!   `--expect-checksum` as the additional safety net on NFS. Filesystems
+//!   that reject `flock` (`EOPNOTSUPP`, `ENOLCK`, `ENOSYS`) run without lock.
 //! - The lock file is `.<target>.atomwrite.lock` in the same directory as
-//!   the target, so the lock disappears when the target is deleted.
-//! - On Windows, this is a no-op (`LockGuard` always succeeds immediately)
-//!   because `flock(2)` semantics are not available without C extensions.
+//!   the target. The guard unlinks it on release while it still holds the
+//!   lock, and waiters re-check the inode after acquiring, so no sidecar
+//!   survives a clean exit. A process killed by SIGKILL can leave one behind;
+//!   the next writer reuses and removes it.
+//! - On Windows the sidecar is reused instead of unlinked, because a handle
+//!   open elsewhere would make the unlink fail anyway; the lock itself is
+//!   `LockFileEx` through the same standard-library call.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-#[cfg(unix)]
-use std::time::Duration;
-
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::error::AtomwriteError;
+use crate::retry::{Backoff, RetryPolicy, RetryStop};
 
 /// RAII guard that holds an advisory exclusive lock on a file.
 ///
-/// On Unix, the lock is held via `flock(LOCK_EX)` on the sidecar file until
-/// the guard is dropped, which calls `flock(LOCK_UN)`. On Windows, the
-/// guard is a no-op.
+/// The lock is held on the sidecar file until the last guard for the path
+/// drops (guards taken again on the same thread share one lock), which
+/// releases it with `File::unlock` and, on Unix, unlinks the sidecar.
 ///
 /// Marked `#[must_use]`: dropping the guard early releases the lock; ignoring
 /// the return of [`acquire_exclusive`] would drop immediately and defeat
@@ -47,14 +75,28 @@ use crate::error::AtomwriteError;
 pub struct LockGuard {
     /// File path the lock is protecting.
     target: PathBuf,
-    /// The sidecar lock file. Kept open so the `fd` stays valid for `flock`.
-    /// On Unix, the file is duplicated via `dup(2)` so the `flock` lock
-    /// survives even after the original handle is closed (we still keep the
-    /// original open while the guard lives, as a belt-and-suspenders measure).
-    #[cfg(unix)]
-    _file: std::fs::File,
+    /// The real lock, shared by every guard the thread holds for the path.
+    _held: std::rc::Rc<Held>,
     /// Time elapsed while waiting for the lock, in milliseconds.
     pub held_ms: u64,
+}
+
+/// The OS lock on one sidecar, released when the last guard drops.
+struct Held {
+    /// Path of the sidecar lock file, unlinked on release. Unix only: the
+    /// Windows sidecar is reused instead of unlinked, so the field would be
+    /// dead there.
+    #[cfg(unix)]
+    lock_path: PathBuf,
+    /// The sidecar lock file. Kept open while the guard lives so the
+    /// `flock` on its open file description stays valid.
+    file: std::fs::File,
+}
+
+thread_local! {
+    /// Locks this thread holds, by sidecar path, so a nested acquire is a no-op.
+    static HELD: std::cell::RefCell<std::collections::HashMap<PathBuf, std::rc::Weak<Held>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 impl std::fmt::Debug for LockGuard {
@@ -66,124 +108,205 @@ impl std::fmt::Debug for LockGuard {
     }
 }
 
-/// On Unix, release the advisory lock before the file handle drops.
-/// On non-Unix platforms there is no flock resource, so the default
-/// field-wise Drop of `LockGuard` is sufficient (no empty `impl Drop`).
-#[cfg(unix)]
-impl Drop for LockGuard {
+impl Drop for Held {
     fn drop(&mut self) {
-        // Release the flock explicitly so the lock is freed before the
-        // file handle is closed. The `flock` syscall on the raw fd is
-        // safe: we still own the file handle at this point.
-        use std::os::unix::io::AsRawFd;
-        let fd = self._file.as_raw_fd();
-        // Best-effort: if this fails, the process is exiting anyway and
-        // the kernel will release the lock when the fd is closed.
-        // Never panic inside Drop (Rules: Drop must be short and panic-free).
-        #[allow(deprecated)]
-        let _ = nix::fcntl::flock(fd, nix::fcntl::FlockArg::Unlock);
+        // Unlink while the lock is still held: a waiter that opened the old
+        // inode sees the path vanish or change in `acquire_exclusive` and
+        // retries on a fresh file, so two writers never hold "the" lock.
+        // Best-effort: Drop must be short and panic-free.
+        #[cfg(unix)]
+        crate::best_effort::best_effort(
+            std::fs::remove_file(&self.lock_path),
+            "remove lock sidecar",
+        );
+        // If this fails, the process is exiting anyway and the kernel
+        // releases the lock when the file is closed.
+        crate::best_effort::best_effort(self.file.unlock(), "release advisory lock");
     }
+}
+
+/// Take the lock a read-modify-write verb needs, BEFORE it reads the target.
+///
+/// Hold the returned guard until the write is committed. The wait budget is the
+/// configured lock timeout (`lock.acquire_timeout_ms`). The `target` must be the
+/// validated path the verb later hands to [`crate::atomic::atomic_write`].
+///
+/// # Errors
+///
+/// Same as [`acquire_exclusive`].
+pub fn acquire_for_update(target: &Path) -> Result<LockGuard> {
+    acquire_exclusive(target, crate::config::tuning().lock_acquire_timeout_ms)
 }
 
 /// Acquire an exclusive advisory lock on `target` with the given timeout.
 ///
+/// Re-entrant per thread: when the calling thread already holds the lock for
+/// `target`, the returned guard shares it and returns without waiting.
+///
 /// The lock is taken on a sidecar file `.<target>.atomwrite.lock` in the
-/// same directory, so the sidecar automatically disappears if the target
-/// is deleted (the lock is then moot anyway).
+/// same directory, which the caller must have created already. The sidecar
+/// is removed when the returned guard drops.
 ///
 /// # Errors
 ///
-/// Returns `AtomwriteError::LockTimeout` if the lock could not be acquired
-/// within `timeout_ms`. Returns I/O errors for permission denied, missing
-/// parent directory, etc.
+/// Returns `AtomwriteError::LockTimeout` (exit 83, carrying the real
+/// `target` path) if the lock could not be acquired within `timeout_ms`.
+/// Returns `AtomwriteError::Cancelled` if a shutdown signal arrives while
+/// waiting, or when the global `--timeout-secs` deadline ends the wait before
+/// `timeout_ms` does. Returns I/O errors for permission denied, missing parent
+/// directory, etc.
+///
+/// Waiting follows [`crate::retry`]: exponential backoff with full jitter,
+/// cut into slices that poll the shutdown flag, under a budget of `timeout_ms`
+/// or the time left of the global deadline, whichever is smaller.
 pub fn acquire_exclusive(target: &Path, timeout_ms: u64) -> Result<LockGuard> {
     let start = Instant::now();
     let lock_path = sidecar_path(target);
-    let parent = lock_path
-        .parent()
-        .ok_or_else(|| AtomwriteError::InternalError {
-            reason: format!("lock path has no parent: {}", lock_path.display()),
-        })?;
-    std::fs::create_dir_all(parent).with_context(|| {
-        format!(
-            "cannot create parent directory for lock {}",
-            lock_path.display()
-        )
-    })?;
+    let key = lock_key(&lock_path);
+    if let Some(held) = HELD.with(|m| m.borrow().get(&key).and_then(std::rc::Weak::upgrade)) {
+        return Ok(LockGuard {
+            target: target.to_path_buf(),
+            _held: held,
+            held_ms: 0,
+        });
+    }
+    let mut backoff = Backoff::new(RetryPolicy::new(
+        crate::constants::LOCK_RETRY_BASE_MS,
+        crate::constants::LOCK_RETRY_CAP_MS,
+        timeout_ms,
+        crate::constants::LOCK_RETRY_MAX_ATTEMPTS,
+    ));
+    loop {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|e| AtomwriteError::from_io_at(&lock_path, e))?;
 
-    let lock_file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(&lock_path)
-        .with_context(|| format!("cannot open lock file {}", lock_path.display()))?;
+        try_acquire_loop(&file, target, timeout_ms, &mut backoff)?;
 
-    let held_ms = try_acquire_loop(&lock_file, timeout_ms, start)?;
-
-    tracing::debug!(
-        target = %target.display(),
-        lock = %lock_path.display(),
-        held_ms,
-        "advisory lock acquired"
-    );
-
-    Ok(LockGuard {
-        target: target.to_path_buf(),
-        #[cfg(unix)]
-        _file: lock_file,
-        held_ms,
-    })
+        if is_current_sidecar(&file, &lock_path) {
+            let held_ms = start.elapsed().as_millis() as u64;
+            tracing::debug!(
+                target = %target.display(),
+                lock = %lock_path.display(),
+                held_ms,
+                "advisory lock acquired"
+            );
+            #[cfg(unix)]
+            let held = std::rc::Rc::new(Held { lock_path, file });
+            #[cfg(not(unix))]
+            let held = std::rc::Rc::new(Held { file });
+            HELD.with(|m| {
+                let mut map = m.borrow_mut();
+                map.retain(|_, w| w.strong_count() > 0);
+                map.insert(key, std::rc::Rc::downgrade(&held));
+            });
+            return Ok(LockGuard {
+                target: target.to_path_buf(),
+                _held: held,
+                held_ms,
+            });
+        }
+        // The previous holder unlinked the sidecar while we waited: our lock
+        // sits on a dead inode. `file` drops here; retry on the fresh path.
+    }
 }
 
+/// Key of the per-thread table: the sidecar path with its directory resolved,
+/// so two spellings of the same directory share one lock.
+fn lock_key(lock_path: &Path) -> PathBuf {
+    let resolved = lock_path
+        .parent()
+        .and_then(|dir| dir.canonicalize().ok())
+        .zip(lock_path.file_name());
+    match resolved {
+        Some((dir, name)) => dir.join(name),
+        None => lock_path.to_path_buf(),
+    }
+}
+
+/// On Windows the sidecar is never unlinked, so the open file is always
+/// the current one.
+#[cfg(not(unix))]
+fn is_current_sidecar(_file: &std::fs::File, _lock_path: &Path) -> bool {
+    true
+}
+
+/// True when `lock_path` still names the inode behind `file`.
 #[cfg(unix)]
-fn try_acquire_loop(file: &std::fs::File, timeout_ms: u64, start: Instant) -> Result<u64> {
-    use std::os::unix::io::AsRawFd;
-    let fd = file.as_raw_fd();
-    let deadline = Duration::from_millis(timeout_ms);
-    let mut attempts: u32 = 0;
+fn is_current_sidecar(file: &std::fs::File, lock_path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(held) = file.metadata() else {
+        return true;
+    };
+    match std::fs::metadata(lock_path) {
+        Ok(current) => held.dev() == current.dev() && held.ino() == current.ino(),
+        Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+    }
+}
+
+/// True when the error means the filesystem has no advisory lock at all.
+#[cfg(unix)]
+fn is_lock_unsupported(e: &std::io::Error) -> bool {
+    use nix::errno::Errno;
+    matches!(
+        e.raw_os_error(),
+        Some(code)
+            if code == Errno::EOPNOTSUPP as i32
+                || code == Errno::ENOLCK as i32
+                || code == Errno::ENOSYS as i32
+    )
+}
+
+fn try_acquire_loop(
+    file: &std::fs::File,
+    target: &Path,
+    timeout_ms: u64,
+    backoff: &mut Backoff,
+) -> Result<()> {
     loop {
-        // `LockExclusiveNonblock` is the safe variant for our retry loop:
-        // it returns EWOULDBLOCK (EAGAIN) immediately if the file is already
-        // locked, instead of blocking until the lock is released. This lets
-        // us poll on a timer and respect `timeout_ms` exactly.
-        #[allow(deprecated)]
-        match nix::fcntl::flock(fd, nix::fcntl::FlockArg::LockExclusiveNonblock) {
-            Ok(()) => return Ok(start.elapsed().as_millis() as u64),
-            Err(nix::Error::EAGAIN) => {
-                let elapsed = start.elapsed();
-                if elapsed >= deadline {
+        // `try_lock` is the non-blocking variant: it reports `WouldBlock`
+        // immediately if another holder owns the lock, instead of blocking
+        // until release. This lets the retry module wait with jitter and
+        // respect `timeout_ms` and the global deadline.
+        match file.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(std::fs::TryLockError::WouldBlock) => match backoff.wait() {
+                Ok(()) => {}
+                Err(RetryStop::Cancelled) => {
+                    return Err(crate::signal::cancelled_error(format!(
+                        "lock wait cancelled for {}",
+                        target.display()
+                    ))
+                    .into());
+                }
+                Err(RetryStop::DeadlineElapsed | RetryStop::AttemptsExhausted) => {
                     return Err(AtomwriteError::LockTimeout {
-                        path: std::path::PathBuf::from("<target>"),
+                        path: target.to_path_buf(),
                         timeout_ms,
                     }
                     .into());
                 }
-                attempts += 1;
-                // A-030: named poll intervals (not magic 10/50/20).
-                let sleep_ms = if attempts < crate::constants::LOCK_POLL_FAST_ATTEMPTS {
-                    crate::constants::LOCK_POLL_FAST_MS
-                } else {
-                    crate::constants::LOCK_POLL_SLOW_MS
-                };
-                std::thread::sleep(Duration::from_millis(sleep_ms));
-            }
-            Err(e) => {
-                return Err(AtomwriteError::Io {
-                    source: std::io::Error::from_raw_os_error(e as i32),
+            },
+            Err(std::fs::TryLockError::Error(e)) => {
+                #[cfg(unix)]
+                if is_lock_unsupported(&e) {
+                    // The filesystem has no flock: the lock is advisory, so
+                    // the write proceeds and `--expect-checksum` stays the
+                    // safety net.
+                    tracing::warn!(
+                        path = %target.display(),
+                        "filesystem does not support flock; continuing without advisory lock"
+                    );
+                    return Ok(());
                 }
-                .into());
+                return Err(AtomwriteError::Io { source: e }.into());
             }
         }
     }
-}
-
-#[cfg(not(unix))]
-fn try_acquire_loop(_file: &std::fs::File, _timeout_ms: u64, start: Instant) -> Result<u64> {
-    // On Windows, advisory file locking is a no-op (the semantics of
-    // flock(2) are not available without C extensions). The LockGuard
-    // still serves to document the intent at the call site.
-    Ok(start.elapsed().as_millis() as u64)
 }
 
 /// Compute the sidecar path used as the lock file for `target`.
@@ -193,13 +316,25 @@ fn sidecar_path(target: &Path) -> PathBuf {
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_default();
-    parent.join(format!(".{filename}.atomwrite.lock"))
+    let prefix = crate::constants::HIDDEN_FILE_PREFIX;
+    let suffix = crate::constants::LOCK_SIDECAR_SUFFIX;
+    // The sidecar lives beside the target, so its name is bounded by the same
+    // filesystem limit. Past 255 bytes the stem becomes a short hash of the
+    // full name: still unique per target and stable across runs.
+    let name = if prefix.len() + filename.len() + suffix.len() > 255 {
+        let digest = crate::checksum::hash_bytes(filename.as_bytes());
+        format!("{prefix}{}", &digest[..16])
+    } else {
+        format!("{prefix}{filename}")
+    };
+    parent.join(format!("{name}{suffix}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn sidecar_path_appends_dot_atomwrite_lock() {
         let target = Path::new("/tmp/foo.txt");
@@ -224,6 +359,19 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn release_removes_the_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("clean.txt");
+        std::fs::write(&target, "x").unwrap();
+
+        let guard = acquire_exclusive(&target, 1000).unwrap();
+        assert!(sidecar_path(&target).exists(), "sidecar exists while held");
+        drop(guard);
+        assert!(!sidecar_path(&target).exists(), "sidecar must not survive");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn second_acquire_blocks_until_release() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("concurrent.txt");
@@ -231,21 +379,80 @@ mod tests {
 
         let guard1 = acquire_exclusive(&target, 1000).unwrap();
         let start = std::time::Instant::now();
-        // Second acquire should fail because the first is still held.
-        // Use a short timeout so the test doesn't hang for the full 1000ms.
-        let result = acquire_exclusive(&target, 50);
+        // A second THREAD must fail while the first holds the lock (the same
+        // thread would share it). A short timeout keeps the test fast.
+        let other = target.clone();
+        let result = std::thread::spawn(move || acquire_exclusive(&other, 50).map(drop))
+            .join()
+            .expect("acquire thread");
         let elapsed = start.elapsed().as_millis();
         assert!(result.is_err(), "second acquire must time out");
         assert!(
             elapsed >= 50,
             "must wait at least the configured timeout, got {elapsed}ms"
         );
+        assert!(
+            elapsed < 50 + 300,
+            "the last wait is cut at the deadline, got {elapsed}ms"
+        );
         let err = result.unwrap_err();
         let ae = err.downcast_ref::<AtomwriteError>();
         assert!(
-            matches!(ae, Some(AtomwriteError::LockTimeout { .. })),
-            "expected LockTimeout, got: {err:?}"
+            matches!(
+                ae,
+                Some(AtomwriteError::LockTimeout { path, .. }) if path == &target
+            ),
+            "expected LockTimeout carrying the target path, got: {err:?}"
         );
         drop(guard1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_acquire_on_the_same_thread_shares_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("nested.txt");
+        std::fs::write(&target, "x").unwrap();
+
+        let outer = acquire_for_update(&target).unwrap();
+        let begun = std::time::Instant::now();
+        let inner = acquire_exclusive(&target, 50).expect("nested acquire must not block");
+        assert!(begun.elapsed().as_millis() < 40, "nested acquire waited");
+        drop(outer);
+        assert!(
+            sidecar_path(&target).exists(),
+            "the real lock lives until the last guard drops"
+        );
+        drop(inner);
+        assert!(!sidecar_path(&target).exists(), "sidecar must not survive");
+        // After the last drop the lock is free for a fresh acquire.
+        drop(acquire_exclusive(&target, 1000).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_held_lock_serialises_threads_of_one_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("serial.txt");
+        std::fs::write(&target, "0").unwrap();
+        let target = std::sync::Arc::new(target);
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                let target = std::sync::Arc::clone(&target);
+                std::thread::spawn(move || {
+                    let _lock = acquire_for_update(&target).expect("lock");
+                    let n: u32 = std::fs::read_to_string(&*target).unwrap().parse().unwrap();
+                    // Widen the read-write window so an unserialised run would lose updates.
+                    for _ in 0..200 {
+                        std::thread::yield_now();
+                    }
+                    std::fs::write(&*target, (n + 1).to_string()).unwrap();
+                })
+            })
+            .collect();
+        for w in workers {
+            w.join().expect("worker");
+        }
+        assert_eq!(std::fs::read_to_string(&*target).unwrap(), "8");
     }
 }

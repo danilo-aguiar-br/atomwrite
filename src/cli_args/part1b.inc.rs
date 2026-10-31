@@ -1,16 +1,37 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Included by part1.inc.rs (A-MONO-001 — after EditLoopArgs).
+// Included by part1.inc.rs, after EditLoopArgs.
+
+/// How `search` writes its answers on stdout.
+///
+/// Deliberately separate from [`crate::cli::OutputFormat`], which belongs to
+/// `read`: adding a `Text` value there would make `read --format text` fall
+/// through to the NDJSON branch, because `read` only tests for `Raw`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+pub enum SearchFormat {
+    /// One NDJSON record per event (the agent contract, and the default).
+    #[default]
+    Ndjson,
+    /// Plain text, one line per match, shaped like `rg -n`.
+    Text,
+}
 
 /// Arguments for the search subcommand.
 #[derive(Args, Debug)]
 #[derive(Clone)]
 pub struct SearchArgs {
     /// Search pattern (regex by default).
-    #[arg(allow_hyphen_values = true)]
+    ///
+    /// A pattern that starts with a hyphen must come after `--`, so that an
+    /// unknown flag is reported as an argument error instead of being taken
+    /// as the pattern.
     pub pattern: String,
 
     /// Paths to search within.
-    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
+    ///
+    /// When omitted, `search` scans the workspace root (never the process
+    /// current directory) and reports `target_source = "workspace"`. A root
+    /// named here is resolved against `--workspace` and reported as `"argv"`.
+    #[arg(value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
 
     /// Treat pattern as regex.
@@ -91,13 +112,12 @@ pub struct SearchArgs {
     #[arg(long, value_enum, help = "Sort results by criterion")]
     pub sort: Option<SortBy>,
 
-    /// Include FIFO / named pipe files in the search (G56).
+    /// Include FIFO / named pipe files in the search.
     ///
-    /// By default, atomwrite skips FIFOs because `open()` on a FIFO blocks
-    /// indefinitely until the other end connects — this can cause atomwrite
-    /// to hang in automated local runs / Docker environments that have FIFOs in /tmp or /var.
-    /// Pass `--include-fifo` to opt back into the legacy behavior of
-    /// opening FIFOs (which may hang).
+    /// By default `search` skips FIFOs, because opening one blocks until the
+    /// other end connects, which can hang automated runs and containers that
+    /// have FIFOs in /tmp or /var. Pass `--include-fifo` to open them anyway
+    /// (this may hang).
     #[arg(
         long,
         help = "Include FIFO / named pipe files (default: skip to avoid hangs)",
@@ -105,33 +125,33 @@ pub struct SearchArgs {
     )]
     pub include_fifo: bool,
 
-    /// Maximum file size in bytes for `search` (G68).
+    /// Maximum file size in bytes for `search`.
     ///
-    /// Files larger than this are skipped silently (with a `skipped` event
-    /// when `--count` or `--files` is active). Default: 10 MiB. Useful for
-    /// skipping `node_modules`, `target/`, log archives, and other large
-    /// generated files.
+    /// Larger files are skipped; the run counts them in `files_skipped` on the
+    /// `summary` event instead of emitting one event per file. The default is
+    /// 10 MiB. Useful for skipping `node_modules`, `target/`, log archives,
+    /// and other large generated files.
     #[arg(
         long,
         default_value_t = crate::constants::DEFAULT_SEARCH_MAX_FILESIZE_BYTES,
-        help = "Skip files larger than N bytes (default: constants::DEFAULT_SEARCH_MAX_FILESIZE_BYTES)"
+        help = "Skip files larger than N bytes (10 MiB by default)"
     )]
     pub max_filesize: u64,
 
-    /// Maximum line length in columns for `search` matches (G68).
+    /// Maximum line length in columns for `search` matches.
     ///
-    /// Lines longer than this are truncated with a `...[truncated]` marker.
-    /// Default: 500. Useful for skipping minified bundle.js, styles.min.css,
-    /// and other single-line giant files that explode context windows.
+    /// Longer lines are truncated with a `...[truncated]` marker. The default
+    /// is 500 columns. Useful for minified bundle.js, styles.min.css and other
+    /// single-line giant files that explode context windows.
     #[arg(
         long,
         default_value_t = crate::constants::DEFAULT_SEARCH_MAX_COLUMNS,
-        help = "Truncate matches longer than N columns (default: constants::DEFAULT_SEARCH_MAX_COLUMNS)"
+        help = "Truncate matches longer than N columns (500 by default)"
     )]
     pub max_columns: usize,
 
-    /// Search binary files (A-008). Default: skip files that look binary
-    /// (`NUL` / `content_inspector`), matching ripgrep-style safety for agents.
+    /// Search binary files. Default: skip files that look binary
+    /// (`NUL` bytes or binary content detection), matching ripgrep-style safety for agents.
     #[arg(
         long,
         help = "Search binary files (default: skip binary / NUL content)",
@@ -140,8 +160,7 @@ pub struct SearchArgs {
     pub binary: bool,
 
     /// Suppress per-file `begin` and `end` NDJSON events for files with
-    /// zero matches (GAP-2026-010). Default: emit `begin`/`end` for every
-    /// file visited (back-compat).
+    /// zero matches. Default: emit `begin`/`end` for every file visited.
     #[arg(
         long,
         help = "Suppress begin/end events for files with no matches (cleaner output for empty searches)",
@@ -159,7 +178,7 @@ pub struct SearchArgs {
     )]
     pub pcre2: bool,
 
-    /// Search target: content (default), files (basename), or both (v0.1.30).
+    /// Search target: content (default), files (basename), or both.
     #[arg(
         long,
         value_enum,
@@ -168,13 +187,34 @@ pub struct SearchArgs {
     )]
     pub target: SearchTarget,
 
-    /// Skip first N matches when paginating results (v0.1.30).
+    /// Skip first N matches when paginating results.
     #[arg(long, default_value_t = 0, help = "Skip first N matches (pagination offset)")]
     pub offset: u64,
 
-    /// Limit number of match events emitted (v0.1.30).
+    /// Limit number of match events emitted.
     #[arg(long, help = "Limit number of match events emitted")]
     pub limit: Option<u64>,
+
+    /// Output format: `ndjson` (default) or `text`.
+    ///
+    /// `text` prints one line per match as `LINE:TEXT`, or `PATH:LINE:TEXT`
+    /// when more than one file can match, with `PATH` relative to
+    /// `--workspace` and `/` as the separator on every OS. `--context N`
+    /// prints context lines with `-` instead of `:` and separates groups with
+    /// `--`, the way `rg` does. Nothing else reaches stdout: no `begin`, `end`,
+    /// `summary` or colour. `--count` prints `N`, or `PATH:N` for several
+    /// files, and `--files` prints `PATH`, matching `rg -c` and `rg -l`.
+    /// `--multiline`, `--target files` and `--target both` are rejected,
+    /// because a match there is not a single line of a single file.
+    /// `--max-columns` does not apply: `rg` returns the whole line, and a
+    /// truncated line could not be compared against it byte for byte.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = SearchFormat::Ndjson,
+        help = "Output format: ndjson (default) or text"
+    )]
+    pub format: SearchFormat,
 }
 
 /// Arguments for the extract subcommand.
@@ -183,13 +223,13 @@ pub struct ExtractArgs {
     /// Field names or indices to extract (positional).
     pub fields: Vec<String>,
 
-    /// Local field list (agent-native; v0.1.36 residual).
+    /// Local field list: the input columns to extract.
     ///
-    /// Prefer one of: positional fields **or** `--field`, not both (exit 65).
+    /// Use either positional fields or `--field`, not both (exit 65).
     ///
-    /// **Not** global `--select` / `--fields`: those project the whole NDJSON
-    /// envelope after extract. This flag chooses input columns before emit.
-    /// (`--select` cannot be local — it collides with the global shape flag.)
+    /// This is not the global `--select` / `--fields`: those project the whole
+    /// NDJSON envelope after the extraction, while this flag chooses the input
+    /// columns before anything is emitted.
     #[arg(
         long = "field",
         value_name = "FIELD",
@@ -216,6 +256,10 @@ pub struct ExtractArgs {
 #[derive(Args, Debug)]
 pub struct CalcArgs {
     /// Math expression to evaluate.
+    ///
+    /// The attribute stays: a stolen flag lands here as an expression that
+    /// fails to evaluate, so the run exits 65 instead of answering with a
+    /// plausible number for something else.
     #[arg(allow_hyphen_values = true)]
     pub expression: Option<String>,
 
@@ -227,8 +271,18 @@ pub struct CalcArgs {
 /// Arguments for the transform subcommand.
 #[derive(Args, Debug)]
 pub struct TransformArgs {
+    /// Refuse the cross-device copy-then-rename fallback (exit 91).
+    #[command(flatten)]
+    pub strict: crate::cli_args::StrictAtomicArgs,
+
     /// Paths to search for transforms.
-    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
+    ///
+    /// A verb with side effects requires the subject in the invocation line,
+    /// so the root list is mandatory: omitting it is a usage error and never
+    /// rewrites a tree chosen from ambient state. Name the root explicitly
+    /// (e.g. `.` or `src/`). The multi-rule mode (`--rules` /
+    /// `--inline-rules`) needs a root for the same reason.
+    #[arg(required = true, value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
 
     /// AST pattern to match.
@@ -269,21 +323,28 @@ pub struct TransformArgs {
     #[arg(long, help = "Show diff preview without writing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 
-    /// Path to a YAML file containing multiple rules (G44).
-    #[arg(long, help = "Apply multiple rules from a YAML file", value_hint = ValueHint::FilePath)]
+    /// Path to a YAML file containing multiple rules.
+    #[arg(
+        long,
+        conflicts_with = "inline_rules",
+        help = "Apply multiple rules from a YAML file (conflicts with --inline-rules)",
+        value_hint = ValueHint::FilePath
+    )]
     pub rules: Option<PathBuf>,
 
     /// Inline YAML rules (alternative to --rules).
     #[arg(
         long,
         allow_hyphen_values = true,
-        help = "Apply multiple rules from inline YAML string"
+        conflicts_with = "rules",
+        help = "Apply multiple rules from inline YAML string (conflicts with --rules)"
     )]
     pub inline_rules: Option<String>,
 
     /// Shared backup flags.
     #[command(flatten)]
     pub backup_opts: BackupOpts,
+
 
     /// Re-parse output with tree-sitter to detect syntax errors introduced by the rewrite.
     #[arg(
@@ -294,9 +355,9 @@ pub struct TransformArgs {
     pub verify_parse: bool,
 }
 
-/// Arguments for the `prune-backups` subcommand (ADR-0040).
+/// Arguments for the `prune-backups` subcommand.
 ///
-/// G-036: at least one of `--max-age-secs` / `--max-count` is required (clap group).
+/// At least one of `--max-age-secs` / `--max-count` is required (clap group).
 #[derive(Args, Debug)]
 #[command(group(
     clap::ArgGroup::new("prune_policy")
@@ -332,12 +393,16 @@ pub struct PruneBackupsArgs {
 /// Arguments for the apply subcommand.
 #[derive(Args, Debug)]
 pub struct ApplyArgs {
+    /// Refuse the cross-device copy-then-rename fallback (exit 91).
+    #[command(flatten)]
+    pub strict: crate::cli_args::StrictAtomicArgs,
+
     #[arg(value_hint = ValueHint::FilePath)]
     /// Target file to apply the patch to.
     pub file: PathBuf,
 
     /// Patch format (default: auto-detect).
-    #[arg(long, value_enum, default_value_t = PatchFormat::Auto, help = "Patch format: auto, unified, search-replace, full, markdown")]
+    #[arg(long, value_enum, default_value_t = PatchFormat::Auto, help = "Patch format: auto (detect, refuse when no marker), unified, search-replace, full (whole-file replacement), markdown")]
     pub format: PatchFormat,
 
     /// Shared backup flags.
@@ -347,9 +412,17 @@ pub struct ApplyArgs {
     /// Preview without writing.
     #[arg(long, help = "Show what would be done without writing", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
+
+    /// Accept replacing a file above XDG `[write].confirm_large_bytes`.
+    #[arg(long, help = "Acknowledge replacing a target above XDG [write].confirm_large_bytes", action = clap::ArgAction::SetTrue)]
+    pub ack_overwrite: bool,
+
+    /// Accept a result smaller than XDG `[write].shrink_block_percent`.
+    #[arg(long, help = "Allow a result smaller than XDG [write].shrink_block_percent", action = clap::ArgAction::SetTrue)]
+    pub allow_shrink: bool,
 }
 
-/// Identifier case style (v14 Tier 3 `case` subcommand).
+/// Identifier case style for the `case` subcommand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum IdentifierCase {
     /// `snake_case`
@@ -364,7 +437,7 @@ pub enum IdentifierCase {
     ScreamingSnake,
 }
 
-/// Arguments for the `query` subcommand (v14 Tier 3, v0.1.12).
+/// Arguments for the `query` subcommand.
 ///
 /// Runs a tree-sitter S-expression pattern against a source file and
 /// returns all matching AST nodes as NDJSON. Uses
@@ -386,7 +459,7 @@ pub struct QueryArgs {
     pub language: Option<String>,
     /// Tree-sitter S-expression pattern (e.g. `(function_item name: (identifier) @name)`).
     ///
-    /// **Must use `-Q` / `--query`** — global `-q` is quiet verbosity (A-005).
+    /// Use `-Q` or `--query`: the global `-q` is quiet verbosity.
     #[arg(
         short = 'Q',
         long,

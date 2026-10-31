@@ -3,7 +3,7 @@
 //! WAL statistics and journal walk (CPU+I/O; rayon over independent journals).
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use ignore::WalkBuilder;
@@ -62,6 +62,13 @@ pub struct WalDirEntry {
 ///
 /// Discovery is `WalkParallel`; per-journal parse fans out with `par_iter`
 /// when more than one sidecar is present (independent I/O).
+///
+/// # Errors
+///
+/// Returns the `anyhow::Error` propagated from [`walk_journal_paths`] when
+/// discovery fails. A journal that cannot be read or parsed is counted under
+/// `by_state.malformed` instead of failing the snapshot, and a missing
+/// metadata size is recorded as `0`.
 pub fn compute_wal_stats(workspace: &Path) -> Result<WalStats> {
     use std::collections::BTreeMap;
 
@@ -69,6 +76,9 @@ pub fn compute_wal_stats(workspace: &Path) -> Result<WalStats> {
     let workspace = workspace.to_path_buf();
 
     // Independent read+parse per journal → parallel when multi-item.
+    if crate::concurrency::should_parallelize(paths.len()) {
+        crate::concurrency::ensure_global_pool();
+    }
     let rows: Vec<(PathBuf, u64, &'static str, u64)> =
         if crate::concurrency::should_parallelize(paths.len()) {
             paths
@@ -103,7 +113,16 @@ pub fn compute_wal_stats(workspace: &Path) -> Result<WalStats> {
         let rel_dir = path
             .parent()
             .and_then(|p| p.strip_prefix(&workspace).ok())
-            .map(|p| p.display().to_string())
+            .map(|p| {
+                let shown = p.display().to_string();
+                // A journal sitting in the workspace root strips to an empty
+                // relative path; reporting "" reads as a missing directory.
+                if shown.is_empty() {
+                    ".".to_string()
+                } else {
+                    shown
+                }
+            })
             .unwrap_or_else(|| ".".to_string());
         *by_dir.entry(rel_dir).or_insert(0) += 1;
 
@@ -157,6 +176,13 @@ pub fn compute_wal_stats(workspace: &Path) -> Result<WalStats> {
 ///
 /// Uses `WalkParallel` (hidden sidecars included) so discovery scales on
 /// monorepos; paths are sorted for stable stats/heal order.
+///
+/// # Errors
+///
+/// The signature admits `Err` for a future fallible walker, but the current
+/// body never returns one: a missing workspace answers `Ok(Vec::new())`, and
+/// directories the walk cannot open are skipped by the collector rather than
+/// surfaced.
 pub fn walk_journal_paths(workspace: &Path) -> Result<Vec<PathBuf>> {
     if !workspace.exists() {
         return Ok(Vec::new());
@@ -179,6 +205,61 @@ pub fn walk_journal_paths(workspace: &Path) -> Result<Vec<PathBuf>> {
     });
     crate::concurrency::sort_paths_parallel(&mut out);
     Ok(out)
+}
+
+/// One directory the startup heal may scan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealScope {
+    /// Directory to scan (never a file).
+    pub root: PathBuf,
+    /// Walk depth below `root`; `None` means the whole subtree.
+    pub max_depth: Option<usize>,
+}
+
+/// Discover journals under `scopes` with a wall-clock cutoff checked per entry.
+///
+/// Unlike [`walk_journal_paths`], this walk is sequential (it never spawns
+/// more threads than `--threads` allows), honours `.gitignore`/`.ignore`, never
+/// enters [`crate::constants::WAL_STARTUP_HEAL_SKIP_DIRS`], and stops as soon as
+/// `deadline` passes or the run is cancelled, so the cost is bounded by the
+/// budget and not by the size of the tree.
+pub fn walk_journal_paths_bounded(scopes: &[HealScope], deadline: Instant) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for scope in scopes {
+        if !scope.root.is_dir() {
+            continue;
+        }
+        let mut builder = WalkBuilder::new(&scope.root);
+        builder
+            .hidden(false)
+            .max_depth(scope.max_depth)
+            .filter_entry(|entry| {
+                let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
+                !(is_dir
+                    && entry.depth() > 0
+                    && entry.file_name().to_str().is_some_and(|name| {
+                        crate::constants::WAL_STARTUP_HEAL_SKIP_DIRS.contains(&name)
+                    }))
+            });
+        for result in builder.build() {
+            if Instant::now() >= deadline || crate::signal::is_global_shutdown() {
+                tracing::debug!("startup wal-heal walk cut at the time budget");
+                return out;
+            }
+            let Ok(entry) = result else { continue };
+            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                continue;
+            }
+            if entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.ends_with(JOURNAL_EXT))
+            {
+                out.push(entry.into_path());
+            }
+        }
+    }
+    out
 }
 
 /// Parse a sidecar and return `(terminal_state, last_unix)` for the last

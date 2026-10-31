@@ -2,13 +2,15 @@
 
 //! v0.1.30 agent-contract tests: fuzzy mandatory, uniqueness, escape-drift, search dual, tokenizer.
 
+mod common;
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
 use tempfile::tempdir;
 
 fn bin() -> Command {
-    Command::cargo_bin("atomwrite").expect("bin")
+    common::hermetic(Command::cargo_bin("atomwrite").expect("bin"))
 }
 
 #[test]
@@ -222,6 +224,7 @@ fn recipe_hash_skips_bak() {
     );
 }
 
+#[cfg(feature = "ast")]
 #[test]
 fn sparse_outline_emits_kind() {
     let dir = tempdir().unwrap();

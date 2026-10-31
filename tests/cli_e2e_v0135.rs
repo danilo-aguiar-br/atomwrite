@@ -1,6 +1,8 @@
 //! Contract e2e for atomwrite v0.1.35 residual gaps (G-024 expanded).
 #![cfg(unix)]
 
+mod common;
+
 use assert_cmd::Command;
 use assert_cmd::cargo::cargo_bin;
 use predicates::prelude::*;
@@ -9,9 +11,10 @@ use std::path::PathBuf;
 use tempfile::tempdir;
 
 fn bin() -> Command {
-    Command::new(cargo_bin("atomwrite"))
+    common::hermetic(Command::new(cargo_bin("atomwrite")))
 }
 
+#[cfg(feature = "ast")]
 #[test]
 fn doctor_strict_ok_without_feature_warns() {
     let dir = tempdir().unwrap();
@@ -468,6 +471,12 @@ fn write_large_before_shrink_mentions_ack() {
         .stdout(predicate::str::contains("ack-overwrite"));
 }
 
+// E7: the continuous mode left the default feature set, so the summary this
+// test asserts is produced only by a build that opts back in. The default
+// binary's answer is the closed-feature error, which
+// `cli_v0137_artefato::default_binary_does_not_carry_the_continuous_mode`
+// pins from the other side.
+#[cfg(feature = "watch")]
 #[test]
 fn watch_idle_emits_watch_summary() {
     // A-WATCH-001: idle exit must not leave stdout empty.
@@ -540,8 +549,8 @@ fn agent_surface_case_schema_hint_not_write_output() {
     let s = String::from_utf8_lossy(&out);
     // G-037: hints must match docs/schemas/*.schema.json basenames.
     assert!(
-        s.contains("\"name\":\"case\"") && s.contains("case-result"),
-        "case should use case-result schema_hint"
+        s.contains("\"name\":\"case\"") && s.contains("case-output"),
+        "case should use case-output schema_hint"
     );
     assert!(
         s.contains("\"name\":\"set\"") && s.contains("set-result"),
@@ -560,8 +569,8 @@ fn agent_surface_case_schema_hint_not_write_output() {
         "verify should use hash-output (G-041; same NDJSON as hash)"
     );
     assert!(
-        !s.contains("case-output") && !s.contains("set-output"),
-        "legacy *-output hints for case/set must not appear"
+        !s.contains("case-result") && !s.contains("set-output"),
+        "legacy *-result hints for case and *-output for set must not appear"
     );
 }
 

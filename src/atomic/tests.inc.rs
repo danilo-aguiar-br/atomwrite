@@ -237,6 +237,7 @@ mod tests {
         // we can verify the error variant's exit code and code string.
         let err = crate::error::AtomwriteError::ExdevFallbackDisabled {
             path: std::path::PathBuf::from("/tmp/x"),
+            reason: "cross-device rename".into(),
         };
         assert_eq!(err.exit_code(), 91);
         assert_eq!(err.error_code(), "EXDEV_FALLBACK_DISABLED");

@@ -9,7 +9,7 @@
 use std::io::Write;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
@@ -17,11 +17,13 @@ use crate::cli::{DelArgs, GlobalArgs};
 use crate::commands::resolve_backup;
 use crate::output::NdjsonWriter;
 
-#[derive(Debug, Serialize)]
-struct DelResult {
+/// Terminal event of `del`: the key removed at a dotted path.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct DelResult {
     r#type: &'static str,
     path: String,
     key_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     removed_value: Option<String>,
     existed: bool,
     format: &'static str,
@@ -33,6 +35,17 @@ struct DelResult {
 /// Removes the key at `key_path` from the target structured config file
 /// (TOML or JSON) and writes the result back atomically. Comments and
 /// key order are preserved in TOML.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::NotFound` when the target file does not exist.
+/// Returns `AtomwriteError::WorkspaceJail` when the path escapes the workspace.
+/// Returns `AtomwriteError::LockTimeout` when the update lock is not acquired in time.
+/// Returns `AtomwriteError::FileTooLarge` when the file exceeds the effective max filesize.
+/// Returns `AtomwriteError::InvalidInput` when the file is not valid UTF-8, is not TOML or JSON,
+/// exceeds the JSON nesting depth, or the key is absent while `--force-missing` is not set.
+/// Returns `AtomwriteError::Io` when reading or writing the file fails.
+/// Returns `AtomwriteError::BrokenPipe` when the consumer closes the NDJSON stream.
 #[tracing::instrument(skip_all, fields(command = "del"))]
 pub fn cmd_del(
     args: &DelArgs,
@@ -47,20 +60,20 @@ pub fn cmd_del(
     if !validated.exists() {
         return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
+    // A1: lock BEFORE reading, hold it to the commit.
+    let _update_lock = crate::lock::acquire_for_update(&validated)?;
     let original = crate::file_io::read_file_string(&validated, global.effective_max_filesize())?;
 
     let (new_content, removed_value, existed, format) =
         match validated.extension().and_then(|s| s.to_str()) {
             Some("toml") => {
-                let mut doc: toml_edit::DocumentMut =
-                    original.parse().with_context(|| "invalid TOML in source")?;
+                let mut doc = crate::commands::set::parse_toml_doc(&original)?;
                 let removed = remove_toml_path(&mut doc, &args.key_path);
                 let existed = removed.is_some();
                 (doc.to_string(), removed, existed, "toml")
             }
             Some("json") => {
-                let mut v: serde_json::Value =
-                    serde_json::from_str(&original).with_context(|| "invalid JSON in source")?;
+                let mut v = crate::commands::set::parse_json_source(&original)?;
                 if !crate::output::check_json_depth(&v, crate::constants::MAX_JSON_DEPTH) {
                     return Err(crate::error::AtomwriteError::InvalidInput {
                         reason: format!(
@@ -117,6 +130,20 @@ pub fn cmd_del(
         return Ok(());
     }
 
+    if args.dry_run {
+        let plan = crate::ndjson_types::DryRunPlan {
+            r#type: "plan",
+            operation: "del".into(),
+            path: validated.display().to_string(),
+            would_modify: existed,
+            details: Some(format!("del {}", args.key_path)),
+            // Removing a dotted key writes no payload the patterns describe.
+            risk_assessment: None,
+        };
+        writer.write_event(&plan)?;
+        return Ok(());
+    }
+
     let opts = AtomicWriteOptions {
         backup: resolved.backup,
         syntax_check: false,
@@ -124,13 +151,13 @@ pub fn cmd_del(
         preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
         strategy: None,
-        strict_atomic: false,
+        strict_atomic: args.strict.strict_atomic,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup: resolved.keep,
         durability: crate::platform::Durability::Auto,
     };
 
-    let _ = atomic_write(&validated, new_content.as_bytes(), &opts, &workspace)?;
+    atomic_write(&validated, new_content.as_bytes(), &opts, &workspace)?;
 
     let output = DelResult {
         r#type: "del",
@@ -197,35 +224,5 @@ fn remove_json_pointer(root: &mut serde_json::Value, pointer: &str) {
 /// `toml_edit::DocumentMut::remove` treats dotted keys as a single
 /// literal name; this helper manually descends through `Table`s.
 fn remove_toml_path(doc: &mut toml_edit::DocumentMut, key_path: &str) -> Option<String> {
-    let segments: Vec<&str> = key_path.split('.').collect();
-    if segments.is_empty() {
-        return None;
-    }
-    let last = match segments.last() {
-        Some(s) => *s,
-        None => return None,
-    };
-    let mut current: &mut toml_edit::Item = doc.as_item_mut();
-    for seg in &segments[..segments.len() - 1] {
-        match current.as_table_mut() {
-            Some(table) => match table.get_mut(seg) {
-                Some(item) => current = item,
-                None => return None,
-            },
-            None => return None,
-        }
-    }
-    let table = current.as_table_mut()?;
-    let removed = table.get(last).map(|item| {
-        if let Some(v) = item.as_value() {
-            match v.as_str() {
-                Some(s) => s.to_owned(),
-                None => v.to_string().trim().to_owned(),
-            }
-        } else {
-            item.to_string().trim().to_owned()
-        }
-    });
-    table.remove(last);
-    removed
+    crate::commands::toml_path::remove(doc, key_path)
 }

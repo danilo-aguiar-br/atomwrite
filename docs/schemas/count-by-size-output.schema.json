@@ -1,9 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "CountBySizeOutput",
-  "description": "NDJSON output for count sorted by file size (top-N). Added in v0.1.20 to close GAP-2026-001 (HELP-FIRST-DRIFT).",
+  "description": "NDJSON output for count sorted by file size (top-N).\nAdded in v0.1.20 to close GAP-2026-001 (HELP-FIRST-DRIFT).",
   "type": "object",
-  "additionalProperties": false,
   "properties": {
     "type": {
       "description": "Event type discriminator.",
@@ -20,10 +19,114 @@
         "$ref": "#/$defs/SizeEntry"
       }
     },
+    "total": {
+      "description": "Totals over every file counted, before the top-N cut.",
+      "$ref": "#/$defs/CountTotals"
+    },
+    "items_omitted": {
+      "description": "Files the `--top` cut left out of `items`.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
     "elapsed_ms": {
-      "description": "Operation duration in milliseconds.",
+      "description": "Duration in milliseconds.",
       "type": "integer",
       "format": "uint64",
+      "minimum": 0
+    },
+    "files_failed": {
+      "description": "Files the walk saw but could not read; present only when some failed.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "errors": {
+      "description": "First read failures, capped; `files_failed` is the full count.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/FileFailure"
+      }
+    },
+    "partial": {
+      "description": "The run answered from part of its targets, so the answer is partial.\n\nPresent exactly when `files_failed` is present, so a consumer reads one\nflag instead of comparing two counters.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "walker_stopped_early": {
+      "description": "Present and true when the walker itself quit before the tree ended.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "ok": {
+      "description": "Outcome of the run, stamped by the writer",
+      "type": "boolean"
+    },
+    "code": {
+      "description": "Machine error code, present when ok is false",
+      "type": "string"
+    },
+    "exit": {
+      "description": "Process exit status, present when ok is false",
+      "type": "integer",
+      "minimum": 0
+    },
+    "target_resolved": {
+      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+      "type": "string"
+    },
+    "target_source": {
+      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+      "type": "string",
+      "enum": [
+        "argv",
+        "workspace",
+        "stdin"
+      ]
+    },
+    "workspace_source": {
+      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+      "type": "string",
+      "enum": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "records_suppressed": {
+      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_budget_dropped": {
+      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_planned": {
+      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+      "type": "boolean"
+    },
+    "truncated_records": {
+      "description": "Records the writer cut this run, counted once per record",
+      "type": "integer",
       "minimum": 0
     }
   },
@@ -31,13 +134,16 @@
     "type",
     "mode",
     "items",
-    "elapsed_ms"
+    "total",
+    "elapsed_ms",
+    "items_omitted",
+    "ok"
   ],
+  "additionalProperties": false,
   "$defs": {
     "SizeEntry": {
-      "description": "One entry in CountBySizeOutput.items (GAP-2026-001).",
+      "description": "One entry in `CountBySizeOutput.items` (GAP-2026-001).",
       "type": "object",
-      "additionalProperties": false,
       "properties": {
         "path": {
           "description": "Absolute or workspace-relative file path.",
@@ -53,6 +159,65 @@
       "required": [
         "path",
         "bytes"
+      ]
+    },
+    "CountTotals": {
+      "description": "Aggregate file and line counts.",
+      "type": "object",
+      "properties": {
+        "files": {
+          "description": "Total files counted.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "lines": {
+          "description": "Total lines counted.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "blank": {
+          "description": "Total blank lines.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "bytes": {
+          "description": "Total bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "files",
+        "lines",
+        "blank",
+        "bytes"
+      ]
+    },
+    "FileFailure": {
+      "description": "One file an operation could not process, as listed in a summary's `errors[]`.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Path of the file that failed.",
+          "type": "string"
+        },
+        "code": {
+          "description": "Machine error code of the failure (for example `PERMISSION_DENIED`).",
+          "type": "string"
+        },
+        "message": {
+          "description": "Human-readable failure message.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "code",
+        "message"
       ]
     }
   }

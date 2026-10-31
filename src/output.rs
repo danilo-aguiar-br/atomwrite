@@ -10,16 +10,63 @@ use serde::Serialize;
 use crate::error::{AtomwriteError, ErrorContext, ErrorJson};
 
 include!("output_shape.inc.rs");
+include!("output_verdict.inc.rs");
+
+include!("output_budget.inc.rs");
+include!("output_lines.inc.rs");
+
+/// How an emitted record interacts with the process-wide `--limit` budget.
+///
+/// `Data` is an answer record the consumer asked for and pays for. `Framing`
+/// is a `begin` or `end` anchor: it never spends and never claims a dedupe key.
+/// `AlreadyCharged` is a child record re-emitted by `recipe` or `codemod`, and
+/// the child writer already spent that unit.
+#[derive(Clone, Copy)]
+enum Charge {
+    Data,
+    Framing,
+    AlreadyCharged,
+}
 
 /// Buffered NDJSON writer that flushes after every line.
 ///
-/// Optional agent-native shaping (`--filter` / `--select` / `--limit`) is applied
-/// only when configured; the identity path serializes without an intermediate
-/// `serde_json::Value` (memory-friendly hot path).
+/// Every emitted line passes through [`Self::write_event`], which attaches the
+/// [`RESULT_KEY`] verdict to a success envelope, or through the error paths, which
+/// carry their own verdict. Shaping (`--filter` / `--select` / `--limit`) is
+/// applied only when configured; the identity path serializes without an
+/// intermediate `serde_json::Value` (memory-friendly hot path).
 pub struct NdjsonWriter<W: Write> {
     writer: BufWriter<W>,
     shape: OutputShape,
     emitted: u64,
+    /// Held-back events for the tail pass (`--sort-by` / `--dedupe` /
+    /// `--aggregate` / `--diff-against`).
+    ///
+    /// These operations cannot answer from one event: ordering needs the whole
+    /// set, dedupe needs the keys already seen, and the stream comparison needs
+    /// the stream. Buffering here keeps the burden in the one place every
+    /// subcommand already passes through, so a subcommand author does not have
+    /// to know these flags exist.
+    buffered: Vec<PositionedValue>,
+    /// Arrival order of the buffered events, and the stable tie-break for sort.
+    line_index: u64,
+    /// Set once the tail pass has run, so a second `flush` writes nothing.
+    tail_done: bool,
+    /// Success records `--filter` or an empty `--select` projection removed.
+    ///
+    /// The writer is the only place that knows a record was removed on purpose
+    /// rather than never produced, so it is the only place that can say how
+    /// many the consumer did not receive.
+    suppressed: u64,
+    /// Absolute target the run resolved, stamped on terminal envelopes.
+    target_resolved: Option<String>,
+    /// Origin of the target (`argv` or `workspace`), stamped with the target.
+    target_source: Option<&'static str>,
+    /// Origin of the workspace root (`argv` when `--workspace` was passed,
+    /// `cwd` when it was inherited from the process working directory).
+    workspace_source: Option<&'static str>,
+    /// Tables read from stdin for `--join`; empty when the flag is not used.
+    join_tables: Vec<JoinTable>,
 }
 
 impl<W: Write> NdjsonWriter<W> {
@@ -34,7 +81,60 @@ impl<W: Write> NdjsonWriter<W> {
             writer: BufWriter::with_capacity(crate::constants::BUF_CAPACITY, inner),
             shape,
             emitted: 0,
+            buffered: Vec::new(),
+            line_index: 0,
+            tail_done: false,
+            suppressed: 0,
+            target_resolved: None,
+            target_source: None,
+            workspace_source: None,
+            join_tables: Vec::new(),
         }
+    }
+
+    /// Read the `--join` tables from `stdin`, once, before the command runs.
+    ///
+    /// Join runs BEFORE `--select`, `--filter` and `--limit`, so a projection
+    /// can keep the joined field and a filter can match on it. With a tail flag
+    /// (`--sort-by`, `--dedupe`, `--aggregate`) the join runs in the tail pass,
+    /// after the sort and before dedupe and aggregation, as [`flush_positioned`]
+    /// documents. Failure and summary records never receive a join.
+    ///
+    /// # Errors
+    ///
+    /// See [`read_join_tables`].
+    pub fn load_joins(
+        &mut self,
+        stdin: &mut impl std::io::Read,
+        stdin_is_tty: bool,
+        command_consumes_stdin: bool,
+    ) -> anyhow::Result<()> {
+        self.join_tables = read_join_tables(
+            stdin,
+            stdin_is_tty,
+            command_consumes_stdin,
+            &self.shape.joins,
+        )?;
+        Ok(())
+    }
+
+    /// Record the target the run resolved, so every terminal envelope names it.
+    ///
+    /// `source` is the wire token of where the target came from (`argv` when
+    /// the caller named it, `workspace` when the run fell back to the
+    /// workspace root). Terminal success and failure envelopes carry both keys
+    /// once this is set, and omit them while it is not.
+    pub fn set_target(&mut self, resolved: String, source: &'static str) {
+        self.target_resolved = Some(resolved);
+        self.target_source = Some(source);
+    }
+
+    /// Record where the workspace root came from, so terminal envelopes name it.
+    ///
+    /// `source` is `argv` when the caller passed `--workspace` and `cwd` when
+    /// the root was inherited from the process working directory (ETD step 2).
+    pub fn set_workspace(&mut self, source: &'static str) {
+        self.workspace_source = Some(source);
     }
 
     /// Serialize a value as a single NDJSON line and flush.
@@ -46,28 +146,355 @@ impl<W: Write> NdjsonWriter<W> {
     ///
     /// Returns an I/O error if serialization or writing to the underlying writer fails.
     pub fn write_event<T: Serialize>(&mut self, event: &T) -> anyhow::Result<()> {
-        if let Some(max) = self.shape.limit
-            && self.emitted >= max
-        {
-            return Ok(());
-        }
-        if self.shape.is_identity() {
-            self.write_raw_line(event)?;
-            self.emitted = self.emitted.saturating_add(1);
-            return Ok(());
-        }
         let value = serde_json::to_value(event)?;
-        let Some(shaped) = shape_value(value, &self.shape) else {
-            return Ok(());
-        };
-        if let Some(max) = self.shape.limit
-            && self.emitted >= max
-        {
+        self.emit_stamped(value, Charge::Data)
+    }
+
+    /// Write a framing record that does not spend the `--limit` budget.
+    ///
+    /// `search` brackets each file with `begin` and `end` anchors. Those records
+    /// frame the answer; they are not the answer. Charging the budget for them
+    /// made `search --limit 1` spend its whole allowance on one `begin` and
+    /// print no `match` at all, which is the opposite of what the flag promises.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if serialization or writing to the underlying
+    /// writer fails.
+    pub fn write_framing_event<T: Serialize>(&mut self, event: &T) -> anyhow::Result<()> {
+        let value = serde_json::to_value(event)?;
+        self.emit_stamped(value, Charge::Framing)
+    }
+
+    /// Re-emit a child command's record that the child already charged.
+    ///
+    /// `recipe` and `codemod` capture a child run into a buffer and forward the
+    /// lines. The child writer spent the `--limit` unit as it wrote, so this
+    /// path spends nothing: charging again made `--limit 4` print one terminal
+    /// and no records at all. Shaping still applies, and the record keeps
+    /// `framing: false`, so `--dedupe` and `--sort-by` treat it as an answer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if serialization or writing fails.
+    pub fn write_reemitted_event<T: Serialize>(&mut self, event: &T) -> anyhow::Result<()> {
+        let value = serde_json::to_value(event)?;
+        self.emit_stamped(value, Charge::AlreadyCharged)
+    }
+
+    /// Publish the summary of a run that fails, as its single terminal event.
+    ///
+    /// The record leaves with `ok: false`, the machine `code`, the process
+    /// `exit` status and the failure detail (`error_class`, `retryable`,
+    /// `suggestion`, `suggestion_lang`, `conflict_count`, `match_count`,
+    /// `pairs_*`) stamped on it, so one line carries both the counts and the
+    /// verdict. The returned error is `err` tagged with [`VerdictPublished`]:
+    /// `main` sees the tag and writes no second envelope for the same fact.
+    ///
+    /// The failure path ignores `--filter` and `--limit`, like
+    /// [`Self::write_event_unshaped`], because shaping describes how to present
+    /// an answer and this record says there is none. `--select` and `--redact`
+    /// still apply. When the record cannot be written (a closed pipe), the
+    /// write error is returned instead, and it wins over `err`.
+    pub fn publish_failure<T: Serialize>(
+        &mut self,
+        event: &T,
+        err: anyhow::Error,
+    ) -> anyhow::Error {
+        match self.write_failure_event(event, &err) {
+            Ok(()) => err.context(VerdictPublished),
+            Err(write_err) => write_err,
+        }
+    }
+
+    /// Stamp the failure on `event` and write it as the terminal line.
+    fn write_failure_event<T: Serialize>(
+        &mut self,
+        event: &T,
+        err: &anyhow::Error,
+    ) -> anyhow::Result<()> {
+        let mut value = serde_json::to_value(event)?;
+        stamp_failure(&mut value, err);
+        // A tail pass (`--sort-by`, `--dedupe`, ...) writes its held-back events
+        // at flush time, so the failure record joins them to keep the stream order.
+        // It also joins them as a TERMINAL: `--filter` and `--aggregate` must not
+        // reach the record that says the run did not answer.
+        if self.shape.is_tail_flush() {
+            self.stamp_target(&mut value);
+            self.stamp_cut_counters(&mut value);
+            crate::output::scrub_envelope_keys(&mut value);
+            self.buffered.push(PositionedValue {
+                terminal: true,
+                framing: false,
+                value,
+                line_index: self.line_index,
+            });
+            self.line_index = self.line_index.saturating_add(1);
             return Ok(());
         }
+        self.stamp_target(&mut value);
+        self.stamp_cut_counters(&mut value);
+        let shaped = shape_error_value(value, &self.shape);
         self.write_raw_line(&shaped)?;
         self.emitted = self.emitted.saturating_add(1);
         Ok(())
+    }
+
+    /// Stamp, scrub and shape one event value, then write it.
+    ///
+    /// `charged` is false for a framing record: it still respects `--select` and
+    /// the key floor, but it neither spends nor checks the `--limit` budget.
+    fn emit_stamped(&mut self, mut value: Value, charge: Charge) -> anyhow::Result<()> {
+        let charged = matches!(charge, Charge::Data);
+        // B1: the success envelope carries the same `ok` verdict the error
+        // envelope already carries as `ok: false`, so one key decides between
+        // success and remediation across every subcommand. The verdict is
+        // attached HERE — the single point every emitted record passes through —
+        // so a new subcommand inherits it without its author remembering, which
+        // is the cause the defect came from.
+        //
+        // Stamping happens BEFORE the shape runs, because `--filter` may select
+        // on the verdict, and a filter that reads a key the writer has not
+        // written yet would silently match nothing.
+        stamp_ok(&mut value);
+        self.stamp_target(&mut value);
+        // Unconditional key floor: a credential-shaped top-level key is redacted
+        // on EVERY envelope, with or without `--redact` and with or without any
+        // other shaping flag. Forgetting the flag must fail closed, and before
+        // this ran only on the shaped path, the common invocation — no flags at
+        // all — was exactly the one that leaked. A floor that depends on an
+        // unrelated flag is not a floor: `--limit 5` used to redact while a bare
+        // call did not.
+        //
+        // Only the key name decides here. Redacting on value shape as well would
+        // corrupt legitimate data an agent asked to read verbatim, so
+        // value-pattern redaction stays behind the explicit `--redact` opt-in.
+        crate::output::scrub_envelope_keys(&mut value);
+
+        // A tail operation cannot answer from one event: order needs the whole
+        // set, dedupe needs the keys already seen, and the stream comparison
+        // needs the stream. Those events are held back and the tail pass in
+        // `flush` writes them, so a subcommand inherits stream shaping without
+        // doing anything.
+        if self.shape.is_tail_flush() {
+            self.buffered.push(PositionedValue {
+                value,
+                line_index: self.line_index,
+                terminal: false,
+                framing: matches!(charge, Charge::Framing),
+            });
+            self.line_index = self.line_index.saturating_add(1);
+            return Ok(());
+        }
+
+        for table in &self.join_tables {
+            apply_join(&mut value, table);
+        }
+        // A charged record that arrives with no budget left is work the consumer
+        // may not read, so it is not written. The check asks how much budget
+        // REMAINS, not whether the limit flag rose: a verb that cuts a collected
+        // list with `cap_collected` raises the flag to report the truncation,
+        // and that list is exactly the one whose records must still be written.
+        if charged && remaining_budget() == Some(0) {
+            crate::output::note_stream_cut();
+            return Ok(());
+        }
+        if self.shape.is_identity() {
+            self.write_raw_line(&value)?;
+            self.emitted = self.emitted.saturating_add(1);
+            if charged {
+                let _filled = spend_budget();
+            }
+            return Ok(());
+        }
+        let Some(shaped) = shape_value(value, &self.shape) else {
+            self.suppressed = self.suppressed.saturating_add(1);
+            return Ok(());
+        };
+        self.write_raw_line(&shaped)?;
+        self.emitted = self.emitted.saturating_add(1);
+        // Charge the record that was just written, not the one that would be
+        // dropped: the walk has to stop at the N-th record, so a verb that
+        // already produced the whole answer keeps working on files whose
+        // records the consumer may read.
+        if charged {
+            let _filled = spend_budget();
+        }
+        Ok(())
+    }
+
+    /// Emit a terminal record that shaping must not be allowed to drop.
+    ///
+    /// Same key floor and the same `ok` verdict as [`Self::write_event`], and
+    /// no shaping at all: no `--filter`, no `--select`, no `--limit`, no tail
+    /// buffering. Reserved for the cancel envelope, which reports that the run
+    /// was interrupted rather than answering the question the run was asked.
+    /// Shaping describes how to present an answer, so letting it remove the
+    /// record that says there is no complete answer would hand the consumer a
+    /// partial result wearing the shape of a finished one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if writing to the underlying writer fails.
+    pub fn write_event_unshaped<T: Serialize>(&mut self, event: &T) -> anyhow::Result<()> {
+        let mut value = serde_json::to_value(event)?;
+        stamp_ok(&mut value);
+        self.stamp_target(&mut value);
+        crate::output::scrub_envelope_keys(&mut value);
+        self.write_raw_line(&value)?;
+        self.emitted = self.emitted.saturating_add(1);
+        Ok(())
+    }
+
+    /// Write bytes to the same stream the NDJSON records go to.
+    ///
+    /// Used by the modes whose payload is not a record: `read --format raw`
+    /// hands the file's bytes over, and `search --format text` writes lines of
+    /// text. The buffer is drained first, so nothing a record left behind can
+    /// land after the raw payload and corrupt it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the flush or the write fails.
+    pub fn write_text_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.writer.flush()?;
+        self.writer.get_mut().write_all(bytes)?;
+        self.writer.get_mut().flush()
+    }
+
+    /// Emit the terminal record of the run.
+    ///
+    /// `--filter`, `--select` and `--limit` describe how to present the answer,
+    /// so none of them may remove the record that says the answer is complete
+    /// (or that the limit cut it short). The tail pass still owns the order:
+    /// with `--sort-by` the record joins the held-back events.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if writing to the underlying writer fails.
+    pub fn write_terminal<T: Serialize>(&mut self, event: &T) -> anyhow::Result<()> {
+        let mut value = serde_json::to_value(event)?;
+        stamp_ok(&mut value);
+        self.stamp_target(&mut value);
+        self.stamp_cut_counters(&mut value);
+        crate::output::scrub_envelope_keys(&mut value);
+        if self.shape.is_tail_flush() {
+            self.buffered.push(PositionedValue {
+                terminal: true,
+                framing: false,
+                value,
+                line_index: self.line_index,
+            });
+            self.line_index = self.line_index.saturating_add(1);
+            return Ok(());
+        }
+        self.write_raw_line(&value)?;
+        self.emitted = self.emitted.saturating_add(1);
+        Ok(())
+    }
+
+    /// Emit the terminal record only when `--filter` accepts it.
+    ///
+    /// `--filter` narrows the data stream, and the ordinary terminal path
+    /// deliberately ignores it, so the record that says the run ended survives
+    /// every filter. `search` is the exception the callers of this method ask
+    /// for: when a filter names a key the summary does not carry, the consumer
+    /// asked for a record that does not exist, and printing the summary anyway
+    /// answered a question that was never posed.
+    ///
+    /// A summary that names a failure is not a record about the answer, it is
+    /// the run's only error channel: `search --filter ok=true` over a tree with
+    /// an unreadable directory printed nothing at all and still exited 0, so the
+    /// caller lost the `PERMISSION_DENIED` entry `errors[]` was carrying.
+    /// `terminal_names_failure` therefore wins over the filter.
+    ///
+    /// The same predicate as [`shape_value`] decides the clean case, so
+    /// `--select` still projects and a summary that survives keeps its verdict.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the record cannot be written.
+    pub fn write_terminal_if_accepted<T: Serialize>(&mut self, event: &T) -> anyhow::Result<()> {
+        if !self.shape.filters.is_empty() {
+            let probe = serde_json::to_value(event)?;
+            if Self::terminal_names_failure(&probe) {
+                return self.write_terminal(event);
+            }
+            if shape_value(probe, &self.shape).is_none() {
+                return Ok(());
+            }
+            return self.write_terminal(event);
+        }
+        self.write_terminal(event)
+    }
+
+    /// Whether a terminal record carries a failure the caller has to see.
+    ///
+    /// Three shapes say so, and each one is a field the summaries already
+    /// publish: `ok: false` for a run that failed, a non-zero `files_failed` for
+    /// a run that answered but lost files, and a non-empty `errors[]` for the
+    /// entries that name each file.
+    fn terminal_names_failure(value: &serde_json::Value) -> bool {
+        let refused = value.get("ok") == Some(&serde_json::Value::Bool(false));
+        let lost = value
+            .get("files_failed")
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|count| count > 0);
+        let named = value
+            .get("errors")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|errors| !errors.is_empty());
+        refused || lost || named
+    }
+
+    /// Records the writer accepted on the data channel.
+    ///
+    /// A verb that reports how many entries it produced reads this instead of
+    /// counting its own attempts: `--limit` and `--filter` can drop a record
+    /// after the verb already counted it, and a summary that counts attempts
+    /// claims work the consumer never saw.
+    #[must_use]
+    pub fn emitted_count(&self) -> u64 {
+        self.emitted
+    }
+
+    /// Attach the counters that say how much of the answer the run withheld.
+    ///
+    /// Each key enters only when the count is above zero and only when the
+    /// record does not already carry it: a verb that measured its own number
+    /// keeps it, and the writer's count is the fallback for every other verb.
+    /// A key equal to zero is left out, because "nothing was withheld" is what
+    /// an absent key already says, and a zero on every line costs tokens.
+    fn stamp_cut_counters(&self, value: &mut Value) {
+        let Some(obj) = value.as_object_mut() else {
+            return;
+        };
+        if self.suppressed > 0 {
+            obj.entry("records_suppressed")
+                .or_insert(Value::from(self.suppressed));
+        }
+        let budget = budget_dropped();
+        if budget > 0 {
+            obj.entry("files_budget_dropped")
+                .or_insert(Value::from(budget));
+        }
+        let truncated = truncated_records();
+        if truncated > 0 {
+            obj.entry("truncated_records")
+                .or_insert(Value::from(truncated));
+        }
+    }
+
+    /// Attach the workspace origin and the resolved target to a terminal
+    /// envelope, when each was set.
+    fn stamp_target(&self, value: &mut Value) {
+        if let Some(source) = self.workspace_source {
+            stamp_workspace_key(value, source);
+        }
+        let (Some(resolved), Some(source)) = (&self.target_resolved, self.target_source) else {
+            return;
+        };
+        stamp_target_keys(value, resolved, source);
     }
 
     fn write_raw_line<T: Serialize>(&mut self, event: &T) -> anyhow::Result<()> {
@@ -129,261 +556,70 @@ impl<W: Write> NdjsonWriter<W> {
             json.path = path.map(|p| p.display().to_string());
         }
         // Bypass write_event: never filter-drop or limit-swallow errors.
+        //
+        // The key floor still runs, because an error envelope carries the same
+        // key surface and a credential-shaped key on it leaks just as much. It
+        // is applied to both branches, so the floor stops depending on whether a
+        // projection flag happened to be set.
         if self.shape.select.is_none() {
-            return self.write_raw_line(&json);
+            let mut value = serde_json::to_value(&json)?;
+            self.stamp_target(&mut value);
+            crate::output::scrub_envelope_keys(&mut value);
+            return self.write_raw_line(&value);
         }
-        let value = serde_json::to_value(&json)?;
+        let mut value = serde_json::to_value(&json)?;
+        self.stamp_target(&mut value);
         let shaped = shape_error_value(value, &self.shape);
         self.write_raw_line(&shaped)
     }
 
+    /// Drop the events held back for the tail pass and cancel that pass.
+    ///
+    /// Called when the run is cancelled: the held-back set is partial, and the
+    /// tail pass would write it AFTER the terminal `cancelled` record, which
+    /// must stay the last line of the stream. Events already written are not
+    /// affected, and a later `flush` only drains the byte buffer.
+    pub fn discard_pending(&mut self) {
+        self.buffered.clear();
+        self.tail_done = true;
+    }
+
     /// Flush the underlying buffer to the output stream.
+    ///
+    /// When a tail operation is active (`--sort-by` / `--dedupe` /
+    /// `--aggregate` / `--diff-against`), this runs the stream-wide pass first
+    /// and writes its result, so the held-back events leave the process in the
+    /// order and the shape the flags asked for. The pass runs once: a second
+    /// `flush` only drains the byte buffer.
     ///
     /// # Errors
     ///
     /// Returns an I/O error if flushing the underlying writer fails.
     pub fn flush(&mut self) -> anyhow::Result<()> {
-        self.writer.flush().map_err(|e| e.into())
-    }
-}
-
-/// Write a structured error as NDJSON directly to a raw writer.
-///
-/// # Errors
-///
-/// Returns an I/O error if writing the error JSON to the underlying writer fails.
-#[cold]
-pub fn write_error_json(
-    out: &mut impl Write,
-    err: &AtomwriteError,
-    path: Option<&Path>,
-) -> anyhow::Result<()> {
-    write_error_json_with_context(out, err, path, &ErrorContext::default())
-}
-
-/// Write a structured error as NDJSON directly to a raw writer, with context.
-///
-/// # Errors
-///
-/// Returns an I/O error if writing the error JSON to the underlying writer fails.
-#[cold]
-pub fn write_error_json_with_context(
-    out: &mut impl Write,
-    err: &AtomwriteError,
-    path: Option<&Path>,
-    ctx: &ErrorContext,
-) -> anyhow::Result<()> {
-    write_error_json_shaped(out, err, path, ctx, &OutputShape::default())
-}
-
-/// Write a structured error applying agent-native optional `--select` projection.
-///
-/// Used by `main` so failure envelopes stay on the same stdout contract as
-/// success events. **`--filter` never drops errors** (agent-native always-emit);
-/// **`--limit` does not apply** on this path. Only `--select`/`--fields` may
-/// thin top-level keys.
-///
-/// # Errors
-///
-/// Returns an I/O error if writing fails.
-#[cold]
-pub fn write_error_json_shaped(
-    out: &mut impl Write,
-    err: &AtomwriteError,
-    path: Option<&Path>,
-    ctx: &ErrorContext,
-    shape: &OutputShape,
-) -> anyhow::Result<()> {
-    let mut json = ErrorJson::from_error_with_context(err, ctx);
-    if json.path.is_none() {
-        json.path = path.map(|p| p.display().to_string());
-    }
-    if shape.select.is_none() {
-        serde_json::to_writer(&mut *out, &json)?;
-    } else {
-        let value = serde_json::to_value(&json)?;
-        let shaped = shape_error_value(value, shape);
-        serde_json::to_writer(&mut *out, &shaped)?;
-    }
-    out.write_all(b"\n")?;
-    out.flush()?;
-    Ok(())
-}
-
-/// Read a single line from a buffered reader with a **streaming** per-line size limit.
-///
-/// Reuses the provided `buf` (cleared before each call). Returns the number
-/// of bytes read (0 means EOF). Returns an error if the line exceeds
-/// `max_bytes` **before** the full line is buffered (DoS-safe — unlike
-/// `BufRead::read_line`, which can allocate unbounded data first).
-///
-/// CRLF is normalized: a trailing `\r` before `\n` is discarded so Windows
-/// NDJSON pipelines parse as LF-delimited records.
-///
-/// A leading UTF-8 BOM (`U+FEFF`) is stripped when present at the start of
-/// the line (common on Windows-exported manifests).
-pub fn read_limited_line(
-    reader: &mut impl std::io::BufRead,
-    buf: &mut String,
-    max_bytes: usize,
-) -> std::io::Result<usize> {
-    buf.clear();
-    // Accumulate raw bytes first so multi-byte UTF-8 sequences that straddle
-    // `BufRead` buffer boundaries are decoded only once, at end-of-line.
-    let mut raw: Vec<u8> = Vec::new();
-    let mut total = 0usize;
-    loop {
-        let available = {
-            let filled = reader.fill_buf()?;
-            if filled.is_empty() {
-                if total == 0 {
-                    return Ok(0);
-                }
-                return finalize_line_bytes(&raw, buf, total);
-            }
-            filled
-        };
-
-        if let Some(nl) = memchr::memchr(b'\n', available) {
-            let chunk_len = nl + 1; // include '\n'
-            if total.saturating_add(chunk_len) > max_bytes {
-                reader.consume(chunk_len);
-                return Err(std::io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "NDJSON line exceeds maximum size of {max_bytes} bytes ({} bytes read)",
-                        total.saturating_add(chunk_len)
-                    ),
-                ));
-            }
-            raw.extend_from_slice(&available[..nl]);
-            reader.consume(chunk_len);
-            total += chunk_len;
-            return finalize_line_bytes(&raw, buf, total);
-        }
-
-        let n = available.len();
-        if total.saturating_add(n) > max_bytes {
-            reader.consume(n);
-            total = total.saturating_add(n);
-            drain_until_newline(reader, &mut total, max_bytes)?;
-            return Err(std::io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "NDJSON line exceeds maximum size of {max_bytes} bytes ({total} bytes read)"
-                ),
-            ));
-        }
-        raw.extend_from_slice(available);
-        reader.consume(n);
-        total += n;
-    }
-}
-
-fn finalize_line_bytes(raw: &[u8], buf: &mut String, total: usize) -> std::io::Result<usize> {
-    let mut slice = raw;
-    // Drop trailing CR from CRLF (already excluded LF).
-    if slice.last() == Some(&b'\r') {
-        slice = &slice[..slice.len() - 1];
-    }
-    // Strip UTF-8 BOM bytes if present at the start of the record.
-    if slice.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        slice = &slice[3..];
-    }
-    match std::str::from_utf8(slice) {
-        Ok(s) => {
-            buf.push_str(s);
-            Ok(total)
-        }
-        Err(e) => Err(std::io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("NDJSON line is not valid UTF-8: {e}"),
-        )),
-    }
-}
-
-/// Strip a leading UTF-8 BOM character from an NDJSON line (after decode).
-///
-/// Cross-platform: Windows editors may emit a UTF-8 BOM; strip it before JSON parse.
-#[inline]
-pub fn strip_utf8_bom_str(s: &str) -> &str {
-    s.strip_prefix('\u{FEFF}').unwrap_or(s)
-}
-
-/// Convert a dotted config path (`a.b.c`) into an RFC 6901 JSON Pointer
-/// (`/a/b/c`), escaping `~` → `~0` and `/` → `~1` in each segment.
-#[inline]
-pub fn dotted_to_json_pointer(path: &str) -> String {
-    let mut out = String::with_capacity(path.len() + 1);
-    for seg in path.split('.') {
-        out.push('/');
-        // RFC 6901: escape `~` first, then `/`.
-        for ch in seg.chars() {
-            match ch {
-                '~' => out.push_str("~0"),
-                '/' => out.push_str("~1"),
-                c => out.push(c),
+        if self.shape.is_tail_flush() && !self.tail_done {
+            self.tail_done = true;
+            let outcome = crate::output::flush_positioned(
+                &mut self.writer,
+                std::mem::take(&mut self.buffered),
+                &self.shape,
+                &self.join_tables,
+            )?;
+            self.emitted = self.emitted.saturating_add(outcome.emitted);
+            if outcome.limit_hit {
+                mark_limit_reached();
             }
         }
-    }
-    out
-}
-
-/// Check that a JSON value's nesting depth does not exceed `max`.
-///
-/// Leaf values have depth 1. An object/array that contains only leaves has
-/// depth 2. Used to reject pathological nesting on untrusted JSON input
-/// (manifests, config files, extract stdin).
-pub fn check_json_depth(value: &serde_json::Value, max: usize) -> bool {
-    fn recurse(v: &serde_json::Value, remaining: usize) -> bool {
-        if remaining == 0 {
-            return false;
-        }
-        match v {
-            serde_json::Value::Array(arr) => arr.iter().all(|item| recurse(item, remaining - 1)),
-            serde_json::Value::Object(map) => map.values().all(|val| recurse(val, remaining - 1)),
-            _ => true,
-        }
-    }
-    recurse(value, max)
-}
-
-/// Consume bytes until `\n` or EOF after a size-limit violation so subsequent
-/// reads do not resume mid-line.
-fn drain_until_newline(
-    reader: &mut impl std::io::BufRead,
-    total: &mut usize,
-    max_bytes: usize,
-) -> std::io::Result<()> {
-    // Cap drain work: once we are well past the limit we still seek the
-    // newline, but stop if the overrun itself is pathological (16× max).
-    let hard_cap = max_bytes.saturating_mul(16).max(max_bytes + 1);
-    loop {
-        let available = {
-            let filled = reader.fill_buf()?;
-            if filled.is_empty() {
-                return Ok(());
+        match self.writer.flush() {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                Err(crate::error::AtomwriteError::BrokenPipe.into())
             }
-            filled
-        };
-        if let Some(nl) = memchr::memchr(b'\n', available) {
-            reader.consume(nl + 1);
-            *total = total.saturating_add(nl + 1);
-            return Ok(());
-        }
-        let n = available.len();
-        reader.consume(n);
-        *total = total.saturating_add(n);
-        if *total >= hard_cap {
-            return Err(std::io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "NDJSON line exceeds maximum size of {max_bytes} bytes and has no terminator within {hard_cap} bytes"
-                ),
-            ));
+            Err(e) => Err(e.into()),
         }
     }
 }
+
+include!("output_error.inc.rs");
 
 fn is_broken_pipe(err: &serde_json::Error) -> bool {
     matches!(err.io_error_kind(), Some(io::ErrorKind::BrokenPipe))
@@ -407,74 +643,4 @@ pub fn ndjson_insert_field(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Cursor;
-
-    #[test]
-    fn read_limited_line_basic_lf() {
-        let mut r = Cursor::new(b"{\"a\":1}\n{\"b\":2}\n");
-        let mut buf = String::new();
-        let n = read_limited_line(&mut r, &mut buf, 1024).unwrap();
-        assert!(n > 0);
-        assert_eq!(buf, "{\"a\":1}");
-        let n = read_limited_line(&mut r, &mut buf, 1024).unwrap();
-        assert!(n > 0);
-        assert_eq!(buf, "{\"b\":2}");
-        assert_eq!(read_limited_line(&mut r, &mut buf, 1024).unwrap(), 0);
-    }
-
-    #[test]
-    fn read_limited_line_crlf_and_bom() {
-        let mut r = Cursor::new(b"\xEF\xBB\xBF{\"x\":1}\r\n");
-        let mut buf = String::new();
-        read_limited_line(&mut r, &mut buf, 1024).unwrap();
-        assert_eq!(buf, "{\"x\":1}");
-    }
-
-    #[test]
-    fn read_limited_line_rejects_oversize_before_full_buffer() {
-        // Line larger than max without needing a multi-GB allocation first.
-        let mut payload = vec![b'a'; 64];
-        payload.push(b'\n');
-        let mut r = Cursor::new(payload);
-        let mut buf = String::new();
-        let err = read_limited_line(&mut r, &mut buf, 32).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        // Stream recovered: next read is EOF (newline was consumed).
-        assert_eq!(read_limited_line(&mut r, &mut buf, 32).unwrap(), 0);
-    }
-
-    #[test]
-    fn check_json_depth_limits_nesting() {
-        let shallow: serde_json::Value = serde_json::from_str(r#"{"a":{"b":1}}"#).expect("fixture");
-        assert!(check_json_depth(&shallow, 3));
-        assert!(!check_json_depth(&shallow, 2));
-        let leaf = serde_json::Value::from(1);
-        assert!(check_json_depth(&leaf, 1));
-    }
-
-    #[test]
-    fn ndjson_insert_field_tags_object() {
-        let tagged = ndjson_insert_field(r#"{"type":"x","path":"/t"}"#, "step", 2.into())
-            .expect("object line");
-        assert_eq!(tagged["step"], 2);
-        assert_eq!(tagged["type"], "x");
-        assert!(ndjson_insert_field("[]", "step", 1.into()).is_none());
-    }
-
-    #[test]
-    fn strip_utf8_bom_str_prefix() {
-        assert_eq!(strip_utf8_bom_str("\u{FEFF}{\"a\":1}"), "{\"a\":1}");
-        assert_eq!(strip_utf8_bom_str("{\"a\":1}"), "{\"a\":1}");
-    }
-
-    #[test]
-    fn dotted_to_json_pointer_escapes_rfc6901() {
-        assert_eq!(dotted_to_json_pointer("a.b.c"), "/a/b/c");
-        assert_eq!(dotted_to_json_pointer("a/b"), "/a~1b");
-        assert_eq!(dotted_to_json_pointer("a~b"), "/a~0b");
-        assert_eq!(dotted_to_json_pointer("x.y/z~w"), "/x/y~1z~0w");
-    }
-}
+include!("output_tests.inc.rs");

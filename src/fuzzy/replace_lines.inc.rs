@@ -7,7 +7,11 @@ pub fn apply_line_replacement(
     new: &str,
 ) -> String {
     // G-FZZ-037: preserve dominant line ending (CRLF vs LF) instead of always joining with LF.
-    let nl = if original.contains("\r\n") { "\r\n" } else { "\n" };
+    let nl = if original.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
     let before = content_lines[..start].join(nl);
     let after = content_lines[end..].join(nl);
     // Normalize `new` internal newlines to the file's dominant ending.
@@ -16,7 +20,9 @@ pub fn apply_line_replacement(
     } else {
         new.replace("\r\n", "\n")
     };
-    let mut out = String::with_capacity(before.len() + new_norm.len() + after.len() + 4);
+    let mut out = String::with_capacity(
+        before.len() + new_norm.len() + after.len() + crate::constants::FUZZY_LINES_SLACK_BYTES,
+    );
     if !before.is_empty() {
         out.push_str(&before);
         out.push_str(nl);
@@ -32,4 +38,3 @@ pub fn apply_line_replacement(
     }
     out
 }
-

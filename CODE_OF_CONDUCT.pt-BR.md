@@ -1,7 +1,8 @@
 [Read in English](CODE_OF_CONDUCT.md)
 
 
-# Pacto do Contribuidor -- Código de Conduta
+# Pacto do Contribuidor: Código de Conduta
+
 
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.pt-BR.md)
 

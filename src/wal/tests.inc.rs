@@ -1,6 +1,12 @@
 #[cfg(test)]
 use anyhow::Context as _;
 
+/// Read every non-blank journal line as one [`JournalEntry`] (test helper).
+///
+/// # Errors
+///
+/// Returns an I/O error when the journal cannot be read, and an error when a
+/// line is not valid JSON for [`JournalEntry`].
 #[cfg(test)]
 pub(crate) fn read_entries(path: &std::path::Path) -> anyhow::Result<Vec<JournalEntry>> {
     let content = std::fs::read_to_string(path)
@@ -250,22 +256,49 @@ mod tests {
 
     #[test]
     fn l4_h3_rate_limit_returns_false_below_threshold() {
-        // First call in a fresh window must not be throttled. We can't
-        // mutate env (deny(unsafe_code)) so we rely on the default
-        // threshold of 10/min — a single call is well below it.
-        let result = heuristics::h3_rate_limit();
-        assert!(
-            !result,
-            "first call in a fresh window must not be throttled (default K=10/min)"
-        );
+        // A private window: the process-wide one is shared with every
+        // `atomic_write` of the other unit tests, so asserting on it is racy.
+        let window = heuristics::RateWindow::new();
+        let now = 1_000_000;
+        for hit in 1..=crate::constants::WAL_RATE_LIMIT_DEFAULT {
+            assert!(
+                !window.hit(now, crate::constants::WAL_RATE_LIMIT_DEFAULT),
+                "hit {hit} is within the cap and must not be throttled"
+            );
+        }
+    }
+
+    #[test]
+    fn l4_h3_rate_limit_throttles_past_the_cap_and_resets_after_the_window() {
+        let window = heuristics::RateWindow::new();
+        let now = 1_000_000;
+        let cap = crate::constants::WAL_RATE_LIMIT_DEFAULT;
+        for _ in 0..cap {
+            assert!(!window.hit(now, cap));
+        }
+        assert!(window.hit(now, cap), "the hit past the cap is throttled");
+        let later = now + crate::constants::WAL_RATE_WINDOW_SECS;
+        assert!(!window.hit(later, cap), "a new window starts unthrottled");
+        assert!(!window.hit(now, 0), "a zero cap disables the limit");
     }
 
     #[test]
     fn l4_h4_sentinel_returns_true_when_file_exists() {
         let tmp = TempDir::new().unwrap();
         let target = tmp.path().join("data.txt");
-        std::fs::write(tmp.path().join(".atomwrite_no_wal"), "").unwrap();
+        std::fs::write(tmp.path().join(crate::constants::WAL_KEEP_SENTINEL), "").unwrap();
         assert!(heuristics::h4_sentinel(&target));
+    }
+
+    #[test]
+    fn l4_h4_sentinel_honours_the_legacy_name() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("data.txt");
+        std::fs::write(tmp.path().join(crate::constants::WAL_LEGACY_SENTINEL), "").unwrap();
+        assert!(
+            heuristics::h4_sentinel(&target),
+            "a directory that holds the old sentinel keeps the behaviour it always had"
+        );
     }
 
     #[test]

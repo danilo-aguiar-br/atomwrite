@@ -61,9 +61,6 @@ pub struct ReadOutput {
     /// "line" | "lines" | "grep" | "stat" | "raw". Allows downstream consumers to
     /// distinguish partial reads from full reads without parsing content.
     pub mode: String,
-    /// Base64 payload for binary `--format raw` under NDJSON agent contract (G-013).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content_b64: Option<String>,
 }
 
 /// NDJSON output for a per-file replace operation.
@@ -104,6 +101,9 @@ pub struct ReplaceResult {
     /// True when `--word` was ignored because fuzzy path was used (v0.1.29).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub word_ignored: Option<bool>,
+    /// Local diagnostic for a payload that looks destructive (B-013).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk_assessment: Option<WriteRiskAssessment>,
 }
 
 /// NDJSON output for a surgical edit operation.
@@ -162,6 +162,9 @@ pub struct EditOutput {
     /// True when fuzzy indent delta realigned the replacement text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indent_adjusted: Option<bool>,
+    /// Local diagnostic for a payload that looks destructive (B-013).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk_assessment: Option<WriteRiskAssessment>,
 }
 
 /// NDJSON output for a rollback (restore from backup) operation.
@@ -210,6 +213,7 @@ pub struct BatchSummary {
 
 /// NDJSON summary for a diff operation.
 #[derive(Debug, Serialize, JsonSchema)]
+#[schemars(inline)]
 pub struct DiffSummaryOutput {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -227,6 +231,14 @@ pub struct DiffSummaryOutput {
     pub similarity_ratio: f32,
     /// Duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Present and true when the run spent the whole diff budget.
+    ///
+    /// The engine takes a deadline, and it does not report whether it gave up,
+    /// so this is the measured fact: the run consumed
+    /// `DIFF_SIMILARITY_TIMEOUT_MS` or more, and `similarity_ratio` is then a
+    /// floor instead of a final value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timed_out: Option<bool>,
 }
 
 /// NDJSON output for a completed move operation.
@@ -264,6 +276,26 @@ pub struct CountTotalOutput {
     pub total: CountTotals,
     /// Duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Files the walk saw but could not read; present only when some failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_failed: Option<u64>,
+    /// First read failures, capped; `files_failed` is the full count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<FileFailure>>,
+    /// The run answered from part of its targets, so the answer is partial.
+    ///
+    /// Present exactly when `files_failed` is present, so a consumer reads one
+    /// flag instead of comparing two counters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial: Option<bool>,
+    /// Present and true when the walker itself quit before the tree ended.
+    ///
+    /// It is read off the walk, never off the writer's output budget: a walk
+    /// that visited every file reports `false` (or omits the field) even when
+    /// `--limit` dropped records. A path that collects the whole tree and only
+    /// then slices the page never sets it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub walker_stopped_early: Option<bool>,
 }
 
 /// NDJSON output for count sorted by file size (top-N).
@@ -276,8 +308,28 @@ pub struct CountBySizeOutput {
     pub mode: &'static str,
     /// Top-N files by descending size.
     pub items: Vec<SizeEntry>,
+    /// Totals over every file counted, before the top-N cut.
+    pub total: CountTotals,
+    /// Files the `--top` cut left out of `items`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items_omitted: Option<u64>,
     /// Duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Files the walk saw but could not read; present only when some failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_failed: Option<u64>,
+    /// First read failures, capped; `files_failed` is the full count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<FileFailure>>,
+    /// The run answered from part of its targets, so the answer is partial.
+    ///
+    /// Present exactly when `files_failed` is present, so a consumer reads one
+    /// flag instead of comparing two counters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial: Option<bool>,
+    /// Present and true when the walker itself quit before the tree ended.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub walker_stopped_early: Option<bool>,
 }
 
 /// NDJSON dry-run plan for backup operations.
@@ -388,6 +440,43 @@ pub struct SemanticSummaryEvent {
     pub results: usize,
     /// Ranking backend label.
     pub backend: &'static str,
+    /// Files the ranking could not read; present only when some failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_failed: Option<u64>,
+    /// First read failures, capped; `files_failed` is the full count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<FileFailure>>,
+    /// The run answered from part of its targets, so the answer is partial.
+    ///
+    /// Present exactly when `files_failed` is present, so a consumer reads one
+    /// flag instead of comparing two counters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial: Option<bool>,
+    /// Present and true when the walker itself quit before the tree ended.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub walker_stopped_early: Option<bool>,
+    /// Files the ranking scored, when the run scanned the tree.
+    ///
+    /// Omitted on the inverted-index path, which reads no file: `results`
+    /// against this tells how much of the scan reached the answer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_scanned: Option<u64>,
+    /// Hits the ranking held before the `k` cut.
+    ///
+    /// The invariant is `results == min(hits_before_cut, k)`, so a larger
+    /// value here proves the answer was truncated and the equality proves the
+    /// caller saw the whole ranking.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hits_before_cut: Option<u64>,
+    /// Candidate files the `--limit` budget cut before scoring.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_budget_dropped: Option<u64>,
+    /// Scored lines the `--min-score` floor kept out of the ranking.
+    ///
+    /// Present only when the floor rejected something, so an empty answer
+    /// says whether the corpus was empty or the floor was too high.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub below_min_score: Option<u64>,
 }
 
 /// Built-in recipe listing row (`recipe list`).
@@ -431,6 +520,12 @@ pub struct CodemodSummaryEvent {
     pub dry_run: bool,
     /// Stats keyed by rule id.
     pub by_rule_id: std::collections::BTreeMap<String, CodemodRuleStats>,
+    /// Terminal record the delegated `transform` run published.
+    ///
+    /// Folded in instead of printed beside this line, so the campaign still
+    /// ends in exactly one terminal record.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform_summary: Option<serde_json::Value>,
 }
 
 /// Multi-rule transform: rule failure (partial success continues).

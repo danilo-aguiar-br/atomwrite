@@ -30,7 +30,10 @@ pub struct ErrorJson {
     /// 1-based index of the failed `--old`/`--new` pair (multi-pair edit, G117).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failed_pair_index: Option<u64>,
-    /// Total number of `--old`/`--new` pairs in the invocation (multi-pair edit, G117).
+    /// Total number of `--old`/`--new` pairs in the invocation.
+    ///
+    /// Emitted by multi-pair edit (G117) and by a partial `edit-loop` run
+    /// (v0.1.36) — one key, two producers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pairs_total: Option<u64>,
     /// Per-pair diagnostics up to and including the failed pair (multi-pair edit, G117).
@@ -49,6 +52,38 @@ pub struct ErrorJson {
     /// Similar basenames when path is missing (v0.1.30).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub similar_paths: Option<Vec<String>>,
+    /// Number of conflicting regions a three-way merge could not align (v0.1.36).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict_count: Option<u64>,
+    /// Flag literal the operation required but did not receive (v0.1.36).
+    ///
+    /// Present only for [`AtomwriteError::MissingFlag`]; the duplicate `code`
+    /// on that variant is deliberate — callers branch on `missing_flag` and
+    /// still see the `INVALID_INPUT` family in `code`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missing_flag: Option<String>,
+    /// Pairs that did not match in a partial `edit-loop` run (v0.1.36).
+    ///
+    /// `pairs_total` already exists above for the multi-pair edit family and
+    /// is reused by this variant instead of being duplicated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairs_unmatched: Option<u64>,
+    /// Pairs that were written to the target before the error (v0.1.37).
+    ///
+    /// Always `0` for the all-or-nothing `EditPairFailed` abort (nothing is
+    /// written) and `total - unmatched` for `edit-loop --partial`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairs_applied: Option<u64>,
+    /// UI language the catalogue-derived `suggestion` was rendered in (B4).
+    ///
+    /// The two human strings on this envelope do not share a source: `message`
+    /// is built from the error variant, which is English by contract, while
+    /// `suggestion` comes from the i18n catalogue and follows the resolved UI
+    /// language. One envelope can therefore carry an English `message` and a
+    /// Portuguese `suggestion`. Without this field a consumer cannot tell which
+    /// language the suggestion is in, and cannot decide whether to re-render
+    /// it. `code` and every other field stay machine literals.
+    pub suggestion_lang: &'static str,
 }
 
 impl ErrorJson {
@@ -91,7 +126,27 @@ impl ErrorJson {
                 Some(*total),
                 Some(pair_results.as_ref().clone()),
             ),
+            AtomwriteError::EditLoopPartial { total, .. } => (None, Some(*total), None),
             _ => (None, None, None),
+        };
+        let conflict_count = match err {
+            AtomwriteError::MergeConflict { count, .. } => Some(*count),
+            _ => None,
+        };
+        let missing_flag = match err {
+            AtomwriteError::MissingFlag { flag, .. } => Some(flag.clone()),
+            _ => None,
+        };
+        let pairs_unmatched = match err {
+            AtomwriteError::EditLoopPartial { unmatched, .. } => Some(*unmatched),
+            _ => None,
+        };
+        let pairs_applied = match err {
+            AtomwriteError::EditPairFailed { .. } => Some(0),
+            AtomwriteError::EditLoopPartial { unmatched, total } => {
+                Some(total.saturating_sub(*unmatched))
+            }
+            _ => None,
         };
         let best_candidate = match err {
             AtomwriteError::MatchFailed { best_candidate, .. }
@@ -129,6 +184,11 @@ impl ErrorJson {
             candidates,
             match_count,
             similar_paths: similar_paths_for(err, ctx),
+            conflict_count,
+            missing_flag,
+            pairs_unmatched,
+            pairs_applied,
+            suggestion_lang: crate::locale::resolved_language().as_str(),
         }
     }
 }

@@ -1,50 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Included by write.rs (SRP split — A-MONO-001).
 
-/// B-013 / R-XDG-013: classify destructive shell-like payloads (local diagnostics, not telemetry).
-///
-/// Patterns come from XDG / `.atomwrite.toml` `[write].content_risk_patterns` when set;
-/// otherwise the built-in defaults in [`crate::constants::WRITE_CONTENT_RISK_PATTERNS`].
-fn assess_content_risk(
-    content: &[u8],
-    original_bytes: u64,
-    new_bytes: u64,
-    write_cfg: &crate::config::WriteSection,
-) -> Option<crate::ndjson_types::WriteRiskAssessment> {
-    let text = std::str::from_utf8(content).ok()?;
-    let matched = if write_cfg.content_risk_patterns.is_empty() {
-        crate::constants::WRITE_CONTENT_RISK_PATTERNS
-            .iter()
-            .any(|pat| text.contains(pat))
-    } else {
-        write_cfg
-            .content_risk_patterns
-            .iter()
-            .any(|pat| !pat.is_empty() && text.contains(pat.as_str()))
-    };
-    if matched {
-        return Some(crate::ndjson_types::WriteRiskAssessment {
-            original_bytes,
-            new_bytes,
-            size_delta_pct: 0,
-            risk_level: "high",
-            guard_triggered: "content_pattern",
-        });
-    }
-    // curl|sh style without requiring both tokens adjacent in the constant list.
-    if text.contains("curl")
-        && (text.contains("| sh") || text.contains("|sh") || text.contains("| bash"))
-    {
-        return Some(crate::ndjson_types::WriteRiskAssessment {
-            original_bytes,
-            new_bytes,
-            size_delta_pct: 0,
-            risk_level: "high",
-            guard_triggered: "content_pattern",
-        });
-    }
-    None
-}
+// `assess_content_risk` now lives in `write_guards`, next to
+// `check_replacement_size`: every verb that replaces content needs both, so the
+// two barriers are one module and no verb can take one and skip the other.
 
 /// Read all bytes from stdin, applying optional `max_size` cap and the G120
 /// L1 guard for empty input. Returns the buffer plus the actual byte count
@@ -57,61 +16,6 @@ fn assess_content_risk(
 /// expands to nothing, a failing `find`, etc.). Callers that genuinely
 /// intend to write zero bytes (e.g. truncating a file to empty) must pass
 /// `--allow-empty-stdin` to make the intent explicit.
-/// Read stdin in 64 KiB chunks, optionally honouring cooperative cancel (v0.1.29 P0-4).
-pub(crate) fn read_stdin_content_cancellable(
-    stdin: impl Read,
-    max_size: Option<u64>,
-    allow_empty: bool,
-    shutdown: Option<&crate::signal::ShutdownSignal>,
-) -> Result<(Vec<u8>, u64)> {
-    use std::io::Read as _;
-    let mut reader = BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
-    let mut buf = Vec::with_capacity(crate::constants::STDIN_INITIAL_CAPACITY);
-    if let Some(max) = max_size {
-        let reserve = usize::try_from(max.min(u64::from(u32::MAX))).unwrap_or(usize::MAX);
-        // Soft pre-reserve up to the cap so growth is one-shot when the
-        // payload is near max_size; failure is non-fatal (we still grow).
-        let _ = buf.try_reserve(reserve.min(crate::constants::STDIN_INITIAL_CAPACITY * 64));
-    }
-    // A-025: stdin read chunk aligned with BUF_CAPACITY.
-    let mut chunk = [0u8; crate::constants::BUF_CAPACITY];
-    loop {
-        if shutdown.is_some_and(|s| s.is_shutdown()) {
-            return Err(crate::signal::cancelled_error("stdin read cancelled by signal").into());
-        }
-        let n = reader.read(&mut chunk).context("failed to read stdin")?;
-        if n == 0 {
-            break;
-        }
-        buf.try_reserve(n).map_err(|e| AtomwriteError::InternalError {
-            reason: format!("allocation failed while reading stdin (+{n} bytes): {e}"),
-        })?;
-        buf.extend_from_slice(&chunk[..n]);
-        if let Some(max) = max_size {
-            if buf.len() as u64 > max {
-                return Err(AtomwriteError::InvalidInput {
-                    reason: format!(
-                        "stdin exceeds max size {} bytes (got {} bytes)",
-                        max,
-                        buf.len()
-                    ),
-                }
-                .into());
-            }
-        }
-    }
-    let n = buf.len();
-
-    if !allow_empty && n == 0 {
-        return Err(AtomwriteError::InvalidInput {
-            reason: "stdin produced 0 bytes; pass --allow-empty-stdin to confirm an empty write is intentional".into(),
-        }
-        .into());
-    }
-
-    Ok((buf, n as u64))
-}
-
 fn handle_append_prepend(
     target: &std::path::Path,
     new_content: &[u8],

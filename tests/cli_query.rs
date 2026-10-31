@@ -5,6 +5,8 @@
 //! Covers tree-sitter REAL AST traversal via `tree-sitter-language-pack`.
 //! Tests --kinds, --tree, --positions modes on Rust and Python.
 
+#![cfg(feature = "ast")]
+
 mod common;
 
 fn write_rust(dir: &std::path::Path) -> std::path::PathBuf {

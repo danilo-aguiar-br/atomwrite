@@ -42,15 +42,18 @@ pub struct RecipeRunArgs {
     /// Recipe name (built-in) or path to YAML documentation (`--name`).
     #[arg(long, value_name = "NAME")]
     pub name: Option<String>,
-    /// Positional recipe name (B-004 discoverability: `recipe run NAME`).
+    /// Recipe name as a positional argument (`recipe run NAME`).
     #[arg(value_name = "NAME")]
     pub name_positional: Option<String>,
     /// Dry-run all mutating steps.
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
-    /// Workspace-relative path root for recipe steps.
-    #[arg(long, default_value = ".", value_hint = ValueHint::AnyPath)]
-    pub path: PathBuf,
+    /// Path root for the recipe steps (required unless `--target` names the file).
+    ///
+    /// A recipe that rewrites files never inherits its root from the current
+    /// directory: omitting both `--path` and `--target` is a usage error.
+    #[arg(long, required_unless_present = "target", value_hint = ValueHint::AnyPath)]
+    pub path: Option<PathBuf>,
     /// Search/replace pattern (required for search-replace-verify).
     #[arg(long)]
     pub pattern: Option<String>,
@@ -94,6 +97,13 @@ pub struct RecipeStepResult {
     /// Optional BLAKE3 checksum produced by the step.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checksum: Option<String>,
+    /// Terminal record the child run published, kept whole.
+    ///
+    /// The child's `summary` already carries what the step found and how it
+    /// ended, so the recipe folds it into the step instead of printing a second
+    /// terminal line the consumer would have to pair up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub child_summary: Option<serde_json::Value>,
 }
 
 /// Final recipe envelope.
@@ -110,11 +120,27 @@ pub struct RecipeResult {
     /// Failed step id when status is partial/error.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failed_step_id: Option<u64>,
+    /// Steps not run because `--limit` stopped the stream first.
+    ///
+    /// The budget is an output ceiling, so running a later step would produce
+    /// records the consumer may not read. Absent when every step ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steps_skipped: Option<u64>,
     /// Wall-clock elapsed ms.
     pub elapsed_ms: u64,
 }
 
 /// Dispatch recipe actions.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::InvalidInput` when neither `--name` nor a positional NAME is given,
+/// when the NAME is unknown, or when a step requires a flag that was omitted
+/// (`--pattern`, `--replacement`, `--path`, `--target`).
+/// Returns `AtomwriteError::Cancelled` when shutdown interrupts a step.
+/// Returns every error the delegated child subcommand raises, including
+/// `AtomwriteError::WorkspaceJail`, `AtomwriteError::NotFound` and `AtomwriteError::Io`.
+/// Returns `AtomwriteError::BrokenPipe` when the consumer closes the NDJSON stream.
 #[tracing::instrument(skip_all, fields(command = "recipe"))]
 pub fn cmd_recipe(
     args: &RecipeArgs,
@@ -123,6 +149,7 @@ pub fn cmd_recipe(
     shutdown: &ShutdownSignal,
     defaults: &crate::config::DefaultsSection,
     fuzzy_cfg: &crate::config::FuzzySection,
+    write_cfg: &crate::config::WriteSection,
 ) -> Result<()> {
     match &args.action {
         RecipeAction::List => {
@@ -135,9 +162,15 @@ pub fn cmd_recipe(
             }
             Ok(())
         }
-        RecipeAction::Run(a) => {
-            run_recipe(a.as_ref(), global, writer, shutdown, defaults, fuzzy_cfg)
-        }
+        RecipeAction::Run(a) => run_recipe(
+            a.as_ref(),
+            global,
+            writer,
+            shutdown,
+            defaults,
+            fuzzy_cfg,
+            write_cfg,
+        ),
     }
 }
 
@@ -148,6 +181,7 @@ fn run_recipe(
     shutdown: &ShutdownSignal,
     defaults: &crate::config::DefaultsSection,
     fuzzy_cfg: &crate::config::FuzzySection,
+    write_cfg: &crate::config::WriteSection,
 ) -> Result<()> {
     let start = std::time::Instant::now();
     // B-004: accept `--name` or positional NAME.
@@ -167,12 +201,12 @@ fn run_recipe(
         .unwrap_or(raw_name);
 
     match name {
-        "search-replace-verify" => {
-            run_search_replace_verify(args, global, writer, shutdown, defaults, fuzzy_cfg, start)
-        }
-        "edit-loop-syntax-check" => {
-            run_edit_loop_syntax_check(args, global, writer, shutdown, defaults, fuzzy_cfg, start)
-        }
+        "search-replace-verify" => run_search_replace_verify(
+            args, global, writer, shutdown, defaults, fuzzy_cfg, write_cfg, start,
+        ),
+        "edit-loop-syntax-check" => run_edit_loop_syntax_check(
+            args, global, writer, shutdown, defaults, fuzzy_cfg, write_cfg, start,
+        ),
         other => Err(AtomwriteError::InvalidInput {
             reason: format!("unknown recipe: {other}"),
         }

@@ -7,7 +7,7 @@
 use std::io::{BufRead, Read, Write};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::cli::RegexArgs;
 use crate::error::AtomwriteError;
@@ -19,6 +19,9 @@ use crate::output::NdjsonWriter;
 /// # Errors
 ///
 /// Returns `AtomwriteError::InvalidInput` if no example strings are provided.
+/// Returns the underlying I/O error when stdin cannot be read, including invalid
+/// UTF-8 and a read interrupted by the global deadline or a signal, which the
+/// dispatcher reports as a cancellation.
 #[tracing::instrument(skip_all, fields(command = "regex"))]
 pub fn cmd_regex(
     args: &RegexArgs,
@@ -54,11 +57,16 @@ pub fn cmd_regex(
 
     let examples = if args.stdin || args.examples.is_empty() {
         let reader = std::io::BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
-        let lines: Vec<String> = reader
-            .lines()
-            .map_while(|l| l.ok())
-            .filter(|l| !l.trim().is_empty())
-            .collect();
+        let mut lines = Vec::new();
+        for line in reader.lines() {
+            // Propagate the I/O error unchanged: a cancelled stdin reader reports the
+            // deadline or the signal through it, and swallowing it would turn a
+            // cancellation into a bogus "no example" input error.
+            let line = line.context("failed to read stdin")?;
+            if !line.trim().is_empty() {
+                lines.push(line);
+            }
+        }
         lines
     } else {
         args.examples.clone()

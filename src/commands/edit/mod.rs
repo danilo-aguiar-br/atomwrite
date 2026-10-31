@@ -13,7 +13,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use crate::atomic::{AtomicWriteOptions, atomic_write};
+use crate::atomic::AtomicWriteOptions;
 use crate::checksum;
 pub use crate::cli::FuzzyMode;
 use crate::cli::{EditArgs, GlobalArgs};

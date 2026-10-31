@@ -1,25 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Runtime environment autodetect (WSL, container, CI, Termux, Snap, Flatpak).
+//! Runtime environment autodetect (WSL, container, Kubernetes, Termux, Snap, Flatpak).
 //!
-//! Cross-platform rules: specialized environments must be detected once
-//! and exposed to diagnostics (`atomwrite doctor`) without scattering `cfg` or
-//! ad-hoc env reads through business logic.
+//! Cross-platform rules: specialized environments are detected once and
+//! exposed to diagnostics (`atomwrite doctor`) without scattering `cfg`
+//! through business logic.
 //!
-//! # G-035 / A-ENV-001 — OS probe allowlist (not product knobs)
+//! Detection reads **files only** (`/.dockerenv`, `/proc/*`, `/.flatpak-info`,
+//! the Kubernetes service-account mount). No process environment variable is
+//! read: product configuration is CLI flags plus XDG `config.toml`, and these
+//! values never feed write/delete/watch/timeout/retry policy.
 //!
-//! This module **may** read a fixed allowlist of **host/OS** environment
-//! variables (`CI`, `GITHUB_ACTIONS`, `WSL_*`, `container`, `FLATPAK_ID`,
-//! `SNAP`, `PREFIX`, `SUDO_USER`, `KUBERNETES_SERVICE_HOST`) **only** for
-//! doctor diagnostics. These are **not** product configuration knobs.
-//!
-//! Product configuration remains CLI flags + XDG `config.toml` only
-//! (`rules_rust_storage_xdg_cli_rust_sem_env_em_runtime`). Prefer filesystem
-//! probes (`/.dockerenv`, cgroup) when equivalent.
-//!
-//! **Never** wire these values into write/delete/watch/timeout/retry policy.
-
-use std::path::Path;
+//! On Windows every probe is skipped and only the compile-time and
+//! `std::env::consts` facts are reported.
 
 use serde::Serialize;
 
@@ -38,240 +31,105 @@ pub struct RuntimeEnvironment {
     pub wsl: bool,
     /// Docker / containerd style container (`.dockerenv` or cgroup hint).
     pub container: bool,
-    /// Kubernetes pod (`KUBERNETES_SERVICE_HOST` set).
+    /// Kubernetes pod (service-account secrets mounted).
     pub kubernetes: bool,
-    /// Continuous integration host (`CI` or `GITHUB_ACTIONS`).
-    pub ci: bool,
-    /// Android Termux (`PREFIX` contains `com.termux`).
+    /// Android Termux (`/data/data/com.termux/files/usr` exists).
     pub termux: bool,
-    /// Flatpak sandbox (`FLATPAK_ID` set).
+    /// Flatpak sandbox (`/.flatpak-info` exists).
     pub flatpak: bool,
-    /// Snap confinement (`SNAP` set).
+    /// Snap confinement (this executable runs from `/snap/`).
     pub snap: bool,
-    /// Elevated via sudo (`SUDO_USER` set).
-    pub sudo: bool,
 }
 
-/// Detect specialized runtime environment (pure reads; no I/O side effects
-/// beyond optional `/proc` and `/.dockerenv` probes on Unix).
-pub fn detect() -> RuntimeEnvironment {
-    detect_with(
-        EnvProbe {
-            wsl_distro: std::env::var_os("WSL_DISTRO_NAME"),
-            wsl_interop: std::env::var_os("WSL_INTEROP"),
-            container_env: std::env::var_os("container"),
-            container_upper: std::env::var_os("CONTAINER"),
-            kubernetes: std::env::var_os("KUBERNETES_SERVICE_HOST"),
-            ci: std::env::var_os("CI"),
-            github_actions: std::env::var_os("GITHUB_ACTIONS"),
-            prefix: std::env::var_os("PREFIX"),
-            flatpak_id: std::env::var_os("FLATPAK_ID"),
-            snap: std::env::var_os("SNAP"),
-            sudo_user: std::env::var_os("SUDO_USER"),
-        },
-        ProbeFs::Live,
-    )
-}
-
-/// Injectable environment snapshot for unit tests (no process-global mutation).
+/// Raw facts read from the host filesystem. Tests build it by hand so no
+/// real file is touched.
 #[derive(Default)]
-struct EnvProbe {
-    wsl_distro: Option<std::ffi::OsString>,
-    wsl_interop: Option<std::ffi::OsString>,
-    container_env: Option<std::ffi::OsString>,
-    container_upper: Option<std::ffi::OsString>,
-    kubernetes: Option<std::ffi::OsString>,
-    ci: Option<std::ffi::OsString>,
-    github_actions: Option<std::ffi::OsString>,
-    prefix: Option<std::ffi::OsString>,
-    flatpak_id: Option<std::ffi::OsString>,
-    snap: Option<std::ffi::OsString>,
-    sudo_user: Option<std::ffi::OsString>,
+struct HostFacts {
+    dockerenv: bool,
+    cgroup: Option<String>,
+    osrelease: Option<String>,
+    version: Option<String>,
+    flatpak_info: bool,
+    kubernetes_secrets: bool,
+    termux_usr: bool,
+    exe: Option<std::path::PathBuf>,
 }
 
-enum ProbeFs {
-    /// Read `/proc` and `/.dockerenv` on Unix.
-    Live,
-    /// Unit tests: skip filesystem probes; only env-based flags apply.
-    #[cfg(test)]
-    None,
+impl HostFacts {
+    #[cfg(unix)]
+    fn read() -> Self {
+        use std::path::Path;
+
+        use crate::constants as C;
+        let text = |p: &str| std::fs::read_to_string(p).ok();
+        Self {
+            dockerenv: Path::new(C::DOCKERENV_PATH).exists(),
+            cgroup: text(C::PROC_INIT_CGROUP_PATH).or_else(|| text(C::PROC_SELF_CGROUP_PATH)),
+            osrelease: text(C::PROC_OSRELEASE_PATH),
+            version: text(C::PROC_VERSION_PATH),
+            flatpak_info: Path::new(C::FLATPAK_INFO_PATH).is_file(),
+            kubernetes_secrets: Path::new(C::KUBERNETES_SECRETS_DIR).is_dir(),
+            termux_usr: Path::new(C::TERMUX_USR_DIR).is_dir(),
+            exe: std::fs::read_link(C::PROC_SELF_EXE_PATH).ok(),
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn read() -> Self {
+        Self::default()
+    }
 }
 
-fn detect_with(probe: EnvProbe, fs: ProbeFs) -> RuntimeEnvironment {
-    // A-007: prefer filesystem probes; OS env allowlist is residual diagnostics only
-    // (not product knobs — see module docs / ADR G-035).
+/// Detect specialized runtime environment (file probes only; no env reads).
+pub fn detect() -> RuntimeEnvironment {
+    detect_with(&HostFacts::read())
+}
+
+fn detect_with(facts: &HostFacts) -> RuntimeEnvironment {
     RuntimeEnvironment {
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
         family: std::env::consts::FAMILY,
         target: option_env!("TARGET").unwrap_or("unknown").to_string(),
-        wsl: is_wsl(&probe, &fs),
-        container: is_container(&probe, &fs),
-        kubernetes: is_kubernetes(&probe, &fs),
-        ci: nonempty(&probe.ci) || nonempty(&probe.github_actions),
-        termux: is_termux(&probe, &fs),
-        flatpak: is_flatpak(&probe, &fs),
-        snap: is_snap(&probe, &fs),
-        // sudo: no reliable portable FS probe; residual OS allowlist only.
-        sudo: nonempty(&probe.sudo_user),
+        wsl: is_wsl(facts),
+        container: is_container(facts),
+        kubernetes: facts.kubernetes_secrets,
+        termux: facts.termux_usr,
+        flatpak: facts.flatpak_info,
+        snap: facts.exe.as_ref().is_some_and(|e| e.starts_with("/snap/")),
     }
 }
 
-fn nonempty(v: &Option<std::ffi::OsString>) -> bool {
-    v.as_ref().is_some_and(|s| !s.is_empty())
+fn is_wsl(facts: &HostFacts) -> bool {
+    [&facts.osrelease, &facts.version]
+        .into_iter()
+        .flatten()
+        .any(|text| text.to_ascii_lowercase().contains("microsoft"))
 }
 
-fn is_wsl(probe: &EnvProbe, fs: &ProbeFs) -> bool {
-    if nonempty(&probe.wsl_distro) || nonempty(&probe.wsl_interop) {
-        return true;
-    }
-    match fs {
-        ProbeFs::Live => {
-            #[cfg(unix)]
-            {
-                if let Ok(release) = std::fs::read_to_string("/proc/sys/kernel/osrelease") {
-                    let lower = release.to_ascii_lowercase();
-                    if lower.contains("microsoft") || lower.contains("wsl") {
-                        return true;
-                    }
-                }
-                if let Ok(version) = std::fs::read_to_string("/proc/version") {
-                    let lower = version.to_ascii_lowercase();
-                    if lower.contains("microsoft") || lower.contains("wsl") {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
-        #[cfg(test)]
-        ProbeFs::None => false,
-    }
-}
-
-fn is_container(probe: &EnvProbe, fs: &ProbeFs) -> bool {
-    if nonempty(&probe.container_env) || nonempty(&probe.container_upper) {
-        return true;
-    }
-    match fs {
-        ProbeFs::Live => {
-            if Path::new("/.dockerenv").exists() {
-                return true;
-            }
-            #[cfg(unix)]
-            {
-                if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
-                    let lower = cgroup.to_ascii_lowercase();
-                    if lower.contains("docker")
-                        || lower.contains("kubepods")
-                        || lower.contains("containerd")
-                        || lower.contains("libpod")
-                    {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
-        #[cfg(test)]
-        ProbeFs::None => false,
-    }
-}
-
-fn is_termux(probe: &EnvProbe, fs: &ProbeFs) -> bool {
-    if probe
-        .prefix
-        .as_ref()
-        .and_then(|p| p.to_str())
-        .is_some_and(|p| p.contains("com.termux"))
-    {
-        return true;
-    }
-    match fs {
-        ProbeFs::Live => {
-            // Termux home layout (FS-first when PREFIX unset).
-            Path::new("/data/data/com.termux/files/usr").is_dir()
-        }
-        #[cfg(test)]
-        ProbeFs::None => false,
-    }
-}
-
-fn is_flatpak(probe: &EnvProbe, fs: &ProbeFs) -> bool {
-    if nonempty(&probe.flatpak_id) {
-        return true;
-    }
-    match fs {
-        ProbeFs::Live => Path::new("/.flatpak-info").is_file(),
-        #[cfg(test)]
-        ProbeFs::None => false,
-    }
-}
-
-fn is_snap(probe: &EnvProbe, fs: &ProbeFs) -> bool {
-    if nonempty(&probe.snap) {
-        return true;
-    }
-    match fs {
-        ProbeFs::Live => {
-            // Only true when *this process* runs from a snap mount (not mere
-            // presence of /snap on a host that has snapd installed).
-            #[cfg(unix)]
-            {
-                if let Ok(exe) = std::fs::read_link("/proc/self/exe") {
-                    if exe.starts_with("/snap/") {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
-        #[cfg(test)]
-        ProbeFs::None => false,
-    }
-}
-
-fn is_kubernetes(probe: &EnvProbe, fs: &ProbeFs) -> bool {
-    if nonempty(&probe.kubernetes) {
-        return true;
-    }
-    match fs {
-        ProbeFs::Live => {
-            // In-cluster serviceaccount is the standard FS marker.
-            Path::new("/var/run/secrets/kubernetes.io/serviceaccount").is_dir()
-        }
-        #[cfg(test)]
-        ProbeFs::None => false,
-    }
+fn is_container(facts: &HostFacts) -> bool {
+    facts.dockerenv
+        || facts.cgroup.as_ref().is_some_and(|cgroup| {
+            let lower = cgroup.to_ascii_lowercase();
+            crate::constants::CONTAINER_CGROUP_MARKERS
+                .iter()
+                .any(|m| lower.contains(m))
+        })
 }
 
 /// Human-readable one-line summary for doctor / logs.
 pub fn summary(env: &RuntimeEnvironment) -> String {
-    let mut flags = Vec::new();
-    if env.wsl {
-        flags.push("wsl");
-    }
-    if env.container {
-        flags.push("container");
-    }
-    if env.kubernetes {
-        flags.push("kubernetes");
-    }
-    if env.ci {
-        flags.push("ci");
-    }
-    if env.termux {
-        flags.push("termux");
-    }
-    if env.flatpak {
-        flags.push("flatpak");
-    }
-    if env.snap {
-        flags.push("snap");
-    }
-    if env.sudo {
-        flags.push("sudo");
-    }
+    let flags: Vec<&str> = [
+        (env.wsl, "wsl"),
+        (env.container, "container"),
+        (env.kubernetes, "kubernetes"),
+        (env.termux, "termux"),
+        (env.flatpak, "flatpak"),
+        (env.snap, "snap"),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect();
     if flags.is_empty() {
         format!(
             "os={} arch={} family={} target={} (no specialized runtime flags)",
@@ -292,7 +150,6 @@ pub fn summary(env: &RuntimeEnvironment) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsString;
 
     #[test]
     fn detect_returns_host_consts() {
@@ -311,62 +168,57 @@ mod tests {
     }
 
     #[test]
-    fn ci_flag_from_probe() {
-        let env = detect_with(
-            EnvProbe {
-                ci: Some(OsString::from("true")),
-                ..EnvProbe::default()
-            },
-            ProbeFs::None,
-        );
-        assert!(env.ci);
-        assert!(!env.termux);
+    fn empty_facts_report_no_flags() {
+        let env = detect_with(&HostFacts::default());
+        assert!(!env.wsl && !env.container && !env.kubernetes);
+        assert!(!env.termux && !env.flatpak && !env.snap);
+        assert!(summary(&env).contains("no specialized runtime flags"));
     }
 
     #[test]
-    fn termux_from_prefix_probe() {
-        let env = detect_with(
-            EnvProbe {
-                prefix: Some(OsString::from("/data/data/com.termux/files/usr")),
-                ..EnvProbe::default()
-            },
-            ProbeFs::None,
-        );
+    fn termux_from_filesystem_fact() {
+        let env = detect_with(&HostFacts {
+            termux_usr: true,
+            ..HostFacts::default()
+        });
         assert!(env.termux);
+        assert!(!env.flatpak);
     }
 
     #[test]
-    fn flatpak_snap_wsl_kubernetes_sudo_from_probe() {
-        let env = detect_with(
-            EnvProbe {
-                flatpak_id: Some(OsString::from("com.example.App")),
-                snap: Some(OsString::from("/snap/atomwrite/current")),
-                wsl_distro: Some(OsString::from("Ubuntu")),
-                kubernetes: Some(OsString::from("10.0.0.1")),
-                sudo_user: Some(OsString::from("alice")),
-                ..EnvProbe::default()
-            },
-            ProbeFs::None,
-        );
+    fn flatpak_snap_wsl_kubernetes_from_filesystem_facts() {
+        let env = detect_with(&HostFacts {
+            flatpak_info: true,
+            exe: Some("/snap/atomwrite/current/bin/atomwrite".into()),
+            version: Some("Linux version 5.15 (Microsoft@Microsoft.com)".into()),
+            kubernetes_secrets: true,
+            ..HostFacts::default()
+        });
         assert!(env.flatpak);
         assert!(env.snap);
         assert!(env.wsl);
         assert!(env.kubernetes);
-        assert!(env.sudo);
         let s = summary(&env);
         assert!(s.contains("flatpak"), "{s}");
         assert!(s.contains("wsl"), "{s}");
     }
 
     #[test]
-    fn container_from_env_probe() {
-        let env = detect_with(
-            EnvProbe {
-                container_env: Some(OsString::from("docker")),
-                ..EnvProbe::default()
-            },
-            ProbeFs::None,
-        );
-        assert!(env.container);
+    fn container_from_dockerenv_or_cgroup() {
+        let by_file = detect_with(&HostFacts {
+            dockerenv: true,
+            ..HostFacts::default()
+        });
+        assert!(by_file.container);
+        let by_cgroup = detect_with(&HostFacts {
+            cgroup: Some("0::/kubepods/burstable/pod1".into()),
+            ..HostFacts::default()
+        });
+        assert!(by_cgroup.container);
+        let host = detect_with(&HostFacts {
+            cgroup: Some("0::/user.slice/session-1.scope".into()),
+            ..HostFacts::default()
+        });
+        assert!(!host.container);
     }
 }

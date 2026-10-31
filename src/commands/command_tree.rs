@@ -32,7 +32,7 @@ pub struct CommandsTreeArgs {
 }
 
 #[derive(Serialize, JsonSchema)]
-struct CommandsTreeReport {
+pub(crate) struct CommandsTreeReport {
     r#type: &'static str,
     version: String,
     name: String,
@@ -53,7 +53,9 @@ struct CommandNode {
 #[derive(Serialize, JsonSchema)]
 struct ArgNode {
     name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     long: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     short: Option<String>,
     required: bool,
     takes_value: bool,
@@ -61,6 +63,11 @@ struct ArgNode {
 }
 
 /// Emit the full clap command tree as one NDJSON record.
+///
+/// # Errors
+///
+/// Returns a JSON serialization error when the tree cannot be encoded as a value.
+/// Returns `AtomwriteError::BrokenPipe` when the consumer closes the NDJSON stream.
 #[tracing::instrument(skip_all, fields(command = "commands-tree"))]
 pub fn cmd_commands_tree(
     args: &CommandsTreeArgs,

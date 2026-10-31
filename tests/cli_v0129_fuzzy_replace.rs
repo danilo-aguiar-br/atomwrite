@@ -9,7 +9,7 @@ use predicates::prelude::*;
 use tempfile::tempdir;
 
 fn atomwrite() -> Command {
-    Command::cargo_bin("atomwrite").unwrap()
+    common::hermetic(Command::cargo_bin("atomwrite").unwrap())
 }
 
 #[test]
@@ -107,7 +107,7 @@ fn agent_surface_emits_manifest() {
         .assert()
         .success()
         .stdout(predicate::str::contains("agent_surface"))
-        .stdout(predicate::str::contains("forbidden-use-cli-instead"));
+        .stdout(predicate::str::contains("subprocess-cli-ndjson"));
 }
 
 #[test]

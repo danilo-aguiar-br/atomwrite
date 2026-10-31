@@ -8,6 +8,11 @@ use anyhow::Result;
 use std::io::Write;
 
 /// Tree-sitter query requires feature `ast`.
+///
+/// # Errors
+///
+/// Always returns `AtomwriteError::ConfigInvalid` because this build was compiled without the
+/// `ast` feature.
 pub fn cmd_query(
     _args: &QueryArgs,
     _global: &GlobalArgs,

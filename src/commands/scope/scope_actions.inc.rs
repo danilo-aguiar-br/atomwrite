@@ -120,5 +120,86 @@ fn parse_language(lang_str: &str) -> Result<SupportLang> {
 }
 
 enum ScopeEvent {
-    Result(ScopeResult),
+    /// Boxed because this variant carries the whole per-file result and every
+    /// event crosses an `mpsc` channel, so the box keeps each send small and
+    /// the enum narrow (`clippy::large_enum_variant`).
+    Result(Box<ScopeResult>),
+    /// A file `scope` matched but could not write. The error travels whole so
+    /// the final exit reuses its own variant (code, exit number, suggestion).
+    Failed(std::path::PathBuf, anyhow::Error),
+    /// A file `scope` could not read. Same treatment as a write failure: the
+    /// summary reports it, because a run that never looked inside the file
+    /// cannot claim it found nothing there.
+    ReadFailed(std::path::PathBuf, anyhow::Error),
+}
+
+/// The terminal summary of `scope`.
+///
+/// This is the shared failure summary, not a copy: a field added to the failure
+/// report reaches this verb without a second definition here, which is exactly
+/// how `partial` went missing when it was introduced.
+pub(crate) type ScopeSummary = crate::ndjson_types::FailureSummary;
+
+/// Failures collected while draining the walker channel.
+///
+/// A write failure and a read failure do not weigh the same: a write failure
+/// means bytes `scope` meant to change did not change, so it always fails the
+/// run; a read failure only fails the run when nothing else was read, because a
+/// run that read other files produced a real answer (the same rule `search`
+/// follows). Both are reported in `errors[]` either way.
+#[derive(Default)]
+struct ScopeFailures {
+    items: Vec<crate::ndjson_types::FileFailure>,
+    first_write: Option<anyhow::Error>,
+    first_read: Option<anyhow::Error>,
+}
+
+impl ScopeFailures {
+    fn push_write(&mut self, path: &std::path::Path, err: anyhow::Error) {
+        self.record(path, &err);
+        self.first_write.get_or_insert(err);
+    }
+
+    fn push_read(&mut self, path: &std::path::Path, err: anyhow::Error) {
+        self.record(path, &err);
+        self.first_read.get_or_insert(err);
+    }
+
+    fn record(&mut self, path: &std::path::Path, err: &anyhow::Error) {
+        if self.items.len() < crate::config::summary_errors_max_entries() {
+            self.items.push(crate::ndjson_types::FileFailure {
+                path: path.display().to_string(),
+                code: crate::output::failure_identity(err).0,
+                message: crate::output::error_message(err),
+            });
+        }
+    }
+}
+
+
+/// Stream walker results to stdout and gather write failures.
+///
+/// Borrows the receiver so the caller can still hand it to
+/// `join_walker` whatever this returns.
+fn drain_scope_events(
+    rx: &crossbeam_channel::Receiver<ScopeEvent>,
+    writer: &mut NdjsonWriter<impl Write>,
+    shutdown: &ShutdownSignal,
+) -> Result<(ScopeFailures, u64)> {
+    let mut failures = ScopeFailures::default();
+    let mut bytes_after = 0u64;
+    for event in rx {
+        if shutdown.is_shutdown() {
+            break;
+        }
+        match event {
+            ScopeEvent::Result(r) => {
+                bytes_after = bytes_after.saturating_add(r.bytes_after);
+                writer.write_event(&r)?;
+            }
+            ScopeEvent::Failed(path, err) => failures.push_write(&path, err),
+            ScopeEvent::ReadFailed(path, err) => failures.push_read(&path, err),
+        }
+    }
+    Ok((failures, bytes_after))
 }

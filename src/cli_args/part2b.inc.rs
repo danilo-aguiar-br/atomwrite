@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Included by part2.inc.rs (A-MONO-001 — SearchTarget onward).
+// Included by part2.inc.rs, from SearchTarget onward.
 
 
-/// Where `search` looks for the pattern (v0.1.30).
+/// Where `search` looks for the pattern.
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum SearchTarget {
     /// Search file contents (default).
@@ -29,15 +29,28 @@ pub enum SortBy {
 /// Arguments for the replace subcommand.
 #[derive(Args, Debug)]
 pub struct ReplaceArgs {
+    /// Refuse the cross-device copy-then-rename fallback (exit 91).
+    #[command(flatten)]
+    pub strict: crate::cli_args::StrictAtomicArgs,
+
     /// Pattern to search for.
-    #[arg(allow_hyphen_values = true)]
+    ///
+    /// A pattern that starts with a hyphen must come after `--`, so that an
+    /// unknown flag is reported as an argument error instead of being taken
+    /// as the pattern.
     pub pattern: String,
     /// Replacement text.
-    #[arg(allow_hyphen_values = true)]
+    ///
+    /// A replacement that starts with a hyphen must come after `--`.
     pub replacement: String,
 
-    /// Paths to search within.
-    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
+    /// Paths to rewrite within.
+    ///
+    /// A verb with side effects requires the subject in the invocation line.
+    /// At least one path is mandatory: `replace OLD NEW` with no path is a
+    /// usage error (exit 2) and never walks the current directory. Name the
+    /// root explicitly (e.g. `src/` or `.`).
+    #[arg(required = true, value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
 
     /// Treat pattern as regex.
@@ -61,6 +74,7 @@ pub struct ReplaceArgs {
     /// Shared backup flags.
     #[command(flatten)]
     pub backup_opts: BackupOpts,
+
 
     /// Glob patterns for file inclusion.
     #[arg(short = 'g', long, action = clap::ArgAction::Append, help = "Include files matching glob")]
@@ -97,15 +111,16 @@ pub struct ReplaceArgs {
     )]
     pub preserve_case: bool,
 
-    /// Fuzzy matching when the fixed pattern does not match exactly (v0.1.29).
+    /// Fuzzy matching when the fixed pattern does not match exactly.
     ///
-    /// Ignored when `--regex` is set. Default `auto` runs the 9-strategy cascade
-    /// after exact multi-occurrence replacement finds zero hits.
+    /// Ignored when `--regex` is set. Default `auto` runs the fuzzy cascade
+    /// after the exact multi-occurrence replacement finds zero hits. `off` is
+    /// exact-only.
     #[arg(
         long,
         value_enum,
         default_value_t = FuzzyMode::Auto,
-        help = "Fuzzy match cascade for fixed-string replace (auto|aggressive; off rejected since v0.1.30)"
+        help = "Fuzzy match cascade for fixed-string replace: auto (default), aggressive, or off (exact match only)"
     )]
     pub fuzzy: FuzzyMode,
 
@@ -116,11 +131,11 @@ pub struct ReplaceArgs {
     )]
     pub fuzzy_threshold: Option<f64>,
 
-    /// Emit progress NDJSON every N files (0 disables; default 50) (v0.1.29 P1-3).
+    /// Emit progress NDJSON every N files (0 disables; default 50).
     #[arg(
         long,
         default_value_t = crate::constants::DEFAULT_PROGRESS_EVERY_FILES,
-        help = "Emit progress NDJSON every N files visited (0=off; default constants::DEFAULT_PROGRESS_EVERY_FILES)"
+        help = "Emit progress NDJSON every N files visited (0 = off)"
     )]
     pub progress_every: u64,
 
@@ -146,7 +161,7 @@ pub struct BackupArgs {
     pub output_dir: Option<PathBuf>,
 
     /// Maximum number of backups to retain per file.
-    #[arg(long, default_value_t = crate::constants::DEFAULT_BACKUP_RETENTION, help = "Number of backup copies to keep (default constants::DEFAULT_BACKUP_RETENTION)")]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_BACKUP_RETENTION, help = "Number of backup copies to keep")]
     pub retention: u8,
 
     /// Preview without creating backups.
@@ -157,6 +172,10 @@ pub struct BackupArgs {
 /// Arguments for the rollback subcommand.
 #[derive(Args, Debug)]
 pub struct RollbackArgs {
+    /// Refuse the cross-device copy-then-rename fallback (exit 91).
+    #[command(flatten)]
+    pub strict: crate::cli_args::StrictAtomicArgs,
+
     #[arg(value_hint = ValueHint::FilePath)]
     /// File path to restore from backup.
     pub path: PathBuf,
@@ -182,7 +201,7 @@ pub struct RollbackArgs {
     pub dry_run: bool,
 }
 
-/// Arguments for the `get` subcommand (v14 Tier 3).
+/// Arguments for the `get` subcommand.
 #[derive(Args, Debug)]
 pub struct GetArgs {
     #[arg(value_hint = ValueHint::FilePath)]
@@ -192,14 +211,21 @@ pub struct GetArgs {
     pub key_path: String,
 }
 
-/// Arguments for the `del` subcommand (v14 Tier 3).
+/// Arguments for the `del` subcommand.
 #[derive(Args, Debug)]
 pub struct DelArgs {
+    /// Refuse the cross-device copy-then-rename fallback (exit 91).
+    #[command(flatten)]
+    pub strict: crate::cli_args::StrictAtomicArgs,
+
     #[arg(value_hint = ValueHint::FilePath)]
     /// Path to the structured config file (TOML or JSON).
     pub path: PathBuf,
     /// Dotted path to the key (e.g. `dependencies.serde`).
     pub key_path: String,
+    /// Report the planned change and write nothing.
+    #[arg(long, help = "Report the planned change and write nothing", action = clap::ArgAction::SetTrue)]
+    pub dry_run: bool,
     /// Shared backup flags.
     #[command(flatten)]
     pub backup_opts: BackupOpts,
@@ -211,7 +237,7 @@ pub struct DelArgs {
     pub force_missing: bool,
 }
 
-/// Arguments for the `outline` subcommand (v14 Tier 3, v0.1.12).
+/// Arguments for the `outline` subcommand.
 ///
 /// Extracts the high-level structure of a source file (functions,
 /// classes, structs, enums, traits, modules, top-level consts) as
@@ -243,7 +269,7 @@ pub struct OutlineArgs {
     pub positions: bool,
 }
 
-/// Arguments for the `wal-heal` subcommand (G119 L3 auto-heal).
+/// Arguments for the `wal-heal` subcommand.
 ///
 /// Removes stale `Committed`/`Aborted` journals older than the
 /// threshold. Preserves `Started` journals (potential orphans) and
@@ -251,12 +277,16 @@ pub struct OutlineArgs {
 /// wall-clock budget to keep startup cost predictable.
 #[derive(Args, Debug)]
 pub struct WalHealArgs {
+    /// Directory whose journal sidecars are reaped (required; never the ambient workspace).
+    #[arg(value_hint = ValueHint::DirPath)]
+    pub path: PathBuf,
+
     /// Minimum age in seconds for a terminal journal to be reaped.
-    /// Defaults to 3600 (1h) to match the v0.1.17 auto-heal default.
+    /// Defaults to 3600 (1h), the same threshold as the startup auto-heal.
     #[arg(
         long,
         default_value_t = crate::constants::DEFAULT_WAL_HEAL_THRESHOLD_SECS,
-        help = "Minimum age (seconds) for removal (default constants::DEFAULT_WAL_HEAL_THRESHOLD_SECS)"
+        help = "Minimum age in seconds for a terminal journal to be removed"
     )]
     pub threshold_secs: u64,
 
@@ -265,7 +295,7 @@ pub struct WalHealArgs {
     #[arg(
         long,
         default_value_t = crate::constants::DEFAULT_WAL_HEAL_MAX_DURATION_MS,
-        help = "Wall-clock budget (ms) for the walk (default constants::DEFAULT_WAL_HEAL_MAX_DURATION_MS)"
+        help = "Wall-clock budget in milliseconds for the directory walk"
     )]
     pub max_duration_ms: u64,
 

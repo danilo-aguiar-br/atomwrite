@@ -4,12 +4,17 @@
   "description": "NDJSON output for write, delete, move, copy, and hash operations.",
   "type": "object",
   "properties": {
-    "backup_path": {
-      "description": "Backup file path, if a backup was created.",
-      "type": [
-        "string",
-        "null"
-      ]
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "status": {
+      "description": "Operation outcome: \"ok\" or \"error\".",
+      "type": "string"
+    },
+    "path": {
+      "description": "Absolute path of the target file.",
+      "type": "string"
     },
     "bytes_written": {
       "description": "Number of bytes written.",
@@ -28,11 +33,32 @@
         "null"
       ]
     },
+    "backup_path": {
+      "description": "Backup file path, if a backup was created.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "elapsed_ms": {
       "description": "Operation duration in milliseconds.",
       "type": "integer",
       "format": "uint64",
       "minimum": 0
+    },
+    "stdin_bytes_read": {
+      "description": "Number of bytes read from stdin (G120 L4 local diagnostics). 0 means the\ncaller passed empty stdin and explicitly opted in via\n`--allow-empty-stdin`.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "wal_policy": {
+      "description": "G119 L1: sidecar creation policy in effect for this write.\n\"auto\" (default heuristic), \"always\" (legacy), or \"never\"\n(suppressed).",
+      "type": "string"
+    },
+    "platform": {
+      "description": "Platform-specific fsync methods used.",
+      "$ref": "#/$defs/PlatformInfo"
     },
     "mtime_preserved": {
       "description": "Whether the original mtime was preserved (--preserve-timestamps).",
@@ -41,16 +67,8 @@
         "null"
       ]
     },
-    "path": {
-      "description": "Absolute path of the target file.",
-      "type": "string"
-    },
-    "platform": {
-      "description": "Platform-specific fsync methods used.",
-      "$ref": "#/$defs/PlatformInfo"
-    },
     "risk_assessment": {
-      "description": "GAP-2026-011 L6: local risk diagnostics for size-delta warnings (not product telemetry; G-031). Omitted\nwhen the write is below the configured risk threshold (default\n50% delta) and no other guard was triggered.",
+      "description": "GAP-2026-011 L6: risk diagnostics for size-delta warnings. Omitted\nwhen the write is below the configured risk threshold (default\n50% delta) and no other guard was triggered.",
       "anyOf": [
         {
           "$ref": "#/$defs/WriteRiskAssessment"
@@ -60,23 +78,63 @@
         }
       ]
     },
-    "status": {
-      "description": "Operation outcome: \"ok\" or \"error\".",
+    "ok": {
+      "description": "Outcome of the run, stamped by the writer",
+      "type": "boolean"
+    },
+    "code": {
+      "description": "Machine error code, present when ok is false",
       "type": "string"
     },
-    "stdin_bytes_read": {
-      "description": "Number of bytes read from stdin (G120 L4 local diagnostics). 0 means the\ncaller passed empty stdin and explicitly opted in via\n`--allow-empty-stdin`.",
+    "exit": {
+      "description": "Process exit status, present when ok is false",
       "type": "integer",
-      "format": "uint64",
       "minimum": 0
     },
-    "type": {
-      "description": "Event type discriminator.",
+    "target_resolved": {
+      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
       "type": "string"
     },
-    "wal_policy": {
-      "description": "G119 L1: sidecar creation policy in effect for this write.\n\"auto\" (default heuristic), \"always\" (legacy), or \"never\"\n(suppressed).",
-      "type": "string"
+    "target_source": {
+      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+      "type": "string",
+      "enum": [
+        "argv",
+        "workspace",
+        "stdin"
+      ]
+    },
+    "workspace_source": {
+      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+      "type": "string",
+      "enum": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "records_suppressed": {
+      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_budget_dropped": {
+      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_planned": {
+      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+      "type": "boolean"
+    },
+    "truncated_records": {
+      "description": "Records the writer cut this run, counted once per record",
+      "type": "integer",
+      "minimum": 0
     }
   },
   "required": [
@@ -95,12 +153,9 @@
       "description": "Platform-specific fsync method names for diagnostics.",
       "type": "object",
       "properties": {
-        "backup_method": {
-          "description": "Backup method when a backup was created: reflink_or_copy or copy (v0.1.30; never hardlink of the live file).",
-          "type": [
-            "string",
-            "null"
-          ]
+        "fsync": {
+          "description": "File fsync method name (e.g. `F_FULLFSYNC` or `sync_data`).",
+          "type": "string"
         },
         "dir_fsync": {
           "description": "Directory fsync method name (e.g. `sync_all` or `best_effort`).",
@@ -113,12 +168,15 @@
             "null"
           ]
         },
-        "fsync": {
-          "description": "File fsync method name (e.g. `F_FULLFSYNC` or `sync_data`).",
-          "type": "string"
-        },
         "rename_method": {
           "description": "Rename method used (v0.1.29 P2-2).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "backup_method": {
+          "description": "Backup method when a backup was created: hardlink|reflink|copy (v0.1.29 P2-3).",
           "type": [
             "string",
             "null"
@@ -131,12 +189,14 @@
       ]
     },
     "WriteRiskAssessment": {
-      "description": "GAP-2026-011 L1/L6: Local diagnostics describing why a write was classified\nas risky (G-031: not product telemetry). Emitted in `WriteOutput.risk_assessment` when the size\ndelta exceeds the user-configured `--risk-threshold` (default 50%).",
+      "description": "GAP-2026-011 L1/L6: Local diagnostics describing why a write was classified\nas risky (G-031: not product telemetry). Emitted in `WriteOutput.risk_assessment`\nwhen the size delta exceeds the user-configured `--risk-threshold`.",
       "type": "object",
       "properties": {
-        "guard_triggered": {
-          "description": "Which guard triggered the assessment (always \"size\" for L1).",
-          "type": "string"
+        "original_bytes": {
+          "description": "File size before the write.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
         },
         "new_bytes": {
           "description": "New file size after the write.",
@@ -144,21 +204,19 @@
           "format": "uint64",
           "minimum": 0
         },
-        "original_bytes": {
-          "description": "File size before the write.",
+        "size_delta_pct": {
+          "description": "|new - original| / original * 100.",
           "type": "integer",
-          "format": "uint64",
+          "format": "uint32",
           "minimum": 0
         },
         "risk_level": {
           "description": "\"low\" (<70%) | \"medium\" (70-89%) | \"high\" (>=90%).",
           "type": "string"
         },
-        "size_delta_pct": {
-          "description": "|new - original| / original * 100.",
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
+        "guard_triggered": {
+          "description": "Which guard triggered the assessment (always \"size\" for L1).",
+          "type": "string"
         }
       },
       "required": [

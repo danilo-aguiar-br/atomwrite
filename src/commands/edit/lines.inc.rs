@@ -18,11 +18,11 @@ fn parse_range(s: &str, total: usize) -> Result<(usize, usize)> {
     }
     let start = parts[0]
         .parse::<usize>()
-        .context("invalid range start")?
+        .map_err(|e| crate::error::AtomwriteError::invalid("invalid range start", e))?
         .saturating_sub(1);
     let end = parts[1]
         .parse::<usize>()
-        .context("invalid range end")?
+        .map_err(|e| crate::error::AtomwriteError::invalid("invalid range end", e))?
         .min(total);
 
     if start >= end {

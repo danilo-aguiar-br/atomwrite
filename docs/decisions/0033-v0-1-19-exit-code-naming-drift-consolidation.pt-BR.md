@@ -1,48 +1,41 @@
-# 0033-v0-1-19-exit-code-naming-drift-consolidation (PT-BR) — Tradução
+# ADR-0033: v0.1.19 — Consolidação do desvio de documentação dos códigos de saída
 
-> **Histórico (pré-0.1.35):** knobs `ATOMWRITE_*` / env descritos abaixo estão **supplantados**. Config de runtime é só flags CLI + XDG `config.toml` / `atomwrite set|get`.
+> Status: Superado na v0.1.37 quanto aos itens 1 e 4. Uma divergência de `--verify-checksum` no `read` devolve `CHECKSUM_VERIFY_FAILED` (exit 81), e não `STATE_DRIFT` (82), e o `BROKEN_PIPE` (141) vem de um handler cooperativo de SIGPIPE, e não da disposição padrão restaurada.
 
-
-_Tradução automática do ADR original em inglês. Em caso de divergência, a versão EN prevalece._
-
-# ADR-0033: v0.1.19 — Exit code documentation drift consolidation
-
-- **Status**: Aceito
-- **Data**: 2026-06-14
-- **Contexto**: Phase D testing on 2026-06-14 ran 7 concrete binary-level probes against the v0.1.18 release and surfaced 7 places where the published docs (SKILL.md EN+PT, `error-saída.schema.json`, README, CHANGELOG) diverged from the actual binary behavior. Each drift is small individually, but together they create an environment where agents and local gates não pode reliably interpret códigos de saída. The drifts são:
-  1. `STATE_DRIFT` (82) vs `CHECKSUM_VERIFY_FAILED` (81) — the docs said `--verificar-checksum` returns `CHECKSUM_VERIFY_FAILED`; the binary returns `STATE_DRIFT`. The 81-code is reserved for the `read` path's BLAKE3 mismatch on the file content. The 82-code is the optimistic-locking failure that includes the `--expect-checksum` mismatch on writes/edits and the `--verificar-checksum` mismatch on reads.
-  2. `SYNTAX_ERROR` vs `SYNTAX_ERROR_DETECTED` — the docs in v0.1.12 named the code `SYNTAX_ERROR`; the binary in v0.1.18 emits `SYNTAX_ERROR_DETECTED`. The rename happened in the v0.1.12 G72 tree-sitter rollout but the docs foram not updated.
-  3. `ORPHAN_JOURNAL` (93) is consultive, NOT auto-detected — the docs implied that any stale sidecar is detected on every invocation. The actual gate is `ATOMWRITE_WAL=1` OR `--strict-atomic`; the padrão `write` não write a sidecar and therefore não pode detect orphans.
-  4. `BROKEN_PIPE` (141) exige real SIGPIPE propagation — the docs implied a simple `head -1` pipe triggers it. The actual behavior is that the v0.1.4+ SIGPIPE restoration puts the padrão disposition back, so the signal is only raised when the downstream consumer actively closes the pipe mid-stream.
-  5. Binary file reads return saída 0 with `kind=binary` metadata, NOT saída 65 — the v0.1.4 `BINARY_FILE` heuristic foi changed to emit a structured envelope and saída 0; the 65-code path now only fires for `read` without `--format raw` AND with the binary heuristic bypassed.
-  6. Missing positional returns `ARGUMENT_PARSE_ERROR` (saída 2), NOT `INVALID_INPUT` (65) — clap-level argument errors são reported as saída 2. The 65-code is reserved for runtime content validação (e.g. malformed TOML, invalid regex, empty stdin padrão).
-  7. Missing `--workspace` padrões to CWD, NOT an error — the docs implied `--workspace` is obrigatório; the actual behavior anchors relative paths to CWD and only fires `WORKSPACE_JAIL` (126) when an absolute path resolves outside the effective jail.
-
-- **Decisão**: Accept the binary behavior as canonical. Consolidate the docs in v0.1.19 to match the binary. Especificamente,:
-  1. **STATE_DRIFT absorbs CHECKSUM_VERIFY_FAILED for `--verificar-checksum`** — atualizar the `Exit Codes` table to note the absorption, atualizar the `Error Code List` to flag `CHECKSUM_VERIFY_FAILED` (81) as histórico, and add a drift note in both SKILL files.
-  2. **Rename `SYNTAX_ERROR` to `SYNTAX_ERROR_DETECTED`** in both the `Exit Codes` and `Error Code List` sections. The histórico name is preserved only in prose for grep-ability.
-  3. **Document the ORPHAN_JOURNAL gate** — add explícito text in both SKILL files stating that the consultive path exige `ATOMWRITE_WAL=1` or `--strict-atomic`. The current `WalPolicy::Auto` (v0.1.16 G119) means the sidecar is skipped for trivial writes, so padrão invocations never see this code.
-  4. **Document the BROKEN_PIPE propagation requirement** — the contract is "saída 141 is raised when SIGPIPE is delivered", not "saída 141 is raised when the saída is short". The v0.1.4+ SIGPIPE restoration note belongs here.
-  5. **Document the binary read envelope** — `kind=binary` is the canonical signal; the 65-code is the secondary, edge-case path.
-  6. **Document the clap vs runtime split** — saída 2 is clap, saída 65 is runtime. The SKILL already separates them; the drift section reinforces the distinction.
-  7. **Document the CWD fallback** — `--workspace` is documented as a flag with a CWD padrão, not a obrigatório argument. `WORKSPACE_JAIL` semantics são tied to the effective jail (CWD when `--workspace` is omitted).
-- **Consequências**:
-  - **+** All 7 drifts têm a one-line note in the v0.1.19 drift section of both SKILL files. Agents and local gates can grep the drift section when an código de saída não match the legado table.
-  - **+** CHANGELOG v0.1.19 entry documents the consolidation in a single bullet, indexed by Phase D testing date 2026-06-14.
-  - **+** ADR-0033 captures the rationale so future maintainers não re-discover the drifts.
-  - **+** No binary change obrigatório; the docs now match the binary em vez de the other way around.
-  - **-** Operators that scripted against the legado `SYNTAX_ERROR` code name will see a runtime mismatch. Mitigated: the SKILL drift note is grep-discoverable and the schema (`error-saída.schema.json`) already uses `SYNTAX_ERROR_DETECTED`.
-  - **-** The `CHECKSUM_VERIFY_FAILED` (81) code is now histórico; callers that matched on it must migrado to `STATE_DRIFT` (82). None observed in this repository's own teste suite.
-
-- **Alternativas consideradas**:
-  1. Change the binary to match the docs (rename `SYNTAX_ERROR_DETECTED` back to `SYNTAX_ERROR`, split `STATE_DRIFT` and `CHECKSUM_VERIFY_FAILED`, etc.). Rejected: would break the v0.1.12 G72 contract that testes already pin, force a major version bump, and the new behavior is strictly more correct (e.g. `STATE_DRIFT` already covers the locking semantics that `CHECKSUM_VERIFY_FAILED` foi trying to express).
-  2. Add a `--legado-saída-codes` opt-in that restores the v0.1.12 names. Rejected: YAGNI. The drift notes são sufficient for migração; a runtime flag would invite permanent suporta burden.
-  3. Document the drifts in a separate `docs/drifts/v0-1-18.md` file and link from CHANGELOG. Rejected: the SKILL files são the primary lookup surface for agents; a separate file is less discoverable.
-  4. Skip the CWD-fallback note because the `--workspace REQUIRED` phrasing in the global flags section already implies it. Rejected: the v0.1.4 GAP 13 fix made the error envelope context-aware, and the CWD-fallback contract is the foundation of that fix; it deserves a dedicated note.
-
-- **Gatilho para revisitar**: If a v0.2.0 release introduces a new código de saída, copy the drift section into a v0.2.0 migração chapter and convert the in-place drift notes to archived histórico links. If a binary teste fails because of an undocumented código de saída, the new drift gets its own bullet here.
+> Histórico (pré-0.1.35): os knobs de produto `ATOMWRITE_*` / env descritos abaixo foram superados. A configuração de runtime é apenas flags de CLI + `config.toml` XDG / `atomwrite set|get`.
 
 
----
+- Status: Aceito
+- Data: 2026-06-14
+- Contexto: Os testes da Fase D em 2026-06-14 rodaram 7 sondagens concretas no nível do binário contra o release v0.1.18 e revelaram 7 pontos em que a documentação publicada (SKILL.md EN+PT, `error-output.schema.json`, README, CHANGELOG) divergia do comportamento real do binário. Cada desvio é pequeno isoladamente, mas juntos criam um ambiente em que agentes e gates locais não conseguem interpretar os códigos de saída com confiança. Os desvios são:
+  1. `STATE_DRIFT` (82) vs `CHECKSUM_VERIFY_FAILED` (81) — a documentação dizia que `--verify-checksum` devolve `CHECKSUM_VERIFY_FAILED`, mas o binário devolve `STATE_DRIFT`. O código 81 é reservado para a divergência de BLAKE3 do conteúdo do arquivo no caminho do `read`. O código 82 é a falha de locking otimista, que inclui a divergência de `--expect-checksum` em writes/edits e a divergência de `--verify-checksum` em leituras.
+  2. `SYNTAX_ERROR` vs `SYNTAX_ERROR_DETECTED` — a documentação da v0.1.12 chamava o código de `SYNTAX_ERROR`, e o binário da v0.1.18 emite `SYNTAX_ERROR_DETECTED`. A renomeação aconteceu no lançamento do tree-sitter (G72) da v0.1.12, mas a documentação não foi atualizada.
+  3. `ORPHAN_JOURNAL` (93) é consultivo, NÃO é detectado automaticamente — a documentação sugeria que qualquer sidecar obsoleto é detectado a cada invocação. O gate real é `ATOMWRITE_WAL=1` OU `--strict-atomic`, e o `write` padrão não grava sidecar e, portanto, não pode detectar órfãos.
+  4. `BROKEN_PIPE` (141) exige propagação real de SIGPIPE — a documentação sugeria que um simples pipe com `head -1` o dispara. O comportamento real é que a restauração do SIGPIPE da v0.1.4+ devolve a disposição padrão, então o sinal só é levantado quando o consumidor a jusante fecha ativamente o pipe no meio do fluxo.
+  5. Leituras de arquivo binário devolvem exit 0 com metadados `kind=binary`, NÃO exit 65 — a heurística `BINARY_FILE` da v0.1.4 foi alterada para emitir um envelope estruturado e exit 0, e o caminho do código 65 agora só dispara para `read` sem `--format raw` E com a heurística binária contornada.
+  6. Posicional ausente devolve `ARGUMENT_PARSE_ERROR` (exit 2), NÃO `INVALID_INPUT` (65) — erros de argumento no nível do clap são reportados como exit 2. O código 65 é reservado para validação de conteúdo em runtime (por exemplo TOML malformado, regex inválida, stdin vazio por padrão).
+  7. `--workspace` ausente assume o CWD, NÃO é um erro — a documentação sugeria que `--workspace` é obrigatório, mas o comportamento real ancora caminhos relativos no CWD e só dispara `WORKSPACE_JAIL` (126) quando um caminho absoluto resolve para fora do jail efetivo.
 
-_Original em inglês: [`0033-v0-1-19-exit-code-naming-drift-consolidation.md`](0033-v0-1-19-exit-code-naming-drift-consolidation.md)_
+- Decisão: Aceitar o comportamento do binário como canônico. Consolidar a documentação na v0.1.19 para coincidir com o binário. Especificamente:
+  1. **STATE_DRIFT absorve CHECKSUM_VERIFY_FAILED para `--verify-checksum`** — atualizar a tabela `Exit Codes` para registrar a absorção, atualizar a `Error Code List` para marcar `CHECKSUM_VERIFY_FAILED` (81) como histórico e adicionar uma nota de desvio nos dois arquivos SKILL.
+  2. **Renomear `SYNTAX_ERROR` para `SYNTAX_ERROR_DETECTED`** nas seções `Exit Codes` e `Error Code List`. O nome histórico é preservado apenas em prosa, para facilitar a busca com grep.
+  3. Documentar o gate do ORPHAN_JOURNAL — adicionar texto explícito nos dois arquivos SKILL dizendo que o caminho consultivo exige `ATOMWRITE_WAL=1` ou `--strict-atomic`. O `WalPolicy::Auto` atual (v0.1.16 G119) significa que o sidecar é pulado em writes triviais, então invocações padrão nunca veem esse código.
+  4. Documentar o requisito de propagação do BROKEN_PIPE — o contrato é "exit 141 é levantado quando o SIGPIPE é entregue", e não "exit 141 é levantado quando a saída é curta". A nota sobre a restauração do SIGPIPE da v0.1.4+ pertence aqui.
+  5. Documentar o envelope de leitura binária — `kind=binary` é o sinal canônico, e o código 65 é o caminho secundário, de caso de borda.
+  6. Documentar a divisão clap vs runtime — exit 2 é do clap, exit 65 é do runtime. A SKILL já os separa, e a seção de desvios reforça a distinção.
+  7. Documentar o fallback para o CWD — `--workspace` é documentado como uma flag com padrão no CWD, não como um argumento obrigatório. A semântica do `WORKSPACE_JAIL` está atrelada ao jail efetivo (o CWD quando `--workspace` é omitido).
+- Consequências:
+  - + Os 7 desvios têm uma nota de uma linha na seção de desvios da v0.1.19 dos dois arquivos SKILL. Agentes e gates locais podem buscar a seção de desvios com grep quando um código de saída não bate com a tabela legada.
+  - + A entrada da v0.1.19 no CHANGELOG documenta a consolidação em um único item, indexado pela data dos testes da Fase D, 2026-06-14.
+  - + O ADR-0033 registra o raciocínio para que mantenedores futuros não redescubram os desvios.
+  - + Nenhuma mudança no binário é necessária, a documentação passa a coincidir com o binário, e não o contrário.
+  - - Operadores que automatizaram contra o nome de código legado `SYNTAX_ERROR` verão uma divergência em runtime. Mitigado: a nota de desvio da SKILL é encontrável com grep e o schema (`error-output.schema.json`) já usa `SYNTAX_ERROR_DETECTED`.
+  - - O código `CHECKSUM_VERIFY_FAILED` (81) agora é histórico, e chamadores que o casavam precisam migrar para `STATE_DRIFT` (82). Nenhum foi observado na suíte de testes deste repositório.
+
+- Alternativas consideradas:
+  1. Mudar o binário para coincidir com a documentação (renomear `SYNTAX_ERROR_DETECTED` de volta para `SYNTAX_ERROR`, separar `STATE_DRIFT` e `CHECKSUM_VERIFY_FAILED` etc.). Rejeitado: quebraria o contrato do G72 da v0.1.12 que os testes já fixam, forçaria um salto de versão maior, e o novo comportamento é estritamente mais correto (por exemplo, o `STATE_DRIFT` já cobre a semântica de locking que o `CHECKSUM_VERIFY_FAILED` tentava expressar).
+  2. Adicionar um opt-in `--legacy-exit-codes` que restaura os nomes da v0.1.12. Rejeitado: YAGNI. As notas de desvio bastam para a migração, e uma flag de runtime traria um custo de suporte permanente.
+  3. Documentar os desvios em um arquivo separado `docs/drifts/v0-1-18.md` e linkar a partir do CHANGELOG. Rejeitado: os arquivos SKILL são a principal superfície de consulta dos agentes, e um arquivo separado é menos encontrável.
+  4. Pular a nota do fallback para o CWD porque a redação `--workspace REQUIRED` na seção de flags globais já a implica. Rejeitado: a correção do GAP 13 da v0.1.4 tornou o envelope de erro sensível ao contexto, e o contrato do fallback para o CWD é a base dessa correção, então merece uma nota dedicada.
+
+- Gatilho para revisitar: Se um release v0.2.0 introduzir um novo código de saída, copiar a seção de desvios para um capítulo de migração da v0.2.0 e converter as notas de desvio no próprio local em links históricos arquivados. Se um teste do binário falhar por causa de um código de saída não documentado, o novo desvio ganha seu próprio item aqui.

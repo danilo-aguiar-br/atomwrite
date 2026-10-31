@@ -12,7 +12,6 @@ use clap::{Args, Subcommand, ValueHint};
 use serde::Serialize;
 
 use crate::cli::GlobalArgs;
-use crate::constants::SCRATCH_DIR_REL;
 use crate::output::NdjsonWriter;
 
 /// `atomwrite scratch` — staging helpers (never opens OS `/tmp`).
@@ -33,20 +32,24 @@ pub enum ScratchAction {
 /// Arguments for `scratch init`.
 #[derive(Args, Debug)]
 pub struct ScratchInitArgs {
-    /// Optional relative path under workspace (default: `.atomwrite/scratch`).
+    /// Staging directory to create under the workspace (required; no default).
     ///
-    /// Must stay inside the workspace jail; absolute paths outside fail closed.
+    /// The canonical agent location is `.atomwrite/scratch`. It must stay
+    /// inside the workspace jail;
+    /// absolute paths outside fail closed. A verb that creates directories
+    /// never picks its target from ambient state, so omitting it is a usage error.
     #[arg(
-        long,
         value_hint = ValueHint::DirPath,
-        help = "Relative staging dir under workspace (default constants::SCRATCH_DIR_REL)"
+        help = "Staging dir to create under the workspace (e.g. .atomwrite/scratch)"
     )]
-    pub path: Option<PathBuf>,
+    pub path: PathBuf,
 }
 
 /// NDJSON success event for `scratch init`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct ScratchInitEvent {
+    /// Event type discriminator: `"scratch_init"`.
+    pub r#type: &'static str,
     /// Always true on success.
     pub ok: bool,
     /// Agent success sentinel.
@@ -86,10 +89,7 @@ fn cmd_scratch_init(
     writer: &mut NdjsonWriter<impl Write>,
 ) -> Result<()> {
     let workspace = global.resolve_workspace()?;
-    let relative = args
-        .path
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(SCRATCH_DIR_REL));
+    let relative = args.path.clone();
     // Force relative staging: absolute paths are validated against jail.
     let candidate = if relative.is_absolute() {
         relative.clone()
@@ -104,13 +104,17 @@ fn cmd_scratch_init(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(
-            &resolved,
-            std::fs::Permissions::from_mode(crate::constants::DIR_PERMISSIONS),
+        crate::best_effort::best_effort(
+            std::fs::set_permissions(
+                &resolved,
+                std::fs::Permissions::from_mode(crate::constants::DIR_PERMISSIONS),
+            ),
+            "set mode on scratch directory",
         );
     }
     let rel_display = relative.to_string_lossy().replace('\\', "/");
     writer.write_event(&ScratchInitEvent {
+        r#type: "scratch_init",
         ok: true,
         status: "ok",
         command: "scratch",

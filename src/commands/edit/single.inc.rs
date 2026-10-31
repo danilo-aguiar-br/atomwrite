@@ -16,6 +16,7 @@ pub fn cmd_edit(
     workspace: &Path,
     defaults: &crate::config::DefaultsSection,
     fuzzy_cfg: &crate::config::FuzzySection,
+    write_cfg: &crate::config::WriteSection,
     stdin_is_tty: bool,
 ) -> Result<()> {
     let start = Instant::now();
@@ -27,6 +28,10 @@ pub fn cmd_edit(
     if !path.exists() {
         return Err(AtomwriteError::NotFound { path }.into());
     }
+
+    // A1: take the lock BEFORE reading, hold it to the commit, so concurrent
+    // edits of one file serialise instead of overwriting each other.
+    let _update_lock = crate::lock::acquire_for_update(&path)?;
 
     let mode_count = [
         args.after_line.is_some(),
@@ -50,6 +55,53 @@ pub fn cmd_edit(
                 .into(),
         }
         .into());
+    }
+
+    // Above the mmap threshold the file is validated with a fixed buffer first,
+    // so a binary target is refused before the read allocates it. A 280 MB file
+    // used to cost 300 MB of RSS for one `not valid UTF-8` line.
+    let size_on_disk = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    if size_on_disk >= crate::constants::MMAP_THRESHOLD {
+        crate::file_io::validate_utf8_stream(&path, global.effective_max_filesize())?;
+    }
+
+    // A single pair on a file above the fuzzy content cap is decided here, with
+    // the file still on disk. The cascade refuses such content whatever the file
+    // holds, and the exact path only needs a yes-or-no: one streaming pass
+    // answers both, so a 256 MiB file that cost 300 MB of RSS to say "not found"
+    // now costs one fixed buffer. A file that DOES contain the needle falls
+    // through to the full read, because the edit has to produce the new bytes.
+    let (effective_old, effective_new) =
+        resolve_edit_pairs(args, workspace, global.effective_max_filesize())?;
+    if effective_old.len() == 1
+        && size_on_disk > fuzzy_cfg.max_content_bytes
+        && let Some(old_str) = effective_old.first()
+    {
+        let (exact_count, _) = crate::file_io::count_exact_streaming(
+            &path,
+            old_str.as_bytes(),
+            global.effective_max_filesize(),
+        )?;
+        if exact_count == 0 {
+            return Err(match fuzzy_mode {
+                FuzzyMode::Off => AtomwriteError::MatchFailed {
+                    reason: format!(
+                        "old string not found (fuzzy mode off = exact-only): {old_str:?}"
+                    ),
+                    best_candidate: None,
+                    candidates: None,
+                },
+                _ => AtomwriteError::InvalidInput {
+                    reason: format!(
+                        "content too large for the fuzzy cascade ({} bytes > {} max); raise {} in config.toml or pass --fuzzy off for exact-only matching",
+                        size_on_disk,
+                        fuzzy_cfg.max_content_bytes,
+                        crate::constants::FUZZY_CONTENT_CAP_REASON_MARKER
+                    ),
+                },
+            }
+            .into());
+        }
     }
 
     let original = crate::file_io::read_file_string(&path, global.effective_max_filesize())?;
@@ -90,12 +142,10 @@ pub fn cmd_edit(
             workspace,
             start,
             defaults,
+            write_cfg,
             stdin_is_tty,
         );
     }
-
-    let (effective_old, effective_new) =
-        resolve_edit_pairs(args, workspace, global.effective_max_filesize())?;
 
     if !effective_old.is_empty() && effective_old.len() != effective_new.len() {
         return Err(crate::error::AtomwriteError::InvalidInput {
@@ -133,7 +183,7 @@ pub fn cmd_edit(
         (e, m, None, None)
     } else if args.after_match.is_some() || args.before_match.is_some() || args.between.is_some() {
         let max_size = global.effective_max_filesize();
-        let (e, m) = edit_by_marker(&original, &lines, args, stdin, max_size, stdin_is_tty)?;
+        let (e, m) = edit_by_marker(&lines, args, stdin, max_size, stdin_is_tty)?;
         (e, m, None, None)
     } else {
         return Err(crate::error::AtomwriteError::InvalidInput {
@@ -145,12 +195,20 @@ pub fn cmd_edit(
     let path_str = path.display().to_string();
 
     if args.dry_run {
+        // The plan carries the same risk the write would report: a dry-run is
+        // what an agent inspects before deciding to write at all.
         let plan = crate::ndjson_types::DryRunPlan {
             r#type: "plan",
             operation: "edit".into(),
             path: path_str,
             would_modify: edited != original,
             details: Some(format!("mode: {mode}")),
+            risk_assessment: crate::commands::write_guards::assess_content_risk(
+                edited.as_bytes(),
+                original.len() as u64,
+                edited.len() as u64,
+                write_cfg,
+            ),
         };
         writer.write_event(&plan)?;
         return Ok(());
@@ -165,6 +223,18 @@ pub fn cmd_edit(
         line_endings::normalize(&edited, target)
     };
 
+    // Risk assessment, and only that. The size barriers belong to `write` and
+    // `apply`, which replace the whole content by contract; an edit inserts,
+    // deletes or rewrites a region, so a smaller result is the operation
+    // working, not data loss. Applying the shrink barrier here blocked
+    // `edit --delete-range` outright.
+    let risk_assessment = crate::commands::write_guards::assess_content_risk(
+        edited.as_bytes(),
+        original.len() as u64,
+        edited.len() as u64,
+        write_cfg,
+    );
+
     let opts = AtomicWriteOptions {
         backup: resolved_backup.backup,
         syntax_check: false,
@@ -172,13 +242,19 @@ pub fn cmd_edit(
         preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
         strategy: None,
-        strict_atomic: false,
+        strict_atomic: args.strict.strict_atomic,
         wal_policy: args.wal_policy,
         keep_backup: resolved_backup.keep,
         durability: crate::platform::Durability::Auto,
     };
 
-    let result = atomic_write(&path, edited.as_bytes(), &opts, workspace)?;
+    let result = crate::atomic::atomic_write_based(
+        &path,
+        edited.as_bytes(),
+        &opts,
+        workspace,
+        Some(&checksum_before),
+    )?;
     let lines_after = edited.lines().count() as u64;
 
     let (fuzzy, strategy, strategies_tried, similarity, diff_preview, match_count, indent_adjusted) =
@@ -234,9 +310,9 @@ pub fn cmd_edit(
         mtime_preserved: Some(args.preserve_timestamps),
         match_count,
         indent_adjusted,
+        risk_assessment,
     };
 
     writer.write_event(&output)?;
     Ok(())
 }
-

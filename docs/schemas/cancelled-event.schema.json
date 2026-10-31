@@ -1,9 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "CancelledEvent",
-  "description": "Cooperative cancel envelope (v0.1.29 P0-4).",
+  "description": "Cooperative cancel envelope (v0.1.29 P0-4).\n\nTerminal record of an interrupted operation. Three fields answer the three\nquestions a consumer asks, and none of them requires reading the human text:\n`deadline_exceeded` says whether the global `--timeout-secs` budget elapsed,\n`signal` names the signal when one arrived, and `reason` carries the prose.\n\nBuild one with [`CancelledEvent::from_shutdown`] rather than by hand, so the\nmachine-readable verdict and the prose can never describe different causes.",
   "type": "object",
   "properties": {
+    "type": {
+      "description": "Event type discriminator (`\"cancelled\"`).",
+      "type": "string"
+    },
     "path": {
       "description": "Path being written when cancel was observed, if any.",
       "type": [
@@ -22,13 +26,14 @@
         "null"
       ]
     },
-    "type": {
-      "description": "Event type discriminator (`\"cancelled\"`).",
-      "type": "string"
+    "deadline_exceeded": {
+      "description": "True when the global `--timeout-secs` deadline elapsed.\n\nAlways serialized, never skipped: an omitted field cannot be told apart\nfrom a false one by a consumer, and the whole point of the field is that\nthe deadline case is decidable without parsing `reason`.",
+      "type": "boolean"
     }
   },
   "required": [
     "type",
-    "reason"
+    "reason",
+    "deadline_exceeded"
   ]
 }

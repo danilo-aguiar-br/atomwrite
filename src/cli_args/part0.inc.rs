@@ -1,9 +1,9 @@
-/// Shared backup flags for mutating subcommands (v0.1.28, GAP-CLI-SURFACE-DRIFT).
+/// Shared backup flags for mutating subcommands.
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct BackupOpts {
-    /// Create a transactional backup before writing
-    /// [default: enabled via `.atomwrite.toml` `[defaults]` or built-in true]
-    /// TRI-STATE exception (rules `Option<bool>`): None=config default, Some(true)=--backup; use `no_backup` to force off.
+    /// Create a backup before writing (default: on, unless `[defaults]` in `.atomwrite.toml` turns it off).
+    // Tri-state on purpose: `None` follows the config default, `Some(true)` is
+    // `--backup`, and `no_backup` forces it off.
     #[arg(long, action = clap::ArgAction::SetTrue, conflicts_with = "no_backup", help_heading = "Backup")]
     pub backup: Option<bool>,
     /// Disable backup creation
@@ -12,10 +12,54 @@ pub struct BackupOpts {
     /// Keep the backup file after success (default: auto-remove on success)
     #[arg(long, action = clap::ArgAction::SetTrue, help_heading = "Backup")]
     pub keep_backup: bool,
-    /// Number of backups to retain
-    /// [default: `.atomwrite.toml` `[defaults]` retention or built-in 5]
+    /// Number of backups to retain (default: `[defaults]` retention in `.atomwrite.toml`, else 5).
     #[arg(long, help_heading = "Backup")]
     pub retention: Option<u8>,
+}
+
+/// Refuse the cross-device copy-then-rename fallback.
+///
+/// A target on another filesystem than its temp file normally falls back to
+/// copying the bytes and then renaming, which is no longer a single atomic
+/// step. With this flag the write instead fails with
+/// `EXDEV_FALLBACK_DISABLED` (exit 91), so a caller that needs the single
+/// atomic step can refuse the weaker path.
+///
+/// Flattened into every verb that writes through [`crate::atomic`], so the flag
+/// is spelled the same way everywhere and no verb silently drops it.
+#[derive(Debug, Clone, Copy, Default, clap::Args)]
+pub struct StrictAtomicArgs {
+    /// Refuse the cross-device copy-then-rename fallback, failing with exit 91.
+    #[arg(
+        long,
+        help = "Fail with exit 91 instead of the cross-device copy fallback",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub strict_atomic: bool,
+}
+
+/// Acknowledgement flags flattened into every command that changes bytes on disk.
+///
+/// The global `--confirm-side-effect` is optional for reads and discovery, so
+/// the mutation contract has to live on the mutating commands themselves where
+/// clap can enforce it. Carries no field of its own.
+#[derive(Debug, Clone, Copy, Default, clap::Args)]
+pub struct MutateArgs {
+    /// Acknowledge the command side effect before it runs.
+    #[arg(
+        long = "confirm-side-effect",
+        help = "Acknowledge this command side effect before it runs",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub confirm_side_effect: bool,
+
+    /// Declare non-interactive execution: never prompt, never block on stdin.
+    #[arg(
+        long = "non-interactive",
+        help = "Never prompt or block on stdin (agent-hosted run)",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub non_interactive: bool,
 }
 
 /// Arguments for the count subcommand.
@@ -34,7 +78,7 @@ pub struct CountArgs {
     pub by_size: bool,
 
     /// Number of top results to show.
-    #[arg(long, default_value_t = crate::constants::DEFAULT_QUERY_TOP, help = "Number of top results (default constants::DEFAULT_QUERY_TOP)")]
+    #[arg(long, default_value_t = crate::constants::DEFAULT_QUERY_TOP, help = "Number of top results")]
     pub top: usize,
 
     /// Glob patterns for file inclusion.
@@ -60,6 +104,10 @@ pub enum DiffAlgorithm {
 /// Arguments for the copy subcommand.
 #[derive(Args, Debug)]
 pub struct CopyArgs {
+    /// Refuse the cross-device copy-then-rename fallback (exit 91).
+    #[command(flatten)]
+    pub strict: crate::cli_args::StrictAtomicArgs,
+
     /// Source file path.
     #[arg(value_hint = ValueHint::AnyPath)]
     pub source: PathBuf,
@@ -87,16 +135,16 @@ pub struct CopyArgs {
     #[arg(long, help = "Show what would be done without copying", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 
-    /// Disable reflink (copy-on-write) optimization (G64).
+    /// Disable reflink (copy-on-write) optimization.
     #[arg(long, help = "Disable reflink optimization; force full byte copy", action = clap::ArgAction::SetTrue)]
     pub no_reflink: bool,
 
-    /// Preserve extended attributes on copy (G39).
+    /// Preserve extended attributes on copy.
     #[arg(long, help = "Preserve extended attributes (xattr) on copy", action = clap::ArgAction::SetTrue)]
     pub preserve_xattr: bool,
 }
 
-/// CLI durability policy (v0.1.29 P2-1).
+/// CLI durability policy.
 #[derive(Debug, Clone, Copy, ValueEnum, Default, PartialEq, Eq)]
 pub enum DurabilityCli {
     /// Strongest fsync (`F_FULLFSYNC` / `sync_all`) + dir fsync.
@@ -206,7 +254,7 @@ pub struct EditArgs {
         long,
         value_enum,
         default_value_t = FuzzyMode::Auto,
-        help = "Fuzzy match mode: auto (default, mandatory) or aggressive; off is rejected since v0.1.30"
+        help = "Fuzzy match mode: auto (default), aggressive, or off (exact match only, MATCH_FAILED on a miss)"
     )]
     pub fuzzy: FuzzyMode,
 
@@ -246,7 +294,7 @@ pub struct EditArgs {
     pub preserve_timestamps: bool,
 
     /// Apply only the `--old`/`--new` pairs that match instead of failing the
-    /// whole batch (G117). Default (off) is all-or-nothing: any unmatched pair
+    /// whole batch. Default (off) is all-or-nothing: any unmatched pair
     /// aborts with exit 65 and no write. With `--partial`, unmatched pairs are
     /// reported in `pair_results` with `matched: false`; if zero pairs apply,
     /// the command exits 1 (`NO_MATCHES`) without writing.
@@ -261,7 +309,7 @@ pub struct EditArgs {
     #[arg(long, help = "Override fuzzy similarity threshold (0.0-1.0)")]
     pub fuzzy_threshold: Option<f64>,
 
-    /// Replace every occurrence of --old (default: require unique match) (v0.1.30).
+    /// Replace every occurrence of --old (default: require a unique match).
     #[arg(
         long,
         help = "Replace all occurrences of --old (default: fail if match is not unique)",
@@ -269,23 +317,26 @@ pub struct EditArgs {
     )]
     pub replace_all: bool,
 
-    /// WAL sidecar creation policy (G119 L1 prevention). See `write` for
-    /// the full description; the same enum applies to edit operations
-    /// (which by default DO create a sidecar because they lack native
-    /// atomicity).
+    /// WAL sidecar creation policy. See `write` for the full description;
+    /// the same enum applies to edit operations (which by default DO create a
+    /// sidecar because they lack native atomicity).
     #[arg(
         long,
         value_enum,
         default_value_t = crate::wal::WalPolicy::Auto,
-        help = "WAL sidecar policy: auto (default), always, never (G119 L1)"
+        help = "WAL sidecar policy: auto (default), always, never"
     )]
     pub wal_policy: crate::wal::WalPolicy,
+
+    /// Refuse the cross-device copy-then-rename fallback (exit 91).
+    #[command(flatten)]
+    pub strict: StrictAtomicArgs,
 
     /// Shared backup flags.
     #[command(flatten)]
     pub backup_opts: BackupOpts,
 
-    /// v0.1.21 GAP-012: accept `STATE_DRIFT` between sequential edits by
+    /// Accept `STATE_DRIFT` between sequential edits by
     /// the same agent. Use this when chaining multiple `edit` calls
     /// without re-capturing the checksum. Default (off) keeps the
     /// fail-loud `STATE_DRIFT` for true concurrency.
@@ -366,125 +417,4 @@ pub struct RegexArgs {
     pub no_anchors: bool,
 }
 
-/// Arguments for the batch subcommand.
-#[derive(Args, Debug)]
-pub struct BatchArgs {
-    /// Preview without executing.
-    #[arg(long, help = "Show what would be done without executing", action = clap::ArgAction::SetTrue)]
-    pub dry_run: bool,
-
-    /// Manifest file path (default: stdin).
-    #[arg(long, help = "Read manifest from file instead of stdin", value_hint = ValueHint::FilePath)]
-    pub file: Option<PathBuf>,
-
-    /// Execute all operations as a transaction (all-or-nothing).
-    #[arg(
-        long,
-        help = "All-or-nothing: rollback all changes if any operation fails",
-        action = clap::ArgAction::SetTrue
-    )]
-    pub transaction: bool,
-
-    /// Emit JSON Schema for the NDJSON input manifest format.
-    #[arg(long, help = "Print JSON Schema for the batch input manifest", action = clap::ArgAction::SetTrue)]
-    pub input_schema: bool,
-
-    /// Hint for NDJSON streaming: number of operations to buffer before
-    /// emitting the summary line (G77).
-    ///
-    /// atomwrite reads the manifest incrementally (one line at a time), so
-    /// memory usage is O(1) regardless of this value. This flag only
-    /// controls the granularity of the final `summary` event. Default: 100.
-    #[arg(
-        long,
-        default_value_t = crate::constants::DEFAULT_LIST_LIMIT,
-        help = "Operations to buffer before emitting the summary line (default constants::DEFAULT_LIST_LIMIT)"
-    )]
-    pub batch_size: usize,
-
-    /// Shared backup flags.
-    #[command(flatten)]
-    pub backup_opts: BackupOpts,
-}
-
-/// Patch format for the apply subcommand.
-#[derive(Debug, Clone, Copy, ValueEnum, Default)]
-pub enum PatchFormat {
-    /// Auto-detect format from content.
-    #[default]
-    Auto,
-    /// Standard unified diff (--- +++ @@ markers).
-    Unified,
-    /// SEARCH/REPLACE block format (<<<<<<< SEARCH markers).
-    SearchReplace,
-    /// Full file replacement.
-    Full,
-    /// Markdown-fenced diff (`` ```diff `` blocks).
-    Markdown,
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// v14 Tier 3: structured config edits + identifier case conversion.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Arguments for the `set` subcommand (v14 Tier 3).
-#[derive(Args, Debug)]
-pub struct SetArgs {
-    #[arg(value_hint = ValueHint::FilePath)]
-    /// Path to the structured config file (TOML or JSON).
-    pub path: PathBuf,
-    /// Dotted path to the key (e.g. `package.version`).
-    pub key_path: String,
-    /// New value (auto-coerced to bool/int/float/string).
-    pub value: String,
-    /// Shared backup flags.
-    #[command(flatten)]
-    pub backup_opts: BackupOpts,
-    /// Preserve original file timestamps.
-    #[arg(long, help = "Preserve original mtime/atime", action = clap::ArgAction::SetTrue)]
-    pub preserve_timestamps: bool,
-}
-
-/// Arguments for the `case` subcommand (v14 Tier 3).
-#[derive(Args, Debug)]
-pub struct CaseArgs {
-    #[arg(value_hint = ValueHint::AnyPath)]
-    /// Target file paths to rewrite.
-    pub paths: Vec<PathBuf>,
-    /// Pairs of old new identifiers (must be even count).
-    /// G-029: required — global identifier scanning is not implemented; clap fails closed.
-    #[arg(
-        long = "subvert",
-        num_args = 2,
-        value_name = "OLD NEW",
-        required = true,
-        help = "Old and new identifier (repeat for multiple pairs; required — no global scan)"
-    )]
-    pub subvert: Vec<String>,
-    /// Target case style for the new identifier.
-    #[arg(long, value_enum, default_value_t = IdentifierCase::Snake, help = "Target case style")]
-    pub to: IdentifierCase,
-    /// Shared backup flags.
-    #[command(flatten)]
-    pub backup_opts: BackupOpts,
-    /// Preserve original file timestamps.
-    #[arg(long, help = "Preserve original mtime/atime", action = clap::ArgAction::SetTrue)]
-    pub preserve_timestamps: bool,
-    /// Preview without writing.
-    #[arg(long, help = "Show what would be changed without writing", action = clap::ArgAction::SetTrue)]
-    pub dry_run: bool,
-}
-
-/// Arguments for the `wal-stats` subcommand (G119 L5 journal stats).
-///
-/// Computes a snapshot of all `.atomwrite.journal.*.json` sidecars
-/// under the workspace, classified by terminal state (`Started`/
-/// `Committed`/`Aborted`/malformed) and broken down by directory.
-/// Read-only and safe to call from any context.
-#[derive(Args, Debug)]
-pub struct WalStatsArgs {
-    /// Preview without scanning the workspace.
-    #[arg(long, help = "Show what would be done without scanning", action = clap::ArgAction::SetTrue)]
-    pub dry_run: bool,
-}
-
+include!("part0b.inc.rs");

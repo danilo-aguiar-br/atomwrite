@@ -1,4 +1,6 @@
 //! GAP-2026-019…027 agent-first contract tests for atomwrite v0.1.36.
+mod common;
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 use serde_json::Value;
@@ -6,7 +8,7 @@ use std::fs;
 use tempfile::TempDir;
 
 fn bin() -> Command {
-    Command::cargo_bin("atomwrite").expect("atomwrite bin")
+    common::hermetic(Command::cargo_bin("atomwrite").expect("atomwrite bin"))
 }
 
 #[test]
@@ -273,9 +275,15 @@ fn filter_ok_true_does_not_silence_error_envelope() {
         .assert()
         .failure();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).to_string();
-    let line = out.lines().next().expect("error envelope must still emit on stdout");
+    let line = out
+        .lines()
+        .next()
+        .expect("error envelope must still emit on stdout");
     let v: Value = serde_json::from_str(line).unwrap();
-    assert_eq!(v["ok"], false, "always-emit errors despite filter ok=true: {v}");
+    assert_eq!(
+        v["ok"], false,
+        "always-emit errors despite filter ok=true: {v}"
+    );
     assert_eq!(v["error"], true);
 }
 
@@ -291,7 +299,10 @@ fn extract_field_flag_projects_fields() {
     let v: Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
     assert_eq!(v["a"], 1);
     assert_eq!(v["c"], 3);
-    assert!(v.get("b").is_none(), "extract --field must omit unselected: {v}");
+    assert!(
+        v.get("b").is_none(),
+        "extract --field must omit unselected: {v}"
+    );
 }
 
 #[test]
@@ -335,7 +346,13 @@ fn scratch_init_creates_staging_dir() {
     let td = TempDir::new().unwrap();
     let ws = td.path();
     let assert = bin()
-        .args(["--workspace", ws.to_str().unwrap(), "scratch", "init"])
+        .args([
+            "--workspace",
+            ws.to_str().unwrap(),
+            "scratch",
+            "init",
+            ".atomwrite/scratch",
+        ])
         .assert()
         .success();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).to_string();
@@ -352,7 +369,13 @@ fn scratch_init_creates_staging_dir() {
     );
     // idempotent
     bin()
-        .args(["--workspace", ws.to_str().unwrap(), "scratch", "init"])
+        .args([
+            "--workspace",
+            ws.to_str().unwrap(),
+            "scratch",
+            "init",
+            ".atomwrite/scratch",
+        ])
         .assert()
         .success();
 }

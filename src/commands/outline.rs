@@ -60,15 +60,36 @@ pub struct OutlineItem {
     /// Optional end column (`--positions`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_column: Option<usize>,
+    /// Present and true when `signature` was cut.
+    ///
+    /// The cut happens at `OUTLINE_SIGNATURE_MAX_BYTES` or at the first line,
+    /// so a reader that saw a signature ending in `{` knows the body was not
+    /// part of it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_truncated: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
-struct OutlineSummary {
+/// Terminal event of `outline`: item count for one file.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct OutlineSummary {
     r#type: &'static str,
     path: String,
     language: String,
     items: usize,
     elapsed_ms: u64,
+    /// Items that were emitted with a cut `signature` field.
+    ///
+    /// The item itself is in the stream: only `signature` was shortened, at
+    /// `OUTLINE_SIGNATURE_MAX_BYTES` or at the first line. This never means
+    /// an item was left out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    items_truncated: Option<u64>,
+    /// Items the `--limit` budget kept out of the stream.
+    ///
+    /// Distinct from `items_truncated`, which counts cut signatures, not
+    /// missing items.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    items_omitted: Option<u64>,
 }
 
 const STRUCTURAL_NODE_KINDS: &[&str] = &[
@@ -109,6 +130,18 @@ const STRUCTURAL_NODE_KINDS: &[&str] = &[
 /// classes, structs, etc.), and emits each as an `outline_item`
 /// NDJSON line. After the tree is exhausted, a final
 /// `outline_summary` line is emitted with the total count.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::NotFound` when the target file does not exist.
+/// Returns `AtomwriteError::WorkspaceJail` when the path escapes the workspace.
+/// Returns `AtomwriteError::FileTooLarge` when the file exceeds the effective max filesize.
+/// Returns `AtomwriteError::InvalidInput` when `--language` names an unsupported grammar or the
+/// language cannot be detected from the path and content.
+/// Returns an error when no tree-sitter parser is available for the language or the parser
+/// returns no tree.
+/// Returns `AtomwriteError::Io` when the file cannot be read.
+/// Returns `AtomwriteError::BrokenPipe` when the consumer closes the NDJSON stream.
 #[tracing::instrument(skip_all, fields(command = "outline"))]
 pub fn cmd_outline(
     args: &OutlineArgs,
@@ -134,8 +167,7 @@ pub fn cmd_outline(
         Some(args.kinds.iter().map(|s| s.to_lowercase()).collect())
     };
 
-    let mut parser = tree_sitter_language_pack::get_parser(&lang_name)
-        .with_context(|| format!("failed to load parser for {lang_name}"))?;
+    let mut parser = crate::grammar::parser_for(&lang_name)?;
     let tree = parser
         .parse(std::str::from_utf8(&content).unwrap_or(""))
         .or_else(|| parser.parse_bytes(&content))
@@ -152,18 +184,32 @@ pub fn cmd_outline(
         args.positions,
         &mut collected,
     );
-    let items = collected.len();
+    let items_truncated = collected
+        .iter()
+        .filter(|i| i.signature_truncated == Some(true))
+        .count() as u64;
+    let mut items: usize = 0;
+    let mut omitted: u64 = 0;
     for item in collected {
+        // The record budget is spent: this item is work the consumer may not
+        // read, so the count says how many the stream left out.
+        if crate::output::remaining_budget() == Some(0) {
+            omitted = omitted.saturating_add(1);
+            continue;
+        }
         writer.write_event(&item)?;
+        items += 1;
     }
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
-    writer.write_event(&OutlineSummary {
+    writer.write_terminal(&OutlineSummary {
         r#type: "outline_summary",
         path: validated.display().to_string(),
         language: lang_name,
         items,
         elapsed_ms,
+        items_truncated: (items_truncated > 0).then_some(items_truncated),
+        items_omitted: (omitted > 0).then_some(omitted),
     })?;
     Ok(())
 }
@@ -176,31 +222,48 @@ pub fn collect_outline_for_path(
     content: &[u8],
     language: Option<&str>,
 ) -> Vec<OutlineItem> {
+    collect_outline_for_path_status(path, content, language).0
+}
+
+/// Collect outline items and say whether the file was parsed at all.
+///
+/// `false` means no grammar was resolved or the parser returned no tree, and
+/// the empty vec is a hole instead of a file without symbols.
+pub fn collect_outline_for_path_status(
+    path: &std::path::Path,
+    content: &[u8],
+    language: Option<&str>,
+) -> (Vec<OutlineItem>, bool) {
     let lang_name = match crate::commands::query::resolve_language_name(language, path, content) {
         Ok(l) => l,
-        Err(_) => return Vec::new(),
+        Err(_) => return (Vec::new(), false),
     };
-    let mut parser = match tree_sitter_language_pack::get_parser(&lang_name) {
+    let mut parser = match crate::grammar::parser_for(&lang_name) {
         Ok(p) => p,
-        Err(_) => return Vec::new(),
+        Err(_) => return (Vec::new(), false),
     };
     let tree = match parser
         .parse(std::str::from_utf8(content).unwrap_or(""))
         .or_else(|| parser.parse_bytes(content))
     {
         Some(t) => t,
-        None => return Vec::new(),
+        None => return (Vec::new(), false),
     };
     let root = tree.root_node();
     let mut out = Vec::new();
     walk_outline_collect(&root, content, path, &lang_name, &None, false, &mut out);
-    out
+    (out, true)
 }
 
 /// Emit structural outline items for one file (used by `outline` and `sparse outline`).
 ///
 /// Returns the number of items emitted. Parse failures return `Ok(0)` so callers
 /// can skip unsupported/binary files under a budget.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::BrokenPipe` when the consumer closes the NDJSON stream.
+/// Returns a serialization error when an outline item cannot be encoded as JSON.
 pub fn emit_outline_for_path(
     path: &std::path::Path,
     content: &[u8],
@@ -236,7 +299,7 @@ fn walk_outline_collect(
             };
             if matches_filter {
                 let name = extract_name(&node, source);
-                let signature = extract_signature(&node, source);
+                let (signature, signature_truncated) = extract_signature(&node, source);
                 let start = node.start_position();
                 let end = node.end_position();
                 out.push(OutlineItem {
@@ -268,6 +331,7 @@ fn walk_outline_collect(
                     } else {
                         None
                     },
+                    signature_truncated: signature_truncated.then_some(true),
                 });
             }
         }
@@ -304,21 +368,27 @@ fn extract_name(node: &tree_sitter_language_pack::Node, source: &[u8]) -> String
     "<anonymous>".to_string()
 }
 
-fn extract_signature(node: &tree_sitter_language_pack::Node, source: &[u8]) -> String {
+/// Extract the compact signature, saying whether it was cut.
+///
+/// Two cuts are possible and both count: the per-item byte ceiling, and the
+/// first line of a node that spans many lines.
+fn extract_signature(node: &tree_sitter_language_pack::Node, source: &[u8]) -> (String, bool) {
     let start = node.start_byte();
-    let end = node.end_byte().min(start + 400);
+    let node_end = node.end_byte();
+    let end = node_end.min(start + crate::constants::OUTLINE_SIGNATURE_MAX_BYTES);
     let raw = source.get(start..end).unwrap_or(&[]);
     let s = String::from_utf8_lossy(raw);
     let line = s.lines().next().unwrap_or("");
+    let cut = node_end > end || s.len() > line.len();
     let collapsed: String = line
         .chars()
         .filter(|c| !c.is_control() || *c == '\t')
         .collect();
     let trimmed = collapsed.trim();
     if trimmed.is_empty() {
-        "<empty>".to_owned()
+        ("<empty>".to_owned(), cut)
     } else {
-        trimmed.to_string()
+        (trimmed.to_string(), cut)
     }
 }
 

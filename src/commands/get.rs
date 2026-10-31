@@ -8,17 +8,19 @@
 
 use std::io::Write;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 
 use crate::cli::{GetArgs, GlobalArgs};
 use crate::output::NdjsonWriter;
 
-#[derive(Debug, Serialize)]
-struct GetResult {
+/// Terminal event of `get`: the value found at a dotted path.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct GetResult {
     r#type: &'static str,
     path: String,
     key_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<String>,
     found: bool,
     format: &'static str,
@@ -29,6 +31,16 @@ struct GetResult {
 ///
 /// Reads the target structured config file (TOML or JSON) and emits
 /// the value at `key_path` as a single NDJSON line.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::NotFound` when the target file does not exist.
+/// Returns `AtomwriteError::WorkspaceJail` when the path escapes the workspace.
+/// Returns `AtomwriteError::FileTooLarge` when the file exceeds the effective max filesize.
+/// Returns `AtomwriteError::InvalidInput` when the file is not valid UTF-8, is not TOML or JSON,
+/// exceeds the JSON nesting depth, or the key is absent.
+/// Returns `AtomwriteError::Io` when the file cannot be read.
+/// Returns `AtomwriteError::BrokenPipe` when the consumer closes the NDJSON stream.
 #[tracing::instrument(skip_all, fields(command = "get"))]
 pub fn cmd_get(
     args: &GetArgs,
@@ -45,14 +57,12 @@ pub fn cmd_get(
 
     let (value, found, format) = match validated.extension().and_then(|s| s.to_str()) {
         Some("toml") => {
-            let doc: toml_edit::DocumentMut =
-                content.parse().with_context(|| "invalid TOML in source")?;
+            let doc = crate::commands::set::parse_toml_doc(&content)?;
             let (val, found) = get_toml_path(&doc, &args.key_path);
             (val, found, "toml")
         }
         Some("json") => {
-            let v: serde_json::Value =
-                serde_json::from_str(&content).with_context(|| "invalid JSON in source")?;
+            let v = crate::commands::set::parse_json_source(&content)?;
             if !crate::output::check_json_depth(&v, crate::constants::MAX_JSON_DEPTH) {
                 return Err(crate::error::AtomwriteError::InvalidInput {
                     reason: format!(
@@ -106,31 +116,11 @@ pub fn cmd_get(
 /// Navigate a dotted path in a `toml_edit::DocumentMut` and return the
 /// string representation of the leaf value (if any).
 ///
-/// `toml_edit::DocumentMut::get` treats dotted keys as a single literal
-/// name; this helper manually descends through `Table`s.
+/// Delegates to [`crate::commands::toml_path`], the single walk shared with
+/// `set` and `del`; it descends through standard and inline tables alike.
 fn get_toml_path(doc: &toml_edit::DocumentMut, key_path: &str) -> (Option<String>, bool) {
-    let segments: Vec<&str> = key_path.split('.').collect();
-    if segments.is_empty() {
-        return (None, false);
+    match crate::commands::toml_path::get(doc, key_path) {
+        Some(value) => (Some(value), true),
+        None => (None, false),
     }
-    let mut current: &toml_edit::Item = doc.as_item();
-    for (i, seg) in segments.iter().enumerate() {
-        match current.as_table() {
-            Some(table) => match table.get(seg) {
-                Some(item) => current = item,
-                None => return (None, false),
-            },
-            None => return (None, false),
-        }
-        let _ = i;
-    }
-    let val_str = if let Some(v) = current.as_value() {
-        match v.as_str() {
-            Some(s) => s.to_owned(),
-            None => v.to_string().trim().to_owned(),
-        }
-    } else {
-        current.to_string().trim().to_owned()
-    };
-    (Some(val_str), true)
 }

@@ -1,0 +1,17 @@
+# ADR-0027: o write resolve o alvo contra o workspace antes de todos os pré-passos (G118)
+
+- Status: Aceito
+- Data: 2026-06-11
+- Contexto: O `cmd_write` resolvia o workspace, mas entregava o caminho BRUTO da CLI (relativo ao CWD do processo) a três pré-passos (`handle_append_prepend`, `normalize_line_endings` (modo auto) e `verify_checksum`), enquanto só o `atomic_write` o resolvia via `path_safety::validate_path` (src/atomic.rs:143). Com um alvo relativo e um CWD diferente de `--workspace`, a guarda `if !target.exists()` de cada pré-passo via um caminho inexistente: append/prepend viravam silenciosamente uma sobrescrita completa (truncamento), a detecção automática de fim de linha era pulada e o `--expect-checksum` era pulado por inteiro, de modo que o locking otimista aceitava QUALQUER hash com exit 0. É o CWE-367, check-then-act sobre identidades de caminho divergentes. Um incidente real truncou o `gaps.md` deste repositório, e os dados foram recuperados com `rollback --latest --verify`. A pista forense foi o `checksum_before` no envelope NDJSON: o `atomic_write` via o arquivo real que os pré-passos nunca viam. O write.rs era o ÚNICO comando mutador fora da convenção, pois edit, copy, apply, move, rollback, set, del e case validam antes de qualquer `exists()`/leitura.
+- Decisão: Resolver o alvo uma única vez no topo do `cmd_write` (`let resolved = validate_path(&args.target, &workspace)?`) e passar `&resolved` aos três pré-passos e ao `atomic_write` (cuja revalidação interna é idempotente para um caminho absoluto dentro do jail). O campo `path` do NDJSON continua ecoando o caminho informado pelo usuário, porque identidade de exibição ≠ identidade de operação. Convenção do projeto, agora explícita: todo comando mutador DEVE resolver o alvo via `validate_path` ANTES de qualquer checagem `exists()` ou leitura. Um teste de guarda de conformidade afirma que `&args.target` aparece exatamente uma vez no write.rs.
+- Consequências:
+  - + Append/prepend preservam o conteúdo existente independentemente do CWD, a detecção automática de fim de linha funciona e a divergência de `--expect-checksum` devolve STATE_DRIFT (exit 82) em vez de sobrescrever em silêncio.
+  - + Alvos fora do jail agora falham cedo com WORKSPACE_JAIL (exit 126) antes dos pré-passos, e não só no `atomic_write`.
+  - + As guardas `exists()` dentro dos helpers recuperam a semântica de "arquivo novo" pretendida.
+  - - Mudança de comportamento para chamadores que dependiam do bug (alvo relativo com CWD divergente): o drift agora falha com exit 82 e caminhos fora do jail falham mais cedo. Ambos eram caminhos de perda silenciosa de dados antes, então falhar é o correto.
+  - - A suíte de testes usava apenas alvos ABSOLUTOS (imunes ao bug), e cinco testes de regressão agora usam um alvo RELATIVO com `current_dir` apontando para fora do workspace.
+- Alternativas consideradas:
+  1. Alterar cada helper para receber o workspace e resolver internamente. Rejeitado: três resoluções em vez de uma reintroduzem o risco de múltiplas identidades que a correção remove.
+  2. Tornar falhas de `exists()` nos pré-passos erros fatais. Rejeitado: "o alvo ainda não existe" é um estado legítimo do `write` (criação de arquivo).
+  3. Proibir alvos relativos. Rejeitado: quebra todas as receitas documentadas (`atomwrite --workspace . write target.rs`).
+- Gatilho para revisitar: Se um futuro subcomando mutador chegar sem a convenção de resolver primeiro, promover a guarda de conformidade textual a um harness compartilhado de lint/teste que cubra todos os comandos.

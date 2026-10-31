@@ -12,12 +12,12 @@ pub use crate::cli_args::*;
 /// Build-time version line for clap (`env!` / `option_env!` — compile-time macros).
 ///
 /// `ATOMWRITE_GIT_SHA` and `TARGET` are injected by `build.rs` via
-/// `cargo:rustc-env`. When git is unavailable the SHA falls back to `"unknown"`.
+/// `cargo:rustc-env`. Outside a git repository the source is `"no-git"`.
 fn version_string() -> String {
     format!(
         "{} ({}) {}",
         env!("CARGO_PKG_VERSION"),
-        option_env!("ATOMWRITE_GIT_SHA").unwrap_or("unknown"),
+        env!("ATOMWRITE_GIT_SHA"),
         env!("TARGET"),
     )
 }
@@ -31,9 +31,24 @@ fn version_string() -> String {
     long_about = "A single, self-contained Rust CLI that gives LLM agents superpowers \
                   for file operations. Every write is atomic (tempfile → fsync → rename), \
                   every output is NDJSON, every search is parallel.",
+    // Derived from the error enum, so `--help`, `agent-surface` and the README
+    // table list the same statuses.
+    after_help = crate::commands::agent_surface::exit_codes_help(),
     propagate_version = true
 )]
 /// Top-level CLI definition parsed by clap.
+///
+/// # Examples
+///
+/// ```
+/// use atomwrite::cli::{Cli, Commands};
+/// use clap::Parser;
+///
+/// let cli = Cli::try_parse_from(["atomwrite", "--workspace", ".", "read", "--head", "5", "src/main.rs"])?;
+/// assert!(matches!(cli.command, Commands::Read(_)));
+/// assert_eq!(cli.global.timeout_secs, 120);
+/// # Ok::<(), clap::Error>(())
+/// ```
 pub struct Cli {
     /// Global flags shared across all subcommands.
     #[command(flatten)]
@@ -44,205 +59,43 @@ pub struct Cli {
     pub command: Commands,
 }
 
-#[derive(clap::Args, Debug)]
-/// Global flags shared across all subcommands.
-pub struct GlobalArgs {
-    /// Verbosity level (repeat for more: -v, -vv, -vvv).
-    #[arg(short, long, action = clap::ArgAction::Count, global = true, help = "Increase verbosity (-v info, -vv debug, -vvv trace)")]
-    pub verbose: u8,
+include!("cli_global.inc.rs");
+include!("cli_examples.inc.rs");
 
-    /// Quiet level (repeat for less: -q, -qq).
-    #[arg(short, long, action = clap::ArgAction::Count, global = true, help = "Decrease verbosity (-q error, -qq off)")]
-    pub quiet: u8,
-
-    /// Workspace root for path jail validation.
-    #[arg(
-        long,
-        global = true,
-        value_hint = ValueHint::DirPath,
-        help = "Workspace root for path jail validation"
-    )]
-    pub workspace: Option<PathBuf>,
-
-    /// Explicit config file path (overrides workspace `.atomwrite.toml` and XDG config).
-    #[arg(
-        long,
-        global = true,
-        value_hint = ValueHint::FilePath,
-        help = "Path to .atomwrite.toml (explicit override; fails if missing/malformed)"
-    )]
-    pub config: Option<PathBuf>,
-
-    /// Color output mode.
-    #[arg(long, global = true, value_enum, default_value_t = ColorChoice::Auto, help = "Control colored output")]
-    pub color: ColorChoice,
-
-    /// Disable colored output (equivalent to --color never).
-    #[arg(long, global = true, help = "Disable colored output", action = clap::ArgAction::SetTrue)]
-    pub no_color: bool,
-
-    /// Write PID to this path after signal handlers install (test harness only).
+impl Cli {
+    /// Parser with the parts that cannot be written as an attribute applied.
     ///
-    /// G-007: replaces env readiness probes. One-shot agents normally omit this.
-    #[arg(
-        long = "ready-file",
-        global = true,
-        value_hint = ValueHint::FilePath,
-        help = "Write PID after signal handlers are ready (test harness; no product env)"
-    )]
-    pub ready_file: Option<PathBuf>,
-
-    /// Disable .gitignore filtering.
-    #[arg(long, global = true, help = "Do not respect .gitignore files", action = clap::ArgAction::SetTrue)]
-    pub no_gitignore: bool,
-
-    /// Include hidden files and directories.
-    #[arg(long, global = true, help = "Include hidden files and directories", action = clap::ArgAction::SetTrue)]
-    pub hidden: bool,
-
-    /// Follow symbolic links during traversal.
-    #[arg(long, global = true, help = "Follow symbolic links", action = clap::ArgAction::SetTrue)]
-    pub follow_symlinks: bool,
-
-    /// Parallel worker bound for multi-file / multi-path commands.
-    ///
-    /// Sets both `ignore::WalkBuilder::threads` (directory fan-out) and the
-    /// process-wide rayon pool (CPU-bound `par_iter` helpers: hash, backup,
-    /// recursive delete/copy, semantic-search scoring, non-txn batch, …).
-    ///
-    /// * omitted → all logical CPUs, RAM-capped (`concurrency` module formula)
-    /// * `0` → same as omitted (explicit “use all cores”)
-    /// * `N` → exactly N workers (deterministic tests / constrained hosts)
-    ///
-    /// Alias: `--max-concurrency` (Rules Rust bounded-concurrency surface).
-    /// Bound is **CLI-only** (`--threads` / `--max-concurrency`); atomwrite does
-    /// not document or require process env knobs for concurrency (G-007 / O-009).
-    #[arg(
-        short = 'j',
-        long = "threads",
-        visible_alias = "max-concurrency",
-        global = true,
-        value_name = "N",
-        help = "Max concurrent workers for walks + rayon (0 = all cores; default = all cores, RAM-capped). Alias: --max-concurrency"
-    )]
-    pub threads: Option<usize>,
-
-    /// Maximum allowed file size in bytes.
-    #[arg(
-        long,
-        global = true,
-        help = "Maximum file size in bytes (default: 1GB, reject larger)"
-    )]
-    pub max_filesize: Option<u64>,
-
-    /// Global operation timeout in seconds (one-shot default: [`crate::constants::DEFAULT_TIMEOUT_SECS`]).
-    ///
-    /// When non-zero, a watchdog sets the cooperative cancel flag after N
-    /// seconds (exit 124). Alias: `--timeout`. Pass `0` to disable (not
-    /// recommended for agents — pure CPU sections must poll the flag).
-    #[arg(
-        long = "timeout-secs",
-        visible_alias = "timeout",
-        global = true,
-        default_value_t = crate::constants::DEFAULT_TIMEOUT_SECS,
-        help = "Global operation timeout in seconds (default from constants::DEFAULT_TIMEOUT_SECS=120; 0 = disable; exit 124 on deadline)"
-    )]
-    pub timeout_secs: u64,
-
-    /// Suppress NDJSON `progress` heartbeats (batch/replace).
-    #[arg(
-        long,
-        global = true,
-        help = "Disable NDJSON progress events on long operations",
-        action = clap::ArgAction::SetTrue
-    )]
-    pub no_progress: bool,
-
-    /// Emit JSON Schema for subcommand output and exit.
-    #[arg(
-        long,
-        global = true,
-        help = "Emit JSON Schema for the subcommand output and exit",
-        action = clap::ArgAction::SetTrue
-    )]
-    pub json_schema: bool,
-
-    /// Accepted for compatibility but ignored — output is always NDJSON.
-    #[arg(long, global = true, hide = true, action = clap::ArgAction::SetTrue)]
-    pub json: bool,
-
-    /// Override locale for translated suggestions / human stderr (e.g. en, pt-BR).
-    ///
-    /// ADR-0037: long flag renamed `--lang` → `--locale` in v0.1.20 to
-    /// free the `--lang` namespace for subcommand-level use (e.g.
-    /// `scope --lang` as an alias for `--language`). Field name remains `lang`.
-    ///
-    /// Precedence (Rules Rust i18n): `--locale` → XDG preference → OS via
-    /// `sys-locale` → `en`. NDJSON error **codes** and Display **messages**
-    /// stay English; **suggestions** follow the locale.
-    /// G-007: locale via CLI / XDG only (no product env knobs).
-    #[arg(
-        long = "locale",
-        global = true,
-        value_parser = crate::locale::parse_cli_locale,
-        help = "Override locale (en, pt-BR); renamed from --lang in v0.1.20"
-    )]
-    pub lang: Option<String>,
-
-    /// Skip the on-startup `wal-heal` pass (G119 L3). Default: every
-    /// invocation walks the workspace and reaps stale `Committed`/
-    /// `Aborted` sidecars older than 3600s within a 100ms wall-clock
-    /// budget. Set this flag in tight local loops or in benchmarks that
-    /// measure the subcommand cost in isolation.
-    /// G-007: flag only (no `ATOMWRITE_WAL_NO_AUTO_HEAL` env).
-    #[arg(
-        long,
-        global = true,
-        help = "Skip startup wal-heal pass (G119 L3); default: run with 3600s threshold and 100ms budget",
-        action = clap::ArgAction::SetTrue
-    )]
-    pub no_auto_heal: bool,
-
-    /// Project NDJSON events to top-level keys only (agent-native; comma-separated).
-    ///
-    /// Applied by the stdout writer for every subcommand. Missing keys are
-    /// omitted (no null filler). Alias: `--fields`.
-    #[arg(
-        long = "select",
-        visible_alias = "fields",
-        global = true,
-        value_name = "KEYS",
-        help = "Project NDJSON to top-level keys (CSV); alias --fields"
-    )]
-    pub select: Option<String>,
-
-    /// Keep only NDJSON events matching top-level key equality (repeatable AND).
-    ///
-    /// Expressions: `key=value`, `key==value`, or `key!=value`. Values may be
-    /// `true`/`false`/`null`/number/string. Applies to all events including errors.
-    #[arg(
-        long = "filter",
-        global = true,
-        value_name = "EXPR",
-        action = clap::ArgAction::Append,
-        help = "Filter NDJSON events by top-level key=value (repeatable AND)"
-    )]
-    pub filter: Vec<String>,
-
-    /// Emit at most N NDJSON events after filtering (agent-native token bound).
-    ///
-    /// Long-only: short `-n` is reserved by `replace --max-replacements` (`-n`).
-    #[arg(
-        long = "limit",
-        global = true,
-        value_name = "N",
-        help = "Max NDJSON events after --filter (agent-native; long-only, -n is replace)"
-    )]
-    pub limit: Option<u64>,
+    /// `config --help` publishes the key table, so it is generated from the
+    /// same `KEYS` the verb reads. The derive attribute can only hold a
+    /// `'static` string, and a hand-written copy of the table is what drifted
+    /// before (22 rows against 35). `main` builds the parser here instead of
+    /// calling `try_parse`, so the page printed from argv carries the table the
+    /// verb itself reads; `agent-surface` and `commands` publish the summary
+    /// only, and completions carry no prose at all.
+    #[must_use]
+    pub fn parser() -> clap::Command {
+        use clap::CommandFactory;
+        let keys = crate::commands::config_cmd::keys_help_block();
+        Cli::command().mut_subcommand("config", |sub| {
+            // The generated table plus the scopes block, in one blank line.
+            sub.after_long_help(format!("{keys}\n{}", EX_CONFIG_SCOPES))
+        })
+    }
 }
 
 impl GlobalArgs {
     /// Return the workspace root as an absolute path, defaulting to the current directory.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use atomwrite::cli::Cli;
+    /// use clap::Parser;
+    ///
+    /// let cli = Cli::try_parse_from(["atomwrite", "--workspace", "/srv/project", "doctor"])?;
+    /// assert_eq!(cli.global.resolve_workspace()?, std::path::PathBuf::from("/srv/project"));
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
     ///
     /// # Errors
     ///
@@ -250,12 +103,16 @@ impl GlobalArgs {
     pub fn resolve_workspace(&self) -> Result<PathBuf> {
         let base = match &self.workspace {
             Some(p) => p.clone(),
-            None => std::env::current_dir()
-                .map_err(|e| anyhow::anyhow!("cannot resolve workspace: {e}"))?,
+            // Classified as a typed error so an unreadable current directory
+            // keeps its semantic exit (13 or 74) instead of falling to 255.
+            None => std::env::current_dir().map_err(|e| {
+                crate::error::AtomwriteError::from_io_at(std::path::Path::new("."), e)
+            })?,
         };
         if base.is_relative() {
-            let cwd = std::env::current_dir()
-                .map_err(|e| anyhow::anyhow!("cannot resolve workspace: {e}"))?;
+            let cwd = std::env::current_dir().map_err(|e| {
+                crate::error::AtomwriteError::from_io_at(std::path::Path::new("."), e)
+            })?;
             Ok(cwd.join(base))
         } else {
             Ok(base)
@@ -292,130 +149,221 @@ pub enum ColorChoice {
     Never,
 }
 
+/// Side-effect acknowledgement policy resolved from the global flags.
+///
+/// Commands that mutate declare which policy they require; a policy the
+/// caller did not grant fails closed before any filesystem work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SideEffectMode {
+    /// Command has no side effect gated by acknowledgement.
+    Unspecified,
+    /// Command mutates and requires `--confirm-side-effect`.
+    Acknowledged,
+}
+
+impl GlobalArgs {
+    /// Resolve the acknowledgement policy of this invocation.
+    ///
+    /// The flag is only meaningful on a verb that changes bytes on disk. On any
+    /// other verb it is not a harmless no-op: it is a caller telling the CLI
+    /// they believe the run writes, and the CLI reporting success would confirm
+    /// a belief it never checked. The dispatch refuses it there instead.
+    pub fn side_effect_mode(&self) -> SideEffectMode {
+        if self.confirm_side_effect {
+            SideEffectMode::Acknowledged
+        } else {
+            SideEffectMode::Unspecified
+        }
+    }
+
+    /// Resolve whether the process is agent-hosted and must never prompt.
+    ///
+    /// True when `--non-interactive` is set or stdin is not a terminal. A
+    /// one-shot CLI that can block on a terminal prompt is the failure this
+    /// covers, so a pipe or `/dev/null` counts as non-interactive.
+    pub fn non_interactive(&self, stdin_is_tty: bool) -> bool {
+        self.non_interactive || !stdin_is_tty
+    }
+}
+
 /// Available subcommands for the CLI.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Read files with metadata, checksum, and optional content
+    #[command(after_long_help = EX_READ)]
     Read(ReadArgs),
 
     /// Create or overwrite files atomically via stdin
+    #[command(after_long_help = EX_WRITE)]
     Write(WriteArgs),
 
     /// Surgically edit files by line number, text marker, or exact match
+    #[command(after_long_help = EX_EDIT)]
     Edit(EditArgs),
 
     /// Search file contents in parallel (ripgrep engine)
+    #[command(after_long_help = EX_SEARCH)]
     Search(SearchArgs),
 
     /// Replace text across files in parallel with atomic writes
+    #[command(after_long_help = EX_REPLACE)]
     Replace(ReplaceArgs),
 
-    /// Calculate BLAKE3 checksums for files
+    /// Calculate BLAKE3 checksums for files, or for stdin when --stdin is given
+    #[command(after_long_help = EX_HASH)]
     Hash(HashArgs),
 
     /// Delete files with optional backup
+    #[command(after_long_help = EX_DELETE)]
     Delete(DeleteArgs),
 
     /// Count lines, matches, or files by extension
+    #[command(after_long_help = EX_COUNT)]
     Count(CountArgs),
 
     /// Compare two files or file vs stdin (unified diff)
+    #[command(after_long_help = EX_DIFF)]
     Diff(DiffArgs),
 
     /// Move or rename files/dirs atomically (same-FS dir rename; cross-device dirs: copy -r + delete)
+    #[command(after_long_help = EX_MOVE)]
     Move(MoveArgs),
 
     /// Copy files with checksum verification and atomic destination
+    #[command(after_long_help = EX_COPY)]
     Copy(CopyArgs),
 
     /// List project file structure with metadata (NDJSON per entry)
+    #[command(after_long_help = EX_LIST)]
     List(ListArgs),
 
     /// Extract fields from NDJSON stdin or text columns
+    #[command(after_long_help = EX_EXTRACT)]
     Extract(ExtractArgs),
 
     /// Evaluate math expressions and unit conversions (fend engine)
+    #[command(after_long_help = EX_CALC)]
     Calc(CalcArgs),
 
     /// Generate regex from examples (grex engine)
+    #[command(after_long_help = EX_REGEX)]
     Regex(RegexArgs),
 
     /// Structural code search and rewrite via AST patterns (ast-grep engine)
+    #[command(after_long_help = EX_TRANSFORM)]
     Transform(TransformArgs),
 
     /// Grammatical scoping: select AST categories and apply actions (delete, upper, lower, etc.)
+    #[command(after_long_help = EX_SCOPE)]
     Scope(crate::commands::scope::ScopeArgs),
 
     /// Execute multiple operations from an NDJSON manifest (batch mode)
+    #[command(after_long_help = EX_BATCH)]
     Batch(BatchArgs),
 
     /// Create timestamped backups of files with BLAKE3 checksums
+    #[command(after_long_help = EX_BACKUP)]
     Backup(BackupArgs),
 
     /// Restore a file from a previous backup
+    #[command(after_long_help = EX_ROLLBACK)]
     Rollback(RollbackArgs),
 
     /// Apply a patch (unified diff, SEARCH/REPLACE, or full file) from stdin
+    #[command(after_long_help = EX_APPLY)]
     Apply(ApplyArgs),
-    /// v14 Tier 3: set a value in a structured config file (TOML/JSON).
+    /// Set a value in a TOML or JSON file by dotted key path
+    #[command(after_long_help = EX_SET)]
     Set(crate::cli_args::SetArgs),
-    /// v14 Tier 3: get a value from a structured config file (TOML/JSON).
+    /// Read a value from a TOML or JSON file by dotted key path
+    #[command(after_long_help = EX_GET)]
     Get(crate::cli_args::GetArgs),
-    /// v14 Tier 3: delete a key from a structured config file (TOML/JSON).
+    /// Delete a key from a TOML or JSON file by dotted key path
+    #[command(after_long_help = EX_DEL)]
     Del(crate::cli_args::DelArgs),
-    /// v14 Tier 3: convert identifier case in source files.
+    /// Convert identifier case in source files
+    #[command(after_long_help = EX_CASE)]
     Case(crate::cli_args::CaseArgs),
-    /// v14 Tier 3 (v0.1.12): tree-sitter S-expression query against a file.
+    /// Run a tree-sitter S-expression query against a file
+    #[command(after_long_help = EX_QUERY)]
     Query(crate::cli_args::QueryArgs),
-    /// v14 Tier 3 (v0.1.12): extract high-level structure (functions, classes,
-    /// structs, enums, etc.) from a source file.
+    /// Extract the high-level structure (functions, classes, structs, enums) from a source file
+    #[command(after_long_help = EX_OUTLINE)]
     Outline(crate::cli_args::OutlineArgs),
 
-    /// Snapshot of journal state: count by terminal state, size, age,
-    /// breakdown by directory (G119 L5 journal stats).
+    /// Count journal sidecars by terminal state, size, age and directory
+    #[command(after_long_help = EX_WAL_STATS)]
     WalStats(crate::cli_args::WalStatsArgs),
 
-    /// Remove stale terminal journals older than the threshold (G119 L3).
+    /// Remove terminal journals older than the threshold
+    #[command(after_long_help = EX_WAL_HEAL)]
     WalHeal(crate::cli_args::WalHealArgs),
 
-    /// Three-way line-based merge (not AST/embedding) for multi-agent writes (v0.1.29 P1-1).
+    /// Three-way line-based merge for multi-agent writes (not AST based)
+    #[command(after_long_help = EX_SEMANTIC_MERGE)]
     SemanticMerge(crate::commands::semantic_merge::SemanticMergeArgs),
-    /// Budgeted sparse list/read (v0.1.29 P1-2).
+    /// List, read and outline files under a hard file budget
+    #[command(after_long_help = EX_SPARSE)]
     Sparse(crate::commands::sparse::SparseArgs),
-    /// Named multi-step recipes (v0.1.29 P1-4).
+    /// List and run named multi-step recipes
+    #[command(after_long_help = EX_RECIPE)]
     Recipe(crate::commands::recipe::RecipeArgs),
-    /// Metadata alias for `read --stat` (v0.1.29 P2-4).
+    /// Metadata only, alias of `read --stat`
+    #[command(after_long_help = EX_STAT)]
     Stat(crate::cli_args::ReadArgs),
-    /// Agent tool surface manifesto without MCP (v0.1.29 P2-5).
+    /// Print the agent tool manifest as NDJSON
+    #[command(after_long_help = EX_AGENT_SURFACE)]
     AgentSurface(crate::commands::agent_surface::AgentSurfaceArgs),
-    /// Watch filesystem events (feature `watch`) (v0.1.29 P3-1).
+    /// Watch filesystem events (needs a build with the `watch` feature)
+    #[command(after_long_help = EX_WATCH)]
     Watch(crate::commands::watch::WatchArgs),
-    /// Multi-rule codemod campaign (v0.1.29 P3-3).
+    /// Extract a bounded signal from PDF, OOXML and image headers
+    ///
+    /// Reads PDF, OOXML (document / spreadsheet / presentation) and image
+    /// headers, emitting a bounded signal and never raw artifact bytes.
+    #[command(after_long_help = EX_EXTRACT_ARTIFACT)]
+    ExtractArtifact(crate::commands::extract_artifact::ExtractArtifactArgs),
+    /// Run a multi-rule AST codemod campaign from a YAML rules file
+    #[command(after_long_help = EX_CODEMOD)]
     Codemod(crate::commands::codemod::CodemodArgs),
-    /// Offline token Jaccard search (v0.1.29 P3-2).
+    /// Offline token-overlap (Jaccard) search
+    #[command(after_long_help = EX_SEMANTIC_SEARCH)]
     SemanticSearch(crate::commands::semantic_search::SemanticSearchArgs),
     /// Diagnose environment and dependencies (agent host readiness)
+    #[command(after_long_help = EX_DOCTOR)]
     Doctor(crate::commands::doctor::DoctorArgs),
 
     /// Create agent staging dir under workspace (never OS /tmp)
+    #[command(after_long_help = EX_SCRATCH)]
     Scratch(crate::commands::scratch::ScratchArgs),
 
     /// Show resolved UI locale / persist preference (XDG)
+    #[command(after_long_help = EX_LOCALE)]
     Locale(crate::commands::locale_cmd::LocaleArgs),
 
+    /// Read or write persistent tuning keys (`config.toml`, `.atomwrite.toml`) without env vars
+    // `after_long_help` is filled by `Cli::parser` from the live key table:
+    // the attribute can only hold a `'static` string, and the copy in it had
+    // drifted from `KEYS` (22 rows against 35).
+    Config(crate::commands::config_cmd::ConfigArgs),
+
     /// Emit full command tree as JSON for agent discovery
-    #[command(name = "commands")]
+    #[command(name = "commands", after_long_help = EX_COMMANDS)]
     CommandsTree(crate::commands::command_tree::CommandsTreeArgs),
 
-    /// Generate shell completions for bash, zsh, fish, or powershell
+    /// Generate shell completions for bash, zsh, fish, elvish, or powershell
+    #[command(after_long_help = EX_COMPLETIONS)]
     Completions(CompletionsArgs),
 
-    /// v0.1.22 ADR-0040: prune `.bak.YYYYMMDD_HHMMSS` backups by age or count.
+    /// Prune `.bak.YYYYMMDD_HHMMSS` backups by age or count
+    #[command(after_long_help = EX_PRUNE_BACKUPS)]
     PruneBackups(PruneBackupsArgs),
 
-    /// v0.1.22 ADR-0039: apply N `old`/`new` pairs from NDJSON stdin in one write.
+    /// Apply N `old`/`new` pairs from stdin (JSON array or NDJSON) in one write
+    #[command(after_long_help = EX_EDIT_LOOP)]
     EditLoop(EditLoopArgs),
 
     /// Verify file integrity by comparing BLAKE3 checksum
+    #[command(after_long_help = EX_VERIFY)]
     Verify(crate::cli_args::VerifyArgs),
 }

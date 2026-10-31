@@ -18,10 +18,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use regex::Regex;
 
-use crate::atomic::{AtomicWriteOptions, atomic_write};
+use crate::atomic::AtomicWriteOptions;
 use crate::checksum;
 
 use crate::cli::{GlobalArgs, ReplaceArgs};
@@ -46,9 +46,13 @@ pub fn cmd_replace(
     shutdown: &ShutdownSignal,
     defaults: &crate::config::DefaultsSection,
     fuzzy_cfg: &crate::config::FuzzySection,
+    write_cfg: &crate::config::WriteSection,
 ) -> Result<()> {
-    run_replace(args, global, writer, shutdown, defaults, fuzzy_cfg)
+    run_replace(
+        args, global, writer, shutdown, defaults, fuzzy_cfg, write_cfg,
+    )
 }
 
 include!("replace_run.inc.rs");
+include!("replace_finish.inc.rs");
 include!("replace_helpers.inc.rs");

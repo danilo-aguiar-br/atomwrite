@@ -17,6 +17,19 @@ use serde::Serialize;
 
 use crate::ndjson_types::{BestCandidate, PairResult};
 
+/// Build an `anyhow::Error` holding [`AtomwriteError::InvalidInput`] from a format string.
+///
+/// For input the caller got wrong (a missing field, a malformed line): exit 65 with
+/// the short reason, instead of an untyped error the binary reports as an internal one.
+#[macro_export]
+macro_rules! invalid_input {
+    ($($arg:tt)*) => {
+        ::anyhow::Error::from($crate::error::AtomwriteError::InvalidInput {
+            reason: format!($($arg)*),
+        })
+    };
+}
+
 include!("class.inc.rs");
 include!("variants.inc.rs");
 include!("impl_methods.inc.rs");

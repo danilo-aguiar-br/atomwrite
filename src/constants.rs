@@ -35,7 +35,7 @@ pub const SCRATCH_DIR_REL: &str = ".atomwrite/scratch";
 ///
 /// Kept in sync by unit test against `Cli::command().get_subcommands()`.
 /// When adding a subcommand: bump this constant and agent-facing docs (45).
-pub const CANONICAL_SUBCOMMAND_COUNT: usize = 45;
+pub const CANONICAL_SUBCOMMAND_COUNT: usize = 47;
 
 /// Default number of backup copies to retain.
 pub const DEFAULT_BACKUP_RETENTION: u8 = 5;
@@ -63,6 +63,100 @@ pub const EXIT_TRANSACTION_ROLLBACK_FAILED: i32 = 80;
 
 /// Exit code when checksum verification fails after write.
 pub const EXIT_CHECKSUM_VERIFY_FAILED: i32 = 81;
+
+/// Exit code when `edit-loop --partial` wrote the matching pairs but others missed.
+pub const EXIT_EDIT_LOOP_PARTIAL: i32 = 87;
+
+/// Exit code for a failure no other status describes (also the `NO_MATCHES` status).
+pub const EXIT_FAILURE: i32 = 1;
+
+/// Exit code for `NO_MATCHES`: the search ran and found nothing.
+pub const EXIT_NO_MATCHES: i32 = EXIT_FAILURE;
+
+/// Exit code for a command line the parser rejected.
+pub const EXIT_ARGUMENT_PARSE_ERROR: i32 = 2;
+
+/// Exit code when the target does not exist.
+pub const EXIT_NOT_FOUND: i32 = 4;
+
+/// Exit code when the OS denied access.
+pub const EXIT_PERMISSION_DENIED: i32 = 13;
+
+/// Exit code when the device is full.
+pub const EXIT_DISK_FULL: i32 = 28;
+
+/// Exit code when a quota was exceeded.
+pub const EXIT_QUOTA_EXCEEDED: i32 = 30;
+
+/// Exit code for invalid input (also match failures, binary and oversize files).
+pub const EXIT_INVALID_INPUT: i32 = 65;
+
+/// Exit code for a rename across filesystems.
+pub const EXIT_CROSS_DEVICE: i32 = 73;
+
+/// Exit code for an I/O error.
+pub const EXIT_IO_ERROR: i32 = 74;
+
+/// Exit code for an invalid configuration.
+pub const EXIT_CONFIG_INVALID: i32 = 78;
+
+/// Exit code for optimistic-lock state drift.
+pub const EXIT_STATE_DRIFT: i32 = 82;
+
+/// Exit code when an advisory lock timed out.
+pub const EXIT_LOCK_TIMEOUT: i32 = 83;
+
+/// Exit code for `semantic-merge` conflicts.
+pub const EXIT_MERGE_CONFLICT: i32 = 84;
+
+/// Exit code when a FIFO was found where a regular file was expected.
+pub const EXIT_FIFO_DETECTED: i32 = 85;
+
+/// Exit code when a device file was found where a regular file was expected.
+pub const EXIT_DEVICE_FILE: i32 = 86;
+
+/// Exit code when the post-write syntax check failed.
+pub const EXIT_SYNTAX_ERROR: i32 = 88;
+
+/// Exit code when the cross-device copy fallback is disabled.
+pub const EXIT_EXDEV_FALLBACK_DISABLED: i32 = 91;
+
+/// Exit code when the copy-back BLAKE3 verification failed.
+pub const EXIT_COPY_BACK_FAILED: i32 = 92;
+
+/// Exit code when an orphan journal was found.
+pub const EXIT_ORPHAN_JOURNAL: i32 = 93;
+
+/// Exit code for a tree-sitter grammar this host cannot provide (v0.1.37).
+///
+/// `EX_UNAVAILABLE` from `sysexits.h`, which names exactly this condition: a
+/// service the run needs is not available here. 69 was unused before, and the
+/// alternative was 255, which reads as "the tool is broken".
+pub const EXIT_GRAMMAR_UNAVAILABLE: i32 = 69;
+
+/// Exit code for the global deadline (GNU `timeout(1)` convention).
+pub const EXIT_TIMEOUT: i32 = 124;
+
+/// Exit code when a path escapes the workspace jail.
+pub const EXIT_WORKSPACE_JAIL: i32 = 126;
+
+/// Exit code when a symlink target is blocked.
+pub const EXIT_SYMLINK_BLOCKED: i32 = 127;
+
+/// Exit code when the target file is immutable.
+pub const EXIT_IMMUTABLE_FILE: i32 = 128;
+
+/// Exit code for SIGHUP (128 + 1).
+pub const EXIT_SIGHUP: i32 = 129;
+
+/// Exit code for SIGINT (128 + 2).
+pub const EXIT_SIGINT: i32 = 130;
+
+/// Exit code for SIGTERM (128 + 15).
+pub const EXIT_SIGTERM: i32 = 143;
+
+/// Exit code for an internal error.
+pub const EXIT_INTERNAL_ERROR: i32 = 255;
 
 /// Maximum allowed size for a single NDJSON line from stdin (256 KiB).
 pub const MAX_NDJSON_LINE_SIZE: usize = 256 * 1024;
@@ -112,6 +206,24 @@ const _: () = assert!(FUZZY_MAX_WINDOWS >= 16);
 const _: () = assert!(FUZZY_DEFAULT_MAX_REPLACEMENTS >= 1);
 const _: () = assert!(FUZZY_HARD_MAX_REPLACEMENTS >= FUZZY_DEFAULT_MAX_REPLACEMENTS);
 const _: () = assert!(FUZZY_MAX_BUFFER_GROWTH_FACTOR >= 2);
+
+// --- Fuzzy cancel poll and content cap (T1, v0.1.37) ---
+/// Max content bytes the fuzzy cascade scans (256 MiB); `[fuzzy].max_content_bytes` overrides.
+pub const FUZZY_MAX_CONTENT_BYTES: u64 = 256 * 1024 * 1024;
+/// Cancel poll mask for cheap per-line loops: check shutdown every 256 iterations.
+pub const FUZZY_CANCEL_POLL_MASK: usize = 0xFF;
+/// Cancel poll mask for expensive per-iteration work (diff, Damerau): check every iteration.
+pub const FUZZY_CANCEL_POLL_MASK_HEAVY: usize = 0;
+/// Punctuation whose adjacent spaces `punctuation_normalized` removes.
+pub const FUZZY_PUNCTUATION_CHARS: &str = "(){}[]<>,;:";
+
+/// Max content bytes for `escape_normalized`, which builds an 8-byte-per-byte offset map
+/// (32 MiB of content = 256 MiB of map); above it the strategy is skipped, not failed.
+pub const FUZZY_ESCAPE_MAP_MAX_CONTENT_BYTES: usize = 32 * 1024 * 1024;
+
+const _: () = assert!((FUZZY_CANCEL_POLL_MASK + 1).is_power_of_two());
+const _: () = assert!(FUZZY_ESCAPE_MAP_MAX_CONTENT_BYTES as u64 <= FUZZY_MAX_CONTENT_BYTES);
+const _: () = assert!(FUZZY_MAX_CONTENT_BYTES >= FUZZY_MAX_PATTERN_BYTES as u64);
 
 // --- WAL heuristics (G-007: named defaults for XDG config, not env) ---
 /// Default seconds to keep committed WAL sidecars (0 = drop immediately).
@@ -176,6 +288,14 @@ const _: () = assert!(DEFAULT_RISK_THRESHOLD_ON > 0 && DEFAULT_RISK_THRESHOLD_ON
 pub const DEFAULT_SEARCH_MAX_FILESIZE_BYTES: u64 = 10 * 1024 * 1024;
 /// Default `search --max-columns` truncation.
 pub const DEFAULT_SEARCH_MAX_COLUMNS: usize = 500;
+/// Fragment of the error `grep-searcher` raises when a single line exceeds
+/// the searcher's heap limit.
+///
+/// The library has no typed error for it, only this text, so the translation to
+/// the crate's own vocabulary keys on it. If the wording ever changes, the match
+/// simply stops and the raw message is reported unchanged instead of turning a
+/// valid run into a failure.
+pub const SEARCH_HEAP_LIMIT_MARKER: &str = "allocation limit";
 /// Default `replace --progress-every` (0 = off).
 pub const DEFAULT_PROGRESS_EVERY_FILES: u64 = 50;
 // DEFAULT_BACKUP_RETENTION defined above (line ~28).
@@ -187,6 +307,20 @@ pub const DEFAULT_WAL_HEAL_MAX_DURATION_MS: u64 = 100;
 pub const DEFAULT_SEMANTIC_SEARCH_TOP: usize = 20;
 /// Default `semantic-search` min score.
 pub const DEFAULT_SEMANTIC_SEARCH_MIN_SCORE: f64 = 0.05;
+/// Maximum number of per-file failures echoed in `errors[]` of a scan summary.
+///
+/// The failure counter stays exact; only the reported list is bounded so that a
+/// tree full of unreadable files cannot grow memory without limit.
+pub const MAX_REPORTED_FILE_FAILURES: usize = 50;
+/// Files scored per batch by `semantic-search`; bounds resident memory and sets the
+/// granularity at which the global deadline is polled between batches.
+pub const SEMANTIC_SEARCH_BATCH_FILES: usize = 64;
+/// Maximum characters of the source line kept as the `semantic-search` snippet.
+pub const SEMANTIC_SNIPPET_CHARS: usize = 200;
+/// Minimum byte length of a `semantic-search` token.
+pub const SEMANTIC_TOKEN_MIN_LEN: usize = 2;
+/// File name of the `semantic-search` inverted index inside `--index-dir`.
+pub const SEMANTIC_INDEX_FILE: &str = "tokens.ndjson";
 /// Default `sparse` max entries.
 pub const DEFAULT_SPARSE_MAX_ENTRIES: usize = 100;
 /// Default `sparse` max bytes per file.
@@ -203,6 +337,14 @@ pub const WATCH_DEBOUNCE_FLOOR_MS: u64 = 50;
 /// Default idle-exit bound for `watch` (A-ONESHOT-001: prefer short one-shot loops).
 /// Overridable via CLI `--idle-exit-ms` or XDG `[watch].idle_exit_ms`.
 pub const DEFAULT_WATCH_IDLE_EXIT_MS: u64 = 500;
+
+// --- `config` list keys (`Kind::List`) ---
+/// Separator of a `Kind::List` value typed on the command line.
+pub const CONFIG_LIST_SEPARATOR: char = ',';
+/// Most items one `Kind::List` key accepts.
+pub const CONFIG_LIST_MAX_ITEMS: usize = 256;
+/// Longest single item a `Kind::List` key accepts, in bytes.
+pub const CONFIG_LIST_ITEM_MAX_BYTES: usize = 4096;
 
 // --- Write content risk patterns (B-013; not product telemetry) ---
 /// Destructive shell substrings that elevate write content risk (UTF-8, case-sensitive).
@@ -240,6 +382,18 @@ pub const WAL_AUTO_HEAL_COUNT_THRESHOLD: u64 = WAL_MAX_COUNT_DEFAULT;
 pub const WAL_AUTO_HEAL_AGE_SECS: u64 = WAL_ARCHIVE_DAYS_DEFAULT * 86_400;
 /// Max directories listed in wal-stats `by_directory` truncation.
 pub const WAL_STATS_TOP_DIRS: usize = 10;
+// --- T3a: strict `apply` (v0.1.37) ---
+/// Lines a unified hunk may sit away from where its `@@` header says.
+pub const PATCH_MAX_HUNK_SHIFT: usize = 64;
+/// Characters of a file or patch line quoted in an `apply` error message.
+pub const PATCH_ERROR_SNIPPET_CHARS: usize = 120;
+// --- T3a: startup WAL heal scope and H3 window (v0.1.37) ---
+/// Length of the H3 creation rate-limit window, in seconds.
+pub const WAL_RATE_WINDOW_SECS: u64 = 60;
+/// Directory names the startup heal never enters, even without a `.gitignore`.
+pub const WAL_STARTUP_HEAL_SKIP_DIRS: &[&str] = &[".git", "target", "node_modules"];
+/// Walk depth of the startup heal when the target is a file: its siblings only.
+pub const WAL_STARTUP_HEAL_FILE_DEPTH: usize = 1;
 
 // --- Batch progress policy (A-018) ---
 /// Divisor for adaptive batch progress cadence (`total / DIVISOR`).
@@ -252,16 +406,12 @@ pub const BATCH_PROGRESS_MAX: u64 = 50;
 // --- Residual policy (A-021…A-030) ---
 /// Max chars in fuzzy `diff_preview` mini unified diff (A-023).
 pub const FUZZY_MINI_DIFF_MAX_CHARS: usize = 800;
-/// Windows atomic `persist` retry backoff delays in ms (A-022).
-pub const PERSIST_RETRY_DELAYS_MS: &[u64] = &[100, 200, 400];
 /// `diff` similar/timeout budget for expensive similarity path (A-026).
 pub const DIFF_SIMILARITY_TIMEOUT_MS: u64 = 500;
-/// Lock acquire: fast poll interval (A-030).
-pub const LOCK_POLL_FAST_MS: u64 = 10;
-/// Lock acquire: slow poll interval after fast attempts exhausted (A-030).
-pub const LOCK_POLL_SLOW_MS: u64 = 50;
-/// Lock acquire: number of fast polls before switching to slow (A-030).
-pub const LOCK_POLL_FAST_ATTEMPTS: u32 = 20;
+/// Max time `atomic_write` waits for the advisory lock of a target before it
+/// fails with `LOCK_TIMEOUT` (exit 83), in milliseconds.
+// Tunable: moves to XDG config in a later step
+pub const LOCK_ACQUIRE_TIMEOUT_MS: u64 = 5_000;
 /// Glob patterns that exclude atomwrite timestamped backups (A-027 DRY).
 pub const BACKUP_EXCLUDE_GLOBS: &[&str] = &["*.bak.*", "**/*.bak.*"];
 /// Bounded channel capacity walker → NDJSON (A-031: policy of record).
@@ -270,6 +420,7 @@ pub const EVENT_CHANNEL_CAP: usize = 1024;
 pub const RAM_PER_TASK_BYTES: u64 = 16 * 1024 * 1024;
 
 const _: () = assert!(DEFAULT_SEARCH_MAX_FILESIZE_BYTES >= 1024);
+
 const _: () = assert!(DEFAULT_SEARCH_MAX_COLUMNS >= 16);
 const _: () = assert!(DEFAULT_BACKUP_RETENTION >= 1);
 const _: () = assert!(DEFAULT_WAL_HEAL_THRESHOLD_SECS >= 1);
@@ -282,11 +433,48 @@ const _: () = assert!(BATCH_PROGRESS_DIVISOR >= 1);
 const _: () = assert!(BATCH_PROGRESS_MAX >= BATCH_PROGRESS_MIN);
 const _: () = assert!(WATCH_DEBOUNCE_FLOOR_MS >= 1);
 const _: () = assert!(FUZZY_MINI_DIFF_MAX_CHARS >= 64);
-const _: () = assert!(!PERSIST_RETRY_DELAYS_MS.is_empty());
 const _: () = assert!(DIFF_SIMILARITY_TIMEOUT_MS >= 1);
-const _: () = assert!(LOCK_POLL_FAST_MS >= 1);
-const _: () = assert!(LOCK_POLL_SLOW_MS >= LOCK_POLL_FAST_MS);
-const _: () = assert!(LOCK_POLL_FAST_ATTEMPTS >= 1);
+const _: () = assert!(LOCK_ACQUIRE_TIMEOUT_MS >= 100);
 const _: () = assert!(!BACKUP_EXCLUDE_GLOBS.is_empty());
 const _: () = assert!(EVENT_CHANNEL_CAP >= 16);
 const _: () = assert!(RAM_PER_TASK_BYTES >= 1024 * 1024);
+
+// --- Terminal summary failure report (v0.1.37, T2) ---
+/// Default for `summary.errors_max_entries`: most `errors[]` entries a terminal
+/// summary lists, while `files_failed` keeps the full count.
+pub const SUMMARY_ERRORS_MAX_ENTRIES: usize = 50;
+/// Smallest `summary.errors_max_entries` the config accepts.
+pub const SUMMARY_ERRORS_MIN_ENTRIES: usize = 1;
+/// Largest `summary.errors_max_entries` the config accepts.
+///
+/// An unbounded list would let one broken tree push megabytes of failure text
+/// into a single record, which is the cost the cap exists to avoid.
+pub const SUMMARY_ERRORS_CEILING: usize = 1000;
+const _: () = assert!(SUMMARY_ERRORS_MAX_ENTRIES >= SUMMARY_ERRORS_MIN_ENTRIES);
+const _: () = assert!(SUMMARY_ERRORS_MAX_ENTRIES <= SUMMARY_ERRORS_CEILING);
+/// Config key named by the fuzzy content-cap `InvalidInput` reason.
+///
+/// The reason is built from this constant and the localized hint is chosen by
+/// finding it in the reason, so the two cannot drift apart; a test in
+/// `src/error/tests.inc.rs` fails if the emitted reason stops matching.
+pub const FUZZY_CONTENT_CAP_REASON_MARKER: &str = "[fuzzy].max_content_bytes";
+/// Opening words of the fuzzy pattern-cap `InvalidInput` reason (same contract as above).
+pub const FUZZY_PATTERN_CAP_REASON_MARKER: &str = "fuzzy pattern too large";
+
+// --- Config schema and log sink (v0.1.37, R25/R26) ---
+/// Highest `version` value a config file may declare; a larger one fails closed.
+pub const CONFIG_SCHEMA_VERSION: u32 = 1;
+/// Rotated log files kept by the opt-in file sink (`[log] file = true`).
+pub const LOG_MAX_FILES: usize = 7;
+/// Default rotation of the opt-in file sink.
+pub const LOG_ROTATION_DEFAULT: &str = "daily";
+const _: () = assert!(LOG_MAX_FILES >= 1);
+
+// --- Retry, thread caps and in-flight memory (T3b) ---
+include!("constants_concurrency.inc.rs");
+
+// --- Named literals moved out of production code (T6b) ---
+include!("constants_literals.inc.rs");
+
+// --- Config verb and tuning keys (T6a) ---
+include!("constants_config.inc.rs");

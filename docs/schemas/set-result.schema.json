@@ -1,22 +1,108 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "atomwrite set subcommand output",
-  "description": "Result of `atomwrite set` — modifies a single key in a structured config file (TOML/JSON) while preserving comments, key order, and formatting.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SetResult",
+  "description": "Terminal event of `set`: a value written at a dotted path in a structured config file.",
   "type": "object",
-  "required": ["type", "path", "key_path", "new_value", "format", "comments_preserved", "elapsed_ms"],
   "properties": {
-    "type": { "const": "set" },
-    "path": { "type": "string", "description": "Absolute path to the config file." },
-    "config_path": { "type": "string", "description": "Alias of `path` retained for backward compatibility." },
-    "key_path": { "type": "string", "description": "Dotted path of the key that was set (e.g. `package.version`)." },
-    "old_value": {
-      "type": ["string", "null"],
-      "description": "The previous value as a TOML/JSON string. `null` when the key did not exist."
+    "type": {
+      "type": "string"
     },
-    "new_value": { "type": "string", "description": "The new value as a TOML/JSON string." },
-    "format": { "enum": ["toml", "json"], "description": "Source config format detected from extension." },
-    "comments_preserved": { "type": "boolean", "description": "True when toml_edit successfully preserved comments (only meaningful for `format: toml`)." },
-    "elapsed_ms": { "type": "integer", "description": "Wall-clock time for the operation in milliseconds." }
+    "path": {
+      "type": "string"
+    },
+    "config_path": {
+      "type": "string"
+    },
+    "key_path": {
+      "type": "string"
+    },
+    "old_value": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "new_value": {
+      "type": "string"
+    },
+    "format": {
+      "type": "string"
+    },
+    "comments_preserved": {
+      "type": "boolean"
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "ok": {
+      "description": "Outcome of the run, stamped by the writer",
+      "type": "boolean"
+    },
+    "code": {
+      "description": "Machine error code, present when ok is false",
+      "type": "string"
+    },
+    "exit": {
+      "description": "Process exit status, present when ok is false",
+      "type": "integer",
+      "minimum": 0
+    },
+    "target_resolved": {
+      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+      "type": "string"
+    },
+    "target_source": {
+      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+      "type": "string",
+      "enum": [
+        "argv",
+        "workspace",
+        "stdin"
+      ]
+    },
+    "workspace_source": {
+      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+      "type": "string",
+      "enum": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "records_suppressed": {
+      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_budget_dropped": {
+      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_planned": {
+      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+      "type": "boolean"
+    },
+    "truncated_records": {
+      "description": "Records the writer cut this run, counted once per record",
+      "type": "integer",
+      "minimum": 0
+    }
   },
-  "additionalProperties": false
+  "required": [
+    "type",
+    "path",
+    "config_path",
+    "key_path",
+    "new_value",
+    "format",
+    "comments_preserved",
+    "elapsed_ms"
+  ]
 }

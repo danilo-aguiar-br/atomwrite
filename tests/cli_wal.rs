@@ -176,9 +176,10 @@ fn g119_l5_wal_stats_reports_zeros_on_empty_workspace() {
 
 /// G119 L3 (v0.1.17): the startup `wal-heal` pass reaps stale `Committed`
 /// sidecars WITHOUT requiring an explicit `wal-heal` subcommand. The
-/// workspace is seeded with a stale journal, the binary is invoked
-/// with an arbitrary read-only subcommand (`read`), and we assert the
-/// sidecar is gone afterwards.
+/// workspace is seeded with a stale journal beside the target, the binary
+/// is invoked with a mutating subcommand (`write`), and we assert the
+/// sidecar is gone afterwards. Since v0.1.37 a read-only verb no longer
+/// runs the pass (see `cli_v0137_wal_startup_heal.rs`).
 #[test]
 fn g119_l3_startup_auto_heal_reaps_stale_committed() {
     let _guard = WAL_ENV_LOCK.lock().expect("lock");
@@ -197,13 +198,19 @@ fn g119_l3_startup_auto_heal_reaps_stale_committed() {
     .expect("seed");
 
     let output = common::atomwrite()
-        .args(["--workspace", dir.path().to_str().unwrap(), "read"])
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "write",
+            "--no-backup",
+        ])
         .arg(&target)
+        .write_stdin("rewritten")
         .output()
         .expect("run");
     assert!(
         output.status.success(),
-        "read must succeed even when L3 runs first; stderr: {}",
+        "write must succeed even when L3 runs first; stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 

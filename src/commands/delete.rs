@@ -15,7 +15,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rayon::prelude::*;
 
 use crate::checksum;
@@ -23,7 +23,7 @@ use crate::cli::{DeleteArgs, GlobalArgs};
 use crate::commands::resolve_backup;
 use crate::concurrency::should_parallelize;
 use crate::error::AtomwriteError;
-use crate::ndjson_types::{DeleteOutput, DryRunPlan, Summary};
+use crate::ndjson_types::{DeleteOutput, DryRunPlan, FailureTally, Summary};
 use crate::output::NdjsonWriter;
 use crate::platform;
 
@@ -46,10 +46,10 @@ fn parse_human_duration(s: &str) -> std::result::Result<Duration, AtomwriteError
             num_buf.clear();
             let multiplier = match ch {
                 's' => 1,
-                'm' => 60,
-                'h' => 3600,
-                'd' => 86400,
-                'w' => 604800,
+                'm' => crate::constants::SECS_PER_MINUTE,
+                'h' => crate::constants::SECS_PER_HOUR,
+                'd' => crate::constants::SECS_PER_DAY,
+                'w' => crate::constants::SECS_PER_WEEK,
                 _ => {
                     return Err(AtomwriteError::InvalidInput {
                         reason: format!("unknown duration suffix '{ch}' in {s:?}; use s/m/h/d/w"),
@@ -118,7 +118,7 @@ pub fn cmd_delete(
     };
     let mut deleted = 0u64;
     let mut planned = 0u64;
-    let mut _bytes_freed = 0u64;
+    let mut bytes_freed = 0u64;
     let mut skipped = 0u64;
 
     let age_threshold = match &args.older_than {
@@ -129,17 +129,20 @@ pub fn cmd_delete(
     let mut visited = 0u64;
     let max_size = global.effective_max_filesize();
     // B-005 / B-014: `--confirm` is not plan and does not delete — fail closed.
+    // v0.1.36 — `--plan` is named as a required flag field, not only in prose.
     if args.confirm {
-        return Err(crate::error::AtomwriteError::InvalidInput {
-            reason: "delete --confirm is rejected (one-shot): use --plan to list targets without deleting, or omit flags to delete; write --confirm is a different large-file guard"
+        return Err(crate::error::AtomwriteError::MissingFlag {
+            flag: "--plan".into(),
+            reason: "delete --confirm is rejected (one-shot): list targets without deleting, or omit flags to delete; write --confirm is a different large-file guard"
                 .into(),
         }
         .into());
     }
     // B-015: `-y/--yes` is not a no-op — fail closed so agents do not invent confirm UX.
     if args.yes {
-        return Err(crate::error::AtomwriteError::InvalidInput {
-            reason: "delete -y/--yes is rejected (one-shot: no interactive confirm exists); use --plan to list targets, or omit flags to delete"
+        return Err(crate::error::AtomwriteError::MissingFlag {
+            flag: "--plan".into(),
+            reason: "delete -y/--yes is rejected (one-shot: no interactive confirm exists); list targets, or omit flags to delete"
                 .into(),
         }
         .into());
@@ -166,8 +169,11 @@ pub fn cmd_delete(
         }
 
         if path.is_dir() && !args.recursive {
-            return Err(AtomwriteError::InvalidInput {
-                reason: format!("{} is a directory, use --recursive", path.display()),
+            // v0.1.36 — the required flag travels as its own field so callers
+            // re-run with `--recursive` instead of scraping the message.
+            return Err(AtomwriteError::MissingFlag {
+                flag: "--recursive".into(),
+                reason: format!("{} is a directory", path.display()),
             }
             .into());
         }
@@ -179,33 +185,27 @@ pub fn cmd_delete(
         }
     }
 
+    // A directory the walk cannot open hides files this verb was asked to
+    // delete, so the hole is reported in the terminal instead of dropped.
+    let failures: std::sync::Arc<std::sync::Mutex<FailureTally>> =
+        std::sync::Arc::new(std::sync::Mutex::new(FailureTally::default()));
     if !dir_roots.is_empty() && !crate::signal::is_global_shutdown() {
-        let mut walker_builder = ignore::WalkBuilder::new(&dir_roots[0]);
-        for d in dir_roots.iter().skip(1) {
-            walker_builder.add(d);
-        }
-        walker_builder
-            .hidden(!global.hidden)
-            .git_ignore(!global.no_gitignore)
-            .follow_links(global.follow_symlinks);
-        crate::concurrency::apply_walk_threads(&mut walker_builder, global.threads);
+        // The one shared walker: a delete that honored a different set of
+        // globs than the other tree verbs would remove a different tree.
+        let walker_builder =
+            crate::commands::build_scoped_walker(&dir_roots, global, &args.include, &args.exclude)?;
 
-        if !args.include.is_empty() || !args.exclude.is_empty() {
-            let mut overrides = ignore::overrides::OverrideBuilder::new(&dir_roots[0]);
-            for pat in &args.include {
-                overrides.add(pat)?;
-            }
-            for pat in &args.exclude {
-                overrides.add(&format!("!{pat}"))?;
-            }
-            walker_builder.overrides(overrides.build()?);
-        }
-
-        files_to_delete.extend(crate::concurrency::collect_files_parallel(&walker_builder));
+        files_to_delete.extend(crate::concurrency::collect_files_parallel_tallied(
+            &walker_builder,
+            Some(std::sync::Arc::clone(&failures)),
+        ));
     }
 
     crate::concurrency::sort_paths_parallel(&mut files_to_delete);
     files_to_delete.dedup();
+    // `--limit` cuts the list BEFORE the first unlink, so `delete --limit 1`
+    // removes exactly one file.
+    crate::output::cap_collected(&mut files_to_delete);
 
     if crate::signal::is_global_shutdown() {
         return Ok(());
@@ -263,10 +263,12 @@ pub fn cmd_delete(
                     path: path_str,
                     would_modify: true,
                     details: Some(format!("{size} bytes")),
+                    // A delete removes a file and writes no content to assess.
+                    risk_assessment: None,
                 })?;
                 // G-002/G-016: plan must not count as modified.
                 planned += 1;
-                _bytes_freed += size;
+                bytes_freed += size;
             }
             DeleteItem::Deleted {
                 path: path_str,
@@ -275,14 +277,14 @@ pub fn cmd_delete(
             } => {
                 visited += 1;
                 deleted += 1;
-                _bytes_freed += size;
+                bytes_freed += size;
                 writer.write_event(&DeleteOutput {
                     r#type: "deleted",
                     path: path_str,
                     bytes: size,
                     checksum_before: hash,
                     elapsed_ms: start.elapsed().as_millis() as u64,
-                    warnings: warnings.clone(),
+                    warnings: (!warnings.is_empty()).then(|| warnings.clone()),
                 })?;
             }
             DeleteItem::Err(e) => return Err(e),
@@ -295,12 +297,12 @@ pub fn cmd_delete(
         let cleanup: Vec<Result<(), anyhow::Error>> = if should_parallelize(dir_roots.len()) {
             dir_roots
                 .par_iter()
-                .map(|path| cleanup_dir_root(path, &files_to_delete))
+                .map(|path| cleanup_dir_root(path))
                 .collect()
         } else {
             dir_roots
                 .iter()
-                .map(|path| cleanup_dir_root(path, &files_to_delete))
+                .map(|path| cleanup_dir_root(path))
                 .collect()
         };
         for r in cleanup {
@@ -314,48 +316,62 @@ pub fn cmd_delete(
         return Ok(());
     }
 
-    writer.write_event(&Summary {
+    let tally = match std::sync::Arc::try_unwrap(failures) {
+        Ok(mutex) => mutex.into_inner().unwrap_or_default(),
+        Err(arc) => std::mem::take(&mut *arc.lock().unwrap_or_else(|e| e.into_inner())),
+    };
+    let (summary, first) = tally.into_summary(Summary {
         r#type: "summary",
         files_visited: visited,
         files_matched: deleted + planned,
         files_modified: Some(deleted),
-        files_skipped: Some(skipped + visited.saturating_sub(deleted + planned + skipped)),
+        files_skipped: Some(skipped),
         total_matches: None,
         total_replacements: None,
+        total_bytes: Some(bytes_freed),
+        files_budget_dropped: Some(crate::output::budget_dropped()).filter(|n| *n > 0),
         elapsed_ms: start.elapsed().as_millis() as u64,
-    })?;
+        walker_stopped_early: crate::output::limit_reached().then_some(true),
+        ..Summary::default()
+    });
+    if let Some(err) = first {
+        return Err(writer.publish_failure(&summary, err));
+    }
+    writer.write_terminal(&summary)?;
 
     Ok(())
 }
 
-fn cleanup_dir_root(path: &Path, files_to_delete: &[PathBuf]) -> Result<()> {
-    let files_under = files_to_delete.iter().any(|f| f.starts_with(path));
-    if !files_under {
-        std::fs::remove_dir_all(path)
-            .with_context(|| format!("cannot remove directory {}", path.display()))?;
-    } else {
-        // Parallel discovery of empty-candidate dirs; bottom-up remove stays
-        // sequential (parent depends on children being gone first).
-        let mut builder = ignore::WalkBuilder::new(path);
-        builder.hidden(true).git_ignore(false);
-        crate::concurrency::apply_walk_threads(&mut builder, None);
-        let mut dirs_to_remove: Vec<PathBuf> =
-            crate::concurrency::collect_mapped_parallel(&builder, |entry| {
-                if entry.file_type().is_some_and(|ft| ft.is_dir()) {
-                    Some(entry.path().to_path_buf())
-                } else {
-                    None
-                }
-            });
-        // Deepest paths first ≈ contents_first semantics for remove_dir.
-        dirs_to_remove.sort_by(|a, b| {
-            let da = a.components().count();
-            let db = b.components().count();
-            db.cmp(&da).then_with(|| b.cmp(a))
+/// Remove the directories this run emptied, deepest first.
+///
+/// Only `remove_dir` is used, never `remove_dir_all`: the walker above decides
+/// which entries this verb owns, and a brute-force removal would destroy a file
+/// that `--include`, `--exclude`, the hidden filter or an ignore file kept out
+/// of that set, while no counter saw it. A directory that still holds a kept
+/// entry simply stays, and the summary already reports zero files touched.
+fn cleanup_dir_root(path: &Path) -> Result<()> {
+    // Parallel discovery of empty-candidate dirs; bottom-up remove stays
+    // sequential (parent depends on children being gone first).
+    let mut builder = ignore::WalkBuilder::new(path);
+    builder.hidden(true).git_ignore(false);
+    crate::concurrency::apply_walk_threads(&mut builder, None);
+    let mut dirs_to_remove: Vec<PathBuf> =
+        crate::concurrency::collect_mapped_parallel(&builder, |entry| {
+            if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+                Some(entry.path().to_path_buf())
+            } else {
+                None
+            }
         });
-        for dir in &dirs_to_remove {
-            let _ = std::fs::remove_dir(dir);
-        }
+    // Deepest paths first ≈ contents_first semantics for remove_dir.
+    dirs_to_remove.sort_by(|a, b| {
+        let da = a.components().count();
+        let db = b.components().count();
+        db.cmp(&da).then_with(|| b.cmp(a))
+    });
+    for dir in &dirs_to_remove {
+        // A non-empty directory (kept entries) is expected here.
+        crate::best_effort::best_effort(std::fs::remove_dir(dir), "remove emptied directory");
     }
     Ok(())
 }
@@ -369,8 +385,12 @@ fn process_one_delete(
     retention: u8,
 ) -> DeleteItem {
     if crate::signal::is_global_shutdown() {
+        // The cause comes from the live signal, never from a fixed sentence.
+        // "cancelled by signal" was stated rather than observed, so a run
+        // stopped by the global `--timeout-secs` deadline reported a signal
+        // that never arrived.
         return DeleteItem::Err(
-            crate::signal::cancelled_error("delete cancelled by signal").into(),
+            crate::signal::cancelled_error(crate::signal::current_cancel_reason()).into(),
         );
     }
 

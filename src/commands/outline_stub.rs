@@ -8,13 +8,18 @@ use anyhow::Result;
 use std::io::Write;
 
 /// Outline requires feature `ast`.
+///
+/// # Errors
+///
+/// Always returns `AtomwriteError::ConfigInvalid` because this build was compiled without the
+/// `ast` feature.
 pub fn cmd_outline(
     _args: &OutlineArgs,
     _global: &GlobalArgs,
     _writer: &mut NdjsonWriter<impl Write>,
 ) -> Result<()> {
     Err(AtomwriteError::ConfigInvalid {
-        reason: "outline requires --features ast (included in default features)".into(),
+        reason: rust_i18n::t!("feature.ast-required", command = "outline").to_string(),
     }
     .into())
 }

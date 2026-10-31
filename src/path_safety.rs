@@ -17,6 +17,25 @@ use crate::error::AtomwriteError;
 /// Returns `AtomwriteError::SymlinkBlocked` if the path is a symbolic link.
 /// Returns `AtomwriteError::FifoDetected` if the path is a FIFO.
 /// Returns `AtomwriteError::DeviceFile` if the path is a device file.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+///
+/// use atomwrite::error::AtomwriteError;
+/// use atomwrite::path_safety::validate_path;
+///
+/// let workspace = tempfile::tempdir()?;
+/// let inside = workspace.path().join("src/main.rs");
+/// assert!(validate_path(&inside, workspace.path()).is_ok());
+///
+/// let outside = Path::new("/etc/passwd");
+/// let err = validate_path(outside, workspace.path()).unwrap_err();
+/// let domain = err.downcast_ref::<AtomwriteError>().expect("typed error");
+/// assert_eq!(domain.exit_code(), 126);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
 pub fn validate_path(path: &Path, workspace: &Path) -> Result<PathBuf> {
     validate_path_with_symlink(path, workspace, false)
 }
@@ -52,10 +71,13 @@ pub fn validate_path_with_symlink(
     } else {
         path.to_path_buf()
     };
-    let resolved = normalize_path_nfc(&soft_canonicalize(&effective_path));
-    let workspace_resolved = normalize_path_nfc(&soft_canonicalize(workspace));
+    // `resolved` keeps the caller's bytes and is what gets returned for I/O.
+    // NFC is applied only to the copies used to COMPARE against the jail, so
+    // an NFD file name on Linux is still found under its own name (R19).
+    let resolved = soft_canonicalize(&effective_path);
+    let workspace_resolved = soft_canonicalize(workspace);
 
-    if !resolved.starts_with(&workspace_resolved) {
+    if !normalize_path_nfc(&resolved).starts_with(normalize_path_nfc(&workspace_resolved)) {
         return Err(AtomwriteError::WorkspaceJail {
             path: resolved,
             workspace: workspace_resolved,
@@ -110,11 +132,16 @@ pub fn check_symlink(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// NFC copy of `path`, for jail COMPARISON only — never use it for I/O.
+///
+/// A path that is not valid UTF-8 is returned unchanged: lossy conversion
+/// would replace its bytes with U+FFFD and make unrelated names compare equal.
 fn normalize_path_nfc(path: &Path) -> PathBuf {
     use unicode_normalization::UnicodeNormalization;
-    let s = path.to_string_lossy();
-    let normalized: String = s.nfc().collect();
-    PathBuf::from(normalized)
+    match path.to_str() {
+        Some(s) => PathBuf::from(s.nfc().collect::<String>()),
+        None => path.to_path_buf(),
+    }
 }
 
 /// Canonicalize the longest existing prefix of a path, resolving symlinks.
@@ -255,7 +282,10 @@ fn check_windows_filename_strict(name: &str) -> Result<()> {
         .into());
     }
     for ch in name.chars() {
-        if WINDOWS_INVALID_NAME_CHARS.contains(&ch) || ch == ':' || (ch as u32) < 32 {
+        if WINDOWS_INVALID_NAME_CHARS.contains(&ch)
+            || ch == ':'
+            || (ch as u32) < crate::constants::ASCII_CONTROL_LIMIT
+        {
             return Err(AtomwriteError::InvalidInput {
                 reason: format!("Windows-illegal character {ch:?} in filename: {name:?}"),
             }
@@ -277,7 +307,10 @@ fn check_windows_filename(name: &str) -> Result<()> {
         .into());
     }
     for ch in name.chars() {
-        if WINDOWS_INVALID_NAME_CHARS.contains(&ch) || ch == ':' || (ch as u32) < 32 {
+        if WINDOWS_INVALID_NAME_CHARS.contains(&ch)
+            || ch == ':'
+            || (ch as u32) < crate::constants::ASCII_CONTROL_LIMIT
+        {
             return Err(AtomwriteError::InvalidInput {
                 reason: format!("Windows-illegal character {ch:?} in filename: {name:?}"),
             }

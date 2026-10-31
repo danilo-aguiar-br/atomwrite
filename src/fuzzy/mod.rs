@@ -15,10 +15,15 @@
 //! unicode preserve, always-on best_candidate + multi-candidates, diff_preview.
 //!
 //! v0.1.33 one-shot hardening:
-//! - [`apply_fuzzy_one_pass`] never re-scans inserted replacement text (sed-style).
+//! - [`crate::fuzzy::apply_fuzzy_one_pass`] never re-scans inserted replacement text (sed-style).
 //! - Default max applies = 1; `replacement.contains(pattern)` forces 1.
 //! - Pattern / levenshtein / window caps + cooperative cancel poll via
 //!   [`crate::signal::is_global_shutdown`].
+//!
+//! v0.1.37: every scan loop polls the shutdown flag through `util::CancelPoll`,
+//! cancellation propagates as [`crate::error::AtomwriteError::Cancelled`] (never as
+//! a miss), and content above `[fuzzy].max_content_bytes` skips the cascade with
+//! `InvalidInput`.
 
 mod normalize;
 mod score;
@@ -27,7 +32,10 @@ mod windows;
 
 use normalize::{maybe_unescape_new_string, normalize_unicode_for_match};
 use score::{gestalt_ratio, line_vote_ratio};
-use util::{byte_offset_of_line, count_occurrences, find_str, line_col_of_offset, truncate_text};
+use util::{
+    CancelPoll, check_cancel, collect_lines, count_occurrences, find_str, line_col_of_offset,
+    line_start_position, truncate_text,
+};
 use windows::{match_block_anchor, match_context_aware};
 
 use crate::cli_args::FuzzyMode;

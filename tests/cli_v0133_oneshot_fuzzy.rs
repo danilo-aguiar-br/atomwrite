@@ -2,13 +2,15 @@
 
 //! v0.1.33: one-shot fuzzy replace — no hang when replacement embeds pattern.
 
+mod common;
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
 fn atomwrite() -> Command {
-    Command::cargo_bin("atomwrite").unwrap()
+    common::hermetic(Command::cargo_bin("atomwrite").unwrap())
 }
 
 /// Agent footgun: NEW contains OLD. Must finish in wall-clock seconds, apply once.

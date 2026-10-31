@@ -106,6 +106,14 @@ pub struct ProgressEvent {
 }
 
 /// Cooperative cancel envelope (v0.1.29 P0-4).
+///
+/// Terminal record of an interrupted operation. Three fields answer the three
+/// questions a consumer asks, and none of them requires reading the human text:
+/// `deadline_exceeded` says whether the global `--timeout-secs` budget elapsed,
+/// `signal` names the signal when one arrived, and `reason` carries the prose.
+///
+/// Build one with [`CancelledEvent::from_shutdown`] rather than by hand, so the
+/// machine-readable verdict and the prose can never describe different causes.
 #[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct CancelledEvent {
     /// Event type discriminator (`"cancelled"`).
@@ -118,6 +126,36 @@ pub struct CancelledEvent {
     /// Signal name when known (`SIGINT`, `SIGTERM`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signal: Option<String>,
+    /// True when the global `--timeout-secs` deadline elapsed.
+    ///
+    /// Always serialized, never skipped: an omitted field cannot be told apart
+    /// from a false one by a consumer, and the whole point of the field is that
+    /// the deadline case is decidable without parsing `reason`.
+    pub deadline_exceeded: bool,
+}
+
+impl CancelledEvent {
+    /// Build the terminal cancel record from the live shutdown signal.
+    ///
+    /// Single construction point for every scanning verb, so the deadline
+    /// verdict, the signal name and the prose all come from one observation of
+    /// [`crate::signal::ShutdownSignal`] and cannot diverge.
+    ///
+    /// `path` is the target the verb was working on when it observed the
+    /// cancel, when the verb tracks one.
+    #[must_use]
+    pub fn from_shutdown(
+        shutdown: &crate::signal::ShutdownSignal,
+        path: Option<String>,
+    ) -> Self {
+        Self {
+            r#type: "cancelled",
+            path,
+            reason: shutdown.cancel_reason().to_string(),
+            signal: shutdown.signal_name().map(str::to_string),
+            deadline_exceeded: shutdown.is_timeout(),
+        }
+    }
 }
 
 /// Outcome of matching a single `--old`/`--new` pair in multi-pair edit mode.
@@ -196,6 +234,9 @@ pub struct TransformResult {
     pub checksum_after: String,
     /// Operation duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Local diagnostic for a payload that looks destructive (B-013).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk_assessment: Option<WriteRiskAssessment>,
 }
 
 /// NDJSON output for a backup operation on a single file.
@@ -238,6 +279,7 @@ pub struct BatchOpResult<'a> {
 
 /// NDJSON output for unified diff format.
 #[derive(Debug, Serialize, JsonSchema)]
+#[schemars(inline)]
 pub struct DiffUnifiedOutput {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -253,222 +295,4 @@ pub struct DiffUnifiedOutput {
     pub elapsed_ms: u64,
 }
 
-/// NDJSON output for BLAKE3 hash computation.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
-pub struct HashOutput {
-    /// Event type discriminator.
-    pub r#type: &'static str,
-    /// File path, absent for stdin.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    /// Source identifier for stdin input.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<&'static str>,
-    /// Hash algorithm name.
-    pub algorithm: &'static str,
-    /// Computed hash value (GAP-107: renamed to `checksum` for schema consistency).
-    #[serde(rename = "checksum")]
-    pub value: String,
-    /// File size in bytes.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bytes: Option<u64>,
-    /// Verification result against expected hash.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub verified: Option<bool>,
-    /// Duration in milliseconds.
-    pub elapsed_ms: u64,
-}
-
-/// NDJSON output for a completed delete operation.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
-pub struct DeleteOutput {
-    /// Event type discriminator.
-    pub r#type: &'static str,
-    /// Deleted file path.
-    pub path: String,
-    /// File size in bytes before deletion.
-    pub bytes: u64,
-    /// BLAKE3 checksum before deletion.
-    pub checksum_before: String,
-    /// Duration in milliseconds.
-    pub elapsed_ms: u64,
-    /// Non-fatal warnings about backup flag combinations that had no
-    /// effect (v0.1.28 GAP-CLI-SURFACE-DRIFT), e.g. `--keep-backup` is
-    /// redundant for delete because deletion backups are always
-    /// preserved. Empty when there is nothing to warn about.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<String>,
-}
-
-/// Aggregate file and line counts.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
-pub struct CountTotals {
-    /// Total files counted.
-    pub files: u64,
-    /// Total lines counted.
-    pub lines: u64,
-    /// Total blank lines.
-    pub blank: u64,
-    /// Total bytes.
-    pub bytes: u64,
-}
-
-/// NDJSON summary for backup operations.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
-pub struct BackupSummary {
-    /// Event type discriminator.
-    pub r#type: &'static str,
-    /// Number of files backed up.
-    pub files_backed_up: u64,
-    /// Total bytes backed up.
-    pub total_bytes: u64,
-    /// Whether this was a dry run.
-    pub dry_run: bool,
-    /// Duration in milliseconds.
-    pub elapsed_ms: u64,
-}
-
-/// NDJSON output for replace preview mode.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
-pub struct ReplacePreview {
-    /// Event type discriminator.
-    pub r#type: &'static str,
-    /// File path.
-    pub path: String,
-    /// Number of replacements.
-    pub replacements: u64,
-    /// Unified diff of changes.
-    pub diff: String,
-}
-
-/// NDJSON output for text field extraction.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct TextFieldsOutput<'a> {
-    /// Event type discriminator.
-    pub r#type: &'static str,
-    /// Extracted fields.
-    pub fields: Vec<&'a str>,
-}
-
-/// NDJSON final summary for `prune-backups`.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
-pub struct PruneBackupSummary {
-    /// Event type discriminator: "summary".
-    pub r#type: &'static str,
-    /// Action label: `"pruned"` | `"dry_run"`.
-    pub action: String,
-    /// Total number of backups pruned (or matching criteria, in dry-run).
-    pub total: usize,
-    /// Operation duration in milliseconds.
-    pub elapsed_ms: u64,
-}
-
-/// NDJSON final summary for `edit-loop`.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
-pub struct EditLoopSummary {
-    /// Event type discriminator: "result".
-    pub r#type: &'static str,
-    /// Action label: `"edit_loop"`.
-    pub action: String,
-    /// Target file path.
-    pub path: String,
-    /// Total number of pairs read from stdin.
-    pub pairs_total: usize,
-    /// Number of pairs that matched and were applied.
-    pub pairs_applied: usize,
-    /// Number of pairs that did not match.
-    pub pairs_unmatched: usize,
-    /// Operation duration in milliseconds.
-    pub elapsed_ms: u64,
-    /// Per-pair result array, in input order.
-    pub pair_results: Vec<EditLoopPairResult>,
-}
-
-/// NDJSON ranked hit for `semantic-search`.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
-pub struct SemanticMatchEvent {
-    /// Event type discriminator: `"semantic_match"`.
-    pub r#type: &'static str,
-    /// 1-based rank in the result list.
-    pub rank: usize,
-    /// Jaccard similarity score in \[0.0, 1.0\].
-    pub score: f64,
-    /// Path of the matching file.
-    pub path: String,
-    /// 1-based line number of the snippet.
-    pub line: u64,
-    /// Truncated line content.
-    pub snippet: String,
-    /// Ranking backend label (`"jaccard"` or `"inverted-index"`).
-    pub backend: &'static str,
-}
-
-/// Aggregate kind count from `query --kinds`.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
-pub struct QueryKindEvent {
-    /// Event type discriminator: `"query_kind"`.
-    pub r#type: &'static str,
-    /// Source path.
-    pub path: String,
-    /// Detected or overridden language.
-    pub language: String,
-    /// tree-sitter node kind name.
-    pub kind: String,
-    /// Occurrences of this kind in the tree.
-    pub count: usize,
-}
-
-/// Per-step progress line during `recipe run`.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
-pub struct RecipeStepEvent {
-    /// Event type discriminator: `"recipe_step"`.
-    pub r#type: &'static str,
-    /// 1-based step number.
-    pub step: u64,
-    /// Step name.
-    pub name: String,
-    /// Status string.
-    pub status: String,
-    /// Detail or error message.
-    pub detail: String,
-    /// Optional checksum from the step.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub checksum: Option<String>,
-}
-
-/// Per-rule aggregate inside `codemod_summary.by_rule_id`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct CodemodRuleStats {
-    /// Match / transform event count attributed to the rule.
-    pub matches: u64,
-    /// Distinct files touched by the rule.
-    pub files: u64,
-}
-
-/// Multi-rule transform: rule boundary marker.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
-pub struct TransformRuleBegin {
-    /// Event type discriminator: `"rule_begin"`.
-    pub r#type: &'static str,
-    /// Optional rule id from YAML (null when omitted).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    /// Language of the rule.
-    pub language: String,
-}
-
-/// Budget diagnostics for `sparse outline`.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
-pub struct SparseOutlineBudget {
-    /// Event type discriminator: `"sparse_outline_budget"`.
-    pub r#type: &'static str,
-    /// Files visited under the budget.
-    pub files_seen: u64,
-    /// Outline items emitted.
-    pub items: u64,
-    /// Whether the walk stopped due to `max_files`.
-    pub truncated: bool,
-    /// Configured `max_files`.
-    pub max_files: u64,
-}
-
+include!("part2c.inc.rs");

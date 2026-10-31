@@ -18,14 +18,18 @@ use clap::{CommandFactory, Parser};
 /// Minimal-but-valid positional arguments for each of the 15 subcommands
 /// that flatten `BackupOpts` (v0.1.28). Values are placeholders: these
 /// tests only exercise `try_parse_from`, never touching the filesystem.
+/// The subject is part of every base because a mutating verb must receive its
+/// target in its own invocation line. `transform` gained a required
+/// `[PATHS]...` for that reason, so a base without it no longer parses and the
+/// matrix would fail on a missing subject rather than on the flag under test.
 fn subcommands_with_backup_opts() -> Vec<(&'static str, Vec<&'static str>)> {
     vec![
         ("write", vec!["write", "f.txt"]),
         ("edit", vec!["edit", "f.txt"]),
         ("edit-loop", vec!["edit-loop", "f.txt"]),
-        ("replace", vec!["replace", "old", "new"]),
-        ("transform", vec!["transform"]),
-        ("scope", vec!["scope", "-l", "rust"]),
+        ("replace", vec!["replace", "old", "new", "."]),
+        ("transform", vec!["transform", "."]),
+        ("scope", vec!["scope", "-l", "rust", "."]),
         ("apply", vec!["apply", "f.txt"]),
         ("set", vec!["set", "f.toml", "key.path", "value"]),
         ("del", vec!["del", "f.toml", "key.path"]),

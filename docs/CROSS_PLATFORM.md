@@ -3,18 +3,32 @@
 
 [Leia em Português](CROSS_PLATFORM.pt-BR.md)
 
-> Write once, run anywhere -- with real fsync guarantees on every platform
+- One CLI contract on Linux, macOS and Windows; only Linux x86_64 is validated (see the Verification Matrix)
 
-### Verification matrix (v0.1.36 honest)
 
-| Platform | Status |
-|----------|--------|
-| Linux x86_64 | Full e2e + unit/integration suite (`cli_v0136_gaps`, residual agent contract) |
-| Windows (`x86_64-pc-windows-gnu`) | `cargo check` on Linux host |
-| macOS (apple-darwin) | Source `cfg` support; cross-compile may fail without host SDK/osxcross — runtime proof on real Mac |
-| CI / GitHub Actions | **Not** shipped in this repo (local gates only) |
+## Verification Matrix (v0.1.37)
 
-**v0.1.36 note (all platforms):** workspace jail for content-source paths (`--old-file`/`--new-file`) is OS-agnostic — stage under `$WS/.atomwrite/scratch/` via `scratch init`; never rely on OS `/tmp` outside `--workspace`. Agent-native stdout shape (`--select`/`--filter`/`--limit`) and error envelopes (`ok:false`) are identical across platforms.
+| Target | Status |
+|--------|--------|
+| `x86_64-unknown-linux-gnu` | Validated: built and tested end to end (131 test targets, 1486 tests passed, 0 failed, 9 ignored, as recorded in `CHANGELOG.md`) |
+| `x86_64-unknown-linux-musl` | Compiles: `cross_compile_linux_musl_x64_succeeds` passed on 2026-10-31 with `cargo check --lib`; no binary was run |
+| `aarch64-unknown-linux-gnu` | Compiles: `cross_compile_linux_aarch64_gnu_succeeds` passed on 2026-10-31 with `cargo check --lib`; no binary was run |
+| `aarch64-unknown-linux-musl` | Compiles: `cross_compile_linux_aarch64_musl_succeeds` passed on 2026-10-31 with `cargo check --lib`; no binary was run |
+| `x86_64-apple-darwin` | NOT validated: the Apple target is installed but the C toolchain is missing, and `cc-rs` fails while building `libmimalloc-sys` and `zstd-sys` with `-arch arm64` |
+| `aarch64-apple-darwin` | NOT validated: the Apple target is installed but the C toolchain is missing, and `cc-rs` fails while building `libmimalloc-sys` and `zstd-sys` with `-arch arm64` |
+| `x86_64-pc-windows-msvc` | `cross_compile_windows_msvc_succeeds` exists; the target is not installed on this host, so NOT validated |
+| `aarch64-pc-windows-msvc` | `cross_compile_windows_arm64_msvc_succeeds` exists; the target is not installed on this host, so NOT validated |
+| `x86_64-pc-windows-gnu` | Compiles: `cross_compile_windows_gnu_x64_succeeds` passed on 2026-10-31, which also proves the `cfg(windows)` paths compile; no binary was run |
+| `i686-pc-windows-gnu` | `cross_compile_windows_gnu_i686_succeeds` exists; the target is not installed on this host, so NOT validated |
+| Remote automation | Not shipped in this repository (local gates only) |
+
+- Four of the nine `cross_compile_*` tests passed on 2026-10-31 (linux musl x64, linux aarch64 gnu, linux aarch64 musl and windows gnu x64), the two Apple ones stopped at the C toolchain, and the three MSVC or i686 ones need targets this host does not have
+- Binary size, measured on release builds for `x86_64-unknown-linux-gnu` on 2026-10-31: slim 10.40 MiB and default 54.45 MiB (see `docs/INSTALL.md`). Other targets were not measured
+- Startup time per target was not measured
+- Not validated either: the advisory write lock on filesystems without `flock` (NFS) and on Windows, where the code now compiles but never ran, the Windows rename retry of `persist_retry.rs`, and every Windows and macOS path in this guide
+- The `ast` feature downloads the tree-sitter parsers at run time on first use, on every platform (23,031,807 bytes measured on Linux x86_64, which is 21,97 MiB; see `docs/INSTALL.md`)
+
+Note for all platforms: the workspace jail for content-source paths (`--old-file`/`--new-file`) is OS-agnostic. Stage under `$WS/.atomwrite/scratch/` via `scratch init`, and never rely on the OS `/tmp` outside `--workspace`. The agent-native stdout shape (`--select`/`--filter`/`--limit`) and the error envelopes (`ok:false`) are identical across platforms by design, and were exercised on Linux only.
 
 
 ## What's New in v0.1.12
@@ -22,56 +36,50 @@
 This section summarizes cross-platform-relevant changes in v0.1.12.
 
 ### Signal Handling (Improved)
-
 - v0.1.12 adds 5 new tests in `tests/signal_test.rs` covering SIGINT, SIGTERM, SIGPIPE, batch interruption
 - `tests/signal_test.rs::batch_interrupted_by_signal` validates the WAL journal cleanup on signal
-- `tests/signal_test.rs::sigpipe_exits_141_or_signal_13` confirms BrokenPipe handling (exit 141 or signal 13)
+- `tests/signal_test.rs::sigpipe_handler_ends_the_run_with_exit_141` confirms that a closed pipe ends the run with exit 141 (the test was named `sigpipe_exits_141_or_signal_13` in v0.1.12)
 - `tests/signal_test.rs::sigint_during_search_exits_130` and `sigterm_during_search_exits_143` confirm clean exit codes
 - `tests/signal_test.rs::shutdown_message_on_stderr` validates tracing on shutdown
 
 ### Windows
-
 - v0.1.12 preserves the v0.1.4 Windows 10/11 fix: `cargo install atomwrite` succeeds
 - `init_console` improvements: UTF-8 code page 65001 + `ENABLE_VIRTUAL_TERMINAL_PROCESSING`
-- `persist_with_retry` handles `PermissionDenied` during atomic rename with exponential backoff
-- Windows-specific: 5 new error codes (83, 88, 91, 92, 93) all have bilingual messages
+- `persist_with_retry` handles `PermissionDenied` during atomic rename with retries (v0.1.12 used exponential backoff; see the v0.1.37 notes for the current policy)
+- v0.1.12 added 5 error codes (83, 88, 91, 92, 93) with bilingual messages, and none of them is Windows-specific
 
 ### Linux
-
-- v0.1.12 requires Rust 1.88 or later
-- `--include-fifo` flag skips FIFO/named pipes (G56) to prevent blocking
-- `--strict-atomic` flag aborts on EXDEV (G90) for filesystems where atomicity is critical
+- v0.1.12 required Rust 1.88 or later (historical). The current minimum is Rust 1.90
+- FIFO/named pipes are skipped by default (G56) to prevent blocking; `search --include-fifo` opens them again, and `write` to a FIFO exits 85 `FIFO_DETECTED`
+- The EXDEV copy fallback (G90) is switched off by `--strict-atomic` on a writing verb, which sets the library option `WriteOptions.strict_atomic`; the write then exits 91 instead of copying across filesystems
 - Advisory file lock via `flock` works on Linux (G54)
 - xattr preservation works on ext4, btrfs, XFS, F2FS (G39)
 
 ### macOS
-
 - v0.1.12 preserves the v0.1.2 macOS arm64 (Apple Silicon) and macOS x86_64 build fixes
 - Reflink CoW works on APFS (G64): O(1) backup and copy
 - xattr preservation works for `com.apple.quarantine`, `kMDItemUserTags`, `kMDItemFinderComment` (G39)
 - Gatekeeper may require `xattr -d com.apple.quarantine` on first run
 
-### Containers (Docker, Podman, Kubernetes)
-
+### Containers (Docker, Kubernetes)
 - EXDEV fallback (G90) handles Docker overlay2 + named volumes automatically
-- Exit code 91 (`ExdevFallbackDisabled`) for `--strict-atomic` opt-out
+- Exit code 91 (`ExdevFallbackDisabled`) belongs to the library-only opt-out of the fallback and is not reachable from the command line
 - No code changes required for container users; works out of the box
 
 ### NFS
-
-- `flock(2)` is silently ignored on NFS, so `--lock` may not protect against concurrent edits
-- Combine `--lock` with `--expect-checksum` for defense in depth
+- `flock(2)` is silently ignored on NFS, so the automatic write lock may not protect against concurrent edits
+- Combine the automatic lock with `--expect-checksum` for defense in depth
 - `--expect-checksum` detects state drift after the write (exit 82)
 
 ### Test Coverage
-
-- 700+ tests listed (v0.1.34 working tree; suites `cli_v0133_oneshot_fuzzy`, `cli_v0130_agent_contract`)
-- Cross-compile gate: `cargo test --test cross_compile_check -- --ignored` validates Windows GNU/MSVC targets
+- Final run of v0.1.37 recorded in `CHANGELOG.md`: 131 test targets, 1486 tests passed, 0 failed, 9 ignored (the `cross_compile_*` tests)
+- Cross-compile gate: `cargo test --test cross_compile_check -- --ignored` runs nine target checks; none was run for v0.1.37 (see the Verification Matrix)
 - 5 signal tests in `tests/signal_test.rs` cover SIGINT/SIGTERM/SIGPIPE/batch/shutdown
 - See [docs/decisions/README.md](decisions/README.md) for architectural decisions
 - For v0.1.29 durability and rename, see [v0.1.29 — Durability and rename](#v0129--durability-and-rename)
 - For v0.1.30 backup honesty and residual contract, see [v0.1.30 — Backup and agent residual](#v0130--backup-and-agent-residual)
 - For v0.1.34 one-shot fuzzy + timeout, see [v0.1.34 — One-shot fuzzy and timeout](#v0134--one-shot-fuzzy-and-timeout)
+
 
 ## The Pain You Already Know
 - You write a file on Linux and it reaches disk reliably
@@ -88,64 +96,65 @@ This section summarizes cross-platform-relevant changes in v0.1.12.
 - Atomic rename: prefers `renameat2` with fallback to `rename` on `ENOSYS`
 - NDJSON write reports `platform.rename_method` (`renameat2` or `rename`)
 - Cross-device: automatic copy-then-delete fallback
-- Tested on x86_64 and aarch64
+- Tested on x86_64 only; the aarch64 target has a cross-compile test that was not run
 
-### macOS (Full Support)
+### macOS (source support, not validated)
 - File fsync: `F_FULLFSYNC` via `fcntl` for true durability
 - Directory fsync: `sync_all()` on parent directory
 - Standard `fsync` on macOS does NOT guarantee disk write
 - atomwrite uses `F_FULLFSYNC` automatically
-- Tested on Apple Silicon and Intel
+- Status for v0.1.37: not run on macOS, neither on Apple Silicon nor on Intel; the lines above describe the source behaviour
 
-### Windows (Full Support as of v0.1.4)
+### Windows (source support, not validated)
 - File fsync: `FlushFileBuffers` via `sync_all()`
 - Directory fsync: best-effort (Windows has no `fsync` for directories)
-- **v0.1.15 fix (GAP 18)**: the write snapshot test redacts `platform.dir_fsync` as `[platform_dir_fsync]` because Windows reports `best_effort` while Unix reports `sync_all`; the windows-2025 local gate is green again.
+- v0.1.15 fix (GAP 18): the write snapshot test redacts `platform.dir_fsync` as `[platform_dir_fsync]` because Windows reports `best_effort` while Unix reports `sync_all` (historical, not re-run on Windows)
 - Atomic rename via `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`
 - NTFS provides reasonable durability guarantees
-- **v0.1.4 fix (GAP 14)**: `cargo install atomwrite` now succeeds on Windows 10/11. Three compilation errors in `#[cfg(windows)]` blocks that broke the v0.1.3 release on Windows are resolved.
-- **v0.1.4 addition**: `init_console` enables UTF-8 (code page 65001) and `ENABLE_VIRTUAL_TERMINAL_PROCESSING` so ANSI escape sequences are interpreted by the Windows Console Host. This makes colored output and Unicode characters work correctly in Windows Terminal and PowerShell 7+.
-- **v0.1.4 addition**: `persist_with_retry` handles Windows-specific `PermissionDenied` errors during the atomic rename by retrying with exponential backoff (100ms, 200ms, 400ms) — this compensates for Windows Defender or other antivirus processes that briefly hold the file.
-- Tested on x86_64 and i686 (i686 requires 32-bit mingw toolchain)
+- v0.1.4 fix (GAP 14): `cargo install atomwrite` succeeded on Windows 10/11 after three compilation errors in `#[cfg(windows)]` blocks were resolved (historical, not re-run for v0.1.37)
+- v0.1.4 addition: `init_console` enables UTF-8 (code page 65001) and `ENABLE_VIRTUAL_TERMINAL_PROCESSING` so ANSI escape sequences are interpreted by the Windows Console Host (not re-run for v0.1.37).
+- Current retry policy (v0.1.37): the tempfile persist retries `PermissionDenied` and `ERROR_SHARING_VIOLATION` (32) with full jitter (base 50 ms, ceiling 400 ms, the `retry.*` keys of `atomwrite config`) and still obeys `--timeout-secs`. This compensates for antivirus processes that briefly hold the file. In v0.1.4 the delays were fixed at 100 ms, 200 ms and 400 ms
+- Status for v0.1.37: not run on Windows (neither x86_64 nor i686); the retry was checked only by compiling a copy of its body on Linux
 
 
 ## Signal Handling
 ### Linux and macOS
 - SIGINT (130): graceful shutdown, flush pending writes
 - SIGTERM (143): graceful shutdown, flush pending writes
-- SIGPIPE (141): stop writing to broken pipe silently
+- SIGHUP (129): a closed terminal ends the run as a cancellation, with `signal: "SIGHUP"` on the `cancelled` envelope
+- `--timeout-secs` elapsed (124): the `cancelled` envelope carries `deadline_exceeded: true`
+- SIGPIPE (141): SIGPIPE is NOT reset to `SIG_DFL`. The process installs a cooperative handler that marks a shutdown with exit 141 (a deliberate deviation from the literal rule, ADR-0063). The write that hits the closed pipe fails with `BrokenPipe`, every `Drop` runs and no lock, journal or tempfile is left. An in-flight write finishes and commits
+- Measured on Linux with the default build: `read big.txt | head -c 5` and `search PATTERN big.txt | head -1` exit 141
 
 ### Windows
 - Ctrl+C: handled via SetConsoleCtrlHandler
-- SIGPIPE: not applicable on Windows
+- SIGPIPE: not applicable on Windows. `std` maps `ERROR_BROKEN_PIPE` to `BrokenPipe`, which follows the same path to exit 141 (not validated on Windows)
 - Process termination: pending atomic writes are abandoned safely
 
 
 ## Containers
 - Docker: works out of the box with standard Linux images
-- Podman: identical behavior to Docker
 - Overlay filesystems: atomic rename works within overlay layers
 - Volume mounts: fsync reaches the host filesystem through the mount
 - tmpfs: fsync is a no-op but rename is still atomic
 - Cross-container moves: use `--workspace` to prevent escaping the mount
-- Runtime autodetection (`src/env_detect.rs`): `/.dockerenv`, `container`/`CONTAINER` env, cgroup docker/kubepods/containerd/libpod hints
-- Kubernetes pods: `KUBERNETES_SERVICE_HOST` reported by `atomwrite doctor`
+- Status for v0.1.37: no container run was recorded; the bullets above describe the source behaviour
+- Runtime autodetection (`src/env_detect.rs`): `/.dockerenv` and cgroup docker/kubepods/containerd/libpod hints, read from files only
+- Kubernetes pods: the service-account mount `/var/run/secrets/kubernetes.io/serviceaccount` is reported by `atomwrite doctor`
 
 
 ## Runtime Environment Detection
-`atomwrite doctor` reports specialized host flags (Rules Rust multiplataforma):
+`atomwrite doctor` reports specialized host flags. Detection reads files only and no environment variable (Rules Rust multiplataforma):
 
 | Flag | Detection |
 |------|-----------|
-| WSL1/WSL2 | `WSL_DISTRO_NAME` / `WSL_INTEROP` or `/proc/...` contains `microsoft`/`wsl` |
-| Container | `/.dockerenv`, `container` env, cgroup hints |
-| Kubernetes | `KUBERNETES_SERVICE_HOST` |
-| CI | `CI` or `GITHUB_ACTIONS` |
-| Termux | `PREFIX` contains `com.termux` |
-| Flatpak / Snap | `FLATPAK_ID` / `SNAP` |
-| sudo | `SUDO_USER` |
+| WSL1/WSL2 | `/proc/sys/kernel/osrelease` or `/proc/version` contains `microsoft` |
+| Container | `/.dockerenv` or `/proc/1/cgroup` (fallback `/proc/self/cgroup`) with docker/kubepods/containerd/libpod hints |
+| Kubernetes | directory `/var/run/secrets/kubernetes.io/serviceaccount` exists |
+| Termux | directory `/data/data/com.termux/files/usr` exists |
+| Flatpak / Snap | file `/.flatpak-info` exists / `/proc/self/exe` points under `/snap/` |
 
-Also reports `os` / `arch` / `family` / compile `target`, storage `config_dir`, and platform fsync/rename methods.
+On Windows every file probe is skipped. `doctor` also reports `os` / `arch` / `family` / compile `target`, storage `config_dir`, and platform fsync/rename methods.
 
 
 ## Shell Support
@@ -180,11 +189,12 @@ Also reports `os` / `arch` / `family` / compile `target`, storage `config_dir`, 
 - atomwrite uses absolute paths in all NDJSON output
 - Relative paths in arguments are resolved against the workspace root
 - `--workspace` defaults to the current working directory (pass explicitly for agents)
-- Workspace jail is **CLI-only**: always pass `--workspace <root>` (no product environment variables)
+- The workspace jail is set by the CLI only: always pass `--workspace <root>` (no product environment variables)
 - Backup files are stored alongside the original with a timestamp suffix, unless `--output-dir` is set
 - The `completions --install` command writes to XDG data directories (`directories::ProjectDirs` / platform conventions)
-- **`storage.home`** (XDG `config.toml` via `atomwrite set storage.home` / `get`): optional base directory override for config/data/cache/state (`{home}/config`, …). When unset, `directories::ProjectDirs` is used (`src/storage.rs`) — never process environment for home override
-- Global config: `{config_dir}/config.toml`; locale preference: `{config_dir}/locale`
+- `storage.home` is a key of the `config` verb: `atomwrite config set storage.home DIR --scope global` and `atomwrite config get storage.home`. It relocates config, data, cache and state to `DIR/config`, `DIR/data`, `DIR/cache` and `DIR/state`. When unset, `directories::ProjectDirs` is used (`src/storage.rs`), and no process environment variable overrides the home. The table of paths per platform is in `docs/INSTALL.md` (Files and Directories)
+- Global config: `{config_dir}/config.toml` (mode 0600 on Unix, ACL of the user profile on Windows); locale preference: `{config_dir}/locale`
+- `completions SHELL --install` writes under the parent of the data directory (`~/.local/share/` on Linux with the default XDG setting), and under `{home}` when `storage.home` is set
 - Paths use `PathBuf` / `Path::join` only — no hardcoded `/` or `\` separators in application logic
 - Unicode NFC normalization applied during path jail validation
 - Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, `LPT0`–`LPT9`) rejected on all hosts for portable agent trees
@@ -192,12 +202,15 @@ Also reports `os` / `arch` / `family` / compile `target`, storage `config_dir`, 
 
 
 ## Build Requirements per Platform
-- **Linux** (x86_64, aarch64): Rust 1.88+, standard glibc
-- **macOS** (Intel, Apple Silicon): Rust 1.88+, Nix compatibility is restricted to `cfg(target_os = "linux")` so `posix_fadvise` is a no-op on macOS (added in v0.1.2 — before v0.1.2, the build failed on macOS)
-- **Windows** (x86_64): Rust 1.88+, MSVC toolchain, `windows-sys` 0.61 (updated in v0.1.2)
+- Linux (x86_64, aarch64): Rust 1.90+, standard glibc
+- macOS (Intel, Apple Silicon): Rust 1.90+, Nix compatibility is restricted to `cfg(target_os = "linux")` so `posix_fadvise` is a no-op on macOS (added in v0.1.2 — before v0.1.2, the build failed on macOS)
+- Windows (x86_64): Rust 1.90+, MSVC toolchain, `windows-sys` 0.61 (updated in v0.1.2)
+- Only the Linux x86_64 build was run for v0.1.37 (see the Verification Matrix)
 
 
 ## Performance by Target
+- The figures below are estimates carried from earlier releases. None was measured for v0.1.37, and only Linux x86_64 was run at all
+
 ### x86_64-unknown-linux-gnu
 - Fastest target for all operations
 - Full SIMD acceleration for BLAKE3 hashing
@@ -219,7 +232,7 @@ Also reports `os` / `arch` / `family` / compile `target`, storage `config_dir`, 
 - NVMe drives: <1ms per write
 - Spinning drives: 5-15ms per write due to physical flush
 - v0.1.4 prerequisite: Visual Studio 2019+ Build Tools with "Desktop development with C++" workload
-- v0.1.4 prerequisite: Rust 1.88 or later
+- v0.1.4 prerequisite: Rust 1.88 or later (historical; the current minimum is Rust 1.90)
 - v0.1.4 prerequisite: Windows Terminal or PowerShell 7+ for proper UTF-8 output
 
 ### x86_64-pc-windows-gnu (cross-compile from Linux)
@@ -234,46 +247,30 @@ Also reports `os` / `arch` / `family` / compile `target`, storage `config_dir`, 
 
 
 ## Agents Validated per Platform
-### Linux
-- Claude Code (Anthropic)
-- Cursor (Anysphere)
-- Aider
-- OpenAI Codex CLI
-
-### macOS
-- Claude Code (Anthropic)
-- Cursor (Anysphere)
-- Windsurf (Codeium)
-- Aider
-
-### Windows
-- Claude Code (Anthropic)
-- Cursor (Anysphere)
-- Windsurf (Codeium)
+- No agent-specific test is recorded for any platform, so this guide names no agent as validated
+- The integration route is the CLI plus NDJSON through a subprocess, and the test suite exercises that route on Linux x86_64 through `assert_cmd`
+- macOS and Windows: no agent run and no CLI run was recorded for v0.1.37
 
 
 ## v0.1.20 — What Is New
 
-This release introduces a new safety layer called **intention guards** and renames the global `--lang` flag to `--locale` to disambiguate from the tree-sitter `--lang` selector used by `scope` and `transform`.
+This release introduces a new safety layer called intention guards and renames the global `--lang` flag to `--locale` to disambiguate from the tree-sitter `--lang` selector used by `scope` and `transform`.
 
 ### Intention Guards (5 OPT-IN flags)
-
-- `--require-backup <N>` — refuse the operation when fewer than `N` retained backups exist for the target
-- `--confirm` — emit a confirmation prompt listing the planned mutation in NDJSON before executing
-- `--auto-rotate <N>` — automatically rotate the backup ring down to `N` entries after a successful write
-- `--risk-threshold <LOW|MEDIUM|HIGH>` — block operations whose classified risk meets or exceeds the threshold
+- `--require-backup` — require `--backup`: abort when it is missing and the target file exists (takes no value)
+- `--confirm` — legacy awareness flag on `write`, with no effect by itself: a large overwrite needs `--ack-overwrite`, and `delete --confirm` is rejected (use `--plan`)
+- `--auto-rotate` — force an automatic rotation backup for recently modified files (age from `[write].auto_rotate_max_age_secs`, default 24 h; takes no value)
+- `--risk-threshold <PERCENT>` — size-delta threshold in percent for the risk warning (default 255 = off; for example `--risk-threshold 50`)
 - `--locale <en|pt-BR>` — renamed from `--lang` to disambiguate from the tree-sitter `--lang`
 
 ### Other Additions
-
 - `count --by-size` — list the largest files in the tree with sizes and line counts
-- `read --mode raw|envelope` — select between byte-stream output and structured NDJSON envelope
+- `read --format raw|ndjson` — select between byte-stream output and structured NDJSON envelope (an old `--mode` spelling never existed)
 - `search --no-begin-end` — disable the implicit `^` and `$` anchor decoration in regex output
 - `write --preserve-timestamps` — keep the source file mtime when overwriting
-- `scope --lang rust` — explicit alias accepted for ergonomic symmetry with `transform --lang`
+- `scope --lang rust` — explicit alias of `scope --language`; `transform` takes `-l`/`--language` only
 
 ### Statistics
-
 - 621 tests passing in 51 integration suites, 0 failures
 - 52 GAP-2026 closed (019-070)
 - 3 Windows cross-compile targets green
@@ -288,8 +285,8 @@ rg -l -- '--lang\b' .
 # Bulk replace while preserving other matches
 fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 
-# Or via ruplacer
-ruplacer --subvert --lang --locale
+# Or via ruplacer (a dry run until you add --go)
+ruplacer -- '--lang' '--locale' .
 ```
 
 
@@ -301,15 +298,16 @@ This release is fully backward-compatible across all 3 supported platforms (Linu
 - `--backup` and `--keep-backup` plumbed through 6 subcommands (`write`, `edit`, `replace`, `rollback`, `apply`, `batch`) — works identically on Linux ext4, macOS APFS, and Windows NTFS
 - Backup files use `.bak.<YYYYMMDD_HHMMSS>` naming and atomic `fs::copy` — same atomicity guarantees on all 3 platforms
 
+
 ## v0.1.22 — What Is New
 
 This release is fully backward-compatible across all 3 supported platforms.
 
-- **`prune-backups [PATHS]...`** — manual cleanup of `.bak.YYYYMMDD_HHMMSS` siblings
+- `prune-backups [PATHS]...` — manual cleanup of `.bak.YYYYMMDD_HHMMSS` siblings
   - Uses `std::fs::remove_file` directly (not the atomic pipeline)
   - Honors the `--workspace` jail on all platforms
   - NDJSON output is platform-agnostic
-- **`edit-loop <PATH>`** — N pairs in 1 invocation via NDJSON
+- `edit-loop <PATH>` — N pairs in 1 invocation via NDJSON
   - Reads the file once with `read_file_string` (uses memmap2 for large files on Linux/macOS)
   - Writes atomically via the same pipeline as `edit`
   - On Windows: respects `init_console` UTF-8 and ANSI handling (v0.1.4)
@@ -332,8 +330,8 @@ This release is fully backward-compatible across Linux, macOS, and Windows for e
 - `platform.backup_method` reports `reflink_or_copy` or `copy` only
 - Cargo feature `core` keeps the slim binary path; AST/watch/semantic remain optional
 
-## v0.1.30 — Backup and agent residual
 
+## v0.1.30 — Backup and agent residual
 - Residual agent-contract release on top of the v0.1.29 platform surface
 - Backup path uses `reflink_or_copy` with copy fallback; never hardlink of the live file
 - Edit NDJSON may include `match_count` and `indent_adjusted` for agent parsing
@@ -343,17 +341,18 @@ This release is fully backward-compatible across Linux, macOS, and Windows for e
 - Recipe recursive hash excludes `*.bak.*` paths
 - See [gaps.md](../gaps.md) and [MIGRATION.md](MIGRATION.md#v0129-to-v0130)
 
-## v0.1.34 — One-shot fuzzy and timeout
 
+## v0.1.34 — One-shot fuzzy and timeout
 - Docs-complete publish of the v0.1.33 one-shot runtime (same binary behavior on all platforms)
-- Global `--timeout-secs` / `--timeout` default **120**; `0` disables; deadline → exit **124** (cross-platform)
-- Fuzzy multi-apply is **one-pass** L→R (`apply_fuzzy_one_pass`); never re-scans inserted text
-- Default max fuzzy applies **1**; if replacement contains pattern (fixed-string), force single apply
+- Global `--timeout-secs` / `--timeout` default 120; `0` disables; deadline → exit 124 (cross-platform)
+- Fuzzy multi-apply is one-pass L→R (`apply_fuzzy_one_pass`); never re-scans inserted text
+- Default max fuzzy applies 1; if replacement contains pattern (fixed-string), force single apply
 - Cooperative cancel polled mid-fuzzy cascade; caps: pattern 64 KiB, lev 8192, windows 4096, growth max(4×,+16 MiB)
 - Regression: `cargo test --test cli_v0133_oneshot_fuzzy`
-- See [MIGRATION.md](MIGRATION.md#v0133-to-v0134-current) and ADR-0054
+- See [MIGRATION.md](MIGRATION.md#v0133-to-v0134) and ADR-0054
 
-## A-014 multi-target smoke (local, no GitHub Actions)
+
+## A-014 multi-target smoke (local)
 
 Run on a host with rustup targets installed:
 
@@ -367,23 +366,100 @@ done
 Notes (2026-07-19):
 - `x86_64-unknown-linux-gnu`: primary e2e host — required green.
 - Apple/Windows targets may fail on missing cross toolchains (`lib.exe`, macOS SDK, zstd asm) — document skip honestly; not a product regression.
-- Do **not** add `.github/workflows` to this crate.
+- The loop was not re-run for v0.1.37 (see the Verification Matrix).
+
 
 ## v0.1.35 — Honest multi-OS and local gates
-
 - Linux: full e2e + unit/integration
 - Windows-gnu: `cargo check --target x86_64-pc-windows-gnu` on Linux host
 - macOS: source-level `cfg`; cross may fail without host SDK — validate on a real Mac
-- Product repo ships **no** GitHub Actions workflows; use local DoD from `docs/TESTING.md`
-- Watch/notify and path separators are platform-specific; see A-XPLAT-001 in gaps.md §20
+- Local gates only; use the local DoD from `docs/TESTING.md`
+- Watch/notify and path separators are platform-specific; see A-XPLAT-001 in ADR-0055
+
 
 ## v0.1.36 — Agent contract (platform-neutral)
-
-- Pin agents to `^0.1.36`; **45** subcommands SSOT (`agent-surface` / `commands`)
-- SSOT **45** subcommands identical on Linux/macOS/Windows: `agent-surface`, `apply`, `backup`, `batch`, `calc`, `case`, `codemod`, `commands`, `completions`, `copy`, `count`, `del`, `delete`, `diff`, `doctor`, `edit`, `edit-loop`, `extract`, `get`, `hash`, `list`, `locale`, `move`, `outline`, `prune-backups`, `query`, `read`, `recipe`, `regex`, `replace`, `rollback`, `scope`, `scratch`, `search`, `semantic-merge`, `semantic-search`, `set`, `sparse`, `stat`, `transform`, `verify`, `wal-heal`, `wal-stats`, `watch`, `write`. Features: `watch` needs feature `watch`; `semantic-search` needs feature `semantic`; AST commands need default/full features — but names still part of surface SSOT.
+- Historical (v0.1.36): 46 subcommands SSOT (`agent-surface` / `commands`); the current list of 47 is in the catalog below
 - Content-source jail + `scratch init` (no `/tmp` allowlist) — same path policy on Linux/macOS/Windows
 - Error NDJSON always includes `ok: false` + stable `match_count`
 - Global `--select`/`--fields`, `--filter`, `--limit` (long-only; no global `-n`)
-- Contract suite: `cargo test --test cli_v0136_gaps`; SSOT: `scripts/check-gaps-ssot.sh`
-- See ADR-0055 and `gaps.md` GAP-2026-019…033
+- Contract suite: `cargo test --test cli_v0136_gaps`; gap status lives in the ADR that owns the gap
+- See ADR-0055 (GAP-2026-019…033)
 
+
+## v0.1.37 — Platform notes
+- Pin agents to `^0.1.37`; 47 subcommands SSOT (`agent-surface` / `commands`), the same list on Linux, macOS and Windows by design (exercised on Linux only)
+- Broken pipe: exit 141 on every platform. Unix installs a cooperative SIGPIPE handler (the signal does not kill the process), the write that hits the closed pipe fails with `BrokenPipe`, every `Drop` runs and the process leaves no lock, journal or tempfile. A parent that ignores SIGPIPE, or Windows (`ERROR_BROKEN_PIPE` mapped to `BrokenPipe`), gets the same exit 141. SIGPIPE is not reset to `SIG_DFL`: this is a deliberate deviation (ADR-0063)
+- `config set --scope global` writes the XDG `config.toml` with mode `0600` on Unix; Windows has no mode bits and relies on the ACL of the user profile
+- Windows tempfile persist retries `PermissionDenied` and `ERROR_SHARING_VIOLATION` (32) with full jitter (base 50 ms, ceiling 400 ms) and still obeys `--timeout-secs`; not validated on Windows
+- Advisory lock (`std::fs::File::try_lock`, which is `flock` on Unix and `LockFileEx` on Windows) waits up to `lock.acquire_timeout_ms` (default 5000) with the same backoff; exit 83 when it is not acquired. Not validated on NFS or on Windows
+- Slim build (`--no-default-features --features core`): `outline`, `sparse outline`, `query`, `scope`, `transform` and `codemod` exit 78 (measured on Linux); `cargo xtask check-features` checks the `core` and `core,watch` sets
+- The default build has no `watch`: `atomwrite watch` exits 78 until the binary is built with `--features watch`
+- Parsers are downloaded at run time by `outline`, `sparse outline`, `query` and `write --syntax-check` on every platform
+
+
+## The 47 Subcommands on Every Platform
+- The list is the same on Linux, macOS and Windows, and each line has a one-line summary and an example that was run on Linux x86_64 (`atomwrite 0.1.37`); none was run on macOS or Windows
+- Setup of the examples: `WS` is the absolute path of an empty workspace that holds `src/a.rs` (an `unwrap()` and a comment), `src/b.rs` (the word `beta` once), `src/c.rs` (with `user_id`), `src/tmp.rs`, `config.toml` (a `[package]` table with `name` and a `[features]` table with `x`), `notes.txt`, `tmp.txt`, `base.txt`, `ours.txt`, `theirs.txt`, `img.png` and `rules.yaml` (a YAML list with `id`, `language`, `pattern` and `rewrite`)
+- `HASH_A` is the `checksum` that `hash src/a.rs` prints
+- The examples use `printf ... |` and a POSIX shell. On Windows run the same `atomwrite` arguments from PowerShell and feed stdin with a here-string or a pipe from `Write-Output`; this was not validated
+- The examples run in the order below: `rollback` needs the `backup` before it and `edit-loop` needs the `edit` before it
+- Result on Linux: 46 of the 47 exit 0, and `watch` exits 78 because the default build has no `watch` feature
+
+- `read` — Read a file with checksum, size and lines, optionally only head/tail/range. Example: `atomwrite --workspace "$WS" read --head 2 src/a.rs`
+- `write` — Create or overwrite a file atomically from stdin. Example: `printf 'x\n' | atomwrite --workspace "$WS" write notes/new.txt`
+- `edit` — Edit a file by exact or fuzzy text match, line number or marker. Example: `atomwrite --workspace "$WS" edit src/b.rs --old beta --new gamma`
+- `delete` — Delete files or trees with backup, or only print the plan. Example: `atomwrite --workspace "$WS" delete --plan tmp.txt`
+- `copy` — Copy a file or tree with checksum verification. Example: `atomwrite --workspace "$WS" copy src/a.rs src/a_copy.rs`
+- `move` — Move or rename a file atomically. Example: `atomwrite --workspace "$WS" move src/tmp.rs src/tmp2.rs`
+- `apply` — Apply a patch (unified diff, SEARCH/REPLACE, full file) from stdin. Example: `printf 'new body\n' | atomwrite --workspace "$WS" apply --format full notes.txt`
+- `search` — Search file contents in parallel with the ripgrep engine. Example: `atomwrite --workspace "$WS" search alpha src/`
+- `replace` — Replace text across files with atomic writes and fuzzy matching. Example: `atomwrite --workspace "$WS" replace --dry-run alpha omega src/`
+- `transform` — Rewrite code by AST pattern (ast-grep). Example: `atomwrite --workspace "$WS" transform --dry-run -p '$E.unwrap()' -r '$E?' -l rust src/`
+- `hash` — Print the BLAKE3 checksum of files. Example: `atomwrite --workspace "$WS" hash src/a.rs`
+- `count` — Count lines and files by extension or by size. Example: `atomwrite --workspace "$WS" count --by-extension src/`
+- `diff` — Compare two files (unified, stat or changes). Example: `atomwrite --workspace "$WS" diff src/a.rs src/b.rs --unified`
+- `list` — List a directory tree with metadata. Example: `atomwrite --workspace "$WS" list --long --depth 1 src/`
+- `extract` — Pick fields from NDJSON read on stdin. Example: `printf '{"a":1}\n' | atomwrite --workspace "$WS" extract --field a`
+- `extract-artifact` — Bounded signal from PDF, OOXML and image headers (never raw bytes). Example: `atomwrite --workspace "$WS" extract-artifact img.png`
+- `scope` — Grammatical scoping: act on comments, strings, functions and other code categories. Example: `atomwrite --workspace "$WS" scope src/ --language rust --query comments --delete --dry-run`
+- `regex` — Generate a regex from example strings. Example: `atomwrite --workspace "$WS" regex abc-12 xyz-99 id-7 --digits`
+- `calc` — Math and unit conversion. Example: `atomwrite --workspace "$WS" calc "2 hours to seconds"`
+- `completions` — Print or install shell completions (bash, zsh, fish, elvish, powershell). Example: `atomwrite --workspace "$WS" completions bash`
+- `backup` — Create timestamped backups with BLAKE3 checksums. Example: `atomwrite --workspace "$WS" backup src/a.rs --retention 3`
+- `rollback` — Restore a file from a previous backup. Example: `atomwrite --workspace "$WS" rollback src/a.rs --latest --verify`
+- `batch` — Run NDJSON operations from stdin, optionally as one transaction. Example: `printf '{"op":"write","target":"batch.txt","content":"x"}\n' | atomwrite --workspace "$WS" batch --transaction`
+- `edit-loop` — Apply N old/new pairs in one write, all or nothing. Example: `printf '[{"old":"gamma","new":"delta"}]\n' | atomwrite --workspace "$WS" edit-loop src/b.rs`
+- `prune-backups` — Remove old .bak files by age or count. Example: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run .`
+- `wal-stats` — Show the state of WAL journals (read only). Example: `atomwrite --workspace "$WS" wal-stats`
+- `wal-heal` — Remove orphan terminal WAL journals older than a threshold. Example: `atomwrite --workspace "$WS" wal-heal --threshold-secs 3600 .`
+- `verify` — Check a file against an expected BLAKE3 hash (exit 0 match, 81 mismatch). Example: `atomwrite --workspace "$WS" verify src/a.rs HASH_A`
+- `set` — Write a value at a dotted path in a TOML or JSON file. Example: `atomwrite --workspace "$WS" set config.toml package.name demo2`
+- `get` — Read a value at a dotted path in a TOML or JSON file. Example: `atomwrite --workspace "$WS" get config.toml package.name`
+- `del` — Remove a key from a TOML or JSON file. Example: `atomwrite --workspace "$WS" del config.toml features.x`
+- `case` — Rename identifiers across files between case styles. Example: `atomwrite --workspace "$WS" case --subvert user_id UserId --to pascal --dry-run src/c.rs`
+- `query` — Walk the tree-sitter AST and emit nodes. Example: `atomwrite --workspace "$WS" query --kinds src/a.rs`
+- `outline` — Emit the high-level structure of a source file. Example: `atomwrite --workspace "$WS" outline src/a.rs`
+- `semantic-merge` — Line-based three-way merge with conflict markers (not AST). Example: `atomwrite --workspace "$WS" semantic-merge --base base.txt --ours ours.txt --theirs theirs.txt --output merged.txt --fail-on-conflict`
+- `sparse` — Budgeted list, read and outline for large trees. Example: `atomwrite --workspace "$WS" sparse list src/ --max-files 10 --max-bytes 1048576`
+- `recipe` — List and run built-in multi-step recipes. Example: `atomwrite --workspace "$WS" recipe run --name search-replace-verify --pattern alpha --replacement omega --path src --dry-run`
+- `stat` — Metadata only, alias of read --stat. Example: `atomwrite --workspace "$WS" stat src/a.rs`
+- `agent-surface` — Tool manifest for agents (the SSOT of subcommands). Example: `atomwrite --workspace "$WS" agent-surface --format json`
+- `watch` — Stream filesystem events with debounce; ends with watch_summary (needs a build with `--features watch`, the default build exits 78). Example: `atomwrite --workspace "$WS" watch src/ --max-events 1 --idle-exit-ms 500`
+- `codemod` — Apply a YAML list of AST rewrite rules across a tree. Example: `atomwrite --workspace "$WS" codemod --rules rules.yaml --dry-run src/`
+- `semantic-search` — Offline Jaccard ranking of files by query. Example: `atomwrite --workspace "$WS" semantic-search "unwrap value" src/ --k 5 --min-score 0.01`
+- `doctor` — Host readiness diagnostics. Example: `atomwrite --workspace "$WS" doctor`
+- `scratch` — Create the staging dir .atomwrite/scratch inside the workspace jail. Example: `atomwrite --workspace "$WS" scratch init .atomwrite/scratch`
+- `locale` — Show, set or clear the UI locale. Example: `atomwrite --workspace "$WS" locale`
+- `commands` — Print the full command tree as JSON. Example: `atomwrite --workspace "$WS" commands --include-globals`
+- `config` — Read and write persistent tuning keys (37 keys, scopes global and workspace). Example: `atomwrite --workspace "$WS" config get fuzzy.threshold`
+
+### Platform Differences per Command
+- `write`, `edit`, `edit-loop`, `set`, `del`, `apply`, `config` and the `replace` and `edit` ops of `batch`: they serialise on the advisory lock, which works on Unix and on Windows (NFS: not validated)
+- `case`, `transform`, `scope` and `codemod`: a file that changed between the read and the write fails with `STATE_DRIFT` (exit 82); the same on every platform
+- `move` and `copy`: reflink CoW on APFS, btrfs and XFS, `reflink_or_copy` as the backup method, extended attributes preserved on Unix; none of this was validated on Windows
+- `backup`, `rollback`, `prune-backups`: the backup name is `<name>.bak.<YYYYMMDD_HHMMSS>` on every platform
+- `completions`: with `--install` the files go under the parent of the data directory of the platform (see `docs/INSTALL.md`)
+- `doctor`: every file probe is skipped on Windows (WSL, container, Kubernetes, Termux, Flatpak and Snap are Linux concepts)
+- `watch`: needs `--features watch` and uses the `notify` crate, whose backend depends on the operating system; `cargo xtask check-features` only compiles the `core,watch` set, and a run of `watch` was not done in this audit on any platform
+- `read`, `write`, `delete`: names that are reserved on Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM0` to `COM9`, `LPT0` to `LPT9`) are rejected on all hosts, so an agent tree stays portable
+- `locale` and `config`: the locale preference and the global config live in the config directory of the platform

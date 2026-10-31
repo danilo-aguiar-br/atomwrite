@@ -90,6 +90,12 @@ pub fn save_xattrs(path: &Path) -> std::io::Result<Vec<Xattr>> {
 }
 
 /// Read all extended attributes from `path` (Windows stub).
+///
+/// # Errors
+///
+/// Never returns `Err`: NTFS has no extended attributes, so the stub always
+/// answers `Ok(Vec::new())` and callers treat Windows the same as fork backup
+/// and restore on Unix.
 #[cfg(not(unix))]
 pub fn save_xattrs(_path: &Path) -> std::io::Result<Vec<Xattr>> {
     Ok(Vec::new())
@@ -138,6 +144,11 @@ pub fn restore_xattrs(path: &Path, attrs: &[Xattr]) -> std::io::Result<u32> {
 
 /// Restore extended attributes previously captured by [`save_xattrs`]
 /// (Windows stub).
+///
+/// # Errors
+///
+/// Never returns `Err`: the stub reports `Ok(0)` restored attributes so the
+/// caller continues with the write on a platform that has none.
 #[cfg(not(unix))]
 pub fn restore_xattrs(_path: &Path, _attrs: &[Xattr]) -> std::io::Result<u32> {
     Ok(0)

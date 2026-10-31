@@ -411,31 +411,35 @@ fn content_inspector_empty_is_utf8() {
 // ─── serde_yaml (G44, inline rules) ─────────────────────────────────────────
 
 #[test]
+#[cfg(feature = "ast")]
 fn serde_yaml_parses_simple() {
     let yaml = "name: test\nrules:\n  - id: r1\n    kind: function\n    pattern: 'fn foo()'\n";
-    let parsed: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse");
+    let parsed: serde_json::Value = serde_saphyr::from_str(yaml).expect("parse");
     assert_eq!(parsed["name"], "test");
-    assert!(parsed["rules"].is_sequence());
+    assert!(parsed["rules"].is_array());
 }
 
 #[test]
+#[cfg(feature = "ast")]
 fn serde_yaml_rejects_malformed() {
     let bad = "name: test\n  invalid indent: : :\n  - oops\n";
-    let result: std::result::Result<serde_yaml::Value, _> = serde_yaml::from_str(bad);
+    let result: std::result::Result<serde_json::Value, _> = serde_saphyr::from_str(bad);
     assert!(result.is_err(), "malformed YAML should fail to parse");
 }
 
 #[test]
+#[cfg(feature = "ast")]
 fn serde_yaml_missing_keys_works() {
     let yaml = "name: test\n";
-    let parsed: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse");
+    let parsed: serde_json::Value = serde_saphyr::from_str(yaml).expect("parse");
     // Missing keys are just absent; serde_yaml does not require any.
     assert!(parsed.get("rules").is_none());
 }
 
 #[test]
+#[cfg(feature = "ast")]
 fn serde_yaml_empty_object() {
     let yaml = "{}";
-    let parsed: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse");
-    assert!(parsed.is_mapping() || parsed.is_null());
+    let parsed: serde_json::Value = serde_saphyr::from_str(yaml).expect("parse");
+    assert!(parsed.is_object() || parsed.is_null());
 }

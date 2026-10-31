@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StreamDiffOutput",
+  "description": "Wire envelope for the single `stream_diff` event emitted by `--diff-against`.\n\nThe counts are absolute, not deltas of a previous run, so an agent can read\nthe line without holding earlier state.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "Event discriminator on the data channel.",
+      "type": "string"
+    },
+    "added": {
+      "description": "Events present only in the live stream.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "removed": {
+      "description": "Events present only in the baseline.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "unchanged": {
+      "description": "Events present in both streams.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "type",
+    "added",
+    "removed",
+    "unchanged"
+  ]
+}

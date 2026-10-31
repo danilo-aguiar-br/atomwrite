@@ -36,8 +36,8 @@ impl BatchOp {
 }
 
 /// NDJSON event emitted when a transaction is rolled back.
-#[derive(Debug, Serialize)]
-struct RollbackEvent {
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct RollbackEvent {
     r#type: &'static str,
     files_restored: u64,
     files_removed: u64,
@@ -45,6 +45,11 @@ struct RollbackEvent {
 }
 
 /// Emit the JSON Schema for the batch input manifest format.
+///
+/// # Errors
+///
+/// Returns a JSON serialization error when the generated schema cannot be turned into a value.
+/// Returns `AtomwriteError::BrokenPipe` when the consumer closes the NDJSON stream.
 pub fn emit_input_schema(writer: &mut NdjsonWriter<impl Write>) -> Result<()> {
     let schema = schemars::schema_for!(BatchOp);
     let schema_value = serde_json::to_value(&schema)?;

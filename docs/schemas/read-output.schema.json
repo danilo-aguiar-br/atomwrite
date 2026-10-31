@@ -20,8 +20,17 @@
       ]
     },
     "lines": {
-      "description": "Total number of lines in the file.",
+      "description": "Number of lines in the returned content.\n\nAs of v0.1.20 (GAP-2026-008), this is the FILTERED count when a partial\nread filter (`--head`, `--tail`, `--line`, `--lines`, `--grep`) is\nin effect. The original file total is preserved in `lines_total`.",
       "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "lines_total": {
+      "description": "Total lines in the original file before any filter (GAP-2026-008).\nOmitted when no filter is applied or the filter did not change the\nline count.",
+      "type": [
+        "integer",
+        "null"
+      ],
       "format": "uint64",
       "minimum": 0
     },
@@ -51,16 +60,6 @@
       "description": "Whether the file was detected as binary.",
       "type": "boolean"
     },
-    "mode": {
-      "description": "Read mode discriminator: full, head, tail, line, lines, grep, stat.",
-      "type": "string"
-    },
-    "lines_total": {
-      "description": "Total lines in the original file (present when head/tail/lines filters active).",
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
-    },
     "range": {
       "description": "Line range returned when a subset was requested.",
       "anyOf": [
@@ -78,6 +77,68 @@
         "boolean",
         "null"
       ]
+    },
+    "mode": {
+      "description": "Read mode discriminator (GAP-2026-009): \"full\" | \"head\" | \"tail\" |\n\"line\" | \"lines\" | \"grep\" | \"stat\" | \"raw\". Allows downstream consumers to\ndistinguish partial reads from full reads without parsing content.",
+      "type": "string"
+    },
+    "ok": {
+      "description": "Outcome of the run, stamped by the writer",
+      "type": "boolean"
+    },
+    "code": {
+      "description": "Machine error code, present when ok is false",
+      "type": "string"
+    },
+    "exit": {
+      "description": "Process exit status, present when ok is false",
+      "type": "integer",
+      "minimum": 0
+    },
+    "target_resolved": {
+      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+      "type": "string"
+    },
+    "target_source": {
+      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+      "type": "string",
+      "enum": [
+        "argv",
+        "workspace",
+        "stdin"
+      ]
+    },
+    "workspace_source": {
+      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+      "type": "string",
+      "enum": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "records_suppressed": {
+      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_budget_dropped": {
+      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_planned": {
+      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+      "type": "boolean"
+    },
+    "truncated_records": {
+      "description": "Records the writer cut this run, counted once per record",
+      "type": "integer",
+      "minimum": 0
     }
   },
   "required": [
@@ -89,7 +150,8 @@
     "permissions",
     "modified",
     "kind",
-    "binary"
+    "binary",
+    "mode"
   ],
   "$defs": {
     "LineRange": {

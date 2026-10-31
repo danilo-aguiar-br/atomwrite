@@ -4,11 +4,23 @@
   "description": "NDJSON output for a surgical edit operation.",
   "type": "object",
   "properties": {
-    "bytes_after": {
-      "description": "File size in bytes after editing.",
+    "type": {
+      "description": "Event type discriminator.",
+      "type": "string"
+    },
+    "path": {
+      "description": "Path of the edited file.",
+      "type": "string"
+    },
+    "edits": {
+      "description": "Number of edit operations applied.",
       "type": "integer",
       "format": "uint64",
       "minimum": 0
+    },
+    "mode": {
+      "description": "Edit mode used (e.g. `after_line`, `range`, `old_new`, `exact`).",
+      "type": "string"
     },
     "bytes_before": {
       "description": "File size in bytes before editing.",
@@ -16,23 +28,28 @@
       "format": "uint64",
       "minimum": 0
     },
-    "checksum_after": {
-      "description": "BLAKE3 checksum after editing.",
-      "type": "string"
+    "bytes_after": {
+      "description": "File size in bytes after editing.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
     },
     "checksum_before": {
       "description": "BLAKE3 checksum before editing.",
       "type": "string"
     },
-    "diff_preview": {
-      "description": "Unified diff preview showing what the fuzzy match changed (truncated to 500 chars).",
-      "type": [
-        "string",
-        "null"
-      ]
+    "checksum_after": {
+      "description": "BLAKE3 checksum after editing.",
+      "type": "string"
     },
-    "edits": {
-      "description": "Number of edit operations applied.",
+    "lines_before": {
+      "description": "Line count before editing.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "lines_after": {
+      "description": "Line count after editing.",
       "type": "integer",
       "format": "uint64",
       "minimum": 0
@@ -50,27 +67,15 @@
         "null"
       ]
     },
-    "indent_adjusted": {
-      "description": "True when fuzzy indent delta realigned the replacement text.",
+    "strategy": {
+      "description": "Fuzzy strategy that succeeded (only present when fuzzy=true).",
       "type": [
-        "boolean",
+        "string",
         "null"
       ]
     },
-    "lines_after": {
-      "description": "Line count after editing.",
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
-    },
-    "lines_before": {
-      "description": "Line count before editing.",
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
-    },
-    "match_count": {
-      "description": "Number of occurrences replaced in old/new mode (1 unless `--replace-all`).",
+    "strategies_tried": {
+      "description": "Number of strategies tried before success (only present in --old/--new mode).",
       "type": [
         "integer",
         "null"
@@ -78,16 +83,29 @@
       "format": "uint64",
       "minimum": 0
     },
-    "mode": {
-      "description": "Edit mode used (e.g. `after_line`, `range`, `old_new`, `exact`).",
-      "type": "string"
-    },
-    "mtime_preserved": {
-      "description": "Whether the original modification time was preserved (true) or updated to now (false).\nCritical for build systems: false ensures cargo/make/cmake detect the change.",
+    "similarity": {
+      "description": "Similarity score of the fuzzy match, 0.0-1.0 (only present for `block_anchor` strategy).",
       "type": [
-        "boolean",
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "diff_preview": {
+      "description": "Unified diff preview showing what the fuzzy match changed (truncated to 500 chars).",
+      "type": [
+        "string",
         "null"
       ]
+    },
+    "pairs_total": {
+      "description": "Total number of `--old`/`--new` pairs requested (multi-pair mode only).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
     },
     "pair_results": {
       "description": "Per-pair match results (multi-pair mode only) — the per-item ground truth.",
@@ -99,46 +117,97 @@
         "$ref": "#/$defs/PairResult"
       }
     },
-    "pairs_total": {
-      "description": "Total number of `--old`/`--new` pairs requested (multi-pair mode only).",
+    "mtime_preserved": {
+      "description": "Whether the original modification time was preserved (true) or updated to now (false).\nCritical for build systems: false ensures cargo/make/cmake detect the change.",
       "type": [
-        "integer",
-        "null"
-      ],
-      "format": "uint64",
-      "minimum": 0
-    },
-    "path": {
-      "description": "Path of the edited file.",
-      "type": "string"
-    },
-    "similarity": {
-      "description": "Similarity score of the fuzzy match, 0.0-1.0 (only present for `block_anchor` strategy).",
-      "type": [
-        "number",
-        "null"
-      ],
-      "format": "double"
-    },
-    "strategies_tried": {
-      "description": "Number of strategies tried before success (only present in --old/--new mode).",
-      "type": [
-        "integer",
-        "null"
-      ],
-      "format": "uint64",
-      "minimum": 0
-    },
-    "strategy": {
-      "description": "Fuzzy strategy that succeeded (only present when fuzzy=true).",
-      "type": [
-        "string",
+        "boolean",
         "null"
       ]
     },
-    "type": {
-      "description": "Event type discriminator.",
+    "match_count": {
+      "description": "Number of occurrences replaced in old/new mode (1 unless `--replace-all`).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "indent_adjusted": {
+      "description": "True when fuzzy indent delta realigned the replacement text.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "risk_assessment": {
+      "description": "Local diagnostic for a payload that looks destructive (B-013).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WriteRiskAssessment"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ok": {
+      "description": "Outcome of the run, stamped by the writer",
+      "type": "boolean"
+    },
+    "code": {
+      "description": "Machine error code, present when ok is false",
       "type": "string"
+    },
+    "exit": {
+      "description": "Process exit status, present when ok is false",
+      "type": "integer",
+      "minimum": 0
+    },
+    "target_resolved": {
+      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+      "type": "string"
+    },
+    "target_source": {
+      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+      "type": "string",
+      "enum": [
+        "argv",
+        "workspace",
+        "stdin"
+      ]
+    },
+    "workspace_source": {
+      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+      "type": "string",
+      "enum": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "records_suppressed": {
+      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_budget_dropped": {
+      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_planned": {
+      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+      "type": "boolean"
+    },
+    "truncated_records": {
+      "description": "Records the writer cut this run, counted once per record",
+      "type": "integer",
+      "minimum": 0
     }
   },
   "required": [
@@ -169,6 +238,13 @@
           "description": "Whether the pair matched and was applied to the content.",
           "type": "boolean"
         },
+        "strategy": {
+          "description": "Matching strategy that succeeded (e.g. `exact`, `whitespace_normalized`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "similarity": {
           "description": "Similarity score of the fuzzy match, 0.0-1.0 (block-anchor and context-aware only).",
           "type": [
@@ -183,18 +259,50 @@
             "string",
             "null"
           ]
-        },
-        "strategy": {
-          "description": "Matching strategy that succeeded (e.g. `exact`, `whitespace_normalized`).",
-          "type": [
-            "string",
-            "null"
-          ]
         }
       },
       "required": [
         "index",
         "matched"
+      ]
+    },
+    "WriteRiskAssessment": {
+      "description": "GAP-2026-011 L1/L6: Local diagnostics describing why a write was classified\nas risky (G-031: not product telemetry). Emitted in `WriteOutput.risk_assessment`\nwhen the size delta exceeds the user-configured `--risk-threshold`.",
+      "type": "object",
+      "properties": {
+        "original_bytes": {
+          "description": "File size before the write.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "new_bytes": {
+          "description": "New file size after the write.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "size_delta_pct": {
+          "description": "|new - original| / original * 100.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "risk_level": {
+          "description": "\"low\" (<70%) | \"medium\" (70-89%) | \"high\" (>=90%).",
+          "type": "string"
+        },
+        "guard_triggered": {
+          "description": "Which guard triggered the assessment (always \"size\" for L1).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "original_bytes",
+        "new_bytes",
+        "size_delta_pct",
+        "risk_level",
+        "guard_triggered"
       ]
     }
   }

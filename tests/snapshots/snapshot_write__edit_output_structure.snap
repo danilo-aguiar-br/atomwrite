@@ -1,25 +1,28 @@
 ---
 source: tests/snapshot_write.rs
-assertion_line: 198
 expression: event
 ---
 {
-  "bytes_after": 21,
-  "bytes_before": 21,
-  "checksum_after": "[redacted]",
-  "checksum_before": "[redacted]",
-  "diff_preview": " old_text",
+  "type": "edit",
+  "path": "[redacted]",
   "edits": 1,
+  "mode": "exact",
+  "bytes_before": 21,
+  "bytes_after": 21,
+  "checksum_before": "[redacted]",
+  "checksum_after": "[redacted]",
+  "lines_before": 3,
+  "lines_after": 3,
   "elapsed_ms": "[redacted]",
   "fuzzy": false,
-  "indent_adjusted": false,
-  "lines_after": 3,
-  "lines_before": 3,
-  "match_count": 1,
-  "mode": "exact",
-  "mtime_preserved": false,
-  "path": "[redacted]",
-  "strategies_tried": 1,
   "strategy": "exact",
-  "type": "edit"
+  "strategies_tried": 1,
+  "diff_preview": " old_text",
+  "mtime_preserved": false,
+  "match_count": 1,
+  "indent_adjusted": false,
+  "ok": true,
+  "workspace_source": "argv",
+  "target_resolved": "[redacted]",
+  "target_source": "argv"
 }

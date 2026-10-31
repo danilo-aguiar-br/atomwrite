@@ -37,43 +37,26 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use serde::Serialize;
 use tree_sitter::{Query as TsQuery, StreamingIterator};
-use tree_sitter_language_pack::{Node, get_language, get_parser, has_language};
+use tree_sitter_language_pack::{Node, has_language};
 
 use crate::cli::{GlobalArgs, QueryArgs};
 use crate::output::NdjsonWriter;
 
-/// Result summary for the `query` subcommand.
-#[derive(Debug, Serialize)]
-struct QuerySummary {
+/// Terminal event of `query`: node and match totals for one file.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct QuerySummary {
     r#type: &'static str,
     path: String,
     language: String,
     matches: usize,
     total_nodes: usize,
     elapsed_ms: u64,
+    /// Matches whose node text was cut at `QUERY_NODE_TEXT_MAX_CHARS`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nodes_truncated: Option<u64>,
 }
 
-/// Discriminator between legacy kind-filter matching and the new
-/// real S-expression matching introduced in v0.1.19 (G122).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum QueryType {
-    /// Plain kind name like `function_item` compared to `node.kind()`.
-    KindFilter,
-    /// S-expression with optional `@capture` bindings compiled via
-    /// `tree_sitter::Query::new`.
-    SExpression,
-}
-
-/// Detect whether a `--query <PATTERN>` argument is a plain kind
-/// name or an S-expression. Presence of `(`, `)`, or `@` is the
-/// unambiguous signal documented in ADR-0032.
-fn classify_pattern(pattern: &str) -> QueryType {
-    if pattern.contains('(') || pattern.contains(')') || pattern.contains('@') {
-        QueryType::SExpression
-    } else {
-        QueryType::KindFilter
-    }
-}
+include!("query_parse.inc.rs");
 
 /// Execute the `query` subcommand.
 ///
@@ -82,6 +65,19 @@ fn classify_pattern(pattern: &str) -> QueryType {
 /// three modes: `--kinds` (aggregate counts), `--query <KIND>` (emit
 /// nodes matching a single kind name), and `--tree` (emit every
 /// named node). A final `query_summary` line is always emitted.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::NotFound` when the target file does not exist.
+/// Returns `AtomwriteError::WorkspaceJail` when the path escapes the workspace.
+/// Returns `AtomwriteError::FileTooLarge` when the file exceeds the effective max filesize.
+/// Returns `AtomwriteError::InvalidInput` when the S-expression is unbalanced, `--language` names
+/// an unsupported grammar, the language cannot be detected, the pattern cannot be compiled, or no
+/// mode (`--query`, `--tree`, `--kinds`) was given.
+/// Returns an error when no tree-sitter parser is available for the language or the parser returns
+/// no tree.
+/// Returns `AtomwriteError::Io` when the file cannot be read.
+/// Returns `AtomwriteError::BrokenPipe` when the consumer closes the NDJSON stream.
 #[tracing::instrument(skip_all, fields(command = "query"))]
 pub fn cmd_query(
     args: &QueryArgs,
@@ -94,12 +90,16 @@ pub fn cmd_query(
     if !validated.exists() {
         return Err(crate::error::AtomwriteError::NotFound { path: validated }.into());
     }
+    if let Some(pattern) = args.query.as_deref()
+        && matches!(classify_pattern(pattern), QueryType::SExpression)
+    {
+        check_sexpr_balance(pattern)?;
+    }
     let content = crate::file_io::read_file_bytes(&validated, global.effective_max_filesize())?;
 
     let lang_name = resolve_language_name(args.language.as_deref(), &validated, &content)?;
 
-    let mut parser = get_parser(&lang_name)
-        .with_context(|| format!("failed to load parser for language {lang_name}"))?;
+    let mut parser = crate::grammar::parser_for(&lang_name)?;
     let tree = parser
         .parse(std::str::from_utf8(&content).unwrap_or(""))
         .or_else(|| parser.parse_bytes(&content))
@@ -108,6 +108,7 @@ pub fn cmd_query(
 
     let mut match_count = 0usize;
     let mut node_count = 0usize;
+    let mut nodes_truncated = 0u64;
     let show_positions = args.positions;
 
     if args.kinds {
@@ -137,14 +138,12 @@ pub fn cmd_query(
                     writer,
                     &mut match_count,
                     &mut node_count,
+                    &mut nodes_truncated,
                 )?;
             }
             QueryType::SExpression => {
-                let lang = get_language(&lang_name).with_context(|| {
-                    format!("failed to load Language for S-expression: {lang_name}")
-                })?;
+                let lang = crate::grammar::language_for(&lang_name)?;
                 walk_sexpr(
-                    &root,
                     &content,
                     &validated,
                     &lang_name,
@@ -154,6 +153,7 @@ pub fn cmd_query(
                     writer,
                     &mut match_count,
                     &mut node_count,
+                    &mut nodes_truncated,
                 )?;
             }
         }
@@ -167,6 +167,7 @@ pub fn cmd_query(
             writer,
             &mut match_count,
             &mut node_count,
+            &mut nodes_truncated,
         )?;
     } else {
         return Err(crate::error::AtomwriteError::InvalidInput {
@@ -176,18 +177,27 @@ pub fn cmd_query(
     }
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
-    writer.write_event(&QuerySummary {
+    writer.write_terminal(&QuerySummary {
         r#type: "query_summary",
         path: validated.display().to_string(),
         language: lang_name,
         matches: match_count,
         total_nodes: node_count,
         elapsed_ms,
+        nodes_truncated: (nodes_truncated > 0).then_some(nodes_truncated),
     })?;
     Ok(())
 }
 
 /// Resolve the language name from override, extension, or shebang.
+///
+/// # Errors
+///
+/// Returns [`crate::error::AtomwriteError::InvalidInput`] (exit 65) when the
+/// override is not an accepted language, listing
+/// [`crate::lang_utils::accepted_language_names`], or when no language can be
+/// detected from `path` and `content` and the caller must pass
+/// `--language <LANG>`.
 pub(crate) fn resolve_language_name(
     override_lang: Option<&str>,
     path: &Path,
@@ -196,7 +206,10 @@ pub(crate) fn resolve_language_name(
     if let Some(name) = override_lang {
         if !has_language(name) {
             return Err(crate::error::AtomwriteError::InvalidInput {
-                reason: format!("unsupported language override: {name}"),
+                reason: format!(
+                    "unsupported language override: {name}; accepted: {}",
+                    crate::lang_utils::accepted_language_names()
+                ),
             }
             .into());
         }
@@ -214,19 +227,30 @@ pub(crate) fn resolve_language_name(
     }
 }
 
-fn node_text(source: &[u8], start: usize, end: usize) -> String {
+/// Node text under the character ceiling, saying whether the ceiling cut it.
+fn node_text(source: &[u8], start: usize, end: usize) -> (String, bool) {
     let end = end.min(source.len());
     let raw = source.get(start..end).unwrap_or(&[]);
     let s = String::from_utf8_lossy(raw);
-    let cleaned: String = s
-        .chars()
-        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-        .take(240)
-        .collect();
+    let max = crate::constants::QUERY_NODE_TEXT_MAX_CHARS;
+    let mut cleaned = String::new();
+    let mut kept = 0usize;
+    let mut truncated = false;
+    for c in s.chars() {
+        if c.is_control() && c != '\n' && c != '\t' {
+            continue;
+        }
+        if kept == max {
+            truncated = true;
+            break;
+        }
+        cleaned.push(c);
+        kept += 1;
+    }
     if cleaned.is_empty() {
-        "<empty>".to_owned()
+        ("<empty>".to_owned(), truncated)
     } else {
-        cleaned
+        (cleaned, truncated)
     }
 }
 
@@ -240,7 +264,7 @@ fn walk_kinds(
     kind_counts: &mut std::collections::BTreeMap<String, usize>,
     node_count: &mut usize,
 ) {
-    let mut stack: Vec<Node> = Vec::with_capacity(64);
+    let mut stack: Vec<Node> = Vec::with_capacity(crate::constants::QUERY_STACK_CAPACITY);
     stack.push(root.clone());
     while let Some(node) = stack.pop() {
         *kind_counts.entry(node.kind().to_owned()).or_insert(0) += 1;
@@ -270,6 +294,7 @@ fn walk_kind_filter(
     writer: &mut NdjsonWriter<impl Write>,
     match_count: &mut usize,
     node_count: &mut usize,
+    nodes_truncated: &mut u64,
 ) -> Result<()> {
     let mut stack: Vec<Node> = vec![root.clone()];
     while let Some(node) = stack.pop() {
@@ -278,13 +303,18 @@ fn walk_kind_filter(
         if kind == wanted {
             let start = node.start_position();
             let end = node.end_position();
+            let (text, text_truncated) = node_text(source, node.start_byte(), node.end_byte());
+            if text_truncated {
+                *nodes_truncated += 1;
+            }
             writer.write_event(&crate::ndjson_types::QueryMatchEvent {
                 r#type: "query_match",
                 path: path.display().to_string(),
                 language: lang_name.to_owned(),
                 kind: kind.to_owned(),
                 is_named: node.is_named(),
-                text: node_text(source, node.start_byte(), node.end_byte()),
+                text,
+                text_truncated: text_truncated.then_some(true),
                 capture_name: None,
                 start_byte: show_positions.then_some(node.start_byte()),
                 end_byte: show_positions.then_some(node.end_byte()),
@@ -317,7 +347,6 @@ fn walk_kind_filter(
 /// we'd rather make the new path self-contained for clarity.
 #[allow(clippy::too_many_arguments)]
 fn walk_sexpr(
-    root: &Node,
     source: &[u8],
     path: &Path,
     lang_name: &str,
@@ -327,8 +356,9 @@ fn walk_sexpr(
     writer: &mut NdjsonWriter<impl Write>,
     match_count: &mut usize,
     node_count: &mut usize,
+    nodes_truncated: &mut u64,
 ) -> Result<()> {
-    let _ = root; // Re-parse with a fresh parser to avoid borrow conflicts.
+    // Re-parse with a fresh parser to avoid borrow conflicts.
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(lang)
@@ -338,14 +368,14 @@ fn walk_sexpr(
     })?;
     let fresh_root = tree.root_node();
 
-    let ts_query =
-        TsQuery::new(lang, pattern).with_context(|| format!("invalid S-expression: {pattern}"))?;
+    let ts_query = TsQuery::new(lang, pattern)
+        .map_err(|e| crate::error::AtomwriteError::invalid("invalid S-expression", e))?;
     let mut cursor = tree_sitter::QueryCursor::new();
     let capture_names = ts_query.capture_names();
     let mut matches = cursor.matches(&ts_query, fresh_root, source);
 
     while let Some(m) = matches.next() {
-        for capture in m.captures {
+        for capture in m.captures() {
             *node_count += 1;
             let node = capture.node;
             let capture_name = capture_names
@@ -354,13 +384,18 @@ fn walk_sexpr(
                 .unwrap_or("");
             let start = node.start_position();
             let end = node.end_position();
+            let (text, text_truncated) = node_text(source, node.start_byte(), node.end_byte());
+            if text_truncated {
+                *nodes_truncated += 1;
+            }
             writer.write_event(&crate::ndjson_types::QueryMatchEvent {
                 r#type: "query_match",
                 path: path.display().to_string(),
                 language: lang_name.to_owned(),
                 kind: node.kind().to_owned(),
                 is_named: node.is_named(),
-                text: node_text(source, node.start_byte(), node.end_byte()),
+                text,
+                text_truncated: text_truncated.then_some(true),
                 capture_name: Some(capture_name.to_owned()),
                 start_byte: show_positions.then_some(node.start_byte()),
                 end_byte: show_positions.then_some(node.end_byte()),
@@ -386,6 +421,7 @@ fn walk_tree(
     writer: &mut NdjsonWriter<impl Write>,
     match_count: &mut usize,
     node_count: &mut usize,
+    nodes_truncated: &mut u64,
 ) -> Result<()> {
     let mut stack: Vec<Node> = vec![root.clone()];
     while let Some(node) = stack.pop() {
@@ -393,13 +429,18 @@ fn walk_tree(
         if node.is_named() {
             let start = node.start_position();
             let end = node.end_position();
+            let (text, text_truncated) = node_text(source, node.start_byte(), node.end_byte());
+            if text_truncated {
+                *nodes_truncated += 1;
+            }
             writer.write_event(&crate::ndjson_types::QueryMatchEvent {
                 r#type: "query_match",
                 path: path.display().to_string(),
                 language: lang_name.to_owned(),
                 kind: node.kind().to_owned(),
                 is_named: true,
-                text: node_text(source, node.start_byte(), node.end_byte()),
+                text,
+                text_truncated: text_truncated.then_some(true),
                 capture_name: None,
                 start_byte: show_positions.then_some(node.start_byte()),
                 end_byte: show_positions.then_some(node.end_byte()),
@@ -426,13 +467,13 @@ mod tests {
 
     #[test]
     fn node_text_truncates_long_input() {
-        let s = node_text(b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 0, 500);
+        let (s, _cut) = node_text(b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 0, 500);
         assert_eq!(s.len(), 240);
     }
 
     #[test]
     fn node_text_handles_empty() {
-        let s = node_text(b"hello", 3, 3);
+        let (s, _cut) = node_text(b"hello", 3, 3);
         assert_eq!(s, "<empty>");
     }
 }

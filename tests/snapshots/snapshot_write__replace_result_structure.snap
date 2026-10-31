@@ -1,20 +1,18 @@
 ---
 source: tests/snapshot_write.rs
-assertion_line: 135
 expression: event
 ---
 {
-  "bytes_after": 15,
-  "bytes_before": 15,
-  "checksum_after": "[redacted]",
-  "checksum_before": "[redacted]",
-  "elapsed_ms": "[redacted]",
-  "fuzzy": false,
-  "mtime_preserved": false,
+  "type": "replaced",
   "path": "[redacted]",
   "replacements": 1,
-  "strategies_tried": 1,
+  "bytes_before": 15,
+  "bytes_after": 15,
+  "checksum_before": "[redacted]",
+  "checksum_after": "[redacted]",
+  "elapsed_ms": "[redacted]",
+  "mtime_preserved": false,
+  "fuzzy": false,
   "strategy": "exact",
-  "type": "replaced"
+  "strategies_tried": 1
 }
-

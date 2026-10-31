@@ -3,9 +3,9 @@ members = ["xtask"]
 
 [package]
 name = "atomwrite"
-version = "0.1.36"
+version = "0.1.37"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.90"
 description = "Atomic file operations CLI for LLM agents — read, write, edit, search, replace with NDJSON output"
 authors = ["Danilo Aguiar <daniloaguiarbr@proton.me>"]
 license = "MIT OR Apache-2.0"
@@ -18,11 +18,12 @@ categories = ["command-line-utilities", "filesystem"]
 exclude = [
     ".claude/",
     ".vscode/",
+    "docs-prd/",
     "docs_prd/",
     "docs_rules/",
-    "CLAUDE.md",
-    "AGENTS.md",
-    "MEMORY.md",
+    "/CLAUDE.md",
+    "/AGENTS.md",
+    "/MEMORY.md",
     "**/graphrag.sqlite",
     "**/graphrag.sqlite-shm",
     "**/graphrag.sqlite-wal",
@@ -32,7 +33,6 @@ exclude = [
     "**/.ingest-queue.sqlite",
     "**/.ingest-queue.sqlite-shm",
     "**/.ingest-queue.sqlite-wal",
-    "gaps.md",
     ".setting.cyber/",
     "*.7z",
     "*.log",
@@ -56,11 +56,11 @@ exclude = [
     "*atomwrite_tmp*",
     "*_tmp*",
     "*.atomwrite-*",
-    "*atomwrite-*",
+    "/*atomwrite-*",
     "*.atom_*",
-    "*atom_*",
+    "/*atom_*",
     "*.atom-*",
-    "*atom-*",
+    "/*atom-*",
     "*._agent_tmp*",
     "._agent_tmp*",
     "*agent_tmp*",
@@ -97,30 +97,37 @@ exclude = [
     ".archive/**",
     "uploads/**",
     "docs_bugs/**",
+    "*atomwrite-*",
+    "*atom_*",
+    "*atom-*",
+    "gaps.md",
+    "CLAUDE.md",
+    "docs-prd/**",
+    "docs_prd/**",
 ]
 
 [dependencies]
-notify = { version = "7", optional = true }
+notify = { version = "8", optional = true }
 # Features: derive (API), wrap_help, string (runtime parsers). No clap env knobs (G-007).
 # color + suggestions are also clap defaults; listed explicitly per rules_rust_cli_com_clap.
 clap = { version = "4", features = ["derive", "wrap_help", "string", "color", "suggestions", "cargo"] }
 clap_complete = "4"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 serde_path_to_error = "0.1"
 mimalloc = { version = "0.1", default-features = false }
 memchr = "2"
 schemars = "1"
 thiserror = "2"
+# Non-cryptographic RNG for retry jitter (src/retry.rs). Already in the tree through tempfile.
+fastrand = "2"
 anyhow = "1"
 tempfile = "3"
-walkdir = "2"
 blake3 = { version = "1", features = ["mmap", "rayon"] }
-base64 = "0.22"
 rayon = "1"
 crossbeam-channel = "0.5"
 regex = "1"
-tracing = { version = "0.1", features = ["release_max_level_info"] }
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "json", "fmt", "ansi", "std", "registry", "tracing-log"] }
 tracing-appender = "0.2"
 tracing-error = "0.2"
@@ -129,54 +136,89 @@ grep-regex = "0.1"
 grep-searcher = "0.1"
 grep-matcher = "0.1"
 ignore = "0.4"
+globset = "0.4"
 similar = "3"
 filetime = "0.2"
 human-panic = "2"
 grex = "1.4"
 fend-core = "1.5"
-ast-grep-core = { version = "0.43", optional = true }
-ast-grep-language = { version = "0.43", optional = true }
+ast-grep-core = { version = "0.51", optional = true }
+ast-grep-language = { version = "0.51", optional = true }
 same-file = "1"
 unicode-normalization = "0.1"
 sys-locale = "0.3"
-rust-i18n = "4"
+rust-i18n = "4.2"
 # v0.1.12 — new dependencies for resolving the Top 12 gaps + v14 Tier 3
 reflink-copy = "0.1"   # G64: O(1) copy-on-write backup on APFS/btrfs/XFS
 content_inspector = "0.2"  # G41: accurate binary/text detection (UTF-16LE aware)
 strsim = "0.11"        # G116: fuzzy match cascade strategy 9 (context-aware)
 heck = "0.5"           # v14 Tier 3: identifier case conversion (case subcommand)
-serde_yaml = { version = "0.9", optional = true }     # G44: multi-rule YAML for transform subcommand
+# G44: multi-rule YAML for transform subcommand. serde-saphyr 1.x is the same major that
+# rust-i18n-support 4.2 already pulls, so the graph carries one copy and no unsafe-libyaml.
+serde-saphyr = { version = "1.3", optional = true }
 directories = "6"      # GAP-072: XDG config paths for .atomwrite.toml
 toml = "0.8"           # GAP-072: serde deserialize for .atomwrite.toml config
-indexmap = { version = "2", features = ["serde"] }  # v14 Tier 3: preserve JSON key order
 toml_edit = "0.22"     # v14 Tier 3: TOML editor preserving comments/formatting
 # v0.1.12 — tree-sitter-language-pack for G72 real syntax check + v14 query/outline.
 # Downloads parsers on first use (cache local); keeps install footprint small while
 # enabling AST validation across 305 languages. See src/syntax_check.rs and
 # src/commands/query.rs/outline.rs.
-tree-sitter-language-pack = { version = "1.8", default-features = false, features = ["download", "dynamic-loading"], optional = true }
+tree-sitter-language-pack = { version = "1.22.1", default-features = false, features = ["download", "dynamic-loading"], optional = true }
 # v0.1.19 G122: direct tree-sitter dep for S-expression Query/QueryCursor APIs (language-pack only re-exports Language).
-tree-sitter = { version = "0.26", optional = true }
+tree-sitter = { version = "0.27", optional = true }
 unic-langid = "0.9"
 fluent-langneg = "0.14"
+# v0.1.37 E5 — artifact signal extraction (`extract-artifact`). Every crate below
+# is pure Rust: no C toolchain, no system package, no OpenSSL, no telemetry.
+# `zip` reads the OOXML container only. 9.x fixes RUSTSEC-2026-0367, -0368 and
+# -0369 (all in `extract`, which this crate never calls). In 9.x the narrow
+# `deflate-flate2` feature activates `dep:flate2` itself, so it is the smallest
+# feature set that decodes deflate and lets the tests write fixtures. The
+# `flate2` back-end is selected by the `rust_backend` shim below (`miniz_oxide`,
+# pure Rust). The umbrella `deflate` is NOT used: in 9.x it routes through
+# `deflate-flate2-zlib-rs` and `deflate-zopfli`, which adds crates for a writer
+# quality this crate never uses. Never switch to `deflate-flate2-zlib*` (C zlib).
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2"] }
+# Feature-unification shim on a dependency that other crates already pull in:
+# `flate2` is reachable through `lopdf`, `tree-sitter-language-pack` and `zip`
+# regardless of this line. Declaring `rust_backend` here pins the shared node to
+# `miniz_oxide` (Rust) so no consumer in the graph can select C zlib, and keeps
+# the pin explicit if an upstream edge is ever pruned.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# OOXML part parsing. Default feature set is empty; no serde/encoding pulled in.
+quick-xml = { version = "0.42", default-features = false }
+# Image dimensions from the header only — the crate has no dependencies at all
+# and never decodes pixels.
+imagesize = { version = "0.14", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "bmp",
+    "webp",
+    "tiff",
+    "ico",
+] }
+# PDF object model for page count, MediaBox and Info metadata. Default features
+# pull chrono/jiff/time/rayon for date construction this command never uses.
+lopdf = { version = "0.44", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", features = ["fs"] }
+nix = { version = "0.31", features = ["fs", "signal", "process"] }
 libc = "0.2"
 signal-hook = "0.4"
 xattr = "1"            # G39: extended attribute preservation (macOS/Linux)
-# fd-lock 4 is not used directly: the project's #![deny(unsafe_code)] policy
-# is incompatible with fd-lock's RwLockWriteGuard self-referential pattern.
-# G54 advisory locking is implemented via nix::fcntl::flock (Unix) and a
-# no-op stub (Windows) in src/lock.rs.
+# G54 advisory locking uses std::fs::File::try_lock on every platform, which
+# maps to flock(2) on Unix and LockFileEx on Windows with no `unsafe` here.
+# nix::sys::signal::kill only answers "does this PID still exist" for the
+# WAL heal, which is why the signal and process features are enabled.
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Console"] }
-ctrlc = "3.5"
+ctrlc = { version = "3.5", features = ["termination"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "0.38", features = ["fs"] }  # G114: ftruncate for in-place inode-preserving writes
-nix = { version = "0.31", features = ["fs"] }
+nix = { version = "0.31", features = ["fs", "signal", "process"] }
 libc = "0.2"
 signal-hook = "0.4"
 
@@ -243,6 +285,14 @@ opt-level = 0
 [profile.dev.package."*"]
 opt-level = 2
 
+# Dev: optimize THIS crate too, at the cheapest useful level.
+# The fuzzy cascade is the hot path of `replace --fuzzy auto`, and at opt-level 0
+# a 13 MB corpus took 18.5 s against 3.4 s at opt-level 2, measured on this host.
+# Level 1 keeps `cargo build` fast and makes a debug binary usable for a real read
+# or replace; the release profile stays the shipping shape.
+[profile.dev]
+opt-level = 1
+
 # docs.rs build (nightly sandbox). May 2026+: without `targets`, only default-target is built.
 # Multiplatform CLI: document primary desktop triples explicitly (max 10 on docs.rs).
 [package.metadata.docs.rs]
@@ -256,14 +306,23 @@ targets = [
 ]
 rustdoc-args = ["--cfg", "docsrs"]
 
+# `flate2` is never named in the source: it is a feature-unification shim that
+# pins the shared `flate2` node to the pure-Rust `rust_backend` (see the
+# `flate2` dependency comment above). cargo-machete cannot see that use.
+[package.metadata.cargo-machete]
+ignored = ["flate2"]
+
 [badges.maintenance]
 status = "actively-developed"
 
 [features]
-# B-007: include `watch` so help and default binary match (still one-shot-bound).
-default = ["core", "ast", "lang-rust", "lang-ts", "lang-py", "watch"]
+# E7 (v0.1.37): `watch` is OPT-IN. The default binary is one-shot
+# (born, run, die) and does not carry `notify`; the `watch` subcommand stays
+# on the surface through `src/commands/watch.rs` `#[cfg(not(feature = "watch"))]`
+# stub, which fails closed with exit 78 and a rebuild hint.
+default = ["core", "ast", "lang-rust", "lang-ts", "lang-py"]
 core = []
-ast = ["dep:ast-grep-core", "dep:ast-grep-language", "dep:tree-sitter", "dep:tree-sitter-language-pack", "dep:serde_yaml"]
+ast = ["dep:ast-grep-core", "dep:ast-grep-language", "dep:tree-sitter", "dep:tree-sitter-language-pack", "dep:serde-saphyr"]
 lang-rust = []
 lang-ts = []
 lang-py = []

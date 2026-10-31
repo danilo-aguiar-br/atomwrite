@@ -44,7 +44,7 @@ pub fn cmd_rollback(
             reason: "path has no filename".into(),
         })?
         .to_string_lossy();
-    let prefix = format!("{filename}.bak.");
+    let prefix = format!("{filename}{}", crate::constants::BACKUP_INFIX);
 
     let mut backups: Vec<std::path::PathBuf> = fs::read_dir(parent)
         .with_context(|| format!("cannot list directory {}", parent.display()))?
@@ -80,11 +80,12 @@ pub fn cmd_rollback(
                 path: target.clone(),
             })?
     } else {
-        // INVARIANT: `backups` is non-empty after the is_empty() check above.
         backups
             .last()
             .cloned()
-            .expect("BUG: backups verified non-empty")
+            .ok_or_else(|| AtomwriteError::InternalError {
+                reason: "rollback: backup list empty after the non-empty check".to_string(),
+            })?
     };
 
     let target_str = target.display().to_string();
@@ -119,7 +120,7 @@ pub fn cmd_rollback(
         preserve_timestamps: false,
         backup_output_dir: None,
         strategy: None,
-        strict_atomic: false,
+        strict_atomic: args.strict.strict_atomic,
         wal_policy: crate::wal::WalPolicy::Auto,
         keep_backup: resolved.keep,
         durability: crate::platform::Durability::Auto,

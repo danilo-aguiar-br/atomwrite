@@ -86,6 +86,8 @@ mod tests {
             total_matches: Some(42),
             total_replacements: None,
             elapsed_ms: 200,
+            walker_stopped_early: None,
+            ..Summary::default()
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -121,6 +123,7 @@ mod tests {
             mtime_preserved: Some(false),
             match_count: Some(1),
             indent_adjusted: Some(false),
+            risk_assessment: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -137,6 +140,7 @@ mod tests {
             lines_b: 50,
             similarity_ratio: 1.0,
             elapsed_ms: 1,
+            timed_out: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -189,7 +193,6 @@ mod tests {
             range: None,
             verified: None,
             mode: "full".into(),
-            content_b64: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -226,6 +229,7 @@ mod tests {
             similarity: None,
             strategies_tried: None,
             word_ignored: None,
+            risk_assessment: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -244,6 +248,7 @@ mod tests {
             checksum_before: "aa".into(),
             checksum_after: "bb".into(),
             elapsed_ms: 3,
+            risk_assessment: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -263,6 +268,7 @@ mod tests {
             checksum_before: "x".into(),
             checksum_after: "y".into(),
             elapsed_ms: 10,
+            risk_assessment: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -371,11 +377,16 @@ mod tests {
     #[test]
     fn roundtrip_list_summary() {
         let val = ListSummary {
+            walker_stopped_early: None,
+            files_failed: None,
+            partial: None,
+            errors: None,
             r#type: "summary",
             files: 10,
             dirs: 3,
             symlinks: 0,
             total_bytes: Some(5000),
+            files_budget_dropped: None,
             by_extension: None,
             elapsed_ms: 15,
         };
@@ -391,6 +402,7 @@ mod tests {
             path: "/tmp/dr.rs".into(),
             would_modify: true,
             details: None,
+            risk_assessment: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -436,7 +448,7 @@ mod tests {
             bytes: 150,
             checksum_before: "dhash".into(),
             elapsed_ms: 1,
-            warnings: vec![],
+            warnings: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -445,6 +457,10 @@ mod tests {
     #[test]
     fn roundtrip_count_total_output() {
         let val = CountTotalOutput {
+            walker_stopped_early: None,
+            files_failed: None,
+            partial: None,
+            errors: None,
             r#type: "count",
             mode: "total",
             total: CountTotals {
@@ -528,6 +544,7 @@ mod tests {
             path: "/tmp/rp.rs".into(),
             replacements: 3,
             diff: "-old\n+new".into(),
+            risk_assessment: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -569,11 +586,19 @@ mod tests {
         assert_roundtrip_json(&hit);
 
         let summary = SemanticSummaryEvent {
+            walker_stopped_early: None,
+            files_failed: None,
+            partial: None,
+            errors: None,
             r#type: "semantic_summary",
             query: "main".into(),
             k: 20,
             results: 1,
             backend: "jaccard",
+            files_scanned: None,
+            hits_before_cut: None,
+            files_budget_dropped: None,
+            below_min_score: None,
         };
         assert_valid_ndjson_object(&summary);
         assert_roundtrip_json(&summary);
@@ -598,6 +623,7 @@ mod tests {
             kind: "function_item".into(),
             is_named: true,
             text: "fn a() {}".into(),
+            text_truncated: None,
             capture_name: Some("name".into()),
             start_byte: Some(0),
             end_byte: Some(9),
@@ -624,6 +650,7 @@ mod tests {
             status: "ok".into(),
             detail: "done".into(),
             checksum: None,
+            child_summary: None,
         };
         assert_valid_ndjson_object(&step);
         assert_roundtrip_json(&step);
@@ -653,6 +680,7 @@ mod tests {
             rule_id: "rules".into(),
             dry_run: true,
             by_rule_id: by,
+            transform_summary: None,
         };
         assert_valid_ndjson_object(&csum);
         assert_roundtrip_json(&csum);
@@ -701,5 +729,73 @@ mod tests {
         // Index tokens are not agent stdout envelopes (no `type`); still serialize.
         let s = serde_json::to_string(&tok).expect("ser");
         assert!(s.contains("\"t\":\"main\""));
+    }
+
+    fn base_summary() -> Summary {
+        Summary {
+            r#type: "summary",
+            files_visited: 3,
+            files_matched: 1,
+            files_modified: None,
+            files_skipped: None,
+            total_matches: Some(1),
+            total_replacements: None,
+            elapsed_ms: 1,
+            walker_stopped_early: None,
+            ..Summary::default()
+        }
+    }
+
+    #[test]
+    fn failure_tally_without_failures_leaves_the_summary_untouched() {
+        let (summary, first) = FailureTally::default().into_summary(base_summary());
+        assert!(first.is_none());
+        let json = serde_json::to_value(&summary).expect("ser");
+        assert_eq!(json["files_visited"], 3);
+        assert!(json.get("files_failed").is_none());
+        assert!(json.get("errors").is_none());
+    }
+
+    #[test]
+    fn failure_tally_reports_code_message_and_first_error() {
+        let mut tally = FailureTally::default();
+        let denied = crate::error::AtomwriteError::PermissionDenied {
+            path: "/ws/a.txt".into(),
+        };
+        tally.record(std::path::Path::new("/ws/a.txt"), denied.into());
+        tally.record(
+            std::path::Path::new("/ws/b.txt"),
+            crate::error::AtomwriteError::NoMatches.into(),
+        );
+        assert_eq!(tally.count(), 2);
+        let (summary, first) = tally.into_summary(base_summary());
+        let json = serde_json::to_value(&summary).expect("ser");
+        assert_eq!(json["files_failed"], 2);
+        assert_eq!(json["errors"][0]["path"], "/ws/a.txt");
+        assert_eq!(json["errors"][0]["code"], "PERMISSION_DENIED");
+        assert_eq!(json["errors"][1]["code"], "NO_MATCHES");
+        let first = first.expect("first failure");
+        assert!(matches!(
+            first.downcast_ref::<crate::error::AtomwriteError>(),
+            Some(crate::error::AtomwriteError::PermissionDenied { .. })
+        ));
+    }
+
+    #[test]
+    fn failure_tally_caps_the_entries_but_not_the_count() {
+        let mut tally = FailureTally::default();
+        let total = crate::constants::SUMMARY_ERRORS_MAX_ENTRIES + 7;
+        for i in 0..total {
+            tally.record(
+                std::path::Path::new(&format!("/ws/{i}.txt")),
+                crate::error::AtomwriteError::NoMatches.into(),
+            );
+        }
+        let (summary, _) = tally.into_summary(base_summary());
+        assert_eq!(summary.files_failed, Some(total as u64));
+        assert_eq!(
+            summary.errors.expect("errors").len(),
+            crate::constants::SUMMARY_ERRORS_MAX_ENTRIES
+        );
     }
 }

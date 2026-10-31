@@ -2,7 +2,7 @@
 //! Stub when feature `ast` is disabled.
 use crate::cli::GlobalArgs;
 use crate::cli_args::TransformArgs;
-use crate::config::DefaultsSection;
+use crate::config::{DefaultsSection, WriteSection};
 use crate::error::AtomwriteError;
 use crate::output::NdjsonWriter;
 use crate::signal::ShutdownSignal;
@@ -10,12 +10,18 @@ use anyhow::Result;
 use std::io::Write;
 
 /// AST transform requires feature `ast`.
+///
+/// # Errors
+///
+/// Always returns `AtomwriteError::ConfigInvalid` because this build was compiled without the
+/// `ast` feature.
 pub fn cmd_transform(
     _args: &TransformArgs,
     _global: &GlobalArgs,
     _writer: &mut NdjsonWriter<impl Write>,
     _shutdown: &ShutdownSignal,
     _defaults: &DefaultsSection,
+    _write_cfg: &WriteSection,
 ) -> Result<()> {
     Err(AtomwriteError::ConfigInvalid {
         reason: "transform requires --features ast (included in default features)".into(),

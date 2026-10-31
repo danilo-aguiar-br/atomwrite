@@ -36,6 +36,8 @@ pub struct MatchOpts {
     pub soft_floor_delta: f64,
     /// When true, replace every occurrence; when false, require uniqueness.
     pub replace_all: bool,
+    /// XDG `[fuzzy].max_content_bytes`: content above this skips the cascade.
+    pub max_content_bytes: u64,
 }
 
 impl Default for MatchOpts {
@@ -49,6 +51,7 @@ impl Default for MatchOpts {
             thr_auto: crate::constants::FUZZY_THRESHOLD_AUTO,
             soft_floor_delta: crate::constants::FUZZY_CONTEXT_SOFT_FLOOR_DELTA,
             replace_all: false,
+            max_content_bytes: crate::constants::FUZZY_MAX_CONTENT_BYTES,
         }
     }
 }
@@ -69,6 +72,7 @@ pub fn match_opts_from_section(
         thr_auto: section.threshold,
         soft_floor_delta: section.soft_floor_delta,
         replace_all,
+        max_content_bytes: section.max_content_bytes,
     }
 }
 

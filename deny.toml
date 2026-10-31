@@ -2,6 +2,16 @@
 targets = []
 all-features = true
 
+# Maintenance-only notices (ADR-0057, 2026-10-19). None is a vulnerability, and
+# none is listed in `ignore` (cargo-deny does not flag them under
+# `unmaintained = "workspace"`, so an ignore entry would only warn):
+# - RUSTSEC-2024-0384 `instant` 0.1.13: RESOLVED. `notify` 8.2 (optional `watch`
+#   feature) no longer pulls it. The price is nine duplicate Windows crates
+#   (`windows-targets` and eight `windows_*`), which exist only under `watch`
+#   and are listed in `skip` below.
+# - RUSTSEC-2024-0449 `unsafe-libyaml` 0.2.11: RESOLVED. `rust-i18n` 4.2, the
+#   `transform` YAML rules and the YAML tests all use `serde-saphyr` (MSRV 1.90),
+#   so the crate is gone from `Cargo.lock`.
 [advisories]
 ignore = []
 unmaintained = "workspace"
@@ -15,7 +25,6 @@ allow = [
     "ISC",
     "Unicode-3.0",
     "Zlib",
-    "BSL-1.0",
     # MPL-2.0 transitive via tree-sitter-language-pack -> ureq -> rustls-webpki
     # file-level copyleft, compatible with MIT/Apache for binary distribution
     "MPL-2.0",
@@ -38,11 +47,14 @@ skip = [
     { crate = "anstyle-parse@0.2", reason = "transitive via anstream 0.6" },
     { crate = "bitflags@1", reason = "transitive via older crates" },
     { crate = "hashbrown@0.15", reason = "transitive via older indexmap" },
+    { crate = "foldhash", reason = "grex -> petgraph -> hashbrown 0.15 uses foldhash 0.1 while rust-i18n-support 4.2 uses foldhash 0.2 (ADR-0057)" },
     { crate = "itertools@0.11", reason = "transitive via grex" },
     { crate = "serde_spanned@0.6", reason = "transitive via toml 0.8" },
     { crate = "toml@0.8", reason = "transitive via serde_spanned chain" },
     { crate = "toml_datetime@0.6", reason = "transitive via toml 0.8" },
     { crate = "wit-bindgen@0.46", reason = "transitive via wasm chain" },
+    { crate = "thiserror@1", reason = "transitive via tree-sitter-language-pack 1.22.1 -> ureq 3.3 -> rustls-platform-verifier -> jni, which pins thiserror 1 while ast-grep 0.51 and lopdf use 2 (ADR-0075)" },
+    { crate = "thiserror-impl@1", reason = "proc-macro of thiserror 1 from the same jni chain (ADR-0075)" },
     { crate = "getrandom@0.2", reason = "transitive via tree-sitter-language-pack -> ahash -> const-random" },
     { crate = "getrandom@0.3", reason = "transitive via tree-sitter-language-pack -> ureq -> rustls -> ring AND blake3 -> cc -> jobserver" },
     { crate = "linux-raw-sys", reason = "rustix 0.x and 1.x coexist" },
@@ -54,6 +66,16 @@ skip = [
     { crate = "windows-interface", reason = "windows-sys 0.59 + windows 0.x coexist" },
     { crate = "windows-result", reason = "windows-sys 0.59 + windows 0.x coexist" },
     { crate = "windows-sys", reason = "0.52/0.59 multi-version (sqlite-graphrag dep chain)" },
+    { crate = "windows-targets", reason = "opt-in `watch` feature only: notify 8 -> inotify/windows-sys 0.60 pulls windows-targets 0.53 beside 0.52 (Windows targets only; ADR 0057)" },
+    { crate = "windows_aarch64_gnullvm", reason = "opt-in `watch` feature only: notify 8 -> inotify/windows-sys 0.60 pulls windows-targets 0.53 beside 0.52 (Windows targets only; ADR 0057)" },
+    { crate = "windows_aarch64_msvc", reason = "opt-in `watch` feature only: notify 8 -> inotify/windows-sys 0.60 pulls windows-targets 0.53 beside 0.52 (Windows targets only; ADR 0057)" },
+    { crate = "windows_i686_gnu", reason = "opt-in `watch` feature only: notify 8 -> inotify/windows-sys 0.60 pulls windows-targets 0.53 beside 0.52 (Windows targets only; ADR 0057)" },
+    { crate = "windows_i686_gnullvm", reason = "opt-in `watch` feature only: notify 8 -> inotify/windows-sys 0.60 pulls windows-targets 0.53 beside 0.52 (Windows targets only; ADR 0057)" },
+    { crate = "windows_i686_msvc", reason = "opt-in `watch` feature only: notify 8 -> inotify/windows-sys 0.60 pulls windows-targets 0.53 beside 0.52 (Windows targets only; ADR 0057)" },
+    { crate = "windows_x86_64_gnu", reason = "opt-in `watch` feature only: notify 8 -> inotify/windows-sys 0.60 pulls windows-targets 0.53 beside 0.52 (Windows targets only; ADR 0057)" },
+    { crate = "windows_x86_64_gnullvm", reason = "opt-in `watch` feature only: notify 8 -> inotify/windows-sys 0.60 pulls windows-targets 0.53 beside 0.52 (Windows targets only; ADR 0057)" },
+    { crate = "windows_x86_64_msvc", reason = "opt-in `watch` feature only: notify 8 -> inotify/windows-sys 0.60 pulls windows-targets 0.53 beside 0.52 (Windows targets only; ADR 0057)" },
+    { crate = "tinystr", reason = "fluent-langneg pins icu_locid (tinystr 0.7) while unic-langid pins unic-langid-impl (tinystr 0.8); both are used for locale negotiation" },
 ]
 
 [sources]

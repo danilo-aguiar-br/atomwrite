@@ -2,46 +2,15 @@
 
 //! Subcommand handler implementations for all atomwrite operations.
 
-use std::io::Read as _;
-use std::sync::LazyLock;
+use std::io::{BufReader, Read};
 
-use regex::Regex;
+use crate::error::AtomwriteError;
 
-/// Matches atomwrite backup filenames like `foo.txt.bak.20260615_035515`.
-///
-/// Shared process-wide `LazyLock` (not `const`): regex compilation is one-shot
-/// and every call site must share the same compiled automaton. Used by
-/// `list` and `count` to bucket backups under a dedicated extension key
-/// rather than treating the timestamp suffix as a real extension.
-pub(crate) static BACKUP_FILENAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\.bak\.\d{8}_\d{6}(_\d{3})?$").expect("valid backup regex"));
-
-/// True when `path` looks like an atomwrite timestamped backup (`*.bak.*`).
-///
-/// DRY helper for recipe / semantic-search / hash excludes (A-008b / O-007).
-pub(crate) fn is_backup_path(path: &std::path::Path) -> bool {
-    path.file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|name| name.contains(".bak.") || BACKUP_FILENAME_RE.is_match(name))
-}
-
-/// A-027: owned exclude globs for walks that skip atomwrite backups.
-#[must_use]
-pub(crate) fn backup_exclude_globs() -> Vec<String> {
-    crate::constants::BACKUP_EXCLUDE_GLOBS
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect()
-}
-
-/// A-027: append backup exclude globs to an existing exclude list (idempotent-ish).
-pub(crate) fn push_backup_excludes(exclude: &mut Vec<String>) {
-    for g in crate::constants::BACKUP_EXCLUDE_GLOBS {
-        if !exclude.iter().any(|e| e == *g) {
-            exclude.push((*g).to_string());
-        }
-    }
-}
+/// Backup filename policy, re-exported so callers keep the `commands::` path.
+pub mod backup_names;
+pub(crate) use backup_names::{
+    backup_exclude_globs, is_backup_path, is_backup_timestamp_name, push_backup_excludes,
+};
 
 /// v0.1.29
 pub mod agent_surface;
@@ -55,9 +24,13 @@ pub mod batch;
 pub mod calc;
 /// v14 Tier 3: identifier case conversion (snake/camel/Pascal/kebab/SCREAMING).
 pub mod case;
+/// Forward a captured child run into the parent stream (`recipe`, `codemod`).
+pub(crate) mod child_reemit;
 pub mod codemod;
 /// Full clap command tree as JSON (`atomwrite commands`).
 pub mod command_tree;
+/// Persistent tuning keys: `config path|list|get|set|unset`.
+pub mod config_cmd;
 /// Atomic file copy with checksum verification.
 pub mod copy;
 /// Line, match, and extension counting.
@@ -70,12 +43,17 @@ pub mod delete;
 pub mod diff;
 /// Environment diagnostic for agent hosts (`atomwrite doctor`).
 pub mod doctor;
+/// Claim readers of the `doctor` document guards.
+pub mod doctor_docs;
 /// Surgical file editing by line or marker.
 pub mod edit;
 /// v0.1.22 ADR-0039: apply N `old`/`new` pairs from NDJSON stdin in one write.
 pub mod edit_loop;
 /// Field extraction from NDJSON or text.
 pub mod extract;
+/// v0.1.36 E5 — bounded signal extraction per artifact type (PDF, OOXML
+/// document/spreadsheet/presentation, image geometry). Never forwards raw bytes.
+pub mod extract_artifact;
 /// v14 Tier 3: structured config value reader.
 pub mod get;
 /// BLAKE3 checksum computation for files.
@@ -134,6 +112,8 @@ pub mod set;
 pub mod sparse;
 /// DRY dry-run / plan summary counters (R-DRY-001).
 pub mod summary_metrics;
+/// Single dotted-key walk shared by `get`, `set` and `del`.
+pub(crate) mod toml_path;
 /// Structural AST code search and rewrite.
 #[cfg(feature = "ast")]
 #[cfg_attr(docsrs, doc(cfg(feature = "ast")))]
@@ -146,6 +126,8 @@ pub mod wal_stats;
 pub mod watch;
 /// Atomic file creation and overwrite.
 pub mod write;
+/// Shared size guards of every verb that replaces file content (v0.1.37 WP1).
+pub mod write_guards;
 
 /// Fully resolved backup configuration for a mutating subcommand invocation.
 #[derive(Debug, Clone, Copy)]
@@ -184,14 +166,216 @@ pub(crate) fn resolve_backup(
     }
 }
 
+/// Where the byte cap handed to [`read_stdin_content_cancellable`] came from.
+///
+/// The origin decides the error a caller sees on overflow: a verb-local
+/// `--max-size` is an argument mistake (`InvalidInput`), while the global
+/// `--max-filesize` is a size limit and reports `FileTooLarge`, exactly like
+/// `read`, `edit` and `hash` do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StdinCapOrigin {
+    /// The verb-local `--max-size` flag.
+    LocalMaxSize,
+    /// The global `--max-filesize` flag (or its default ceiling).
+    GlobalMaxFilesize,
+}
+
+/// The one stdin reader: 64 KiB chunks, a fallible buffer, the optional cap and
+/// cooperative cancellation.
+///
+/// Every verb that reads a payload from stdin goes through here, so reserve,
+/// cap and cancel behave the same and a new verb cannot reimplement them
+/// slightly differently.
+///
+/// # Errors
+///
+/// Returns the typed error of the cap that was exceeded, `InvalidInput` on an
+/// empty payload that did not opt in, the cancellation error when the shutdown
+/// signal fires, and `InternalError` when the buffer cannot grow.
+pub(crate) fn read_stdin_content_cancellable(
+    stdin: impl Read,
+    max_size: Option<u64>,
+    cap_origin: StdinCapOrigin,
+    allow_empty: bool,
+    shutdown: Option<&crate::signal::ShutdownSignal>,
+) -> anyhow::Result<(Vec<u8>, u64)> {
+    let mut reader = BufReader::with_capacity(crate::constants::BUF_CAPACITY, stdin);
+    let mut buf = Vec::with_capacity(crate::constants::STDIN_INITIAL_CAPACITY);
+    if let Some(max) = max_size {
+        let reserve = usize::try_from(max.min(u64::from(u32::MAX))).unwrap_or(usize::MAX);
+        // Soft pre-reserve up to the cap so growth is one-shot when the
+        // payload is near max_size; failure is non-fatal (we still grow).
+        if let Err(e) = buf.try_reserve(reserve.min(
+            crate::constants::STDIN_INITIAL_CAPACITY * crate::constants::STDIN_RESERVE_CAP_FACTOR,
+        )) {
+            tracing::debug!(error = %e, "stdin pre-reserve failed; buffer will grow on demand");
+        }
+    }
+    // A-025: stdin read chunk aligned with BUF_CAPACITY.
+    let mut chunk = [0u8; crate::constants::BUF_CAPACITY];
+    loop {
+        if shutdown.is_some_and(|s| s.is_shutdown()) {
+            return Err(
+                crate::signal::cancelled_error(crate::signal::current_cancel_reason()).into(),
+            );
+        }
+        // A cancelled read arrives as an `io::Error` wrapping the typed
+        // `Cancelled`, and the `context` below would hide it from the
+        // `downcast` every caller performs. `surface_cancel` restores the
+        // typed error so a deadline exits 124 instead of 255.
+        let n = reader.read(&mut chunk).map_err(|e| {
+            crate::stdin_cancel::surface_cancel(
+                anyhow::Error::new(e).context("failed to read stdin"),
+            )
+        })?;
+        if n == 0 {
+            break;
+        }
+        buf.try_reserve(n)
+            .map_err(|e| AtomwriteError::InternalError {
+                reason: format!("allocation failed while reading stdin (+{n} bytes): {e}"),
+            })?;
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(max) = max_size {
+            if buf.len() as u64 > max {
+                return Err(match cap_origin {
+                    StdinCapOrigin::LocalMaxSize => AtomwriteError::InvalidInput {
+                        reason: format!(
+                            "stdin exceeds max size {} bytes (got {} bytes)",
+                            max,
+                            buf.len()
+                        ),
+                    },
+                    StdinCapOrigin::GlobalMaxFilesize => AtomwriteError::FileTooLarge {
+                        path: std::path::PathBuf::from(crate::constants::STDIN_SUBJECT),
+                        size: buf.len() as u64,
+                        max_size: max,
+                    },
+                }
+                .into());
+            }
+        }
+    }
+    let n = buf.len();
+
+    if !allow_empty && n == 0 {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "stdin produced 0 bytes; pass --allow-empty-stdin to confirm an empty write is intentional".into(),
+        }
+        .into());
+    }
+
+    Ok((buf, n as u64))
+}
+
+/// Policy differences between verbs that walk a tree.
+///
+/// The roots, the worker bound and the glob compilation are always shared. What
+/// legitimately differs is whether `--include` filters by path or by file name,
+/// and whether a verb must see dotfiles even without `--hidden`: a hashing,
+/// copying or sparse verb that skipped `.env` would answer a question the
+/// caller did not ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WalkerFlavor {
+    /// Honor `--hidden`, `--no-gitignore` and `--follow-symlinks`; `--include` is a path glob.
+    RespectGlobalFlags,
+    /// Same as [`Self::RespectGlobalFlags`], but `--include` selects file names.
+    RespectGlobalFlagsByType,
+    /// Visit hidden files always; gitignore still honors `--no-gitignore`.
+    AlwaysVisitHidden,
+    /// Visit hidden files and ignore nothing: a tree copy that honored a
+    /// gitignore would not copy the tree the caller named.
+    WholeTree,
+}
+
+impl WalkerFlavor {
+    /// Hidden files are skipped unless the flavor says otherwise or `--hidden` came.
+    const fn skips_hidden(self, global_hidden: bool) -> bool {
+        match self {
+            Self::RespectGlobalFlags | Self::RespectGlobalFlagsByType => !global_hidden,
+            Self::AlwaysVisitHidden | Self::WholeTree => false,
+        }
+    }
+
+    /// gitignore is honored unless the flavor walks the whole tree or `--no-gitignore` came.
+    const fn honors_gitignore(self, no_gitignore: bool) -> bool {
+        match self {
+            Self::WholeTree => false,
+            _ => !no_gitignore,
+        }
+    }
+}
+
+/// The one walker builder for the verbs that scan a tree.
+///
+/// Roots, hidden files, gitignore, symlinks, the shared worker bound and the
+/// include/exclude globs are decided once, so two scanning verbs cannot drift
+/// into two different notions of "which files this run visits".
+///
+/// # Errors
+///
+/// Returns the error of an include or exclude glob that does not compile.
+pub(crate) fn build_scoped_walker_flavored(
+    canonical_paths: &[std::path::PathBuf],
+    global: &crate::cli::GlobalArgs,
+    flavor: WalkerFlavor,
+    include: &[String],
+    exclude: &[String],
+) -> anyhow::Result<ignore::WalkBuilder> {
+    let mut builder = ignore::WalkBuilder::new(&canonical_paths[0]);
+
+    for path in canonical_paths.iter().skip(1) {
+        builder.add(path);
+    }
+
+    builder
+        .hidden(flavor.skips_hidden(global.hidden))
+        .git_ignore(flavor.honors_gitignore(global.no_gitignore))
+        .follow_links(global.follow_symlinks);
+
+    // Always apply the shared bound (default = all cores, RAM-capped).
+    crate::concurrency::apply_walk_threads(&mut builder, global.threads);
+
+    if flavor == WalkerFlavor::RespectGlobalFlagsByType {
+        // `--include` names files here, and `--exclude` still prunes paths.
+        crate::walk_globs::add_include_types(&mut builder, include)?;
+        crate::walk_globs::add_overrides(&mut builder, &canonical_paths[0], &[], exclude)?;
+    } else {
+        crate::walk_globs::add_overrides(&mut builder, &canonical_paths[0], include, exclude)?;
+    }
+
+    Ok(builder)
+}
+
+/// The canonical walker: every global flag is honored and `--include` is a path glob.
+///
+/// # Errors
+///
+/// Returns the error of an include or exclude glob that does not compile.
+pub(crate) fn build_scoped_walker(
+    canonical_paths: &[std::path::PathBuf],
+    global: &crate::cli::GlobalArgs,
+    include: &[String],
+    exclude: &[String],
+) -> anyhow::Result<ignore::WalkBuilder> {
+    build_scoped_walker_flavored(
+        canonical_paths,
+        global,
+        WalkerFlavor::RespectGlobalFlags,
+        include,
+        exclude,
+    )
+}
+
 /// Read new content from stdin for a subcommand mode that requires it,
 /// guarding against a terminal stdin (which would otherwise hang waiting
 /// for interactive input).
 ///
 /// # Errors
 ///
-/// Returns `AtomwriteError::InvalidInput` when `stdin_is_tty` is true,
-/// or `AtomwriteError::Io` if reading stdin fails.
+/// Returns `AtomwriteError::InvalidInput` when `stdin_is_tty` is true, the
+/// typed error of [`read_stdin_content_cancellable`] when the cap is exceeded,
+/// and an error when the payload is not UTF-8.
 pub(crate) fn read_stdin_text_guarded(
     stdin: impl std::io::Read,
     max_size: u64,
@@ -199,22 +383,56 @@ pub(crate) fn read_stdin_text_guarded(
     mode: &str,
 ) -> Result<String, crate::error::AtomwriteError> {
     if stdin_is_tty {
-        return Err(crate::error::AtomwriteError::InvalidInput {
+        return Err(AtomwriteError::InvalidInput {
             reason: format!(
                 "--{mode} reads content from stdin but stdin is a terminal; \
                  pipe content (echo 'new text' | atomwrite edit ...) or use --new-file"
             ),
         });
     }
-    let mut buf = String::new();
-    // Cap is known up-front; fallible reserve turns OOM into a domain error.
-    let reserve = usize::try_from(max_size).unwrap_or(usize::MAX);
-    buf.try_reserve(reserve)
-        .map_err(|e| crate::error::AtomwriteError::InternalError {
-            reason: format!("allocation failed for stdin buffer of {reserve} bytes: {e}"),
-        })?;
-    stdin.take(max_size).read_to_string(&mut buf)?;
-    Ok(buf)
+    let (bytes, _) = read_stdin_content_cancellable(
+        stdin,
+        Some(max_size),
+        StdinCapOrigin::GlobalMaxFilesize,
+        true,
+        None,
+    )
+    .map_err(|e| match e.downcast::<AtomwriteError>() {
+        Ok(err) => err,
+        Err(other) => AtomwriteError::InternalError {
+            reason: format!("cannot read stdin: {other:#}"),
+        },
+    })?;
+    // The cap passed every caller is the global `--max-filesize`, so overflow
+    // is a size limit, not an argument mistake. Truncating here would write a
+    // prefix of what the operator piped and call it success.
+    String::from_utf8(bytes).map_err(|e| AtomwriteError::InvalidInput {
+        reason: format!("stdin is not valid UTF-8: {e}"),
+    })
+}
+
+#[cfg(test)]
+mod backup_name_tests {
+    use super::is_backup_timestamp_name;
+
+    #[test]
+    fn accepts_both_timestamp_shapes() {
+        assert!(is_backup_timestamp_name("foo.txt.bak.20260615_035515"));
+        assert!(is_backup_timestamp_name("foo.txt.bak.20260615_035515_042"));
+        assert!(is_backup_timestamp_name("a.bak.b.bak.20260615_035515"));
+    }
+
+    #[test]
+    fn rejects_other_names() {
+        assert!(!is_backup_timestamp_name("foo.txt"));
+        assert!(!is_backup_timestamp_name("foo.txt.bak."));
+        assert!(!is_backup_timestamp_name("foo.txt.bak.20260615_035515_42"));
+        assert!(!is_backup_timestamp_name("foo.txt.bak.2026061_5035515"));
+        assert!(!is_backup_timestamp_name(
+            "foo.txt.bak.20260615_035515.orig"
+        ));
+        assert!(!is_backup_timestamp_name("foo.txt.bak.2026061a_035515"));
+    }
 }
 
 #[cfg(test)]
@@ -242,9 +460,14 @@ mod tty_guard_tests {
     }
 
     #[test]
-    fn non_tty_stdin_respects_max_size() {
-        let content = read_stdin_text_guarded("abcdef".as_bytes(), 3, false, "between")
-            .expect("should read up to max_size");
-        assert_eq!(content, "abc");
+    fn non_tty_stdin_refuses_a_payload_above_max_size() {
+        let err = read_stdin_text_guarded("abcdef".as_bytes(), 3, false, "between")
+            .expect_err("a payload above the cap is refused, not truncated");
+        match err {
+            AtomwriteError::FileTooLarge { size, max_size, .. } => {
+                assert_eq!((size, max_size), (6, 3));
+            }
+            other => panic!("expected FileTooLarge, got {other:?}"),
+        }
     }
 }

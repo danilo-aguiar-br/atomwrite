@@ -1,19 +1,115 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "atomwrite WAL recovery report",
-  "description": "Output of `atomwrite wal-recovery <dir>` — scans `.atomwrite.journal.*.json` sidecars and emits one entry per orphan journal (last entry is `Started` with no matching `Committed`).",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AutoHealReport",
+  "description": "Result of an auto-heal pass on startup (G119 L3).",
   "type": "object",
-  "required": ["type", "journal_path", "target", "op_id", "op", "expected_new_checksum", "started_at_unix", "pid"],
   "properties": {
-    "type": { "const": "wal_recovery" },
-    "journal_path": { "type": "string", "description": "Absolute path to the orphan journal sidecar." },
-    "target": { "type": "string", "description": "The target file the journal was protecting." },
-    "op_id": { "type": "string", "description": "16-hex-char operation ID correlating with the original `Started` entry." },
-    "op": { "enum": ["write", "edit", "replace", "set"], "description": "Operation type that was in progress when the crash occurred." },
-    "expected_new_checksum": { "type": "string", "description": "BLAKE3 of the content the caller intended to write." },
-    "checksum_before": { "type": ["string", "null"], "description": "BLAKE3 of the original content; `null` if the target did not exist." },
-    "started_at_unix": { "type": "integer", "minimum": 0, "description": "Unix seconds when the `Started` entry was appended." },
-    "pid": { "type": "integer", "minimum": 0, "description": "Process ID that started the write." }
+    "type": {
+      "description": "Envelope type discriminator for NDJSON consumers.",
+      "type": "string"
+    },
+    "removed": {
+      "description": "Number of stale `Committed`/`Aborted` journals removed.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "preserved": {
+      "description": "Number of journals preserved (`Started` with a live owner).",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "dead_owner_removed": {
+      "description": "`Started` journals removed because their owning process no longer\nexists. The rest of `removed` are stale `Committed`/`Aborted` journals.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "malformed": {
+      "description": "Number of malformed journals preserved for manual inspection.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "bytes_reclaimed": {
+      "description": "Total bytes reclaimed by the removal.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "threshold_secs": {
+      "description": "Age threshold (seconds) used for this pass.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "ok": {
+      "description": "Outcome of the run, stamped by the writer",
+      "type": "boolean"
+    },
+    "code": {
+      "description": "Machine error code, present when ok is false",
+      "type": "string"
+    },
+    "exit": {
+      "description": "Process exit status, present when ok is false",
+      "type": "integer",
+      "minimum": 0
+    },
+    "target_resolved": {
+      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+      "type": "string"
+    },
+    "target_source": {
+      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+      "type": "string",
+      "enum": [
+        "argv",
+        "workspace",
+        "stdin"
+      ]
+    },
+    "workspace_source": {
+      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+      "type": "string",
+      "enum": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "records_suppressed": {
+      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_budget_dropped": {
+      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_planned": {
+      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+      "type": "boolean"
+    },
+    "truncated_records": {
+      "description": "Records the writer cut this run, counted once per record",
+      "type": "integer",
+      "minimum": 0
+    }
   },
-  "additionalProperties": false
+  "required": [
+    "type",
+    "removed",
+    "preserved",
+    "dead_owner_removed",
+    "malformed",
+    "bytes_reclaimed",
+    "threshold_secs"
+  ]
 }

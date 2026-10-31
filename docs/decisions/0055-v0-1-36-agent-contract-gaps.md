@@ -1,5 +1,7 @@
 # ADR-0055 — v0.1.36 agent-first contract (GAP-2026-019…033)
 
+Amended by: 0061, 0065, 0072
+
 ## Status
 Accepted (2026-07-31)
 
@@ -15,7 +17,9 @@ Agent sessions failed on `--old-file` under `/tmp` (WORKSPACE_JAIL 126), misread
 6. Soft-floor delta is XDG `[fuzzy].soft_floor_delta` (default constant).
 7. `block_anchor` dual-gates middle ratio when pattern has a middle.
 8. Skills EN/PT teach staging, exit-first parse, denylist `--strategy`, `$` literal, `--allow-shrink`, multi-root workspace.
-9. Do **not** remove jail or shrink guard; do **not** invent AST inside fuzzy.
+9. Do not remove jail or shrink guard; do not invent AST inside fuzzy.
+10. Global agent-native shaping: `--select`/`--fields`, `--filter`, `--limit` in the writer (and in the error path of `main`).
+11. Distinct suggestion for content-source vs mutation-target on WORKSPACE_JAIL.
 
 ## Consequences
 - Agents stage patches inside the jail on first try (`scratch init` + `.atomwrite/scratch/`).
@@ -26,7 +30,11 @@ Agent sessions failed on `--old-file` under `/tmp` (WORKSPACE_JAIL 126), misread
 - Aggressive threshold 0.50 re-evaluated with FP corpus (dual-gate); XDG override remains.
 
 ## Residual CAPA (same release)
-- Docs SSOT (`gaps.md` Status sync + `scripts/check-gaps-ssot.sh`)
+- Docs SSOT: the current status of every gap lives in the ADR series, never in an unversioned note
 - ADR pt-BR parity
 - `collect.inc.rs` SRP extract
 - proptest FP oracle
+
+## References
+- [Decisions index](README.md) (GAP-2026-019…033 status)
+- [CHANGELOG](../../CHANGELOG.md)

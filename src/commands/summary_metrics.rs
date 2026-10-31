@@ -15,6 +15,22 @@ pub fn files_modified_for_summary(matched: u64, dry_run: bool) -> Option<u64> {
     if dry_run { Some(0) } else { Some(matched) }
 }
 
+/// Report how many files a dry run would have modified.
+///
+/// The dry run zeroes `files_modified` on purpose, and zero alone tells the
+/// caller nothing about the damage the real run would do. This is the other
+/// half of that pair: present only on a dry run, and absent (not zero) when the
+/// run would change nothing.
+#[inline]
+#[must_use]
+pub fn files_planned_for_summary(matched: u64, dry_run: bool) -> Option<u64> {
+    if dry_run && matched > 0 {
+        Some(matched)
+    } else {
+        None
+    }
+}
+
 /// Same as [`files_modified_for_summary`] but for non-optional `u64` summary fields
 /// (e.g. `case` command).
 #[inline]

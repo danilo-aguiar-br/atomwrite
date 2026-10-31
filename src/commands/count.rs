@@ -25,10 +25,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::cli::{CountArgs, GlobalArgs};
-use crate::commands::BACKUP_FILENAME_RE;
+use crate::commands::is_backup_timestamp_name;
 use crate::ndjson_types::{
     CountByExtOutput, CountBySizeOutput, CountTotalOutput, CountTotals, ExtCountOutput, SizeEntry,
 };
@@ -66,33 +66,15 @@ pub fn cmd_count(
 
     let canonical_paths =
         crate::commands::path_resolution::resolve_paths_against_workspace(&args.paths, &workspace)?;
-    let mut walker = ignore::WalkBuilder::new(&canonical_paths[0]);
-    for p in canonical_paths.iter().skip(1) {
-        walker.add(p);
-    }
-    walker
-        .hidden(!global.hidden)
-        .git_ignore(!global.no_gitignore);
-
-    crate::concurrency::apply_walk_threads(&mut walker, global.threads);
-
-    if !args.include.is_empty() {
-        let mut types_builder = ignore::types::TypesBuilder::new();
-        for pat in &args.include {
-            types_builder
-                .add_def(&format!("custom:{pat}"))
-                .context("invalid include glob")?;
-        }
-        types_builder.select("custom");
-        walker.types(types_builder.build().context("build types")?);
-    }
-    if !args.exclude.is_empty() {
-        let mut overrides = ignore::overrides::OverrideBuilder::new(&canonical_paths[0]);
-        for pat in &args.exclude {
-            overrides.add(&format!("!{pat}"))?;
-        }
-        walker.overrides(overrides.build()?);
-    }
+    // `--include` selects by file name here, so this verb takes the by-type
+    // flavor of the one shared walker.
+    let walker = crate::commands::build_scoped_walker_flavored(
+        &canonical_paths,
+        global,
+        crate::commands::WalkerFlavor::RespectGlobalFlagsByType,
+        &args.include,
+        &args.exclude,
+    )?;
 
     // `--by-size` only needs metadata; skip content reads (zero heap for file bodies).
     let need_line_counts = !args.by_size;
@@ -120,6 +102,14 @@ pub fn cmd_count(
         None
     };
     let ws: Arc<Path> = Arc::from(workspace.as_path());
+    // Failures are recorded on the error path only, so the mutex never sits on
+    // the per-entry hot path. A file the walk saw but could not open must show
+    // up in the summary: a total computed without it is not the tree's total.
+    let failures: Arc<Mutex<crate::ndjson_types::FailureTally>> =
+        Arc::new(Mutex::new(crate::ndjson_types::FailureTally::default()));
+    // An ignore file the walk half-reads is a hole too, and `ignore` never
+    // reports it by itself.
+    crate::concurrency::record_ignore_file_failures(&canonical_paths, Some(&failures));
 
     // Cooperative cancel: same AtomicBool as SIGINT/SIGTERM / --timeout-secs
     // (graceful-shutdown rules: poll every long loop; Quit stops WalkParallel).
@@ -136,6 +126,7 @@ pub fn cmd_count(
         let by_ext_shards = by_ext_shards.clone();
         let by_size_shards = by_size_shards.clone();
         let ws = Arc::clone(&ws);
+        let failures = Arc::clone(&failures);
         let shutdown_flag = Arc::clone(&shutdown_flag);
 
         // Worker-local composites — merge once on Drop (Mutex-free hot path).
@@ -183,13 +174,21 @@ pub fn cmd_count(
 
         Box::new(move |entry| {
             // Acquire: observe shutdown published by signal/timeout threads.
-            if shutdown_flag.load(Ordering::Acquire) {
+            if shutdown_flag.load(Ordering::Acquire) || crate::output::limit_reached() {
                 return ignore::WalkState::Quit;
             }
 
             let entry = match entry {
                 Ok(e) => e,
-                Err(_) => return ignore::WalkState::Continue,
+                Err(e) => {
+                    // A directory the walk cannot open hides every file under
+                    // it, so the total computed without it is not the tree's.
+                    if let Ok(mut tally) = failures.lock() {
+                        let (path, err) = crate::concurrency::classify_walk_error(&e);
+                        tally.record(&path, err);
+                    }
+                    return ignore::WalkState::Continue;
+                }
             };
 
             if !entry.file_type().is_some_and(|ft| ft.is_file()) {
@@ -203,13 +202,37 @@ pub fn cmd_count(
 
             let meta = match std::fs::metadata(&validated) {
                 Ok(m) => m,
-                Err(_) => return ignore::WalkState::Continue,
+                Err(e) => {
+                    // A file the walk listed and `count` cannot stat is a hole
+                    // in the total, not a file to ignore.
+                    if let Ok(mut tally) = failures.lock() {
+                        tally.record(
+                            &validated,
+                            crate::error::AtomwriteError::Io { source: e }.into(),
+                        );
+                    }
+                    return ignore::WalkState::Continue;
+                }
             };
 
             let size = meta.len();
+
+            // `--limit` is a work budget: counting stops at the cap, so the
+            // published total names what was measured and the summary says the
+            // walk stopped short instead of pretending the tree was read. The
+            // claim is taken BEFORE the counters move, so a worker that loses
+            // the race drops its entry instead of overshooting the cap.
+            let seen = total_files.fetch_add(1, Ordering::Relaxed) + 1;
+            if let Some(cap) = crate::output::limit_cap()
+                && seen > cap
+            {
+                total_files.fetch_sub(1, Ordering::Relaxed);
+                crate::output::mark_limit_reached();
+                return ignore::WalkState::Quit;
+            }
+            let _reached = crate::output::spend_budget();
             // Relaxed: pure counters, no dependent payload published via these atomics.
             total_bytes.fetch_add(size, Ordering::Relaxed);
-            total_files.fetch_add(1, Ordering::Relaxed);
 
             if by_size {
                 if let Some(ref mut guard) = size_guard {
@@ -222,7 +245,16 @@ pub fn cmd_count(
                 // I/O outside any Mutex (rules: critical sections free of file I/O).
                 match crate::file_io::read_file_string(&validated, max_size) {
                     Ok(content) => count_lines_and_blank(&content),
-                    Err(_) => (0, 0),
+                    Err(e) => {
+                        // Too large, binary or not UTF-8 is a file the caller
+                        // told `count` to leave alone; anything else is a hole.
+                        if !crate::output::is_content_rejection(&e)
+                            && let Ok(mut tally) = failures.lock()
+                        {
+                            tally.record(&validated, e);
+                        }
+                        (0, 0)
+                    }
                 }
             } else {
                 (0, 0)
@@ -233,7 +265,7 @@ pub fn cmd_count(
 
             if let Some(ref mut guard) = ext_guard {
                 let file_name = validated.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                let ext = if BACKUP_FILENAME_RE.is_match(file_name) {
+                let ext = if is_backup_timestamp_name(file_name) {
                     "backup".to_owned()
                 } else {
                     validated
@@ -257,6 +289,11 @@ pub fn cmd_count(
         return Ok(());
     }
 
+    let (failed_count, failed_items, first_failure) = take_mutex_map(failures).into_parts();
+    let files_failed = (failed_count > 0).then_some(failed_count);
+    let errors = (!failed_items.is_empty()).then_some(failed_items);
+    let stopped_early = crate::output::limit_reached().then_some(true);
+
     if args.by_extension {
         let shards = match by_ext_shards {
             Some(arc) => take_mutex_map(arc),
@@ -272,12 +309,36 @@ pub fn cmd_count(
                 e.blank += c.blank;
             }
         }
-        writer.write_event(&CountByExtOutput {
+        let total = CountTotals {
+            files: total_files.load(Ordering::Relaxed),
+            lines: total_lines.load(Ordering::Relaxed),
+            blank: total_blank.load(Ordering::Relaxed),
+            bytes: total_bytes.load(Ordering::Relaxed),
+        };
+        // `--top` means the same thing in all three modes: keep the N largest
+        // groups and name how many were left out. Ordering by files first
+        // makes the cut independent of the BTreeMap's alphabetical keys.
+        let mut groups: Vec<(String, ExtCountOutput)> = by_extension_map.into_iter().collect();
+        groups.sort_by(|a, b| b.1.files.cmp(&a.1.files).then_with(|| a.0.cmp(&b.0)));
+        let top = args.top.min(groups.len());
+        let items_omitted = (groups.len() - top) as u64;
+        let by_extension: BTreeMap<String, ExtCountOutput> = groups.into_iter().take(top).collect();
+        let out = CountByExtOutput {
             r#type: "count",
             mode: "by_extension",
-            by_extension: by_extension_map,
+            by_extension,
+            total,
+            items_omitted: Some(items_omitted),
             elapsed_ms: start.elapsed().as_millis() as u64,
-        })?;
+            files_failed,
+            partial: crate::ndjson_types::partial_of(files_failed),
+            errors,
+            walker_stopped_early: stopped_early,
+        };
+        if let Some(err) = first_failure {
+            return Err(writer.publish_failure(&out, err));
+        }
+        writer.write_terminal(&out)?;
     } else if args.by_size {
         let shards = match by_size_shards {
             Some(arc) => take_mutex_map(arc),
@@ -287,6 +348,7 @@ pub fn cmd_count(
         // Sort descending by size and truncate to top N.
         items.sort_by(|a, b| b.1.cmp(&a.1));
         let top = args.top.min(items.len());
+        let items_omitted = (items.len() - top) as u64;
         let items: Vec<SizeEntry> = items
             .into_iter()
             .take(top)
@@ -295,14 +357,29 @@ pub fn cmd_count(
                 bytes: s,
             })
             .collect();
-        writer.write_event(&CountBySizeOutput {
+        let out = CountBySizeOutput {
             r#type: "count",
             mode: "by_size",
             items,
+            total: CountTotals {
+                files: total_files.load(Ordering::Relaxed),
+                lines: total_lines.load(Ordering::Relaxed),
+                blank: total_blank.load(Ordering::Relaxed),
+                bytes: total_bytes.load(Ordering::Relaxed),
+            },
+            items_omitted: Some(items_omitted),
             elapsed_ms: start.elapsed().as_millis() as u64,
-        })?;
+            files_failed,
+            partial: crate::ndjson_types::partial_of(files_failed),
+            errors,
+            walker_stopped_early: stopped_early,
+        };
+        if let Some(err) = first_failure {
+            return Err(writer.publish_failure(&out, err));
+        }
+        writer.write_terminal(&out)?;
     } else {
-        writer.write_event(&CountTotalOutput {
+        let out = CountTotalOutput {
             r#type: "count",
             mode: "lines",
             total: CountTotals {
@@ -313,7 +390,15 @@ pub fn cmd_count(
                 bytes: total_bytes.load(Ordering::Relaxed),
             },
             elapsed_ms: start.elapsed().as_millis() as u64,
-        })?;
+            files_failed,
+            partial: crate::ndjson_types::partial_of(files_failed),
+            errors,
+            walker_stopped_early: stopped_early,
+        };
+        if let Some(err) = first_failure {
+            return Err(writer.publish_failure(&out, err));
+        }
+        writer.write_terminal(&out)?;
     }
 
     Ok(())

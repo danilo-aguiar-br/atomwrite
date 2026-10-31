@@ -15,28 +15,13 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use anyhow::{Context, Result};
-use ignore::WalkBuilder;
+use anyhow::Result;
 
 use crate::cli::{GlobalArgs, ListArgs};
-use crate::commands::BACKUP_FILENAME_RE;
-use crate::concurrency::{apply_walk_threads, collect_mapped_parallel, sort_by_parallel};
+use crate::commands::is_backup_timestamp_name;
+use crate::concurrency::{collect_mapped_parallel_tallied, sort_by_parallel};
 use crate::ndjson_types::{ListEntry, ListSummary};
 use crate::output::NdjsonWriter;
-
-fn epoch_days_to_ymd(days: u64) -> (u64, u64, u64) {
-    let z = days + 719468;
-    let era = z / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
 
 /// Intermediate walk record (Send) — sorted then emitted as NDJSON.
 struct ListRecord {
@@ -62,13 +47,7 @@ fn format_mtime(meta: &std::fs::Metadata) -> Option<String> {
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| {
-            let secs = d.as_secs();
-            let days = secs / 86400;
-            let rem = secs % 86400;
-            let h = rem / 3600;
-            let m = (rem % 3600) / 60;
-            let s = rem % 60;
-            let (y, mo, da) = epoch_days_to_ymd(days);
+            let (y, mo, da, h, m, s) = crate::atomic::epoch_to_utc(d.as_secs());
             format!("{y:04}-{mo:02}-{da:02}T{h:02}:{m:02}:{s:02}Z")
         })
 }
@@ -105,100 +84,119 @@ pub fn cmd_list(
         }
     }
 
-    // docs.rs: multi-dir → one WalkBuilder + `.add`, not N separate walks.
-    let mut builder = WalkBuilder::new(&roots[0]);
-    for root in roots.iter().skip(1) {
-        builder.add(root);
-    }
-    builder.hidden(!args.all).git_ignore(!global.no_gitignore);
-    // sort_by_file_path only applies to sequential `build()` — parallel walk
-    // materialises then sorts (PAR-035/036).
-    apply_walk_threads(&mut builder, global.threads);
+    // `list` names hidden files with its own `--all`, so the shared walker is
+    // built from the `--all` policy rather than from `--hidden`.
+    let mut builder = crate::commands::build_scoped_walker_flavored(
+        &roots,
+        global,
+        if args.all {
+            crate::commands::WalkerFlavor::AlwaysVisitHidden
+        } else {
+            crate::commands::WalkerFlavor::RespectGlobalFlagsByType
+        },
+        &args.include,
+        &args.exclude,
+    )?;
 
     if let Some(depth) = args.depth {
         builder.max_depth(Some(depth));
     }
 
-    if !args.include.is_empty() {
-        let mut types_builder = ignore::types::TypesBuilder::new();
-        for pattern in &args.include {
-            types_builder
-                .add_def(&format!("custom:{pattern}"))
-                .context("invalid include glob")?;
-        }
-        types_builder.select("custom");
-        builder.types(types_builder.build().context("build types")?);
-    }
-
-    if !args.exclude.is_empty() {
-        let mut overrides = ignore::overrides::OverrideBuilder::new(&roots[0]);
-        for pattern in &args.exclude {
-            overrides.add(&format!("!{pattern}"))?;
-        }
-        builder.overrides(overrides.build()?);
-    }
-
     let want_long = args.long;
     let want_ext = args.count_by_ext;
     let ws = workspace;
-    let roots_cap = roots.clone();
+    let roots_cap = roots;
 
-    let mut records: Vec<ListRecord> = collect_mapped_parallel(&builder, move |entry| {
-        let path = entry.path();
-        let rel_path = rel_path_for(path, &ws, &roots_cap);
-        if rel_path.is_empty() {
-            return None;
-        }
-
-        let ft = entry.file_type();
-        let kind: &'static str = if ft.is_some_and(|t| t.is_dir()) {
-            "dir"
-        } else if ft.is_some_and(|t| t.is_symlink()) {
-            "symlink"
-        } else {
-            "file"
-        };
-
-        let (size, modified, bytes) = if want_long {
-            match entry.metadata() {
-                Ok(meta) => {
-                    let sz = meta.len();
-                    (Some(sz), format_mtime(&meta), sz)
-                }
-                Err(_) => (None, None, 0),
+    // A directory the walk cannot open is a hole in a listing that claims to
+    // show the whole tree, so the tally travels into the walker with the map.
+    let failures: std::sync::Arc<std::sync::Mutex<crate::ndjson_types::FailureTally>> =
+        std::sync::Arc::new(std::sync::Mutex::new(
+            crate::ndjson_types::FailureTally::default(),
+        ));
+    let failures_in_walk = std::sync::Arc::clone(&failures);
+    // An ignore file the walk half-reads is a hole too, and `ignore` never
+    // reports it by itself.
+    crate::concurrency::record_ignore_file_failures(&roots_cap, Some(&failures));
+    // The map is `move` (it must outlive the call), so it takes its own handle
+    // and the one after the walk stays aliased to the same tally.
+    let failures_in_map = std::sync::Arc::clone(&failures);
+    let mut records: Vec<ListRecord> = collect_mapped_parallel_tallied(
+        &builder,
+        move |entry| {
+            let path = entry.path();
+            let rel_path = rel_path_for(path, &ws, &roots_cap);
+            if rel_path.is_empty() {
+                return None;
             }
-        } else {
-            let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            (None, None, bytes)
-        };
 
-        let ext = if want_ext {
-            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let e = if BACKUP_FILENAME_RE.is_match(file_name) {
-                "backup".to_owned()
+            let ft = entry.file_type();
+            let kind: &'static str = if ft.is_some_and(|t| t.is_dir()) {
+                "dir"
+            } else if ft.is_some_and(|t| t.is_symlink()) {
+                "symlink"
             } else {
-                path.extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("(none)")
-                    .to_owned()
+                "file"
             };
-            Some(e)
-        } else {
-            None
-        };
 
-        Some(ListRecord {
-            path: rel_path,
-            kind,
-            size,
-            modified,
-            bytes,
-            ext,
-        })
-    });
+            let (size, modified, bytes) = if want_long {
+                match entry.metadata() {
+                    Ok(meta) => {
+                        let sz = meta.len();
+                        (Some(sz), format_mtime(&meta), sz)
+                    }
+                    Err(e) => {
+                        if let Ok(mut tally) = failures_in_map.lock() {
+                            tally.record(path, crate::concurrency::walk_failure(&e, path));
+                        }
+                        (None, None, 0)
+                    }
+                }
+            } else {
+                let bytes = match entry.metadata() {
+                    Ok(m) => m.len(),
+                    Err(e) => {
+                        if let Ok(mut tally) = failures_in_map.lock() {
+                            tally.record(path, crate::concurrency::walk_failure(&e, path));
+                        }
+                        0
+                    }
+                };
+                (None, None, bytes)
+            };
+
+            let ext = if want_ext {
+                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                let e = if is_backup_timestamp_name(file_name) {
+                    "backup".to_owned()
+                } else {
+                    path.extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("(none)")
+                        .to_owned()
+                };
+                Some(e)
+            } else {
+                None
+            };
+
+            Some(ListRecord {
+                path: rel_path,
+                kind,
+                size,
+                modified,
+                bytes,
+                ext,
+            })
+        },
+        Some(failures_in_walk),
+    );
 
     // Deterministic NDJSON order after parallel discovery.
     sort_by_parallel(&mut records, |a, b| a.path.cmp(&b.path));
+
+    // `--limit` is a work budget: the tail of the listing is cut before a single
+    // entry is written, and the summary reports that the walk stopped short.
+    crate::output::cap_collected(&mut records);
 
     // Same contract as `search`: on cooperative cancel, skip summary.
     if crate::signal::is_global_shutdown() {
@@ -237,20 +235,39 @@ pub fn cmd_list(
         return Ok(());
     }
 
+    let (failed_count, failed_items, first_failure) = match std::sync::Arc::try_unwrap(failures) {
+        Ok(mutex) => mutex.into_inner().unwrap_or_default().into_parts(),
+        Err(arc) => {
+            let taken = arc
+                .lock()
+                .map(|mut g| std::mem::take(&mut *g))
+                .unwrap_or_default();
+            taken.into_parts()
+        }
+    };
+    let files_failed = (failed_count > 0).then_some(failed_count);
     let summary = ListSummary {
         r#type: "summary",
         files,
         dirs,
         symlinks,
         total_bytes: Some(total_bytes),
+        files_budget_dropped: Some(crate::output::budget_dropped()).filter(|n| *n > 0),
         by_extension: if args.count_by_ext {
             Some(by_ext)
         } else {
             None
         },
         elapsed_ms: start.elapsed().as_millis() as u64,
+        files_failed,
+        partial: crate::ndjson_types::partial_of(files_failed),
+        errors: (!failed_items.is_empty()).then_some(failed_items),
+        walker_stopped_early: crate::output::limit_reached().then_some(true),
     };
-    writer.write_event(&summary)?;
+    if let Some(err) = first_failure {
+        return Err(writer.publish_failure(&summary, err));
+    }
+    writer.write_terminal(&summary)?;
 
     Ok(())
 }

@@ -127,6 +127,7 @@ fn replace_threads_1_applies_all() {
     );
 }
 
+#[cfg(feature = "ast")]
 #[test]
 fn scope_with_shutdown_check_no_regression() {
     let dir = tempfile::tempdir().expect("tempdir");

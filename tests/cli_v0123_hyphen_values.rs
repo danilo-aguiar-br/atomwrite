@@ -161,26 +161,40 @@ fn search_hyphen_pattern_succeeds() {
             "--workspace",
             dir.path().to_str().unwrap(),
             "search",
+            "--",
             "-deprecated",
         ])
         .arg(dir.path())
         .output()
         .expect("run");
 
-    assert_ne!(
-        output.status.code().unwrap_or(-1),
-        2,
-        "search '-deprecated' was rejected as arg parse error: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
     assert!(
         output.status.success(),
-        "search '-deprecated' failed: {}",
+        "search '-- -deprecated' failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let events = common::parse_ndjson(&output.stdout);
     let matches: Vec<_> = events.iter().filter(|e| e["type"] == "match").collect();
     assert!(!matches.is_empty());
+
+    // Without `--` the hyphen-leading token is a flag the verb does not have:
+    // an argument error, never the pattern the caller did not type.
+    let displaced = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "search",
+            "-deprecated",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("run");
+    assert_eq!(
+        displaced.status.code(),
+        Some(2),
+        "search '-deprecated' without `--` must be an argument error: {}",
+        String::from_utf8_lossy(&displaced.stderr)
+    );
 }
 
 #[test]
@@ -194,6 +208,7 @@ fn replace_hyphen_pattern_dry_run_succeeds() {
             dir.path().to_str().unwrap(),
             "replace",
             "--dry-run",
+            "--",
             "-old-api",
             "-new-api",
         ])
@@ -201,11 +216,31 @@ fn replace_hyphen_pattern_dry_run_succeeds() {
         .output()
         .expect("run");
 
-    assert_ne!(
-        output.status.code().unwrap_or(-1),
-        2,
-        "replace '-old-api' was rejected as arg parse error: {}",
+    assert!(
+        output.status.success(),
+        "replace '-- -old-api -new-api' failed: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Without `--` the pattern is a flag the verb does not have, so the run
+    // must stop before it rewrites anything.
+    let displaced = common::atomwrite()
+        .args([
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "replace",
+            "--dry-run",
+            "-old-api",
+            "-new-api",
+        ])
+        .arg(dir.path())
+        .output()
+        .expect("run");
+    assert_eq!(
+        displaced.status.code(),
+        Some(2),
+        "replace without `--` must be an argument error: {}",
+        String::from_utf8_lossy(&displaced.stderr)
     );
 }
 

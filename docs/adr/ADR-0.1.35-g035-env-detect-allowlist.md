@@ -2,22 +2,24 @@
 
 ## Status
 
+Superseded in 0.1.37: no environment variables are read. `src/env_detect.rs` now uses file probes only (`/.dockerenv`, cgroup, `/proc/version`, `/.flatpak-info`, the Kubernetes service-account mount, the Termux prefix, the executable path), and the `ci`, `github_actions` and `sudo` flags were removed from `doctor`. The text below is kept as the record of the 0.1.35 decision.
+
 Accepted (2026-07-19)
 
 ## Context
 
-Project rules forbid **product** runtime configuration via environment variables
+Project rules forbid product runtime configuration via environment variables
 (`ATOMWRITE_*`, clap `env =`, etc.). Configuration must be CLI flags + XDG
 `config.toml`.
 
 `atomwrite doctor` still needs to report whether the host is WSL, a container,
-CI, Flatpak, Snap, etc. Those signals are conventionally exposed as **OS/host**
+CI, Flatpak, Snap, etc. Those signals are conventionally exposed as OS/host
 environment variables set by the platform, not by the product.
 
 ## Decision
 
-1. **Product knobs:** never read process env for atomwrite configuration.
-2. **Doctor diagnostics only:** `src/env_detect.rs` may read a **fixed allowlist**
+1. Product knobs: never read process env for atomwrite configuration.
+2. Doctor diagnostics only: `src/env_detect.rs` may read a fixed allowlist
    of host variables: `CI`, `GITHUB_ACTIONS`, `WSL_DISTRO_NAME`, `WSL_INTEROP`,
    `container`, `CONTAINER`, `KUBERNETES_SERVICE_HOST`, `PREFIX`, `FLATPAK_ID`,
    `SNAP`, `SUDO_USER`.
@@ -29,8 +31,7 @@ environment variables set by the platform, not by the product.
 5. Document the allowlist in the module rustdoc (G-035).
 
 ## Consequences
-
 - Grep for `std::env::var` will still hit `env_detect` — that is intentional and
   scoped.
-- Compliance audits must distinguish **product knobs** vs **OS probes**.
+- Compliance audits must distinguish product knobs vs OS probes.
 - No network, no secrets, no telemetry export from these reads.

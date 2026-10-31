@@ -22,11 +22,11 @@ mod tests {
 
     #[test]
     fn negotiate_pt_to_pt_br() {
-        assert_eq!(negotiate_to_idioma(&["pt"]), Idioma::PtBr);
-        assert_eq!(negotiate_to_idioma(&["pt-BR"]), Idioma::PtBr);
-        assert_eq!(negotiate_to_idioma(&["pt_BR"]), Idioma::PtBr);
-        assert_eq!(negotiate_to_idioma(&["en-GB"]), Idioma::En);
-        assert_eq!(negotiate_to_idioma(&["ja-JP"]), Idioma::En);
+        assert_eq!(negotiate_to_language(&["pt"]), Language::PtBr);
+        assert_eq!(negotiate_to_language(&["pt-BR"]), Language::PtBr);
+        assert_eq!(negotiate_to_language(&["pt_BR"]), Language::PtBr);
+        assert_eq!(negotiate_to_language(&["en-GB"]), Language::En);
+        assert_eq!(negotiate_to_language(&["ja-JP"]), Language::En);
     }
 
     #[test]
@@ -36,14 +36,14 @@ mod tests {
             Some("pt-BR".into()),
             None,
         );
-        assert_eq!(state.idioma, Idioma::En);
+        assert_eq!(state.language, Language::En);
         assert_eq!(state.source, LocaleSource::CliFlag);
     }
 
     #[test]
     fn resolve_system_pt() {
         let state = resolve_locale(None, Some("pt_BR.UTF-8".into()), None);
-        assert_eq!(state.idioma, Idioma::PtBr);
+        assert_eq!(state.language, Language::PtBr);
         assert_eq!(state.source, LocaleSource::System);
         assert!(!state.detection_failed);
     }
@@ -51,7 +51,7 @@ mod tests {
     #[test]
     fn resolve_c_locale_falls_to_default() {
         let state = resolve_locale(None, Some("C.UTF-8".into()), None);
-        assert_eq!(state.idioma, Idioma::En);
+        assert_eq!(state.language, Language::En);
         assert_eq!(state.source, LocaleSource::Default);
         assert!(state.detection_failed);
     }
@@ -62,7 +62,7 @@ mod tests {
         let path = dir.path().join("locale");
         fs::write(&path, "pt-BR\n").unwrap();
         let state = resolve_locale(None, Some("en-US".into()), Some(path));
-        assert_eq!(state.idioma, Idioma::PtBr);
+        assert_eq!(state.language, Language::PtBr);
         assert_eq!(state.source, LocaleSource::Persisted);
     }
 
@@ -74,9 +74,9 @@ mod tests {
     }
 
     #[test]
-    fn idioma_methods() {
-        assert_eq!(Idioma::PtBr.fallback(), Idioma::En);
-        assert_eq!(Idioma::En.direcao(), TextDirection::Ltr);
-        assert_eq!(Idioma::AVAILABLE.len(), 2);
+    fn language_methods() {
+        assert_eq!(Language::PtBr.fallback(), Language::En);
+        assert_eq!(Language::En.direction(), TextDirection::Ltr);
+        assert_eq!(Language::AVAILABLE.len(), 2);
     }
 }

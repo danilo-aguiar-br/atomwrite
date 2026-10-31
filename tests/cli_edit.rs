@@ -556,7 +556,7 @@ fn edit_multi_error_reports_failed_pair_index() {
     assert_eq!(output.status.code(), Some(65));
     let events = common::parse_ndjson(&output.stdout);
     assert_eq!(events[0]["error"], true);
-    assert_eq!(events[0]["code"], "INVALID_INPUT");
+    assert_eq!(events[0]["code"], "MATCH_FAILED");
     assert_eq!(events[0]["failed_pair_index"], 2);
     assert_eq!(events[0]["pairs_total"], 2);
     let pairs = events[0]["pair_results"]

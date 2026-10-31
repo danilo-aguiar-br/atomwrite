@@ -7,15 +7,45 @@ use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::platform;
 
+/// Turn an I/O failure at `target` into the typed error, keeping its exit code.
+///
+/// `with_context` would lift a `std::io::Error` into `anyhow::Error` with no
+/// type, and the catch-all in `main` can only read that as `INTERNAL_ERROR`
+/// (exit 255). Classifying here keeps `PermissionDenied` (13) and `Io` (74)
+/// distinguishable, which is what the exit contract promises.
+fn io_at(target: &Path, what: &str) -> impl Fn(std::io::Error) -> anyhow::Error {
+    let path = target.to_path_buf();
+    let what = what.to_string();
+    move |source| {
+        let reason = format!("{what} for {}: {source}", path.display());
+        crate::error::AtomwriteError::from_io_at(&path, std::io::Error::new(source.kind(), reason))
+            .into()
+    }
+}
+
 #[cfg(unix)]
-use super::inplace::copy_tempfile_to_target;
+use super::inplace::copy_content_to_target;
 #[cfg(windows)]
 use super::persist_retry::persist_with_retry;
 
+/// Write `content` to `target` through tempfile, fsync and rename.
+///
+/// Returns `(fell_back, method)`: `true` only on the EXDEV copy fallback, and
+/// `method` names the rename primitive that actually ran.
+///
+/// # Errors
+///
+/// Returns an I/O error when the tempfile cannot be created in the target's
+/// directory, when a chunk write or the flush fails, when the durability fsync
+/// fails, or when the final rename fails. Returns
+/// [`crate::error::AtomwriteError::ExdevFallbackDisabled`] (exit 91) when the
+/// tempfile and the target land on different filesystems and `strict_atomic`
+/// is set. Returns [`crate::signal::cancelled_error`] (130/143/124) when a hard
+/// shutdown arrives between chunks.
 pub(crate) fn write_rename_path(
     target: &Path,
     content: &[u8],
@@ -37,7 +67,7 @@ pub(crate) fn write_rename_path(
     }
     let temp = builder
         .tempfile_in(parent)
-        .with_context(|| format!("cannot create tempfile in {}", parent.display()))?;
+        .map_err(io_at(parent, "cannot create tempfile"))?;
 
     // Step 7: write content in 64 KiB chunks with cooperative cancel (v0.1.29 P0-4).
     {
@@ -46,7 +76,10 @@ pub(crate) fn write_rename_path(
         let chunk = crate::constants::BUF_CAPACITY;
         let mut offset = 0usize;
         while offset < content.len() {
-            if crate::signal::is_global_shutdown() {
+            // A closed reader (SIGPIPE) does not abort a write already under way:
+            // it is local and short, and aborting it would leave its journal behind.
+            // SIGINT / SIGTERM / SIGHUP / the deadline still abort it here.
+            if crate::signal::is_global_hard_shutdown() {
                 // Drop tempfile by not persisting — NamedTempFile cleans on drop.
                 // Exit code follows the live signal/timeout (130/143/124), not a
                 // hard-coded SIGTERM — see `signal::cancelled_error`.
@@ -59,26 +92,30 @@ pub(crate) fn write_rename_path(
             let end = (offset + chunk).min(content.len());
             writer
                 .write_all(&content[offset..end])
-                .with_context(|| format!("write error for {}", target.display()))?;
+                .map_err(io_at(target, "write error"))?;
             offset = end;
         }
-        writer
-            .flush()
-            .with_context(|| format!("flush error for {}", target.display()))?;
+        writer.flush().map_err(io_at(target, "flush error"))?;
         writer.into_inner().map_err(|e| {
-            anyhow::anyhow!(
-                "BufWriter into_inner error for {}: {}",
-                target.display(),
-                e.error()
-            )
+            io_at(target, "BufWriter into_inner error")(std::io::Error::new(
+                e.error().kind(),
+                format!(
+                    "BufWriter into_inner error for {}: {}",
+                    target.display(),
+                    e.error()
+                ),
+            ))
         })?;
     }
 
     // Step 8: fsync file (respect durability policy)
     platform::fsync_file_with_durability(temp.as_file(), durability)
-        .with_context(|| format!("fsync error for {}", target.display()))?;
+        .map_err(io_at(target, "fsync error"))?;
 
-    // Step 9: atomic rename with EXDEV fallback
+    // Step 9: atomic rename. The tempfile is created in the target's own
+    // directory, so a cross-device rename cannot originate here; EXDEV stays
+    // reachable through the Windows persist retry, which classifies its own
+    // error instead of letting `anyhow` drop the type.
     #[cfg(windows)]
     {
         persist_with_retry(temp, target)?;
@@ -95,6 +132,8 @@ pub(crate) fn write_rename_path(
                         if strict_atomic {
                             return Err(crate::error::AtomwriteError::ExdevFallbackDisabled {
                                 path: target.to_path_buf(),
+                                reason: "the temp file and the target are on different filesystems"
+                                    .into(),
                             }
                             .into());
                         }
@@ -102,13 +141,13 @@ pub(crate) fn write_rename_path(
                             path = %target.display(),
                             "EXDEV detected, falling back to copy + fsync + cleanup"
                         );
-                        let recovered = e.file;
-                        copy_tempfile_to_target(recovered.as_file(), target, content)?;
+                        // Held until the end of the arm: its drop removes exactly this tempfile.
+                        let _recovered = e.file;
+                        copy_content_to_target(target, content)?;
                         return Ok((true, "copy_exdev"));
                     }
                 }
-                return Err(e.error)
-                    .with_context(|| format!("rename error for {}", target.display()));
+                return Err(io_at(target, "rename error")(e.error));
             }
         }
     }

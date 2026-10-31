@@ -45,7 +45,6 @@
 use std::path::Path;
 
 use anyhow::Result;
-use tree_sitter_language_pack::get_parser;
 
 /// Result of a syntax check.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,33 +84,16 @@ pub struct SyntaxErrorLocation {
 
 /// Map a file extension (without the leading dot) to a tree-sitter
 /// language name. Returns `None` for unknown extensions.
+///
+/// The pairs live in [`crate::constants::EXTENSION_LANGUAGES`], which the
+/// `doctor` grammar check reads too: one table means the check measures the
+/// languages these verbs actually ask for.
 fn extension_to_language(ext: &str) -> Option<&'static str> {
-    match ext.to_ascii_lowercase().as_str() {
-        "rs" => Some("rust"),
-        "py" => Some("python"),
-        "js" | "mjs" | "cjs" | "jsx" => Some("javascript"),
-        "ts" => Some("typescript"),
-        "tsx" => Some("tsx"),
-        "go" => Some("go"),
-        "c" | "h" => Some("c"),
-        "cpp" | "cc" | "cxx" | "hpp" | "hxx" => Some("cpp"),
-        "java" => Some("java"),
-        "rb" => Some("ruby"),
-        "php" => Some("php"),
-        "sh" | "bash" | "zsh" => Some("bash"),
-        "html" | "htm" => Some("html"),
-        "css" => Some("css"),
-        "json" => Some("json"),
-        "yaml" | "yml" => Some("yaml"),
-        "toml" => Some("toml"),
-        "md" | "markdown" => Some("markdown"),
-        "lua" => Some("lua"),
-        "scala" => Some("scala"),
-        "swift" => Some("swift"),
-        "kt" | "kts" => Some("kotlin"),
-        "sql" => Some("sql"),
-        _ => None,
-    }
+    let lower = ext.to_ascii_lowercase();
+    crate::constants::EXTENSION_LANGUAGES
+        .iter()
+        .find(|(suffix, _)| *suffix == lower.as_str())
+        .map(|(_, language)| *language)
 }
 
 /// Detect the tree-sitter language name for a given file path.
@@ -128,7 +110,9 @@ pub fn detect_language_name(path: &Path, content: &[u8]) -> Option<String> {
     }
     // Fallback: try content-based detection (shebang)
     if let Ok(text) = std::str::from_utf8(content) {
-        let head = text.get(..text.len().min(8192)).unwrap_or(text);
+        let head = text
+            .get(..text.len().min(crate::constants::SHEBANG_PROBE_BYTES))
+            .unwrap_or(text);
         let trimmed = head.trim_start();
         if let Some(rest) = trimmed.strip_prefix("#!") {
             let shebang = rest.lines().next().unwrap_or("").to_ascii_lowercase();
@@ -179,6 +163,12 @@ impl AsRef<str> for LangRef {
 /// - `Ok(Errors)` if the grammar reported one or more errors
 /// - `Err(_)` only for internal failures (e.g. invalid UTF-8 in content
 ///   when the language requires it)
+///
+/// # Errors
+///
+/// No `Err` is returned today: an unreadable parser, an unknown language, or
+/// a parser that yields no tree all degrade to `Ok(Skipped)` with a reason.
+/// The `Err` arm is reserved for internal failures of the grammar itself.
 pub fn syntax_check(path: &Path, content: &[u8]) -> Result<SyntaxCheckResult> {
     let Some(lang_name) = detect_language_name(path, content) else {
         return Ok(SyntaxCheckResult::Skipped {
@@ -188,11 +178,15 @@ pub fn syntax_check(path: &Path, content: &[u8]) -> Result<SyntaxCheckResult> {
             ),
         });
     };
-    let mut parser = match get_parser(&lang_name) {
+    // A grammar this host cannot provide degrades to `Skipped` rather than
+    // failing the write, which is what `--syntax-check` promises. The reason
+    // comes from the typed error so it names the language and says whether the
+    // name is wrong or the grammar merely has to be downloaded once.
+    let mut parser = match crate::grammar::parser_for(&lang_name) {
         Ok(p) => p,
         Err(e) => {
             return Ok(SyntaxCheckResult::Skipped {
-                reason: format!("parser init failed for {lang_name}: {e}"),
+                reason: format!("parser unavailable: {e}"),
             });
         }
     };
@@ -251,7 +245,8 @@ fn scan_errors(
     count: &mut usize,
     first: &mut Option<SyntaxErrorLocation>,
 ) {
-    let mut parent_stack: Vec<tree_sitter_language_pack::Node> = Vec::with_capacity(64);
+    let mut parent_stack: Vec<tree_sitter_language_pack::Node> =
+        Vec::with_capacity(crate::constants::SYNTAX_STACK_CAPACITY);
     loop {
         // Process the current node.
         let node = cursor.node();
@@ -315,7 +310,7 @@ fn extract_snippet(source: &[u8], start: usize, end: usize) -> String {
     let trimmed: String = s
         .chars()
         .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-        .take(80)
+        .take(crate::constants::SYNTAX_SNIPPET_CHARS)
         .collect();
     if trimmed.is_empty() {
         "<empty>".to_owned()

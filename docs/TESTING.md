@@ -4,49 +4,123 @@
 [Leia em Português](TESTING.pt-BR.md)
 
 
-## What's New in v0.1.36 (Current)
+## What's New in v0.1.37 (Current)
+- Full CLI surface under test policy: 47 subcommands (`CANONICAL_SUBCOMMAND_COUNT`): `agent-surface`, `apply`, `backup`, `batch`, `calc`, `case`, `codemod`, `commands`, `completions`, `config`, `copy`, `count`, `del`, `delete`, `diff`, `doctor`, `edit`, `edit-loop`, `extract`, `extract-artifact`, `get`, `hash`, `list`, `locale`, `move`, `outline`, `prune-backups`, `query`, `read`, `recipe`, `regex`, `replace`, `rollback`, `scope`, `scratch`, `search`, `semantic-merge`, `semantic-search`, `set`, `sparse`, `stat`, `transform`, `verify`, `wal-heal`, `wal-stats`, `watch`, `write`
+- Documentation suites: `cargo test --test docs_consistency --test docs_exit_codes`. `docs_consistency` reads the manifest from the real binary and checks every total subcommand count (plain or in bold, such as `47 subcommands`) in the README, `llms*`, the guides and the skills; it also proves that its own reader rejects a stale bold count
+- `config` verb: `cargo test --test cli_v0137_config_verb` (set/get/unset round trip, scope required, invalid values write nothing, layering key by key, atomic 0600 write)
+- Terminal event and failure report: `cargo test --test cli_v0137_terminal_event --test cli_v0137_terminal_pipe --test cli_v0137_terminal_schema` (one terminal event, `MATCH_FAILED` for a missing pair, `files_failed` and `errors[]`, exit 141 with a closed reader, the six summary schemas)
+- Retry, cancel and limits: `cargo test --test cli_v0137_retry_deadline --test cli_v0137_retry_guards --test cli_v0137_cancel --test cli_v0137_search_rss --test cli_v0137_wal_startup_heal`
+- Source guards (they fail the build): `cargo test --test cli_v0137_hardcode_guard --test cli_v0137_let_underscore_guard`
+- `cli_v0137_hardcode_guard` scans the production code under `src/` (it skips `constants*` files, test files, `#[cfg(test)]` items and comments). It forbids duration literals in `Duration::from_*`, the `.bak.` infix, sidecar and probe names and time-unit numbers outside `constants*`, and it forbids `env::var`, `env::var_os`, `env::vars` and `Command::new` anywhere in production code. It also checks that the repository ships no `.sh` file and no remote-automation directory. The `ALLOWED` list of exceptions is empty
+- `cli_v0137_let_underscore_guard` forbids `let _ =` in production code, and forbids `.unwrap()`, `.expect(`, `unreachable!(`, `panic!(`, `todo!(` and `unimplemented!(` there. Both allowance lists are empty
+- Hermetic harness: every test that runs the binary goes through `common::hermetic(...)` in `tests/common/mod.rs`. The child gets an empty `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `XDG_STATE_HOME` under the cargo target tmp directory, `LANG` and `LC_ALL` fixed to `en_US.UTF-8`, and `LANGUAGE` and `LC_MESSAGES` removed
+- `XDG_CACHE_HOME` stays on the real cache of the machine on purpose: the `ast` feature downloads the tree-sitter parsers there on first use, and an empty cache would send the `outline`, `query` and `--syntax-check` tests to the network
+- A test that needs its own config redirects `HOME` and `XDG_*` after it calls `hermetic`, because the later `env` call wins
+- Version and slim build: `cargo test --test cli_v0137_version`; `cargo xtask check-features` checks the `core` and `core,watch` feature sets
+- The supported test run uses the default features: `cargo test --locked`. Do not use `cargo test --no-default-features --features core` as a gate (see Local test profiles)
+- Local DoD (local gates only, no remote automation): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`
+- Pin docs/agents to `^0.1.37`
 
-- Residual agent-contract CAPA: always-emit errors under `--filter`; extract `--field`; `CANONICAL_SUBCOMMAND_COUNT` = **45**
-- Full CLI surface under test policy: **45** subcommands (`CANONICAL_SUBCOMMAND_COUNT`): `agent-surface`, `apply`, `backup`, `batch`, `calc`, `case`, `codemod`, `commands`, `completions`, `copy`, `count`, `del`, `delete`, `diff`, `doctor`, `edit`, `edit-loop`, `extract`, `get`, `hash`, `list`, `locale`, `move`, `outline`, `prune-backups`, `query`, `read`, `recipe`, `regex`, `replace`, `rollback`, `scope`, `scratch`, `search`, `semantic-merge`, `semantic-search`, `set`, `sparse`, `stat`, `transform`, `verify`, `wal-heal`, `wal-stats`, `watch`, `write`
-- Suite `tests/cli_v0136_gaps.rs` covers **GAP-019…033** contract points (workspace jail / scratch staging, error `ok:false` + `match_count`, fuzzy honesty with normalized strategies emitting `similarity: null` (never fake 1.0), dual-gate / soft-floor policy, shape flags, extract `--field` not `--select`, staging formulas)
-- Local SSOT gate: `bash scripts/check-gaps-ssot.sh` (must stay green with `gaps.md` Status)
-- Run: `cargo test --test cli_v0136_gaps` then `./scripts/check-gaps-ssot.sh`
-- Local DoD (no product GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`
-- Pin docs/agents to `^0.1.36`; ADR-0055
+
+## Smoke Test of the 47 Subcommands
+- One example per subcommand, each run against `atomwrite 0.1.37` (the command, its one-line summary and the example)
+- Setup: `WS` is the absolute path of an empty workspace that holds `src/a.rs` (an `unwrap()` and a comment), `src/b.rs` (the word `beta` once), `src/c.rs` (with `user_id`), `src/tmp.rs`, `config.toml` (a `[package]` table with `name` and a `[features]` table with `x`), `notes.txt`, `tmp.txt`, `base.txt`, `ours.txt`, `theirs.txt`, `img.png` and `rules.yaml` (a YAML list with `id`, `language`, `pattern` and `rewrite`)
+- `HASH_A` is the `checksum` that `hash src/a.rs` prints
+- Run them with `HOME` and the `XDG_*` variables pointing inside the workspace, as `common::hermetic` does for the test suite, so that no real config, locale preference or completion file is touched
+- The examples run in the order below: `rollback` needs the `backup` before it and `edit-loop` needs the `edit` before it
+- Result: 46 of the 47 exit 0, and `watch` exits 78 because the default build has no `watch` feature. A build with `--features watch` was not run
+
+- `read` — Read a file with checksum, size and lines, optionally only head/tail/range. Example: `atomwrite --workspace "$WS" read --head 2 src/a.rs`
+- `write` — Create or overwrite a file atomically from stdin. Example: `printf 'x\n' | atomwrite --workspace "$WS" write notes/new.txt`
+- `edit` — Edit a file by exact or fuzzy text match, line number or marker. Example: `atomwrite --workspace "$WS" edit src/b.rs --old beta --new gamma`
+- `delete` — Delete files or trees with backup, or only print the plan. Example: `atomwrite --workspace "$WS" delete --plan tmp.txt`
+- `copy` — Copy a file or tree with checksum verification. Example: `atomwrite --workspace "$WS" copy src/a.rs src/a_copy.rs`
+- `move` — Move or rename a file atomically. Example: `atomwrite --workspace "$WS" move src/tmp.rs src/tmp2.rs`
+- `apply` — Apply a patch (unified diff, SEARCH/REPLACE, full file) from stdin. Example: `printf 'new body\n' | atomwrite --workspace "$WS" apply --format full notes.txt`
+- `search` — Search file contents in parallel with the ripgrep engine. Example: `atomwrite --workspace "$WS" search alpha src/`
+- `replace` — Replace text across files with atomic writes and fuzzy matching. Example: `atomwrite --workspace "$WS" replace --dry-run alpha omega src/`
+- `transform` — Rewrite code by AST pattern (ast-grep). Example: `atomwrite --workspace "$WS" transform --dry-run -p '$E.unwrap()' -r '$E?' -l rust src/`
+- `hash` — Print the BLAKE3 checksum of files. Example: `atomwrite --workspace "$WS" hash src/a.rs`
+- `count` — Count lines and files by extension or by size. Example: `atomwrite --workspace "$WS" count --by-extension src/`
+- `diff` — Compare two files (unified, stat or changes). Example: `atomwrite --workspace "$WS" diff src/a.rs src/b.rs --unified`
+- `list` — List a directory tree with metadata. Example: `atomwrite --workspace "$WS" list --long --depth 1 src/`
+- `extract` — Pick fields from NDJSON read on stdin. Example: `printf '{"a":1}\n' | atomwrite --workspace "$WS" extract --field a`
+- `extract-artifact` — Bounded signal from PDF, OOXML and image headers (never raw bytes). Example: `atomwrite --workspace "$WS" extract-artifact img.png`
+- `scope` — Grammatical scoping: act on comments, strings, functions and other code categories. Example: `atomwrite --workspace "$WS" scope src/ --language rust --query comments --delete --dry-run`
+- `regex` — Generate a regex from example strings. Example: `atomwrite --workspace "$WS" regex abc-12 xyz-99 id-7 --digits`
+- `calc` — Math and unit conversion. Example: `atomwrite --workspace "$WS" calc "2 hours to seconds"`
+- `completions` — Print or install shell completions (bash, zsh, fish, elvish, powershell). Example: `atomwrite --workspace "$WS" completions bash`
+- `backup` — Create timestamped backups with BLAKE3 checksums. Example: `atomwrite --workspace "$WS" backup src/a.rs --retention 3`
+- `rollback` — Restore a file from a previous backup. Example: `atomwrite --workspace "$WS" rollback src/a.rs --latest --verify`
+- `batch` — Run NDJSON operations from stdin, optionally as one transaction. Example: `printf '{"op":"write","target":"batch.txt","content":"x"}\n' | atomwrite --workspace "$WS" batch --transaction`
+- `edit-loop` — Apply N old/new pairs in one write, all or nothing. Example: `printf '[{"old":"gamma","new":"delta"}]\n' | atomwrite --workspace "$WS" edit-loop src/b.rs`
+- `prune-backups` — Remove old .bak files by age or count. Example: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run .`
+- `wal-stats` — Show the state of WAL journals (read only). Example: `atomwrite --workspace "$WS" wal-stats`
+- `wal-heal` — Remove orphan terminal WAL journals older than a threshold. Example: `atomwrite --workspace "$WS" wal-heal --threshold-secs 3600 .`
+- `verify` — Check a file against an expected BLAKE3 hash (exit 0 match, 81 mismatch). Example: `atomwrite --workspace "$WS" verify src/a.rs HASH_A`
+- `set` — Write a value at a dotted path in a TOML or JSON file. Example: `atomwrite --workspace "$WS" set config.toml package.name demo2`
+- `get` — Read a value at a dotted path in a TOML or JSON file. Example: `atomwrite --workspace "$WS" get config.toml package.name`
+- `del` — Remove a key from a TOML or JSON file. Example: `atomwrite --workspace "$WS" del config.toml features.x`
+- `case` — Rename identifiers across files between case styles. Example: `atomwrite --workspace "$WS" case --subvert user_id UserId --to pascal --dry-run src/c.rs`
+- `query` — Walk the tree-sitter AST and emit nodes. Example: `atomwrite --workspace "$WS" query --kinds src/a.rs`
+- `outline` — Emit the high-level structure of a source file. Example: `atomwrite --workspace "$WS" outline src/a.rs`
+- `semantic-merge` — Line-based three-way merge with conflict markers (not AST). Example: `atomwrite --workspace "$WS" semantic-merge --base base.txt --ours ours.txt --theirs theirs.txt --output merged.txt --fail-on-conflict`
+- `sparse` — Budgeted list, read and outline for large trees. Example: `atomwrite --workspace "$WS" sparse list src/ --max-files 10 --max-bytes 1048576`
+- `recipe` — List and run built-in multi-step recipes. Example: `atomwrite --workspace "$WS" recipe run --name search-replace-verify --pattern alpha --replacement omega --path src --dry-run`
+- `stat` — Metadata only, alias of read --stat. Example: `atomwrite --workspace "$WS" stat src/a.rs`
+- `agent-surface` — Tool manifest for agents (the SSOT of subcommands). Example: `atomwrite --workspace "$WS" agent-surface --format json`
+- `watch` — Stream filesystem events with debounce; ends with watch_summary (needs a build with `--features watch`, the default build exits 78). Example: `atomwrite --workspace "$WS" watch src/ --max-events 1 --idle-exit-ms 500`
+- `codemod` — Apply a YAML list of AST rewrite rules across a tree. Example: `atomwrite --workspace "$WS" codemod --rules rules.yaml --dry-run src/`
+- `semantic-search` — Offline Jaccard ranking of files by query. Example: `atomwrite --workspace "$WS" semantic-search "unwrap value" src/ --k 5 --min-score 0.01`
+- `doctor` — Host readiness diagnostics. Example: `atomwrite --workspace "$WS" doctor`
+- `scratch` — Create the staging dir .atomwrite/scratch inside the workspace jail. Example: `atomwrite --workspace "$WS" scratch init .atomwrite/scratch`
+- `locale` — Show, set or clear the UI locale. Example: `atomwrite --workspace "$WS" locale`
+- `commands` — Print the full command tree as JSON. Example: `atomwrite --workspace "$WS" commands --include-globals`
+- `config` — Read and write persistent tuning keys (37 keys, scopes global and workspace). Example: `atomwrite --workspace "$WS" config get fuzzy.threshold`
+
+
+## What's New in v0.1.36
+- Historical (v0.1.36): residual agent-contract CAPA, always-emit errors under `--filter`; extract `--field`; `CANONICAL_SUBCOMMAND_COUNT` was 46
+- Historical (v0.1.36): full CLI surface under test policy was 46 subcommands (`CANONICAL_SUBCOMMAND_COUNT`): `agent-surface`, `apply`, `backup`, `batch`, `calc`, `case`, `codemod`, `commands`, `completions`, `config`, `copy`, `count`, `del`, `delete`, `diff`, `doctor`, `edit`, `edit-loop`, `extract`, `get`, `hash`, `list`, `locale`, `move`, `outline`, `prune-backups`, `query`, `read`, `recipe`, `regex`, `replace`, `rollback`, `scope`, `scratch`, `search`, `semantic-merge`, `semantic-search`, `set`, `sparse`, `stat`, `transform`, `verify`, `wal-heal`, `wal-stats`, `watch`, `write`
+- Suite `tests/cli_v0136_gaps.rs` covers GAP-019…033 contract points (workspace jail / scratch staging, error `ok:false` + `match_count`, fuzzy honesty with normalized strategies emitting `similarity: null` (never fake 1.0), dual-gate / soft-floor policy, shape flags, extract `--field` not `--select`, staging formulas)
+- Local SSOT gate: the gap inventory is a local unversioned note, so the current status of every gap lives in the ADR series and review keeps both aligned
+- Run: `cargo test --test cli_v0136_gaps`
+- Local DoD (local gates only): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`
+- Historical pin `^0.1.36`; ADR-0055
+
 
 ## What's New in v0.1.35
-
-- Residual A-* closed: suite green without `delete --yes`; large overwrite **default-deny** (`--ack-overwrite`); `watch` always emits `watch_summary`; semantic-merge conflict markers default ON; monólitos `include!` splits
-- Local DoD (no GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
+- Residual A-* closed: suite green without `delete --yes`; large overwrite default-deny (`--ack-overwrite`); `watch` always emits `watch_summary`; semantic-merge conflict markers default ON; monólitos `include!` splits
+- Local DoD (local gates only): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
 - Contract suite: `cargo test --test cli_e2e_v0135`
-- See gaps.md §20
+- See ADR-0055 for the A-* closeout matrix
+
 
 ## What's New in v0.1.34
-
-- Suite `tests/cli_v0133_oneshot_fuzzy.rs` locks the one-shot fuzzy + timeout contract (code fix logged as 0.1.33; docs-complete publish **0.1.34**)
-- Covers: expand-section hang when NEW embeds OLD finishes in **under 2 seconds**; embeds force single apply via `apply_fuzzy_one_pass`; hard ceiling **10_000** applies; global timeout default 120 / exit **124**; cooperative cancel mid-cascade / exit **143**
+- Suite `tests/cli_v0133_oneshot_fuzzy.rs` locks the one-shot fuzzy + timeout contract (code fix logged as 0.1.33; docs-complete publish 0.1.34)
+- Covers: expand-section hang when NEW embeds OLD finishes in under 2 seconds; embeds force single apply via `apply_fuzzy_one_pass`; hard ceiling 10_000 applies; global timeout default 120 / exit 124; cooperative cancel mid-cascade / exit 143
 - Explicit contract under test: `apply_fuzzy_one_pass` one-pass L→R (never re-scans inserted text); NEW embedding OLD must not hang
 - Run: `cargo test --test cli_v0133_oneshot_fuzzy`
 - Keep older suites listed below
 - See [ADR-0054](decisions/0054-v0-1-34-oneshot-fuzzy-timeout.md)
 
-## What's New in v0.1.30
 
-- Suite `tests/cli_v0130_agent_contract.rs` covers residual contract: match_count, indent_adjusted, fuzzy modes, recipe bak skip, sparse outline kind, semantic-merge help line-based, replace-all uniqueness. **Note (v0.1.35):** `--fuzzy off` = exact-only (G-010), not rejected
+## What's New in v0.1.30
+- Suite `tests/cli_v0130_agent_contract.rs` covers residual contract: match_count, indent_adjusted, fuzzy modes, recipe bak skip, sparse outline kind, semantic-merge help line-based, replace-all uniqueness. Note (v0.1.35): `--fuzzy off` = exact-only (G-010), not rejected
 - Suite `tests/cli_v0129_fuzzy_replace.rs` covers the 0.1.29 surface: fuzzy replace, `best_candidate`, durability, recipe, sparse, semantic-merge, stat, agent-surface, semantic-search, `platform.rename_method`
 - `replace --fuzzy auto|aggressive|off` (`off` = exact-only, G-010; default `auto`) with optional `--fuzzy-threshold` and bulk `--progress-every`
 - Match-failure envelopes may include `best_candidate` (schema `best-candidate.schema.json`)
 - Cooperative cancel emits `cancelled` NDJSON events (schema `cancelled-event.schema.json`, exit 143)
 - Write NDJSON reports `platform.rename_method` (`renameat2` or `rename`)
 - `write --durability full|fast|auto` trade-off for fsync cost
-- **Historical (at v0.1.29):** new subcommands: `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch` (feature), `codemod`, `semantic-search` — **41 subcommands** total
-- Feature matrix: slim `core` (~7.7 MiB, local size-gate ≤15 MiB) vs default/full AST (~52 MB)
-- **Local** gates (manual; no remote automation): size-gate slim ≤15 MiB; core-test; schema-diff on `docs/schemas`
+- Historical (at v0.1.29): new subcommands: `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch` (feature), `codemod`, `semantic-search` — 41 subcommands total
+- Feature matrix: slim `core` (10,908,040 bytes = 10.40 MiB measured on 2026-10-31, local size-gate ≤15 MiB) vs default AST (57,096,064 bytes = 54.45 MiB measured on 2026-10-31)
+- Local gates (manual; no remote automation): size-gate slim ≤15 MiB; core-test; schema-diff on `docs/schemas`
 - Run the 0.1.30 contract suite: `cargo test --test cli_v0130_agent_contract`
 - Run the 0.1.29 suite: `cargo test --test cli_v0129_fuzzy_replace`
 
-## What's New in v0.1.28
 
+## What's New in v0.1.28
 - 661 tests passing, 0 failures, 3 ignored (cross-compile gate)
 - BREAKING: `delete` now creates a backup by default (was opt-in) — pass `--no-backup` to disable
 - BREAKING: `move`/`copy` overwriting an existing destination now require `--force` OR an explicit `--backup`
@@ -58,7 +132,6 @@
 
 
 ## What's New in v0.1.27
-
 - 631+ tests passing, 0 failures, 3 ignored (cross-compile gate)
 - 10 bugs fixed: BUG-SEC-001 (CRITICAL symlink-dir escape), BUG-SCOPE-004 (CRITICAL scope --delete code destruction), BUG-GET, BUG-001, BUG-002, BUG-005, BUG-008, BUG-SCOPE-002, BUG-SCOPE-003, BUG-SCOPE-005
 - 3 known limitations documented: GAP-01 (test-fn), GAP-02 (doc-comment), GAP-03 (JS export)
@@ -69,71 +142,68 @@
 
 
 ## What's New in v0.1.25
-
 - 631 tests passing, 0 failures, 3 ignored (cross-compile gate)
 - 49 additional gaps resolved in 6 e2e audit rounds (GAP-071 through GAP-134)
 - Property-based fuzzy tests via proptest (5 properties in `tests/proptest_fuzzy.rs`)
 - ~505 e2e scenarios executed against real binary
 
-## What's New in v0.1.24
 
+## What's New in v0.1.24
 - 621 tests passing, 0 failures, 3 ignored (cross-compile gate)
 - 52 gaps resolved (GAP-2026-019 through GAP-2026-070)
 - 20 `anyhow::bail!()` converted to typed `AtomwriteError` (inline unit tests added per command)
 - 3 new ADRs (0045-0047)
 
 ### New Test Files (v0.1.24)
-
 - `tests/cli_v0124_clap_suggestion.rs` — 5 tests for GAP-019 (actionable clap error suggestions)
 - `tests/cli_gap020_diff_workspace.rs` — 3 tests for GAP-020 (diff resolve-first)
 - `tests/cli_gap021_scope_readonly.rs` — 4 tests for GAP-021 (scope read-only mode)
 
 ### Bug Fixes Validated by Existing Test Suites
-
 - GAP-022 to GAP-070: fixes validated by existing integration tests in `cli_*.rs` files
 - Each `bail!` → `AtomwriteError` conversion includes inline `#[cfg(test)]` assertions
 - `cargo test` confirms 621 total: 609 (v0.1.23) + 5 (GAP-019) + 3 (GAP-020) + 4 (GAP-021)
 
-## What's New in v0.1.23
 
+## What's New in v0.1.23
 - 609 tests passing (575 baseline v0.1.22 + 12 GAP-2026-015 + 7 GAP-2026-016 + 4 GAP-2026-017 + 8 GAP-2026-018 + 3 from [Unreleased] Windows)
 - 33 subcommands (32 from v0.1.22 + `verify` from v0.1.25)
 - 26 ADRs in docs/decisions/ (0019-0044)
-- GAP-2026-015 (allow_hyphen_values) closed; 15 CLI fields across 8 structs now accept values starting with `-`
+- GAP-2026-015 (allow_hyphen_values) closed; 12 CLI fields across 8 structs accept values starting with `-`, and the three positionals require `--` since 0.1.37
 - GAP-2026-016 (backup-by-default) closed; backup enabled by default in 9 content-mutating structs
 - GAP-2026-017 (shrink guard) closed; writes shrinking >50% blocked when --expect-checksum active
 - GAP-2026-018 (--old-file/--new-file) closed; edit reads match/replacement from files, bypassing ARG_MAX
 - New tests: `tests/cli_v0123_hyphen_values.rs` (12), `tests/cli_v0123_backup_default.rs` (7), `tests/cli_v0123_shrink_guard.rs` (4), `tests/cli_v0123_old_file.rs` (8)
 
-## What's New in v0.1.22
 
+## What's New in v0.1.22: Test Totals
 - 631+ tests passing (542 baseline v0.1.18 + 33 in v0.1.21-v0.1.22 + 46 in v0.1.23-v0.1.24 + 10 in v0.1.25)
 - 33 subcommands (30 baseline v0.1.18 + `edit-loop` + `prune-backups` from v0.1.22 + `verify` from v0.1.25)
 - 22 ADRs in docs/decisions/ (0019-0040)
 - 2 new NDJSON schemas: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
 
-## What's New in v0.1.21
 
+## What's New in v0.1.21
 - GAP-2026-012 (--allow-sequential-drift flag) closed; sequential edits no longer require re-capturing checksum between iterations
 - GAP-2026-013 Front 4 (--backup exposed in `edit` and `rollback`) closed; parity with `write` and `replace`
 - GAP-2026-014 v2 (backup default-deletes after success) closed; `--keep-backup` opt-in escape hatch added
 - ADR-0038 created documenting the backup-default-deletes paradigm
 - New tests: `tests/cli_v0121_sequential_drift.rs` (4), `tests/cli_v0121_backup_keep_flag.rs` (3), `tests/cli_v0121_edit_backup.rs` (3), `tests/cli_v0121_rollback_backup.rs` (2), `tests/cli_v0121_apply_keep.rs` (2), `tests/cli_v0121_batch_keep.rs` (2), `tests/proptest_v0121_backup_delete.rs` (2 property tests)
 
-## What's New in v0.1.22
 
+## What's New in v0.1.22
 - GAP-2026-012 Front 3 (edit-loop helper subcommand) closed; new `edit-loop` applies N pairs {old, new} in 1 invocation via NDJSON on stdin
 - GAP-2026-013 Front 2 (prune-backups subcommand) closed; new `prune-backups` provides manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` files
 - ADR-0039 created documenting the `edit-loop` design
 - ADR-0040 created documenting the `prune-backups` design
 - New tests: `tests/cli_v0121_edit_loop.rs` (4), `tests/cli_v0121_prune_backups.rs` (3)
 
+
 ## What's New in v0.1.12 (historical)
 
-This section summarizes the test-relevant changes in v0.1.12. The release added 96 new tests (was 320 baseline) for a total of **445 tests in 43 test suites**. v0.1.15 raises the total to **542 tests** (+2 unit tests in v0.1.14, +8 G117 tests in `tests/cli_edit.rs`, +6 G118 tests in `tests/cli_write.rs`).
+This section summarizes the test-relevant changes in v0.1.12. The release added 96 new tests (was 320 baseline) for a total of 445 tests in 43 test suites. v0.1.15 raises the total to 542 tests (+2 unit tests in v0.1.14, +8 G117 tests in `tests/cli_edit.rs`, +6 G118 tests in `tests/cli_write.rs`).
 
 ### New Test Files (10 Added in v0.1.11+v0.1.12)
-
 - `tests/cli_v012_regressions.rs` -- 11 tests for v0.1.2 through v0.1.4 regressions
 - `tests/cli_v012_audit_regressions.rs` -- 27 tests for the v0.1.12 G72/G114 audit
 - `tests/cli_v012_batch4_regressions.rs` -- 23 tests for the v0.1.12 final batch
@@ -147,7 +217,6 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 - `tests/cli_case.rs` -- 3 tests for v14 Tier 3 case subcommand
 
 ### New Tests in Existing Files
-
 - 12 tests in `src/binary_detect.rs::tests` (G41 content_inspector)
 - 16 tests in `src/syntax_check.rs::tests` (G72 tree-sitter)
 - 8 tests in `src/wal.rs::tests` (G114 WAL)
@@ -156,7 +225,6 @@ This section summarizes the test-relevant changes in v0.1.12. The release added 
 - 3 tests in `src/atomic.rs::tests` (WriteStrategy: rename/inplace/copyback)
 
 ### Test Suite Organization
-
 - Total: 43 test suites (was 34 in v0.1.10)
 - Unit tests in `src/`
 - Integration tests in `tests/cli_*.rs`
@@ -183,8 +251,11 @@ cargo test --test cli_v012_regressions
 cargo test --test cli_v012_audit_regressions
 cargo test --test cli_v012_batch4_regressions
 
-# Core-only (matches the local core-test gate)
-cargo test --no-default-features --features core
+# Supported run: the full suite with the default features
+cargo test --locked
+
+# Slim build: only prove that it compiles (xtask exists in a source checkout only)
+cargo xtask check-features
 
 # Run with output visible for debugging
 cargo test --test cli_v012_syntax_check -- --nocapture
@@ -194,21 +265,19 @@ cargo test --test cross_compile_check -- --ignored
 ```
 
 ### Coverage
-
-- 20.19% line coverage via `cargo tarpaulin` (935/4631 lines covered)
-- Lower than ideal because tarpaulin only counts unit tests, not CLI integration tests
-- The integration test suite is the primary coverage metric (631+ tests across 63+ suites)
+- Historical (at v0.1.12): 20.19% line coverage via `cargo tarpaulin` (935/4631 lines covered), measured at that release and not repeated since
+- It was low because tarpaulin only counts unit tests, not CLI integration tests
+- The integration test suite is the primary coverage metric (see Current Stats)
 
 ### Dependencies Added
-
-- `tree-sitter-language-pack = "1.8"` -- 305 languages for query/outline/syntax-check
+- `tree-sitter-language-pack = "1.8"` -- 305 languages for query/outline/syntax-check at that version, and the tree now pins 1.22.1 with 372
 - All test dependencies are already in the dev-dependencies section
 
 ### ADRs and Schemas
-
 - 29 ADRs in `docs/decisions/` (0019-0047) explain the architectural decisions behind the v0.1.12 to v0.1.27 features
-- 29 JSON schemas in `docs/schemas/` (full index in `docs/schemas/README.md`); v0.1.22 added `edit-loop-output` and `prune-backups-output`
+- Historical (at v0.1.27): 29 JSON schemas in `docs/schemas/`; the current count is 54 (full index in `docs/schemas/README.md`)
 - See [docs/decisions/README.md](decisions/README.md) for the full list of ADRs
+
 
 ## Why Categorized Tests
 - Each test category validates a different layer of the system
@@ -220,9 +289,11 @@ cargo test --test cross_compile_check -- --ignored
 
 
 ## Current Stats
-- 70+ Rust files across `src/` and `tests/`
-- **700+ tests listed (v0.1.34 working tree) across 63+ test suites** (unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency); includes `cli_v0133_oneshot_fuzzy`
-- **96 new tests added in v0.1.11+v0.1.12**:
+- Final run of v0.1.37 recorded in `CHANGELOG.md`: 131 test targets, 1486 tests passed, 0 failed and 9 ignored (the `cross_compile_*` tests)
+- Inventory measured with `fd` and `rg` on the source tree: 131 integration test files in `tests/` (plus `tests/common/mod.rs`, `doc_scan.rs` and `schema_check.rs`), 994 `#[test]` functions in `tests/` and 485 in `src/` (DERIVED: 994 + 485 = 1479), plus 9 snapshot files, 4 proptest files and 2 fuzz targets
+- Measure it again with `rg -c '#\[test\]' tests src` and `cargo test --lib --tests`. A macro-generated test (proptest) is not counted by that `rg`, so the number of tests that run can differ from the number of `#[test]` attributes
+- Suites by theme: unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency
+- Historical (v0.1.11 and v0.1.12): 96 new tests were added then:
   - 11 tests in `tests/cli_v012_regressions.rs` (GAP 13, GAP 14, GAP 18 fixes)
   - 27 tests in `tests/cli_v012_audit_regressions.rs` (v0.1.12 G72/G114 audit)
   - 23 tests in `tests/cli_v012_batch4_regressions.rs` (v0.1.12 final batch)
@@ -236,7 +307,7 @@ cargo test --test cross_compile_check -- --ignored
   - 3 tests in `tests/cli_case.rs` (v14 Tier 3)
   - 3 mtime regression tests in `src/atomic.rs::tests`
   - 7 GAP 13 error-suggestion tests in `src/error.rs::tests`
-  - 3 cross-compile gate tests in `tests/cross_compile_check.rs`
+  - 3 cross-compile gate tests in `tests/cross_compile_check.rs` (v0.1.4; there are 9 now)
   - 16 tests in `src/syntax_check.rs::tests` (G72 tree-sitter)
   - 8 tests in `src/wal.rs::tests` (G114 WAL)
 - 12 tests in `src/binary_detect.rs::tests` (G41 content_inspector)
@@ -305,7 +376,9 @@ cargo test --test cross_compile_check -- --ignored
 - Other regressions cover scope, batch path/source aliases, fuzzy edit, search files dedup, edit multi NDJSON, clap JSON errors, json-schema, validate path jail, dead flags, mtime
 
 ### Cross-Compile Gate (v0.1.4)
-- `tests/cross_compile_check.rs` -- 3 tests guarding Windows-only compilation
+- `tests/cross_compile_check.rs` -- 9 tests (3 guarded Windows-only compilation in v0.1.4, 6 more cover Windows arm64, Linux musl and aarch64, Apple aarch64 and x64)
+- They were NOT validated for v0.1.37: the audit host lacks the foreign linkers (for example `x86_64-w64-mingw32-gcc`)
+- The 9 tests are `cross_compile_windows_gnu_x64_succeeds`, `cross_compile_windows_gnu_i686_succeeds`, `cross_compile_windows_msvc_succeeds`, `cross_compile_windows_arm64_msvc_succeeds`, `cross_compile_linux_musl_x64_succeeds`, `cross_compile_linux_aarch64_gnu_succeeds`, `cross_compile_linux_aarch64_musl_succeeds`, `cross_compile_apple_aarch64_succeeds` and `cross_compile_apple_x64_succeeds`
 - `cross_compile_windows_gnu_x64_succeeds` -- asserts `cargo check --target x86_64-pc-windows-gnu` succeeds and emits no E0433, E0308, or E0507
 - `cross_compile_windows_gnu_i686_succeeds` -- asserts the same for `i686-pc-windows-gnu` (32-bit Windows)
 - `cross_compile_windows_msvc_succeeds` -- asserts the same for `x86_64-pc-windows-msvc` (Microsoft Visual C++ toolchain)
@@ -323,14 +396,16 @@ cargo test --test cross_compile_check -- --ignored
 - Regression files stored alongside test files
 
 ### Signal Tests
-- Located in `tests/signal_test.rs` -- 1 test
+- Located in `tests/signal_test.rs` -- 5 tests
+- `sigpipe_handler_ends_the_run_with_exit_141` proves that a closed pipe ends the run with exit 141 (SIGPIPE has a cooperative handler, not `SIG_DFL`)
+- `sigint_during_search_exits_130` and `sigterm_during_search_exits_143` prove the exit codes of the signals
+- `batch_interrupted_by_signal` and `shutdown_message_on_stderr` prove the cleanup and the shutdown message
 - Verify graceful shutdown behavior on signal reception
 
 ### NDJSON Validation Tests
-- Located in `tests/ndjson_valid_test.rs` -- 17 tests
-- Validate NDJSON output structure for 20 of 21 commands
-- Include `jaq` interop tests verifying piped JSON parsing
-- Include i18n test confirming `--locale` does not alter JSON output
+- Located in `tests/ndjson_valid_test.rs` -- 21 tests (counted with `rg -c '#\[test\]'`)
+- 19 tests validate the NDJSON output of 19 of the 47 commands: `search`, `hash`, `list`, `diff`, `write`, `read`, `edit`, `replace`, `count`, `backup`, `copy`, `move`, `delete`, `batch`, `calc`, `regex`, `rollback` (not-found case), `apply` and `extract`
+- 2 `jaq` interop tests (`search` and `read`) verify piped JSON parsing, and skip when `jaq` is not in `PATH`
 
 ### Concurrency Tests
 - Located in `tests/cli_concurrency.rs`
@@ -411,11 +486,11 @@ cargo insta review
 - Run `cargo test` with default settings
 - Skip long-running property tests with `PROPTEST_CASES=10`
 - Suitable for pre-commit hooks
-- Total time: under 30 seconds
+- Total time: an old estimate of under 30 seconds, not measured for v0.1.37
 
 ### Full (local pre-release v0.1.36+)
 
-Required local release gate (no product GitHub Actions):
+Required local release gate (local gates only):
 
 ```bash
 cargo fmt --check
@@ -423,8 +498,12 @@ cargo clippy --all-targets -- -D warnings
 cargo test --lib
 cargo test --tests
 cargo test --test cli_v0136_gaps
-./scripts/check-gaps-ssot.sh
 ```
+
+### Slim (compile check only)
+- `cargo test --no-default-features --features core` compiles but is NOT green: 44 tests in 11 targets (`cli_scope`, `cli_transform`, `cli_query`, `cli_outline`, `cli_concurrency`, `cli_e2e_v0135` and others) need the `ast` feature and carry no `#[cfg(feature = "ast")]` (`gaps.md` W19, `CHANGELOG.md` Notes)
+- Use `cargo xtask check-features` to prove that the slim build compiles: it runs `cargo check --locked` for the `core` and `core,watch` sets and stops at the first failure
+- Run the test suite with the default features
 
 ### Full (local pre-release)
 - Run `cargo test` with all features
@@ -433,7 +512,7 @@ cargo test --test cli_v0136_gaps
 - Run `cargo insta test` for snapshot verification
 - Run property tests with default case count
 - Suitable for pull request validation
-- Total time: under 2 minutes
+- Total time: an old estimate of under 2 minutes, not measured for v0.1.37
 
 ### Release (Pre-Publish)
 - Run `cargo test --release` for optimized build testing
@@ -441,9 +520,9 @@ cargo test --test cli_v0136_gaps
 - Run `cargo test --test proptest_backup` with `PROPTEST_CASES=1000`
 - Verify all snapshots are up to date with `cargo insta test`
 
-### Performance (local only — no CI)
-Rules Rust eficiência + latência: measure **before** optimizing; never compare
-debug vs release; prefer **tail percentiles** (P50/P99/P999/P9999) over means.
+### Performance (local only)
+Rules Rust eficiência + latência: measure before optimizing; never compare
+debug vs release; prefer tail percentiles (P50/P99/P999/P9999) over means.
 
 ```bash
 # Criterion microbenches (hash + read/mmap). Profile inherits release (fat LTO, CGU=1).
@@ -462,7 +541,7 @@ RUSTFLAGS='-C target-cpu=native' cargo build --release
 # cargo flamegraph --bin atomwrite -- search PATTERN --path .
 ```
 
-**Latency budget notes (CLI one-shot, not HFT):**
+Latency budget notes (CLI one-shot, not HFT):
 
 | Path | Dominated by | Notes |
 |------|----------------|-------|
@@ -473,13 +552,14 @@ RUSTFLAGS='-C target-cpu=native' cargo build --release
 
 Release knobs live in `Cargo.toml` (`[profile.release]`, `[profile.bench]`,
 `[profile.min-size]`) and the mold linker in `.cargo/config.toml` (Linux x86_64).
-**No GitHub Actions / CI benchmark gates** (project policy).
+No remote benchmark gates: the benchmarks run on the local machine only (project policy).
 ## Logging and test harness knobs
-- Binary runtime logging is **CLI + XDG only** (v0.1.35): use `-v`/`-vv`/`-vvv` and `-q`/`-qq`; optional file tee under XDG state `…/atomwrite/logs` via `directories::ProjectDirs` (no product `ATOMWRITE_*` or `RUST_LOG` knobs in the binary).
+- Binary runtime logging is CLI + XDG only (v0.1.35): use `-v`/`-vv`/`-vvv` and `-q`/`-qq`; optional file tee under XDG state `…/atomwrite/logs` via `directories::ProjectDirs` (no product `ATOMWRITE_*` or `RUST_LOG` knobs in the binary).
 - Tracing entrypoint: `init_tracing` (local diagnostics only — no product telemetry).
+- The `common::hermetic` helper sets `HOME`, `XDG_*`, `LANG` and `LC_ALL` on the child process only, for the tests; it is not a product setting.
 - Cargo/test harness only (not product config): `PROPTEST_CASES`, `INSTA_UPDATE`, `RUST_TEST_THREADS`, `CARGO_TARGET_DIR`.
-- Do **not** document or rely on product environment variables for logging, locale, workspace, backup, or home override — removed in v0.1.35 (use CLI + XDG only).
-
+- Do not document or rely on product environment variables for logging, locale, workspace, backup, or home override — removed in v0.1.35 (use CLI + XDG only).
+- `doctor` reads no environment variable: host detection uses file probes only, and this configures no product knob.
 
 
 ## Troubleshooting
@@ -511,6 +591,17 @@ Release knobs live in `Cargo.toml` (`[profile.release]`, `[profile.bench]`,
 - Use `RUST_TEST_THREADS=1` to run sequentially
 - Check that no test writes to a path another test reads
 
+### Parser Download in Tests
+- The `outline`, `query` and `--syntax-check` tests need the tree-sitter parser bundle (23,031,807 bytes on Linux x86_64, which is 21,97 MiB) in the real `XDG_CACHE_HOME`; the first run downloads it, so run it once with network access or fill the cache beforehand
+- The tests never read the real `HOME`, config or locale preference: the `common::hermetic` helper isolates them, and only the cache is shared
+
+### A Test Depends on the Machine
+- If a test passes on one machine and fails on another, check that it builds its command through `common::hermetic(...)` and does not read a config of the developer
+- A test that sets its own config must redirect `HOME` and `XDG_*` after calling `hermetic`
+
+### Slim Tests Fail
+- `cargo test --no-default-features --features core` is expected to fail 44 tests in 11 targets that need the `ast` feature; run the suite with the default features instead (see Local test profiles)
+
 ### Cross-Compile Gate Fails
 - Confirm the Windows target is installed: `rustup target list --installed`
 - Install missing targets: `rustup target add x86_64-pc-windows-gnu i686-pc-windows-gnu x86_64-pc-windows-msvc`
@@ -523,26 +614,23 @@ Release knobs live in `Cargo.toml` (`[profile.release]`, `[profile.bench]`,
 
 ## v0.1.20 — What Is New
 
-This release introduces a new safety layer called **intention guards** and renames the global `--lang` flag to `--locale` to disambiguate from the tree-sitter `--lang` selector used by `scope` and `transform`.
+This release introduces a new safety layer called intention guards and renames the global `--lang` flag to `--locale` to disambiguate from the tree-sitter `--lang` selector used by `scope` and `transform`.
 
 ### Intention Guards (5 OPT-IN flags)
-
-- `--require-backup <N>` — refuse the operation when fewer than `N` retained backups exist for the target
-- `--confirm` — legacy awareness flag on `write` (historical: interactive Y/N on large overwrite). **Superseded in v0.1.35:** large overwrite is one-shot default-deny via `--ack-overwrite` (no Y/N); `delete --confirm` is **rejected** (use `--plan`)
-- `--auto-rotate <N>` — automatically rotate the backup ring down to `N` entries after a successful write
-- `--risk-threshold <LOW|MEDIUM|HIGH>` — block operations whose classified risk meets or exceeds the threshold
+- `--require-backup` — require `--backup`: abort when it is missing and the target file exists (takes no value)
+- `--confirm` — legacy awareness flag on `write` (historical: interactive Y/N on large overwrite). Superseded in v0.1.35: large overwrite is one-shot default-deny via `--ack-overwrite` (no Y/N); `delete --confirm` is rejected (use `--plan`)
+- `--auto-rotate` — force an automatic rotation backup for recently modified files (age from `[write].auto_rotate_max_age_secs`, default 24 h; takes no value)
+- `--risk-threshold <PERCENT>` — size-delta threshold in percent for the risk warning (default 255 = off; for example `--risk-threshold 50`)
 - `--locale <en|pt-BR>` — renamed from `--lang` to disambiguate from the tree-sitter `--lang`
 
 ### Other Additions
-
 - `count --by-size` — list the largest files in the tree with sizes and line counts
-- `read --mode raw|envelope` — select between byte-stream output and structured NDJSON envelope
+- `read --format raw|ndjson` — select between byte-stream output and structured NDJSON envelope (an old `--mode` spelling never existed)
 - `search --no-begin-end` — disable the implicit `^` and `$` anchor decoration in regex output
 - `write --preserve-timestamps` — keep the source file mtime when overwriting
-- `scope --lang rust` — explicit alias accepted for ergonomic symmetry with `transform --lang`
+- `scope --lang rust` — explicit alias of `scope --language`; `transform` takes `-l`/`--language` only
 
 ### Statistics
-
 - 542 tests passing in 47 integration suites, 0 failures
 - 11 GAP-2026 closed
 - 3 Windows cross-compile targets green
@@ -557,6 +645,6 @@ rg -l -- '--lang\b' .
 # Bulk replace while preserving other matches
 fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 
-# Or via ruplacer
-ruplacer --subvert --lang --locale
+# Or via ruplacer (a dry run until you add --go)
+ruplacer -- '--lang' '--locale' .
 ```

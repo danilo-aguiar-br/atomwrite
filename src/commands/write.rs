@@ -4,19 +4,38 @@
 //! Workload: I/O-bound (stdin read + atomic write).
 //! Parallelism: none — single target file.
 
-use std::io::{BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::time::Instant;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 
 use crate::atomic::{AtomicWriteOptions, atomic_write};
 use crate::checksum;
 use crate::cli::{GlobalArgs, WriteArgs};
-use crate::commands::resolve_backup;
+use crate::commands::{StdinCapOrigin, read_stdin_content_cancellable, resolve_backup};
+use crate::constants::{PERCENT_SCALE, WRITE_RISK_HIGH_PERCENT, WRITE_RISK_MEDIUM_PERCENT};
 use crate::error::AtomwriteError;
 use crate::ndjson_types::WriteOutput;
 use crate::output::NdjsonWriter;
 use crate::signal::ShutdownSignal;
+
+/// Line-ending mode in effect: the flag when it names one, else the config.
+///
+/// `--line-ending` defaults to `auto`, so a value of `auto` cannot tell "the
+/// caller asked for auto" from "the caller said nothing". The config key
+/// `defaults.line_ending` is only consulted in the second case, and `auto`
+/// there means the same auto-detection the flag default asks for.
+fn effective_line_ending(
+    args: &WriteArgs,
+    defaults: &crate::config::DefaultsSection,
+) -> crate::line_endings::LineEnding {
+    use clap::ValueEnum;
+    if args.line_ending != crate::line_endings::LineEnding::Auto {
+        return args.line_ending;
+    }
+    crate::line_endings::LineEnding::from_str(&defaults.line_ending, true)
+        .unwrap_or(crate::line_endings::LineEnding::Auto)
+}
 
 /// Create or overwrite a file atomically from stdin content.
 ///
@@ -49,11 +68,39 @@ pub fn cmd_write(
     let resolved_backup = resolve_backup(&args.backup_opts, defaults);
     let effective_backup = resolved_backup.backup;
 
+    // The global `--max-filesize` bounds the payload too, exactly like it bounds
+    // the target: a verb-local `--max-size` only narrows it further, and the two
+    // never disagree. Checked before stdin is consumed so a rejected overwrite
+    // does not drain the pipe.
+    // The config key `defaults.max_filesize` fills the cap the flag did not
+    // name. The flag wins because it is the explicit target designation; the
+    // config key exists so an operator can lower the ceiling once, and a key
+    // nothing reads is a promise the product does not keep.
+    let global_cap = match global.max_filesize {
+        Some(n) => n,
+        None => defaults.max_filesize.max(1),
+    };
+    if let Ok(meta) = std::fs::metadata(&resolved) {
+        if meta.is_file() && meta.len() > global_cap {
+            return Err(AtomwriteError::FileTooLarge {
+                path: resolved,
+                size: meta.len(),
+                max_size: global_cap,
+            }
+            .into());
+        }
+    }
+    let (stdin_cap, cap_origin) = match args.max_size {
+        Some(local) => (Some(local), StdinCapOrigin::LocalMaxSize),
+        None => (Some(global_cap), StdinCapOrigin::GlobalMaxFilesize),
+    };
+
     let stdin_bytes_read;
     let mut content = {
         let (buf, n) = read_stdin_content_cancellable(
             stdin,
-            args.max_size,
+            stdin_cap,
+            cap_origin,
             args.allow_empty_stdin,
             Some(shutdown),
         )?;
@@ -62,9 +109,18 @@ pub fn cmd_write(
     };
 
     if shutdown.is_shutdown() {
-        bail!("interrupted before write");
+        return Err(crate::signal::cancelled_error("interrupted before write").into());
     }
 
+    // A1: append/prepend compute the new content from the file on disk, so lock
+    // BEFORE reading it (stdin was read above, never under the lock).
+    let _update_lock = if (args.append || args.prepend)
+        && resolved.parent().is_some_and(std::path::Path::is_dir)
+    {
+        Some(crate::lock::acquire_for_update(&resolved)?)
+    } else {
+        None
+    };
     if args.append || args.prepend {
         content = handle_append_prepend(
             &resolved,
@@ -75,7 +131,7 @@ pub fn cmd_write(
         )?;
     }
 
-    content = normalize_line_endings(&content, args.line_ending, &resolved);
+    content = normalize_line_endings(&content, effective_line_ending(args, defaults), &resolved);
 
     // G120 L3: cross-validation. When the caller combines
     // `--append` (or `--prepend`) with `--expect-checksum` and the stdin
@@ -117,52 +173,34 @@ pub fn cmd_write(
     // One-shot: never read Y/N from stdin (collides with payload). Require --ack-overwrite
     // when the existing target exceeds XDG [write].confirm_large_bytes.
     if resolved.exists() {
-        let size = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
-        if size > write_cfg.confirm_large_bytes && !args.ack_overwrite {
-            return Err(AtomwriteError::InvalidInput {
-                reason: format!(
-                    "overwrite of large file {} ({} bytes) requires --ack-overwrite \
-                     (threshold XDG [write].confirm_large_bytes={}; one-shot; no interactive prompt)",
-                    resolved.display(),
-                    size,
-                    write_cfg.confirm_large_bytes
-                ),
-            }
-            .into());
-        }
-    }
-
-    // G-017 / G-028: block writes that shrink more than configured percent (not only with CAS).
-    if !args.allow_shrink && resolved.exists() {
         let original_size = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
-        let new_size = content.len() as u64;
-        if original_size > 0 {
-            let remain_pct = new_size.saturating_mul(100) / original_size;
-            let min_remain = 100u64.saturating_sub(u64::from(write_cfg.shrink_block_percent));
-            if remain_pct < min_remain {
-                let shrink_pct =
-                    100u64.saturating_sub(new_size.saturating_mul(100) / original_size);
-                return Err(AtomwriteError::InvalidInput {
-                    reason: format!(
-                        "stdin is {}% smaller than target ({} -> {} bytes); \
-                         pass --allow-shrink to confirm intentional truncation",
-                        shrink_pct, original_size, new_size
-                    ),
-                }
-                .into());
-            }
-        }
+        crate::commands::write_guards::check_replacement_size(
+            &resolved,
+            original_size,
+            content.len() as u64,
+            write_cfg,
+            args.ack_overwrite,
+            args.allow_shrink,
+        )?;
     }
 
     let target_str = args.target.display().to_string();
 
     if args.dry_run {
+        // The plan carries the risk the write would report: the dry-run is the
+        // run an agent reads before deciding to write at all.
         let plan = crate::ndjson_types::DryRunPlan {
             r#type: "plan",
             operation: "write".into(),
             path: target_str,
             would_modify: true,
             details: Some(format!("{} bytes from stdin", content.len())),
+            risk_assessment: crate::commands::write_guards::assess_content_risk(
+                &content,
+                std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0),
+                content.len() as u64,
+                write_cfg,
+            ),
         };
         writer.write_event(&plan)?;
         return Ok(());
@@ -202,8 +240,12 @@ pub fn cmd_write(
 
     let mut risk_assessment = None;
 
-    if let Some(content_risk) = assess_content_risk(&content, original_bytes, new_bytes, write_cfg)
-    {
+    if let Some(content_risk) = crate::commands::write_guards::assess_content_risk(
+        &content,
+        original_bytes,
+        new_bytes,
+        write_cfg,
+    ) {
         crate::runtime::warn_stderr(
             global.color_mode(),
             format!(
@@ -217,11 +259,11 @@ pub fn cmd_write(
     if risk_assessment.is_none() && resolved.exists() && !args.append && !args.prepend {
         let original = original_bytes;
         if original > 0 {
-            let delta_pct = ((new_bytes.abs_diff(original)) * 100 / original) as u32;
+            let delta_pct = ((new_bytes.abs_diff(original)) * PERCENT_SCALE / original) as u32;
             if delta_pct >= u32::from(args.risk_threshold) {
-                let level = if delta_pct >= 90 {
+                let level = if delta_pct >= WRITE_RISK_HIGH_PERCENT {
                     "high"
-                } else if delta_pct >= 70 {
+                } else if delta_pct >= WRITE_RISK_MEDIUM_PERCENT {
                     "medium"
                 } else {
                     "low"
@@ -265,7 +307,7 @@ pub fn cmd_write(
         preserve_timestamps: args.preserve_timestamps,
         backup_output_dir: None,
         strategy: None,
-        strict_atomic: false,
+        strict_atomic: args.strict.strict_atomic,
         wal_policy: args.wal_policy,
         // GAP-106: --require-backup implies --keep-backup so the backup
         // is retained on disk and the reported backup_path is valid.

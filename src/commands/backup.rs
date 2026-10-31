@@ -70,6 +70,10 @@ pub fn cmd_backup(
         sources.push(source);
     }
 
+    // `--limit` bounds the work: a backup copies bytes, so the cut has to land
+    // before the fan-out, not after it.
+    crate::output::cap_collected(&mut sources);
+
     let items: Vec<Result<BackupItem, anyhow::Error>> = if should_parallelize(sources.len()) {
         sources
             .par_iter()
@@ -82,14 +86,20 @@ pub fn cmd_backup(
             .collect()
     };
 
-    for item in items {
-        match item? {
-            BackupItem::SkipNonFile => {}
-            BackupItem::Plan {
+    // One source that cannot be backed up is a hole in the answer, not the end
+    // of the run: the copies already on disk stay useful, and the summary names
+    // what failed instead of vanishing behind an error envelope.
+    let mut failures = crate::ndjson_types::FailureTally::default();
+    let mut skipped = 0u64;
+    for (source, item) in sources.iter().zip(items) {
+        match item {
+            Err(err) => failures.record(source, err),
+            Ok(BackupItem::SkipNonFile) => skipped += 1,
+            Ok(BackupItem::Plan {
                 path,
                 bytes,
                 checksum,
-            } => {
+            }) => {
                 writer.write_event(&BackupPlan {
                     r#type: "plan",
                     operation: "backup",
@@ -98,13 +108,13 @@ pub fn cmd_backup(
                     checksum,
                 })?;
             }
-            BackupItem::Done {
+            Ok(BackupItem::Done {
                 path,
                 backup_path,
                 checksum,
                 bytes,
                 elapsed_ms,
-            } => {
+            }) => {
                 writer.write_event(&BackupResult {
                     r#type: "backup",
                     path,
@@ -119,13 +129,31 @@ pub fn cmd_backup(
         }
     }
 
-    writer.write_event(&BackupSummary {
+    let (failed_count, failed_items, first) = failures.into_parts();
+    let files_failed = (failed_count > 0).then_some(failed_count);
+    let summary = BackupSummary {
         r#type: "summary",
         files_backed_up: backed_up,
         total_bytes,
+        files_budget_dropped: Some(crate::output::budget_dropped()).filter(|n| *n > 0),
         dry_run: args.dry_run,
         elapsed_ms: start.elapsed().as_millis() as u64,
-    })?;
+        walker_stopped_early: crate::output::limit_reached().then_some(true),
+        files_skipped: (skipped > 0).then_some(skipped),
+        files_failed,
+        partial: crate::ndjson_types::partial_of(files_failed),
+        errors: (!failed_items.is_empty()).then_some(failed_items),
+    };
+    // A dry run copies nothing, so its verdict is the plan it printed; a real
+    // run that copied at least one source answered, and only a run with no copy
+    // at all exits with the failure.
+    if let Some(err) = first
+        && backed_up == 0
+        && !dry_run
+    {
+        return Err(writer.publish_failure(&summary, err));
+    }
+    writer.write_terminal(&summary)?;
 
     Ok(())
 }
@@ -138,7 +166,7 @@ fn process_one_backup(
     dry_run: bool,
 ) -> Result<BackupItem> {
     if crate::signal::is_global_shutdown() {
-        return Err(crate::signal::cancelled_error("backup cancelled by signal").into());
+        return Err(crate::signal::cancelled_error(crate::signal::current_cancel_reason()).into());
     }
     if !source.is_file() {
         tracing::warn!(path = %source.display(), "skipping non-file path");

@@ -1,22 +1,24 @@
 ---
 source: tests/snapshot_write.rs
-assertion_line: 30
 expression: event
 ---
 {
+  "type": "write",
+  "status": "success",
+  "path": "[redacted]",
   "bytes_written": 17,
   "checksum": "[redacted]",
   "elapsed_ms": "[redacted]",
-  "path": "[redacted]",
+  "stdin_bytes_read": 17,
+  "wal_policy": "auto",
   "platform": {
+    "fsync": "[platform_fsync]",
     "dir_fsync": "[platform_dir_fsync]",
     "durability": "fast",
-    "fsync": "[platform_fsync]",
     "rename_method": "renameat2"
   },
-  "status": "success",
-  "stdin_bytes_read": 17,
-  "type": "write",
-  "wal_policy": "auto"
+  "ok": true,
+  "workspace_source": "argv",
+  "target_resolved": "[redacted]",
+  "target_source": "argv"
 }
-

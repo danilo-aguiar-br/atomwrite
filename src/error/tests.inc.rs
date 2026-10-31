@@ -281,7 +281,10 @@ mod tests {
                 true,
             ),
             (
-                AtomwriteError::ExdevFallbackDisabled { path: p.clone() },
+                AtomwriteError::ExdevFallbackDisabled {
+                    path: p.clone(),
+                    reason: String::new(),
+                },
                 91,
                 ErrorClass::PreconditionFailed,
                 "EXDEV_FALLBACK_DISABLED",
@@ -361,7 +364,7 @@ mod tests {
     #[test]
     fn gap13_workspace_jail_suggestion_when_workspace_not_provided() {
         // English assertion: pin UI locale for whole test (host may be pt-BR).
-        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Idioma::En);
+        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Language::En);
         let err = AtomwriteError::WorkspaceJail {
             path: PathBuf::from("/etc/passwd"),
             workspace: PathBuf::from("/home/user/project"),
@@ -380,7 +383,7 @@ mod tests {
     #[test]
     fn gap13_workspace_jail_suggestion_when_workspace_provided() {
         // Hold locale mutex for the whole assertion (parallel-test race fix).
-        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Idioma::En);
+        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Language::En);
         let err = AtomwriteError::WorkspaceJail {
             path: PathBuf::from("/etc/passwd"),
             workspace: PathBuf::from("/home/user/project"),
@@ -404,7 +407,7 @@ mod tests {
 
     #[test]
     fn content_source_jail_uses_staging_suggestion() {
-        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Idioma::En);
+        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Language::En);
         let err = AtomwriteError::WorkspaceJail {
             path: PathBuf::from("/tmp/old.txt"),
             workspace: PathBuf::from("/home/user/project"),
@@ -492,6 +495,7 @@ mod tests {
             },
             AtomwriteError::ExdevFallbackDisabled {
                 path: PathBuf::from("/x"),
+                reason: "cross-device rename".into(),
             },
             AtomwriteError::CopyBackBlake3Failed {
                 path: PathBuf::from("/x"),
@@ -567,7 +571,7 @@ mod tests {
         // Default ErrorContext + default locale (`en`) must yield the English
         // suggestion from `locales/en.toml` (locale-aware suggestions).
         // A-012: RAII guard serializes locale mutations across parallel tests.
-        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Idioma::En);
+        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Language::En);
         let err = AtomwriteError::NotFound {
             path: PathBuf::from("/x"),
         };
@@ -581,7 +585,7 @@ mod tests {
     #[test]
     fn suggestion_follows_pt_br_locale() {
         // A-012: hold mutex for entire assertion window (restore on drop).
-        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Idioma::PtBr);
+        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Language::PtBr);
         let err = AtomwriteError::NotFound {
             path: PathBuf::from("/x"),
         };
@@ -591,5 +595,135 @@ mod tests {
             s.contains("arquivo") || s.contains("caminho"),
             "pt-BR suggestion expected, got: {s}"
         );
+    }
+
+    fn cap_error(reason: &str) -> AtomwriteError {
+        AtomwriteError::InvalidInput {
+            reason: reason.into(),
+        }
+    }
+
+    const CONTENT_CAP_REASON: &str = "content too large for the fuzzy cascade (31 bytes > 8 max); raise [fuzzy].max_content_bytes in config.toml or pass --fuzzy off for exact-only matching";
+
+    #[test]
+    fn fuzzy_cap_hint_is_fully_localized_and_keeps_the_reason_out_of_it() {
+        let err = cap_error(CONTENT_CAP_REASON);
+        {
+            let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Language::PtBr);
+            let hint = ErrorJson::from_error(&err).suggestion.expect("hint");
+            assert!(hint.contains("aumente"), "{hint}");
+            assert!(hint.contains("`[fuzzy].max_content_bytes`"), "{hint}");
+            assert!(hint.contains("`--fuzzy off`"), "{hint}");
+            assert!(!hint.contains("raise"), "English text leaked: {hint}");
+            assert!(!hint.contains("too large"), "the reason leaked: {hint}");
+        }
+        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Language::En);
+        let hint = ErrorJson::from_error(&err).suggestion.expect("hint");
+        assert!(hint.contains("raise `[fuzzy].max_content_bytes`"), "{hint}");
+        assert!(hint.contains("`--fuzzy off`"), "{hint}");
+    }
+
+    /// The reason the fuzzy code emits and the marker that picks the hint come
+    /// from the same constants; this fails if either side stops matching.
+    #[test]
+    fn emitted_fuzzy_cap_reasons_select_their_dedicated_hints() {
+        use crate::fuzzy::{MatchOpts, apply_fuzzy_one_pass, match_pair_with};
+        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Language::En);
+        let hint_of = |err: AtomwriteError| {
+            assert!(
+                matches!(err, AtomwriteError::InvalidInput { .. }),
+                "{err:?}"
+            );
+            ErrorJson::from_error(&err).suggestion.expect("hint")
+        };
+        let capped = MatchOpts {
+            max_content_bytes: 8,
+            ..MatchOpts::default()
+        };
+        let err = match_pair_with("alpha beta gamma delta", "wrongword", "x", capped).unwrap_err();
+        assert!(
+            hint_of(err).contains("raise `[fuzzy].max_content_bytes`"),
+            "the content-cap reason no longer selects its hint"
+        );
+        let long = "x".repeat(crate::constants::FUZZY_MAX_PATTERN_BYTES + 1);
+        let err = match_pair_with("y", &long, "z", MatchOpts::default()).unwrap_err();
+        assert!(
+            hint_of(err).contains("shorten the block"),
+            "cascade pattern cap"
+        );
+        let err = apply_fuzzy_one_pass("y", &long, "z", MatchOpts::default(), None).unwrap_err();
+        assert!(
+            hint_of(err).contains("shorten the block"),
+            "one-pass pattern cap"
+        );
+    }
+
+    #[test]
+    fn fuzzy_pattern_cap_and_generic_invalid_input_have_their_own_hints() {
+        let _guard = crate::locale::LocaleTestGuard::set(crate::locale::Language::PtBr);
+        let pattern =
+            cap_error("fuzzy pattern too large (70000 bytes > 65536 max); shorten the block");
+        let hint = ErrorJson::from_error(&pattern).suggestion.expect("hint");
+        assert!(hint.contains("encurte"), "{hint}");
+        assert!(!hint.contains("shorten"), "{hint}");
+        let generic = cap_error("old string must not be empty");
+        let hint = ErrorJson::from_error(&generic).suggestion.expect("hint");
+        assert!(hint.contains("confira os argumentos"), "{hint}");
+        assert!(!hint.contains("empty"), "the reason leaked: {hint}");
+    }
+
+    #[test]
+    fn edit_pair_failed_is_a_match_failure_with_the_invalid_input_exit() {
+        let err = AtomwriteError::EditPairFailed {
+            index: 2,
+            total: 3,
+            reason: "x".into(),
+            pair_results: Box::new(vec![]),
+            best_candidate: None,
+        };
+        assert_eq!(err.error_code(), "MATCH_FAILED");
+        assert_eq!(err.exit_code(), 65);
+        let json = ErrorJson::from_error(&err);
+        assert_eq!(json.code, "MATCH_FAILED");
+        assert_eq!(json.exit, 65);
+    }
+
+    #[test]
+    fn from_io_at_keeps_denied_and_missing_apart_and_names_the_path() {
+        let path = std::path::Path::new("/ws/f.txt");
+        let denied = AtomwriteError::from_io_at(path, std::io::ErrorKind::PermissionDenied.into());
+        assert!(matches!(denied, AtomwriteError::PermissionDenied { .. }));
+        let missing = AtomwriteError::from_io_at(path, std::io::ErrorKind::NotFound.into());
+        assert!(matches!(missing, AtomwriteError::NotFound { .. }));
+        let other = AtomwriteError::from_io_at(path, std::io::Error::other("boom"));
+        assert_eq!(other.error_code(), "IO_ERROR");
+        assert!(other.to_string().contains("/ws/f.txt"), "{other}");
+    }
+
+    #[test]
+    fn from_walk_error_needs_a_path_and_an_io_cause() {
+        let denied = ignore::Error::WithPath {
+            path: PathBuf::from("/ws/dir"),
+            err: Box::new(ignore::Error::Io(
+                std::io::ErrorKind::PermissionDenied.into(),
+            )),
+        };
+        let (path, err) = AtomwriteError::from_walk_error(&denied).expect("classified");
+        assert_eq!(path, PathBuf::from("/ws/dir"));
+        assert!(matches!(err, AtomwriteError::PermissionDenied { .. }));
+
+        let looped = ignore::Error::Loop {
+            ancestor: PathBuf::from("/ws"),
+            child: PathBuf::from("/ws/loop"),
+        };
+        let (path, err) = AtomwriteError::from_walk_error(&looped).expect("classified");
+        assert_eq!(path, PathBuf::from("/ws/loop"));
+        assert_eq!(err.error_code(), "IO_ERROR");
+
+        let glob = ignore::Error::Glob {
+            glob: None,
+            err: "bad".into(),
+        };
+        assert!(AtomwriteError::from_walk_error(&glob).is_none());
     }
 }

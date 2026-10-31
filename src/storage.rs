@@ -17,10 +17,20 @@ pub fn home_override() -> Option<PathBuf> {
     read_storage_home_from_xdg()
 }
 
+/// Path of the bootstrap config: the `config.toml` under the `ProjectDirs` config
+/// directory, which ignores `[storage].home`.
+///
+/// `[storage].home` is circular: it relocates [`config_dir`], so it can only be
+/// read from (and written to) a file whose location does not depend on it.
+/// `config set storage.home` writes here, and [`home_override`] reads from here.
+pub fn bootstrap_config_path() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", crate::constants::STORAGE_APP_NAME)
+        .map(|p| p.config_dir().join(crate::constants::GLOBAL_CONFIG_FILE))
+}
+
 /// Load `[storage].home` from the `ProjectDirs` config.toml (if present).
 fn read_storage_home_from_xdg() -> Option<PathBuf> {
-    let config_toml = directories::ProjectDirs::from("", "", "atomwrite")
-        .map(|p| p.config_dir().join("config.toml"))?;
+    let config_toml = bootstrap_config_path()?;
     let text = std::fs::read_to_string(config_toml).ok()?;
     let value: toml::Value = text.parse().ok()?;
     let home = value
@@ -46,7 +56,8 @@ pub fn config_dir_from(home: Option<PathBuf>) -> Option<PathBuf> {
     if let Some(home) = home {
         return Some(home.join("config"));
     }
-    directories::ProjectDirs::from("", "", "atomwrite").map(|p| p.config_dir().to_path_buf())
+    directories::ProjectDirs::from("", "", crate::constants::STORAGE_APP_NAME)
+        .map(|p| p.config_dir().to_path_buf())
 }
 
 /// Data directory for durable application data.
@@ -59,7 +70,8 @@ pub fn data_dir_from(home: Option<PathBuf>) -> Option<PathBuf> {
     if let Some(home) = home {
         return Some(home.join("data"));
     }
-    directories::ProjectDirs::from("", "", "atomwrite").map(|p| p.data_dir().to_path_buf())
+    directories::ProjectDirs::from("", "", crate::constants::STORAGE_APP_NAME)
+        .map(|p| p.data_dir().to_path_buf())
 }
 
 /// Cache directory for disposable artifacts.
@@ -72,7 +84,8 @@ pub fn cache_dir_from(home: Option<PathBuf>) -> Option<PathBuf> {
     if let Some(home) = home {
         return Some(home.join("cache"));
     }
-    directories::ProjectDirs::from("", "", "atomwrite").map(|p| p.cache_dir().to_path_buf())
+    directories::ProjectDirs::from("", "", crate::constants::STORAGE_APP_NAME)
+        .map(|p| p.cache_dir().to_path_buf())
 }
 
 /// State directory when available (Linux XDG state); falls back to data dir.
@@ -85,7 +98,7 @@ pub fn state_dir_from(home: Option<PathBuf>) -> Option<PathBuf> {
     if let Some(home) = home {
         return Some(home.join("state"));
     }
-    directories::ProjectDirs::from("", "", "atomwrite").map(|p| {
+    directories::ProjectDirs::from("", "", crate::constants::STORAGE_APP_NAME).map(|p| {
         p.state_dir()
             .map(|s| s.to_path_buf())
             .unwrap_or_else(|| p.data_dir().to_path_buf())
@@ -94,7 +107,32 @@ pub fn state_dir_from(home: Option<PathBuf>) -> Option<PathBuf> {
 
 /// Path to the global config file (`config.toml` under [`config_dir`]).
 pub fn global_config_path() -> Option<PathBuf> {
-    config_dir().map(|d| d.join("config.toml"))
+    config_dir().map(|d| d.join(crate::constants::GLOBAL_CONFIG_FILE))
+}
+
+/// Restrict a config file to its owner (mode `CONFIG_FILE_PERMISSIONS`).
+///
+/// # Errors
+///
+/// Returns the I/O error from `set_permissions`.
+#[cfg(unix)]
+pub fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(
+        path,
+        std::fs::Permissions::from_mode(crate::constants::CONFIG_FILE_PERMISSIONS),
+    )
+}
+
+/// Windows has no mode bits: a file inside the user profile inherits an ACL that
+/// already limits it to the user, so there is nothing to change.
+///
+/// # Errors
+///
+/// Never fails.
+#[cfg(not(unix))]
+pub fn restrict_to_owner(_path: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 /// Ensure a storage directory exists with owner-only permissions on Unix.
@@ -107,7 +145,10 @@ pub fn ensure_dir(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+        std::fs::set_permissions(
+            path,
+            std::fs::Permissions::from_mode(crate::constants::PRIVATE_DIR_PERMISSIONS),
+        )?;
     }
     Ok(())
 }

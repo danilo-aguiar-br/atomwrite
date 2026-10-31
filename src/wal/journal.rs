@@ -23,7 +23,7 @@ use super::heuristics::heuristics_should_preserve;
 pub const L1_LARGE_FILE_BYTES: u64 = crate::constants::WAL_L1_LARGE_FILE_BYTES;
 
 /// File extension used for WAL sidecar journals.
-pub(crate) const JOURNAL_EXT: &str = ".atomwrite.journal.json";
+pub(crate) const JOURNAL_EXT: &str = crate::constants::WAL_JOURNAL_EXT;
 
 /// A single entry in the append-only WAL journal.
 ///
@@ -94,7 +94,12 @@ pub fn journal_path(target: &Path) -> PathBuf {
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
-    dir.join(format!(".atomwrite.journal.{}{}", basename, JOURNAL_EXT))
+    dir.join(format!(
+        "{}{}{}",
+        crate::constants::WAL_JOURNAL_PREFIX,
+        basename,
+        JOURNAL_EXT
+    ))
 }
 
 /// Generate a 16-hex-char op ID from random bytes.
@@ -112,7 +117,7 @@ pub fn generate_op_id() -> String {
         .to_hex()
         .as_str()
         .chars()
-        .take(16)
+        .take(crate::constants::WAL_JOURNAL_ID_HEX_LEN)
         .collect()
 }
 
@@ -120,6 +125,13 @@ pub fn generate_op_id() -> String {
 ///
 /// Returns the generated `op_id` so the caller can correlate the
 /// subsequent `committed` / `aborted` entry.
+///
+/// # Errors
+///
+/// Returns the `anyhow::Error` propagated from `append_entry`: a failed
+/// `create_dir_all` for the journal directory, a failed `OpenOptions::open`
+/// of the sidecar, a `serde_json` serialization failure, a failed
+/// `write_all` of the entry line, or a failed `sync_data` fsync.
 pub fn journal_started(
     target: &Path,
     op: JournalOp,
@@ -145,6 +157,12 @@ pub fn journal_started(
 }
 
 /// Append a `Committed` entry to the journal for `target`.
+///
+/// # Errors
+///
+/// Returns the `anyhow::Error` propagated from `append_entry` when the
+/// journal directory or sidecar cannot be created, when the entry cannot be
+/// serialized or written, or when the `sync_data` fsync fails.
 pub fn journal_committed(target: &Path, op_id: &str) -> Result<()> {
     let committed_at_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -158,6 +176,12 @@ pub fn journal_committed(target: &Path, op_id: &str) -> Result<()> {
 }
 
 /// Append an `Aborted` entry to the journal for `target`.
+///
+/// # Errors
+///
+/// Returns the `anyhow::Error` propagated from `append_entry` when the
+/// journal directory or sidecar cannot be created, when the entry cannot be
+/// serialized or written, or when the `sync_data` fsync fails.
 pub fn journal_aborted(target: &Path, op_id: &str, reason: &str) -> Result<()> {
     let aborted_at_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -218,8 +242,10 @@ pub(crate) fn append_entry(target: &Path, entry: &JournalEntry) -> Result<()> {
 /// reference implementation of this pattern in the ecosystem.
 ///
 /// As of v0.1.17, the Drop consults the L4 heuristics engine before
-/// removing. If any of `h1_ttl`, `h3_rate_limit`, `h4_sentinel`, or
-/// `h5_archive` vote to preserve, the sidecar survives. The
+/// removing. If any of `h1_ttl`, `h4_sentinel`, or `h5_archive` vote to
+/// preserve, the sidecar survives. `h3_rate_limit` is NOT consulted here: it
+/// only throttles journal creation, so a successful write always releases its
+/// journal. A failed or crashed write keeps it (`keep_on_drop` stays `true`). The
 /// `h2_lru_within_cap` heuristic is intentionally bypassed here because
 /// the per-file Drop context has no cheap way to know the global
 /// committed count; a workspace-wide sweep is the right place for that
@@ -277,6 +303,24 @@ impl JournalGuard {
         );
     }
 
+    /// Remove the journal now and make the guard inert.
+    ///
+    /// For a write that was cancelled cooperatively (SIGTERM, SIGINT, SIGHUP,
+    /// `--timeout-secs`) BEFORE it touched the target: the target is intact and
+    /// the process is unwinding normally, so there is nothing to recover and a
+    /// leftover journal would only litter the user's project. A failure or a
+    /// crash must not call this: they keep the journal for `wal-heal`.
+    pub fn discard(&mut self) {
+        if !self.path.as_os_str().is_empty() {
+            crate::best_effort::best_effort(
+                fs::remove_file(&self.path),
+                "discard journal of a cancelled write",
+            );
+        }
+        self.path = PathBuf::new();
+        self.keep_on_drop = true;
+    }
+
     /// The `op_id` of the journal entry this guard is protecting.
     #[allow(dead_code)]
     pub fn op_id(&self) -> Option<&str> {
@@ -328,6 +372,11 @@ impl Drop for JournalGuard {
 /// after `Committed` is appended and the rename succeeded; on failure
 /// the caller MUST call `keep()` so `recover_orphan_journals` can
 /// inspect the orphan at the next startup.
+///
+/// # Errors
+///
+/// Returns the `anyhow::Error` propagated from [`journal_started`] when the
+/// `Started` entry cannot be appended to the sidecar.
 pub fn journal_started_with_guard(
     target: &Path,
     op: JournalOp,

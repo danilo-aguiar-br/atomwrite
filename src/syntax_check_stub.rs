@@ -38,6 +38,12 @@ pub struct SyntaxErrorLocation {
 }
 
 /// No-op syntax check without tree-sitter.
+///
+/// # Errors
+///
+/// Never returns `Err`: the stub always answers `Ok(Skipped)` with reason
+/// `syntax-check requires --features ast`, so callers see the same shape as
+/// the `ast` build.
 pub fn syntax_check(_path: &Path, _content: &[u8]) -> anyhow::Result<SyntaxCheckResult> {
     Ok(SyntaxCheckResult::Skipped {
         reason: "syntax-check requires --features ast".into(),

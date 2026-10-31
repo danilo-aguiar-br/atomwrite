@@ -4,7 +4,9 @@
 //!
 //! Rules Rust i18n MVP: `en` and `pt-BR` must have identical non-empty keys.
 
-use std::collections::BTreeSet;
+mod common;
+
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -13,7 +15,7 @@ fn workspace_root() -> PathBuf {
 }
 
 fn bin() -> Command {
-    let mut c = Command::new(env!("CARGO_BIN_EXE_atomwrite"));
+    let mut c = common::hermetic(Command::new(env!("CARGO_BIN_EXE_atomwrite")));
     c.current_dir(workspace_root());
     c
 }
@@ -33,6 +35,32 @@ fn locale_keys(toml: &str) -> BTreeSet<String> {
             }
         })
         .collect()
+}
+
+/// `%{name}` placeholders of every key, so a translation cannot drop or rename one.
+fn locale_placeholders(toml: &str) -> BTreeMap<String, BTreeSet<String>> {
+    let mut map = BTreeMap::new();
+    for line in toml.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('_') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let mut names = BTreeSet::new();
+        let mut rest = value;
+        while let Some(start) = rest.find("%{") {
+            let after = &rest[start + 2..];
+            let Some(end) = after.find('}') else {
+                break;
+            };
+            names.insert(after[..end].to_string());
+            rest = &after[end + 1..];
+        }
+        map.insert(key.trim().to_string(), names);
+    }
+    map
 }
 
 fn locale_values_nonempty(toml: &str) -> bool {
@@ -68,6 +96,20 @@ fn en_and_pt_br_key_parity() {
     assert!(!en_keys.is_empty());
     assert!(locale_values_nonempty(&en), "en has empty translation");
     assert!(locale_values_nonempty(&pt), "pt-BR has empty translation");
+    // A translation that drops or renames a `%{placeholder}` renders a literal
+    // hole or loses the value the sentence is about.
+    let en_holes = locale_placeholders(&en);
+    let pt_holes = locale_placeholders(&pt);
+    let mismatched: Vec<String> = en_holes
+        .iter()
+        .filter(|(key, holes)| pt_holes.get(*key) != Some(*holes))
+        .map(|(key, holes)| format!("{key}: en {holes:?} vs pt-BR {:?}", pt_holes.get(key)))
+        .collect();
+    assert!(
+        mismatched.is_empty(),
+        "placeholders differ between locales:\n{}",
+        mismatched.join("\n")
+    );
 }
 
 #[test]

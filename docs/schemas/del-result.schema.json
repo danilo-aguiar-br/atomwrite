@@ -1,17 +1,100 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "atomwrite del subcommand output",
-  "description": "Result of `atomwrite del` — removes a key (and its value) from a structured config file (TOML/JSON).",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DelResult",
+  "description": "Terminal event of `del`: the key removed at a dotted path.",
   "type": "object",
-  "required": ["type", "path", "key_path", "existed", "format", "elapsed_ms"],
   "properties": {
-    "type": { "const": "del" },
-    "path": { "type": "string", "description": "Absolute path to the config file." },
-    "key_path": { "type": "string", "description": "Dotted path that was removed." },
-    "removed_value": { "type": ["string", "null"], "description": "String representation of the removed value, or null if key did not exist." },
-    "existed": { "type": "boolean", "description": "True if the key existed before removal." },
-    "format": { "enum": ["toml", "json"], "description": "Source config format detected from extension." },
-    "elapsed_ms": { "type": "integer", "description": "Wall-clock time for the operation in milliseconds." }
+    "type": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "key_path": {
+      "type": "string"
+    },
+    "removed_value": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "existed": {
+      "type": "boolean"
+    },
+    "format": {
+      "type": "string"
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "ok": {
+      "description": "Outcome of the run, stamped by the writer",
+      "type": "boolean"
+    },
+    "code": {
+      "description": "Machine error code, present when ok is false",
+      "type": "string"
+    },
+    "exit": {
+      "description": "Process exit status, present when ok is false",
+      "type": "integer",
+      "minimum": 0
+    },
+    "target_resolved": {
+      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+      "type": "string"
+    },
+    "target_source": {
+      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+      "type": "string",
+      "enum": [
+        "argv",
+        "workspace",
+        "stdin"
+      ]
+    },
+    "workspace_source": {
+      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+      "type": "string",
+      "enum": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "records_suppressed": {
+      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_budget_dropped": {
+      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_planned": {
+      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+      "type": "boolean"
+    },
+    "truncated_records": {
+      "description": "Records the writer cut this run, counted once per record",
+      "type": "integer",
+      "minimum": 0
+    }
   },
-  "additionalProperties": false
+  "required": [
+    "type",
+    "path",
+    "key_path",
+    "existed",
+    "format",
+    "elapsed_ms"
+  ]
 }

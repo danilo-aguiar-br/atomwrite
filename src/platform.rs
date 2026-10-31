@@ -67,7 +67,7 @@ impl Durability {
 /// # Errors
 ///
 /// Returns an I/O error if the fsync syscall fails.
-pub fn fsync_file(file: &File) -> Result<()> {
+pub fn fsync_file(file: &File) -> std::io::Result<()> {
     fsync_file_with_durability(file, Durability::Full)
 }
 
@@ -75,10 +75,17 @@ pub fn fsync_file(file: &File) -> Result<()> {
 ///
 /// - `Full`: macOS `F_FULLFSYNC`, else `sync_all` on the file descriptor path when available
 /// - `Fast` / resolved `Auto`: `sync_data` only
-pub fn fsync_file_with_durability(file: &File, durability: Durability) -> Result<()> {
+///
+/// # Errors
+///
+/// Returns the I/O error from `sync_data` (fast path), from `sync_data` when
+/// the macOS `F_FULLFSYNC` fallback is taken, or from `sync_all` on non-macOS
+/// full-sync paths.
+pub fn fsync_file_with_durability(file: &File, durability: Durability) -> std::io::Result<()> {
     match durability {
         Durability::Fast | Durability::Auto => {
-            file.sync_data().context("fsync file (fast)")?;
+            file.sync_data()
+                .map_err(|e| std::io::Error::new(e.kind(), format!("fsync file (fast): {e}")))?;
             Ok(())
         }
         Durability::Full => {
@@ -89,15 +96,21 @@ pub fn fsync_file_with_durability(file: &File, durability: Durability) -> Result
                 // SAFETY: F_FULLFSYNC requires a valid fd from a live File.
                 let ret = unsafe { libc::fcntl(fd, libc::F_FULLFSYNC) };
                 if ret == -1 {
-                    file.sync_data()
-                        .context("fsync fallback after F_FULLFSYNC failure")?;
+                    file.sync_data().map_err(|e| {
+                        std::io::Error::new(
+                            e.kind(),
+                            format!("fsync fallback after F_FULLFSYNC failure: {e}"),
+                        )
+                    })?;
                 }
                 return Ok(());
             }
             #[cfg(not(target_os = "macos"))]
             {
                 // Prefer sync_all for full durability of metadata+data on Linux/Windows.
-                file.sync_all().context("fsync file (full)")?;
+                file.sync_all().map_err(|e| {
+                    std::io::Error::new(e.kind(), format!("fsync file (full): {e}"))
+                })?;
                 Ok(())
             }
         }
@@ -130,6 +143,7 @@ pub fn fsync_file_best_effort(file: &File) {
 ///
 /// Returns an I/O error if the directory cannot be opened or synced.
 /// On Windows this is a no-op and always succeeds.
+#[cfg_attr(not(unix), allow(unused_variables))]
 pub fn fsync_dir(dir: &Path) -> Result<()> {
     #[cfg(unix)]
     {
@@ -140,15 +154,8 @@ pub fn fsync_dir(dir: &Path) -> Result<()> {
         Ok(())
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     {
-        let _ = dir;
-        Ok(())
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = dir;
         Ok(())
     }
 }
@@ -194,15 +201,18 @@ pub fn init_console() {
     // and SetConsoleMode are safe Win32 API calls. CP 65001 is UTF-8.
     // ENABLE_VIRTUAL_TERMINAL_PROCESSING enables ANSI escape interpretation.
     unsafe {
-        SetConsoleOutputCP(65001);
-        SetConsoleCP(65001);
+        SetConsoleOutputCP(crate::constants::WINDOWS_CODE_PAGE_UTF8);
+        SetConsoleCP(crate::constants::WINDOWS_CODE_PAGE_UTF8);
 
         for handle_id in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
             let handle = GetStdHandle(handle_id);
             if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
                 let mut mode: u32 = 0;
                 if GetConsoleMode(handle, &mut mode) != 0 {
-                    let _ = SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+                    if SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) == 0 {
+                        // Only colour is lost: the output stays valid text.
+                        tracing::debug!("could not enable ANSI processing on a console handle");
+                    }
                 }
             }
         }
@@ -234,6 +244,14 @@ pub fn platform_dir_fsync_name() -> &'static str {
 /// On Linux, prefers `renameat2(..., flags=0)` which is equivalent to
 /// `renameat` for overwrite semantics (man7). Falls back to `std::fs::rename`
 /// when the kernel returns `ENOSYS`.
+///
+/// # Errors
+///
+/// Returns the I/O error from `renameat2` when it fails with any errno other
+/// than `ENOSYS`. Returns the I/O error from `std::fs::rename` on the
+/// `ENOSYS` fallback and on non-Linux targets. Returns a `NulError` wrapped
+/// with context when a path contains an interior NUL byte and cannot become
+/// a `CString`.
 pub fn atomic_rename(from: &Path, to: &Path) -> Result<&'static str> {
     // Windows long-path prefix when needed; identity on Unix.
     let from = crate::path_safety::prepare_fs_path(from);

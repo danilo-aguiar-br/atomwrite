@@ -12,8 +12,11 @@ use crate::error::AtomwriteError;
 
 /// Top-level configuration structure matching `.atomwrite.toml`.
 #[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct AtomwriteConfig {
+    /// Schema version of the file; absent means unversioned. A value above
+    /// [`crate::constants::CONFIG_SCHEMA_VERSION`] is rejected (fail closed).
+    pub version: u32,
     /// Default settings for write operations.
     pub defaults: DefaultsSection,
     /// Write guard policy (confirm / shrink / auto-rotate) — G-028.
@@ -26,11 +29,117 @@ pub struct AtomwriteConfig {
     pub search: SearchSection,
     /// Storage paths (XDG home override).
     pub storage: StorageSection,
+    /// Opt-in diagnostics file sink (global XDG config only).
+    pub log: LogSection,
+    /// Worker-bound tuning.
+    pub concurrency: ConcurrencySection,
+    /// Advisory lock tuning.
+    pub lock: LockSection,
+    /// Retry backoff tuning.
+    pub retry: RetrySection,
+    /// `extract-artifact` bounds.
+    pub extract: ExtractSection,
+    /// Terminal summary bounds.
+    pub summary: SummarySection,
+}
+
+/// Diagnostics file sink loaded from the global XDG config `[log]` (R26).
+///
+/// Off by default: with `file = false` no log file is opened and no writer
+/// thread starts. Only the global XDG config can turn it on, because tracing is
+/// initialised before the workspace `.atomwrite.toml` is read.
+#[derive(Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LogSection {
+    /// Tee diagnostics to a JSON-lines file under the XDG state directory.
+    pub file: bool,
+    /// Rotation of that file: `daily` or `hourly`.
+    pub rotation: String,
+}
+
+impl Default for LogSection {
+    fn default() -> Self {
+        Self {
+            file: false,
+            rotation: crate::constants::LOG_ROTATION_DEFAULT.into(),
+        }
+    }
+}
+
+/// Validate `[log]` (fail closed on bad XDG config).
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::ConfigInvalid` when `rotation` is neither `daily` nor `hourly`.
+pub fn validate_log(cfg: &LogSection) -> Result<(), AtomwriteError> {
+    match cfg.rotation.as_str() {
+        "daily" | "hourly" => Ok(()),
+        other => Err(AtomwriteError::ConfigInvalid {
+            reason: format!(
+                "config [log] rotation = \"{other}\" is invalid; use \"daily\" or \"hourly\""
+            ),
+        }),
+    }
+}
+
+/// Log policy for tracing init, which runs before [`load_config`].
+///
+/// Reads both layers the rest of the CLI reads: the global XDG config and the
+/// workspace `.atomwrite.toml`, merged by the same `merge_layers` the full
+/// load uses. Reading only the global file silently discarded a `[log]` block
+/// the owner had written in the workspace, which is the silent-discard family
+/// this project treats as a defect: configuration accepted, validated and then
+/// ignored.
+///
+/// A malformed or out-of-range `[log]` is a hard `CONFIG_INVALID` here, the same
+/// answer [`load_config`] gives, so the two readers cannot disagree.
+///
+/// # Errors
+///
+/// Returns [`AtomwriteError::ConfigInvalid`] when either file is malformed or
+/// when `[log].rotation` is neither `daily` nor `hourly`.
+pub fn startup_log_section(
+    workspace: &Path,
+    explicit_path: Option<&Path>,
+) -> Result<LogSection, AtomwriteError> {
+    // `--config` names the whole configuration for this run, so it must also be
+    // the whole log policy. Reading the layers it replaced here is what made
+    // `--config /dev/null` print a workspace `[log]` error and still run.
+    if let Some(path) = explicit_path {
+        let log = parse_config(path)?.log;
+        validate_log(&log)?;
+        return Ok(log);
+    }
+
+    let global = match global_text() {
+        Some(g) => match &g.text {
+            Ok(text) => Some(parse_layer(&g.path, text)?),
+            Err(e) => {
+                return Err(AtomwriteError::ConfigInvalid {
+                    reason: format!("cannot read config {}: {e}", g.path.display()),
+                });
+            }
+        },
+        None => None,
+    };
+    let local_path = workspace.join(crate::constants::WORKSPACE_CONFIG_FILE);
+    let local = if local_path.is_file() {
+        let text =
+            std::fs::read_to_string(&local_path).map_err(|e| AtomwriteError::ConfigInvalid {
+                reason: format!("cannot read config {}: {e}", local_path.display()),
+            })?;
+        Some(parse_layer(&local_path, &text)?)
+    } else {
+        None
+    };
+    let log = merge_layers(global, local)?.log;
+    validate_log(&log)?;
+    Ok(log)
 }
 
 /// Watch policy loaded from XDG / `.atomwrite.toml` `[watch]` (R-XDG-007 / A-XDG-002).
 #[derive(Debug, serde::Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct WatchSection {
     /// Exit after this many idle milliseconds with zero filesystem events (0 = disable idle-exit).
     pub idle_exit_ms: u64,
@@ -48,8 +157,12 @@ impl Default for WatchSection {
 }
 
 /// Write-guard policy loaded from XDG / `.atomwrite.toml` `[write]` (G-028).
-#[derive(Debug, serde::Deserialize)]
-#[serde(default)]
+///
+/// `Clone` exists for the fan-out verbs: a worker pool reads the same policy
+/// from every thread, and each worker would otherwise have to hold a borrow of
+/// the owner's config alive for the whole walk.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct WriteSection {
     /// Bytes above which overwriting an existing target requires `--ack-overwrite` (A-WRITE-001 default-deny).
     pub confirm_large_bytes: u64,
@@ -78,13 +191,19 @@ impl Default for WriteSection {
 }
 
 /// Validate `[write]` section ranges (fail closed on bad XDG config).
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::InvalidInput` when `confirm_large_bytes` or `auto_rotate_max_age_secs` is 0, or when `shrink_block_percent` falls outside `SHRINK_BLOCK_PERCENT_MIN..=SHRINK_BLOCK_PERCENT_MAX`.
 pub fn validate_write(cfg: &WriteSection) -> Result<(), AtomwriteError> {
     if cfg.confirm_large_bytes == 0 {
         return Err(AtomwriteError::InvalidInput {
             reason: "config [write] confirm_large_bytes must be >= 1".into(),
         });
     }
-    if !(1..=99).contains(&cfg.shrink_block_percent) {
+    if !(crate::constants::SHRINK_BLOCK_PERCENT_MIN..=crate::constants::SHRINK_BLOCK_PERCENT_MAX)
+        .contains(&cfg.shrink_block_percent)
+    {
         return Err(AtomwriteError::InvalidInput {
             reason: format!(
                 "config [write] shrink_block_percent = {} is out of range; must be 1..=99",
@@ -102,7 +221,7 @@ pub fn validate_write(cfg: &WriteSection) -> Result<(), AtomwriteError> {
 
 /// Default settings applied to write/edit/replace operations.
 #[derive(Debug, serde::Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct DefaultsSection {
     /// Enable backup by default.
     pub backup: bool,
@@ -127,7 +246,7 @@ impl Default for DefaultsSection {
 
 /// Fuzzy matching configuration for edit operations.
 #[derive(Debug, serde::Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct FuzzySection {
     /// Default fuzzy mode: `auto`, `aggressive`, or `off` (exact-only, G-010).
     pub mode: String,
@@ -145,6 +264,9 @@ pub struct FuzzySection {
     /// Context-aware soft-floor delta below threshold (GAP-2026-022; XDG `[fuzzy]`).
     #[serde(default = "default_fuzzy_soft_floor")]
     pub soft_floor_delta: f64,
+    /// Max content bytes the fuzzy cascade scans; larger files fail instead of running it.
+    #[serde(default = "default_fuzzy_max_content_bytes")]
+    pub max_content_bytes: u64,
 }
 
 fn default_fuzzy_aggressive() -> f64 {
@@ -159,6 +281,9 @@ fn default_fuzzy_jw() -> f64 {
 fn default_fuzzy_soft_floor() -> f64 {
     crate::constants::FUZZY_CONTEXT_SOFT_FLOOR_DELTA
 }
+fn default_fuzzy_max_content_bytes() -> u64 {
+    crate::constants::FUZZY_MAX_CONTENT_BYTES
+}
 
 impl Default for FuzzySection {
     fn default() -> Self {
@@ -169,13 +294,14 @@ impl Default for FuzzySection {
             threshold_context: crate::constants::FUZZY_THRESHOLD_CONTEXT,
             threshold_jw: crate::constants::FUZZY_THRESHOLD_JW,
             soft_floor_delta: crate::constants::FUZZY_CONTEXT_SOFT_FLOOR_DELTA,
+            max_content_bytes: crate::constants::FUZZY_MAX_CONTENT_BYTES,
         }
     }
 }
 
 /// Storage configuration (XDG; no process env knobs).
 #[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct StorageSection {
     /// Optional home override path (absolute). When set, config/data/cache/state
     /// are rooted under `{home}/…` instead of `ProjectDirs`.
@@ -184,7 +310,7 @@ pub struct StorageSection {
 
 /// Search defaults (A-019: policy overridable via XDG / workspace config).
 #[derive(Debug, serde::Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SearchSection {
     /// Default context lines around matches.
     pub context: u32,
@@ -194,6 +320,8 @@ pub struct SearchSection {
     pub max_filesize: u64,
     /// Default `search --max-columns`.
     pub max_columns: usize,
+    /// Total bytes of search events in flight between walker workers and stdout.
+    pub max_inflight_bytes: u64,
 }
 
 impl Default for SearchSection {
@@ -203,11 +331,35 @@ impl Default for SearchSection {
             smart_case: true,
             max_filesize: crate::constants::DEFAULT_SEARCH_MAX_FILESIZE_BYTES,
             max_columns: crate::constants::DEFAULT_SEARCH_MAX_COLUMNS,
+            max_inflight_bytes: crate::constants::SEARCH_MAX_INFLIGHT_BYTES,
+        }
+    }
+}
+
+/// Terminal summary bounds shared by every verb that reports failures.
+#[derive(Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SummarySection {
+    /// Most `errors[]` entries a terminal summary lists.
+    ///
+    /// `files_failed` keeps the full count, so a small cap costs detail and
+    /// never the size of the hole. The ceiling keeps one record bounded.
+    pub errors_max_entries: usize,
+}
+
+impl Default for SummarySection {
+    fn default() -> Self {
+        Self {
+            errors_max_entries: crate::constants::SUMMARY_ERRORS_MAX_ENTRIES,
         }
     }
 }
 
 /// Validate `[search]` section (A-019).
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::InvalidInput` when `max_filesize` or `max_columns` is 0, or when `max_inflight_bytes` falls outside `SEARCH_MIN_INFLIGHT_BYTES..=SEARCH_MAX_INFLIGHT_CEILING_BYTES`.
 pub fn validate_search_section(cfg: &SearchSection) -> Result<(), AtomwriteError> {
     if cfg.max_filesize == 0 {
         return Err(AtomwriteError::InvalidInput {
@@ -219,82 +371,116 @@ pub fn validate_search_section(cfg: &SearchSection) -> Result<(), AtomwriteError
             reason: "config [search] max_columns must be >= 1".into(),
         });
     }
+    require_in_range(
+        "search",
+        "max_inflight_bytes",
+        cfg.max_inflight_bytes,
+        crate::constants::SEARCH_MIN_INFLIGHT_BYTES,
+        crate::constants::SEARCH_MAX_INFLIGHT_CEILING_BYTES,
+    )?;
+    Ok(())
+}
+
+/// Validate `[summary]` section.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::InvalidInput` when `errors_max_entries` falls
+/// outside `SUMMARY_ERRORS_MIN_ENTRIES..=SUMMARY_ERRORS_CEILING`.
+pub fn validate_summary_section(cfg: &SummarySection) -> Result<(), AtomwriteError> {
+    require_in_range(
+        "summary",
+        "errors_max_entries",
+        cfg.errors_max_entries as u64,
+        crate::constants::SUMMARY_ERRORS_MIN_ENTRIES as u64,
+        crate::constants::SUMMARY_ERRORS_CEILING as u64,
+    )?;
     Ok(())
 }
 
 /// Load configuration from the hierarchy:
-/// 1. Explicit `--config` path (strict — missing/malformed is hard error)
-/// 2. `{workspace}/.atomwrite.toml` (local; soft-fail to defaults)
+/// 1. Explicit `--config` path (alone: it replaces the two files below)
+/// 2. `{workspace}/.atomwrite.toml` (workspace layer, wins key by key)
 /// 3. Global config via [`crate::storage::global_config_path`]
-///    (`set storage.home` / XDG `ProjectDirs` config path; soft-fail)
+///    (`set storage.home` / XDG `ProjectDirs` config path)
 /// 4. Built-in defaults
 ///
-/// Auto-discovered configs that fail to parse emit `tracing::warn!` and fall
-/// through to defaults. An explicit `--config` path **must** exist and parse.
+/// The workspace and global files are merged key by key, so a workspace file
+/// that sets one key keeps every other key of the global file.
+///
+/// Every file that is found must be readable, valid TOML, free of unknown keys
+/// and not newer than [`crate::constants::CONFIG_SCHEMA_VERSION`]; otherwise
+/// the load fails with [`AtomwriteError::ConfigInvalid`] (exit 78). A broken
+/// config is never swapped for defaults in silence.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::ConfigInvalid` when the explicit path, the global XDG file or the workspace `.atomwrite.toml` cannot be read, is not valid TOML, carries an unknown key, declares a version above `CONFIG_SCHEMA_VERSION`, or yields a merged table that no longer type-checks.
 pub fn load_config(
     workspace: &Path,
     explicit_path: Option<&Path>,
 ) -> Result<AtomwriteConfig, AtomwriteError> {
     if let Some(path) = explicit_path {
-        return load_from_path_strict(path);
+        return parse_config(path);
     }
 
-    let local = workspace.join(".atomwrite.toml");
-    if local.is_file() {
-        return Ok(load_from_path_soft(&local));
-    }
-
-    if let Some(global) = crate::storage::global_config_path() {
-        if global.is_file() {
-            return Ok(load_from_path_soft(&global));
-        }
-    }
-
-    Ok(AtomwriteConfig::default())
-}
-
-/// Strict load for `--config`: missing or malformed → [`AtomwriteError::ConfigInvalid`].
-fn load_from_path_strict(path: &Path) -> Result<AtomwriteConfig, AtomwriteError> {
-    let content = std::fs::read_to_string(path).map_err(|e| AtomwriteError::ConfigInvalid {
-        reason: format!("cannot read config {}: {e}", path.display()),
-    })?;
-    let config: AtomwriteConfig =
-        toml::from_str(&content).map_err(|e| AtomwriteError::ConfigInvalid {
-            reason: format!("malformed config {}: {e}", path.display()),
-        })?;
-    tracing::debug!(path = %path.display(), "loaded explicit config");
-    Ok(config)
-}
-
-/// Soft load for auto-discovered configs: warn and use defaults on error.
-fn load_from_path_soft(path: &Path) -> AtomwriteConfig {
-    match std::fs::read_to_string(path) {
-        Ok(content) => match toml::from_str(&content) {
-            Ok(config) => {
-                tracing::debug!(path = %path.display(), "loaded config");
-                config
-            }
+    let global = match global_text() {
+        Some(g) => match &g.text {
+            Ok(text) => Some(parse_layer(&g.path, text)?),
             Err(e) => {
-                tracing::warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "malformed config; using defaults"
-                );
-                AtomwriteConfig::default()
+                return Err(AtomwriteError::ConfigInvalid {
+                    reason: format!("cannot read config {}: {e}", g.path.display()),
+                });
             }
         },
-        Err(e) => {
-            tracing::warn!(
-                path = %path.display(),
-                error = %e,
-                "cannot read config; using defaults"
-            );
-            AtomwriteConfig::default()
+        None => None,
+    };
+    let local_path = workspace.join(crate::constants::WORKSPACE_CONFIG_FILE);
+    let local = if local_path.is_file() {
+        Some(read_layer(&local_path)?)
+    } else {
+        None
+    };
+    merge_layers(global, local)
+}
+
+/// Merge the two layers of the hierarchy into one config.
+///
+/// Both layers arrive already materialized, so this function touches no
+/// filesystem and reads no global state: unit tests drive the exact merge the
+/// binary runs, without inheriting the operator's config directory.
+fn merge_layers(
+    global: Option<Layer>,
+    local: Option<Layer>,
+) -> Result<AtomwriteConfig, AtomwriteError> {
+    match (global, local) {
+        (None, None) => Ok(AtomwriteConfig::default()),
+        (Some(only), None) | (None, Some(only)) => Ok(only.config),
+        (Some(global), Some(local)) => {
+            let merged = merge_tables(global.table, local.table);
+            toml::Value::Table(merged)
+                .try_into()
+                .map_err(|e| AtomwriteError::ConfigInvalid {
+                    reason: format!(
+                        "merged config of {} and {} is invalid: {e}",
+                        crate::constants::GLOBAL_CONFIG_FILE,
+                        crate::constants::WORKSPACE_CONFIG_FILE
+                    ),
+                })
         }
     }
+}
+
+/// Read and parse one config file; every failure names the file in the reason.
+fn parse_config(path: &Path) -> Result<AtomwriteConfig, AtomwriteError> {
+    read_layer(path).map(|layer| layer.config)
 }
 
 /// Reject illegal `[fuzzy]` values (v0.1.35: off = exact-only).
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::InvalidInput` when `[fuzzy]` mode is an unsupported value (including the retired `disabled`, `false` and `0` aliases), when `threshold` falls outside 0.0..=1.0, or when `max_content_bytes` is 0.
 pub fn validate_fuzzy(cfg: &FuzzySection) -> Result<(), AtomwriteError> {
     let mode = cfg.mode.trim().to_ascii_lowercase();
     match mode.as_str() {
@@ -315,12 +501,20 @@ pub fn validate_fuzzy(cfg: &FuzzySection) -> Result<(), AtomwriteError> {
             });
         }
     }
-    if !(0.0..=1.0).contains(&cfg.threshold) {
+    if !(crate::constants::SIMILARITY_MIN..=crate::constants::SIMILARITY_MAX)
+        .contains(&cfg.threshold)
+    {
         return Err(AtomwriteError::InvalidInput {
             reason: format!(
                 "config [fuzzy] threshold = {} is out of range; must be between 0.0 and 1.0",
                 cfg.threshold
             ),
+        });
+    }
+    if cfg.max_content_bytes == 0 {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "config [fuzzy] max_content_bytes = 0 is invalid; must be greater than 0"
+                .into(),
         });
     }
     Ok(())
@@ -330,6 +524,10 @@ pub fn validate_fuzzy(cfg: &FuzzySection) -> Result<(), AtomwriteError> {
 ///
 /// Precedence: explicit CLI `Aggressive` or `cli_threshold` wins; when CLI is
 /// default `Auto` with no threshold, inherit from `.atomwrite.toml` `[fuzzy]`.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::InvalidInput` when `[fuzzy]` violates any rule checked by [`validate_fuzzy`]: an unknown mode, a threshold outside 0.0..=1.0, or `max_content_bytes` equal to 0.
 pub fn resolve_fuzzy(
     cli_mode: FuzzyMode,
     cli_threshold: Option<f64>,
@@ -357,58 +555,5 @@ pub fn resolve_fuzzy(
     Ok((mode, threshold))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[test]
-    fn missing_file_returns_defaults() {
-        let dir = tempdir().unwrap();
-        let config = load_config(dir.path(), None).unwrap();
-        assert!(config.defaults.backup);
-        assert_eq!(config.defaults.retention, 5);
-        assert_eq!(config.fuzzy.mode, "auto");
-    }
-
-    #[test]
-    fn local_config_overrides_defaults() {
-        let dir = tempdir().unwrap();
-        std::fs::write(
-            dir.path().join(".atomwrite.toml"),
-            "[defaults]\nbackup = false\nretention = 3\n",
-        )
-        .unwrap();
-        let config = load_config(dir.path(), None).unwrap();
-        assert!(!config.defaults.backup);
-        assert_eq!(config.defaults.retention, 3);
-    }
-
-    #[test]
-    fn malformed_toml_warns_uses_defaults() {
-        let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join(".atomwrite.toml"), "not valid { toml").unwrap();
-        let config = load_config(dir.path(), None).unwrap();
-        assert!(config.defaults.backup);
-    }
-
-    #[test]
-    fn explicit_path_takes_precedence() {
-        let dir = tempdir().unwrap();
-        let custom = dir.path().join("custom.toml");
-        std::fs::write(&custom, "[fuzzy]\nthreshold = 0.95\n").unwrap();
-        let config = load_config(dir.path(), Some(&custom)).unwrap();
-        assert!((config.fuzzy.threshold - 0.95).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn explicit_path_missing_is_hard_error() {
-        let dir = tempdir().unwrap();
-        let missing = dir.path().join("nope.toml");
-        let err = load_config(dir.path(), Some(&missing)).unwrap_err();
-        assert!(
-            matches!(err, AtomwriteError::ConfigInvalid { .. }),
-            "expected ConfigInvalid, got {err:?}"
-        );
-    }
-}
+include!("config_tuning.inc.rs");
+include!("config_tests.inc.rs");

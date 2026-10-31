@@ -19,7 +19,10 @@ fn edit_old_new(
             };
             Ok((edited, mode, info, None))
         }
-        Err(_) if partial => Err(AtomwriteError::NoMatches.into()),
+        // Only a miss degrades to NoMatches; a cancel or an oversized input must surface.
+        Err(err) if partial && crate::fuzzy::is_no_match(&err) => {
+            Err(AtomwriteError::NoMatches.into())
+        }
         Err(err) => Err(err.into()),
     }
 }
@@ -36,7 +39,8 @@ fn edit_old_new_multi(
     partial: bool,
 ) -> Result<(String, String, FuzzyInfo, Option<MultiReport>)> {
     let pairs_total = old.len() as u64;
-    let mut content = original.to_string();
+    // Borrow the input until the first pair applies, so a miss never copies the buffer.
+    let mut content: std::borrow::Cow<'_, str> = std::borrow::Cow::Borrowed(original);
     let mut pair_results: Vec<PairResult> = Vec::with_capacity(old.len());
     let mut applied = 0u64;
     let mut any_fuzzy = false;
@@ -46,7 +50,7 @@ fn edit_old_new_multi(
         let index = (i + 1) as u64;
         match crate::fuzzy::match_pair_with(&content, old_str, new_str, opts) {
             Ok((edited, info)) => {
-                content = edited;
+                content = std::borrow::Cow::Owned(edited);
                 applied += 1;
                 any_fuzzy |= info.fuzzy;
                 max_strategies_tried = max_strategies_tried.max(info.strategies_tried);
@@ -58,7 +62,7 @@ fn edit_old_new_multi(
                     source: None,
                 });
             }
-            Err(_) if partial => {
+            Err(err) if partial && crate::fuzzy::is_no_match(&err) => {
                 pair_results.push(PairResult {
                     index,
                     matched: false,
@@ -67,6 +71,8 @@ fn edit_old_new_multi(
                     source: None,
                 });
             }
+            // A cancel is not a failed pair: keep its exit code (124/130/143).
+            Err(err @ AtomwriteError::Cancelled { .. }) => return Err(err.into()),
             Err(err) => {
                 let (reason, best_candidate) = match err {
                     AtomwriteError::MatchFailed {
@@ -111,7 +117,7 @@ fn edit_old_new_multi(
         (format!("exact-multi({applied})"), "exact-multi")
     };
     Ok((
-        content,
+        content.into_owned(),
         mode,
         FuzzyInfo {
             fuzzy: any_fuzzy,
@@ -183,7 +189,6 @@ fn edit_by_line(
 }
 
 fn edit_by_marker(
-    original: &str,
     lines: &[&str],
     args: &EditArgs,
     stdin: impl Read,
@@ -229,10 +234,8 @@ fn edit_by_marker(
         return Ok((join_lines(&result), "between".into()));
     }
 
-    let _ = original;
     Err(crate::error::AtomwriteError::InvalidInput {
         reason: "no marker-mode edit operation specified".into(),
     }
     .into())
 }
-

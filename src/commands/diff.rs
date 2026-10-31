@@ -9,7 +9,7 @@
 use std::io::{Read, Write};
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use similar::{Algorithm, TextDiff};
 
 use crate::cli::{DiffAlgorithm, DiffArgs, GlobalArgs};
@@ -52,38 +52,14 @@ pub fn cmd_diff(
     let content_b;
     if stdin_a {
         let resolved_b = crate::path_safety::validate_path(&args.file_b, &workspace)?;
-        let mut buf = String::new();
-        stdin
-            .take(max_size.saturating_add(1))
-            .read_to_string(&mut buf)
-            .context("failed to read stdin for diff file_a")?;
-        if (buf.len() as u64) > max_size {
-            return Err(AtomwriteError::FileTooLarge {
-                path: std::path::PathBuf::from("-"),
-                size: buf.len() as u64,
-                max_size,
-            }
-            .into());
-        }
-        content_a = buf;
+        // The shared reader owns the chunk size, the cap and the cancellation
+        // token, so `diff` cannot drift into its own `take` + `read_to_string`.
+        content_a = read_diff_stdin(stdin, max_size)?;
         content_b = crate::file_io::read_file_string(&resolved_b, max_size)?;
     } else if stdin_b {
         let resolved_a = crate::path_safety::validate_path(&args.file_a, &workspace)?;
         content_a = crate::file_io::read_file_string(&resolved_a, max_size)?;
-        let mut buf = String::new();
-        stdin
-            .take(max_size.saturating_add(1))
-            .read_to_string(&mut buf)
-            .context("failed to read stdin for diff file_b")?;
-        if (buf.len() as u64) > max_size {
-            return Err(AtomwriteError::FileTooLarge {
-                path: std::path::PathBuf::from("-"),
-                size: buf.len() as u64,
-                max_size,
-            }
-            .into());
-        }
-        content_b = buf;
+        content_b = read_diff_stdin(stdin, max_size)?;
     } else {
         let resolved_a = crate::path_safety::validate_path(&args.file_a, &workspace)?;
         let resolved_b = crate::path_safety::validate_path(&args.file_b, &workspace)?;
@@ -166,7 +142,13 @@ pub fn cmd_diff(
             })?;
         }
 
-        writer.write_event(&DiffSummaryOutput {
+        // The engine never says whether it aborted, so the signal is the
+        // budget itself: a run that spent the whole deadline may have come
+        // back with a coarser diff, and the consumer reads this to know the
+        // ratio is a floor.
+        let timed_out = start.elapsed()
+            >= std::time::Duration::from_millis(crate::constants::DIFF_SIMILARITY_TIMEOUT_MS);
+        writer.write_terminal(&DiffSummaryOutput {
             r#type: "summary",
             identical,
             file_a: path_a,
@@ -175,10 +157,34 @@ pub fn cmd_diff(
             lines_b: content_b.lines().count(),
             similarity_ratio: ratio,
             elapsed_ms: start.elapsed().as_millis() as u64,
+            timed_out: timed_out.then_some(true),
         })?;
     }
 
     Ok(())
+}
+
+/// Read one `-` side of a diff from stdin through the shared reader.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::FileTooLarge` when the payload passes `max_size`,
+/// the cancellation error when the shutdown signal fires, and
+/// `AtomwriteError::InvalidInput` when the bytes are not UTF-8.
+fn read_diff_stdin(stdin: impl Read, max_size: u64) -> Result<String> {
+    let (bytes, _) = crate::commands::read_stdin_content_cancellable(
+        stdin,
+        Some(max_size),
+        crate::commands::StdinCapOrigin::GlobalMaxFilesize,
+        true,
+        None,
+    )?;
+    String::from_utf8(bytes).map_err(|e| {
+        AtomwriteError::InvalidInput {
+            reason: format!("diff: stdin is not valid UTF-8: {e}"),
+        }
+        .into()
+    })
 }
 
 fn safe_ratio(ratio: f32) -> f32 {

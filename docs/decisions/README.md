@@ -1,74 +1,85 @@
 # ADRs (Architecture Decision Records) — Index
 
-> **Historical (pre-0.1.35):** product `ATOMWRITE_*` / env knobs described below are **superseded**. Runtime config is CLI flags + XDG `config.toml` / `atomwrite set|get` only.
 
+- Historical (pre-0.1.35): product `ATOMWRITE_*` / env knobs described below are superseded. Runtime config is CLI flags + XDG `config.toml` / `atomwrite config` only.
+- Format: Michael Nygard's ADR template (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit). The ADRs 0058 to 0074 also carry an Evidence section with `file:line` references.
+- Authoring rule: Every non-trivial change to atomwrite (a new subcommand, a new error variant, a new dependency) MUST be accompanied by an ADR or by an update to an existing ADR.
+- Storage: One file per ADR in `docs/decisions/`. Filename is `NNNN-kebab-case-slug.md`. Numbering is monotonic.
+- Mirrors: Every ADR has a pt-BR mirror named `NNNN-kebab-case-slug.pt-BR.md` next to the English file. The English file is canonical.
+- Immutability: An accepted ADR is not rewritten. A later ADR amends it, and the amendment is recorded in the Status of the amending ADR.
 
-- **Format**: Michael Nygard's ADR template (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit).
-- **Authoring rule**: Every non-trivial change to atomwrite (a new subcommand, a new error variant, a new dependency) MUST be accompanied by an ADR or by an update to an existing ADR.
-- **Storage**: One file per ADR in `docs/decisions/`. Filename is `NNNN-kebab-case-slug.md`. Numbering is monotonic.
 
 ## Index
 
-- [0019 — tree-sitter-language-pack](0019-tree-sitter-language-pack.md) — v0.1.12 chose `tree-sitter-language-pack` over direct `tree-sitter` deps to keep binary small.
-- [0020 — WAL sidecar](0020-wal-sidecar.md) — G114 WAL sidecar path is `.atomwrite.journal.<basename>.atomwrite.journal.json`.
-- [0021 — v14 query/outline no S-expr](0021-v14-query-outline-no-s-expr.md) — v0.1.12 `query` accepts only kind names, not tree-sitter S-expressions.
-- [0022 — G72 replaces heuristic](0022-g72-tree-sitter-replaces-heuristic.md) — G72 tree-sitter REAL syntax check replaces (not adds to) the bracket heuristic.
-- [0023 — G114 WAL consultive](0023-g114-wal-consultive.md) — G114 recovery is consultative (no auto-replay, no auto-delete).
-- [0024 — get_toml_path manual](0024-get-toml-path-manual.md) — `get/del` TOML dotted path navigation is manual `Table` descent, not `toml_edit::Table::get`.
-- [0025 — positions opt-in](0025-positions-only-in-query-tree.md) — `query --positions` is valid in `--query`/`--tree`, silently ignored in `--kinds`.
-- [0026 — G117 multi-pair edit](0026-g117-edit-multi-pair-fuzzy-partial.md) — multi-pair `--old`/`--new` gains fuzzy parity, per-pair `pair_results`, `failed_pair_index` on error, and opt-in `--partial`.
-- [0027 — G118 write path resolution](0027-g118-write-path-resolution.md) — `write` resolves the target via `validate_path` before append/prepend, line-ending auto-detection, and `--expect-checksum` (fixes CWE-367 double path identity; checksum drift exits 82 with a divergent CWD).
-- [0028 — G119 WAL intelligent cleanup](0028-g119-wal-cleanup-intelligent.md) — five-layer autonomous cleanup: L1 `--wal-policy` prevention, L2 Drop guard, L3 `--no-auto-heal` startup heal, L4 heuristics (TTL/LRU/rate/sentinel/archive), L5 `wal-stats`.
-  - [PT-BR](0028-g119-wal-cleanup-intelligent.pt-BR.md) — tradução completa
-- [0029 — G120 empty stdin cross-validation](0029-g120-empty-stdin-guard.md) — L3 explicit cross-validation of `--append`/`--expect-checksum`/`--allow-empty-stdin` via `tracing::info` and `--no-checksum-when-empty` opt-out.
-  - [PT-BR](0029-g120-empty-stdin-guard.pt-BR.md) — tradução completa
-- [0030 — v0.1.18 follow-ups](0030-v0-1-18-g118-replace-pre-validation-g120-l3-tests-g117-edge-cases.md) — `replace` pre-validates root paths against the jail, G120 L3 end-to-end test, G117 edge cases (Unicode, CRLF, multi-pair same `--old`).
-  - [PT-BR](0030-v0-1-18-g118-replace-pre-validation-g120-l3-tests-g117-edge-cases.pt-BR.md) — tradução completa
-- [0031 — G121 path resolution helper](0031-g121-path-resolution-helper.md) — `search` e `replace` resolvem root paths contra o workspace via helper compartilhado (CWE-367).
-  - [PT-BR](0031-g121-path-resolution-helper.pt-BR.md) — tradução automática
-- [0032 — query S-expr real implementation](0032-query-sexp-real-implementation.md) — `query` aceita S-expressions tree-sitter via `Query::new` (v0.1.12 docs prometiam mas código nunca implementou).
-  - [PT-BR](0032-query-sexp-real-implementation.pt-BR.md) — tradução automática
-- [0033 — v0.1.19 exit code drift consolidation](0033-v0-1-19-exit-code-naming-drift-consolidation.md) — 7 drifts de exit code entre docs publicadas e binário (STATE_DRIFT, SYNTAX_ERROR_DETECTED, ORPHAN_JOURNAL, BROKEN_PIPE, binary read, ARGUMENT_PARSE_ERROR, missing --workspace).
-  - [PT-BR](0033-v0-1-19-exit-code-naming-drift-consolidation.pt-BR.md) — tradução automática
-- [0034 — help-driven testing anti-pattern](0034-help-driven-testing-anti-pattern.md) — clap `--help` nunca declarado antes da implementação (5 dos 11 GAP-2026 tinham esse anti-pattern; motivação para help-driven testing).
-  - [PT-BR](0034-help-driven-testing-anti-pattern.pt-BR.md) — tradução automática
-- [0035 — write intention guards](0035-write-intention-guards.md) — 4 flags defense-in-depth (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`) + `risk_assessment` no envelope, motivadas pelo incident c24-framework34.html de 2026-06-15.
-  - [PT-BR](0035-write-intention-guards.pt-BR.md) — tradução automática
-- [0036 — edit --partial coverage](0036-edit-partial-coverage.md) — single-pair com zero matches retorna NO_MATCHES (exit 1); multi-pair aplica matched e relata unmatched em `pair_results` (exit 0).
-  - [PT-BR](0036-edit-partial-coverage.pt-BR.md) — tradução automática
-- [0037 — global locale rename](0037-global-locale-rename.md) — rename `GlobalArgs.lang` flag `--lang` para `--locale`; env var `ATOMWRITE_LANG` e campo `args.global.lang` preservados; namespace `--lang` liberado para subcomandos.
-  - [PT-BR](0037-global-locale-rename.pt-BR.md) — tradução automática
-- [0038 — backup cumprido deleta](0038-backup-cumprido-deleta.md) — `keep_backup` default `false` + helper `delete_backup_quietly`; paridade de `--backup` em 4/4 subcomandos (write, edit, replace, rollback) e `--keep-backup` em 6/6 (write, edit, replace, rollback, apply, batch).
-  - [PT-BR](0038-backup-cumprido-deleta.pt-BR.md) — tradução automática
-- [0039 — edit loop helper](0039-edit-loop-helper.md) — sub-comando para N pares em 1 invocação; re-captura checksum opcional
-  - [PT-BR](0039-edit-loop-helper.pt-BR.md) — tradução automática
-- [0040 — prune backups subcommand](0040-prune-backups-subcommand.md) — cleanup manual para legados v0.1.20; flags --max-age e --max-count
-  - [PT-BR](0040-prune-backups-subcommand.pt-BR.md) — tradução automática
-- [0041 — allow_hyphen_values edit](0041-allow-hyphen-values-edit.md) — allow_hyphen_values for 15 CLI text-accepting fields across 8 structs; prevents exit 2 cascade in agent pipelines
-  - [PT-BR](0041-allow-hyphen-values-edit.pt-BR.md) — tradução automática
-- [0042 — backup-by-default](0042-backup-by-default.md) — backup default true in 9 content-mutating structs; --no-backup and ATOMWRITE_BACKUP=0 for opt-out
-  - [PT-BR](0042-backup-by-default.pt-BR.md) — tradução automática
-- [0043 — shrink guard](0043-shrink-guard.md) — blocking shrink guard (exit 65) when --expect-checksum is active and stdin shrinks >50%; --allow-shrink for override
-  - [PT-BR](0043-shrink-guard.pt-BR.md) — tradução automática
-- [0044 — edit --old-file/--new-file](0044-edit-old-file-new-file.md) — --old-file/--new-file to bypass ARG_MAX; cross-mixing validation and trailing newline stripping
-  - [PT-BR](0044-edit-old-file-new-file.pt-BR.md) — tradução automática
-- [0045 — clap error actionable suggestion](0045-clap-error-actionable-suggestion.md) — ARGUMENT_PARSE_ERROR (exit 2) gains context-aware `suggestion` field pointing to --old-file/--new-file when error involves hyphen values
-  - [PT-BR](0045-clap-error-actionable-suggestion.pt-BR.md) — tradução automática
-- [0046 — diff resolve-first retrofit](0046-diff-resolve-first-retrofit.md) — diff now resolves file_a and file_b against workspace via validate_path (was the only command violating ADR-0027 convention)
-  - [PT-BR](0046-diff-resolve-first-retrofit.pt-BR.md) — tradução automática
-- [0047 — scope read-only mode fix](0047-scope-readonly-mode-fix.md) — scope read-only mode now correctly reports files_matched via Node::find_all; files_modified=None when no action configured
-  - [PT-BR](0047-scope-readonly-mode-fix.pt-BR.md) — tradução automática
-- [0048 — unified BackupOpts](0048-unified-backup-opts.md) — single BackupOpts struct flattened via #[command(flatten)] into 15 mutating subcommands; single resolve_backup() with precedence ATOMWRITE_BACKUP env > CLI flags > .atomwrite.toml [defaults] > built-in default
-  - [PT-BR](0048-unified-backup-opts.pt-BR.md) — tradução automática
-- [0049 — live config plumbing](0049-live-config-plumbing.md) — load_config called once in lib.rs::run(); DefaultsSection propagated to every mutating handler, closing GAP-CONFIG-DEFAULTS-DEAD
-  - [PT-BR](0049-live-config-plumbing.pt-BR.md) — tradução automática
-- [0050 — stdin-tty guard](0050-stdin-tty-guard.md) — main.rs computes stdin.is_terminal() once and propagates stdin_is_tty down to cmd_edit; stdin-consuming edit modes fail fast with exit 65 instead of blocking indefinitely
-  - [PT-BR](0050-stdin-tty-guard.pt-BR.md) — tradução automática
-- [0051 — v0.1.29 gap close and docs](0051-v0-1-29-gap-close-and-docs.md) — fecha P0–P3 e residuais: fuzzy compartilhado, best_candidate, features core/slim, recipe real, durability, renameat2, agent-surface anti-MCP, foundation P3, schemas e documentação EN/PT alinhados à 0.1.29
-- [0052 — v0.1.30 residual agent contract](0052-v0-1-30-residual-agent-contract.md) — fecha residual P17–P24: match_count, indent_adjusted, fuzzy off rejeitado, backup reflink_or_copy, recipe bak skip, sparse outline AST real, semantic-merge line-based, schema e docs
-- [0053 — clap rules audit exceptions](0053-clap-rules-audit-exceptions.md) — documented Clap audit exceptions (v0.1.32): `BackupOpts.backup: Option<bool>` tri-state; `prescan_json_schema` via `std::env::args` before Clap
-  - [PT-BR](0053-clap-rules-audit-exceptions.pt-BR.md) — translation
-- [0054 — v0.1.34 oneshot fuzzy + timeout](0054-v0-1-34-oneshot-fuzzy-timeout.md) — one-pass fuzzy; embeds force 1; timeout default 120 / exit 124; cancel mid-cascade; caps; no telemetry; docs-complete of 0.1.33
-  - [PT-BR](0054-v0-1-34-oneshot-fuzzy-timeout.pt-BR.md) — full translation
-- [0055 — v0.1.36 agent contract gaps](0055-v0-1-36-agent-contract-gaps.md) — closes/mitigates GAP-2026-019…033: content-source jail + scratch init, error ok:false + match_count, fuzzy honesty (null similarity / dual-gate / soft-floor), agent-native --select/--filter/--limit, extract --field, CANONICAL_SUBCOMMAND_COUNT=45, ADR surface
-  - [PT-BR](0055-v0-1-36-agent-contract-gaps.pt-BR.md) — tradução
+| ADR | Decision | EN | pt-BR |
+| --- | --- | --- | --- |
+| 0019 | v0.1.12 chose `tree-sitter-language-pack` over direct `tree-sitter` deps to keep binary small. | [0019](0019-tree-sitter-language-pack.md) | [0019](0019-tree-sitter-language-pack.pt-BR.md) |
+| 0020 | G114 WAL sidecar path is `.atomwrite.journal.<basename>.atomwrite.journal.json`. | [0020](0020-wal-sidecar.md) | [0020](0020-wal-sidecar.pt-BR.md) |
+| 0021 | v0.1.12 `query` accepts only kind names, not tree-sitter S-expressions. | [0021](0021-v14-query-outline-no-s-expr.md) | [0021](0021-v14-query-outline-no-s-expr.pt-BR.md) |
+| 0022 | G72 tree-sitter REAL syntax check replaces (not adds to) the bracket heuristic. | [0022](0022-g72-tree-sitter-replaces-heuristic.md) | [0022](0022-g72-tree-sitter-replaces-heuristic.pt-BR.md) |
+| 0023 | G114 recovery is consultative (no auto-replay, no auto-delete). | [0023](0023-g114-wal-consultive.md) | [0023](0023-g114-wal-consultive.pt-BR.md) |
+| 0024 | `get/del` TOML dotted path navigation is manual `Table` descent, not `toml_edit::Table::get`. | [0024](0024-get-toml-path-manual.md) | [0024](0024-get-toml-path-manual.pt-BR.md) |
+| 0025 | `query --positions` is valid in `--query`/`--tree`, silently ignored in `--kinds`. | [0025](0025-positions-only-in-query-tree.md) | [0025](0025-positions-only-in-query-tree.pt-BR.md) |
+| 0026 | Multi-pair `--old`/`--new` gains fuzzy parity, per-pair `pair_results`, `failed_pair_index` on error, and opt-in `--partial`. | [0026](0026-g117-edit-multi-pair-fuzzy-partial.md) | [0026](0026-g117-edit-multi-pair-fuzzy-partial.pt-BR.md) |
+| 0027 | `write` resolves the target via `validate_path` before append/prepend, line-ending auto-detection, and `--expect-checksum` (fixes CWE-367 double path identity; checksum drift exits 82 with a divergent CWD). | [0027](0027-g118-write-path-resolution.md) | [0027](0027-g118-write-path-resolution.pt-BR.md) |
+| 0028 | Five-layer autonomous WAL cleanup: L1 `--wal-policy` prevention, L2 Drop guard, L3 `--no-auto-heal` startup heal, L4 heuristics (TTL/LRU/rate/sentinel/archive), L5 `wal-stats`. | [0028](0028-g119-wal-cleanup-intelligent.md) | [0028](0028-g119-wal-cleanup-intelligent.pt-BR.md) |
+| 0029 | L3 explicit cross-validation of `--append`/`--expect-checksum`/`--allow-empty-stdin` via `tracing::info` and `--no-checksum-when-empty` opt-out. | [0029](0029-g120-empty-stdin-guard.md) | [0029](0029-g120-empty-stdin-guard.pt-BR.md) |
+| 0030 | `replace` pre-validates root paths against the jail, G120 L3 end-to-end test, G117 edge cases (Unicode, CRLF, multi-pair same `--old`). | [0030](0030-v0-1-18-g118-replace-pre-validation-g120-l3-tests-g117-edge-cases.md) | [0030](0030-v0-1-18-g118-replace-pre-validation-g120-l3-tests-g117-edge-cases.pt-BR.md) |
+| 0031 | `search` e `replace` resolvem root paths contra o workspace via helper compartilhado (CWE-367). | [0031](0031-g121-path-resolution-helper.md) | [0031](0031-g121-path-resolution-helper.pt-BR.md) |
+| 0032 | `query` aceita S-expressions tree-sitter via `Query::new` (v0.1.12 docs prometiam mas código nunca implementou). | [0032](0032-query-sexp-real-implementation.md) | [0032](0032-query-sexp-real-implementation.pt-BR.md) |
+| 0033 | 7 drifts de exit code entre docs publicadas e binário (STATE_DRIFT, SYNTAX_ERROR_DETECTED, ORPHAN_JOURNAL, BROKEN_PIPE, binary read, ARGUMENT_PARSE_ERROR, missing --workspace). | [0033](0033-v0-1-19-exit-code-naming-drift-consolidation.md) | [0033](0033-v0-1-19-exit-code-naming-drift-consolidation.pt-BR.md) |
+| 0034 | clap `--help` nunca declarado antes da implementação (5 dos 11 GAP-2026 tinham esse anti-pattern; motivação para help-driven testing). | [0034](0034-help-driven-testing-anti-pattern.md) | [0034](0034-help-driven-testing-anti-pattern.pt-BR.md) |
+| 0035 | 4 flags defense-in-depth (`--require-backup`, `--confirm`, `--auto-rotate`, `--risk-threshold`) + `risk_assessment` no envelope, motivadas pelo incident c24-framework34.html de 2026-06-15. | [0035](0035-write-intention-guards.md) | [0035](0035-write-intention-guards.pt-BR.md) |
+| 0036 | Single-pair com zero matches retorna NO_MATCHES (exit 1); multi-pair aplica matched e relata unmatched em `pair_results` (exit 0). | [0036](0036-edit-partial-coverage.md) | [0036](0036-edit-partial-coverage.pt-BR.md) |
+| 0037 | Rename `GlobalArgs.lang` flag `--lang` para `--locale`; env var `ATOMWRITE_LANG` e campo `args.global.lang` preservados; namespace `--lang` liberado para subcomandos (histórico, pré-0.1.35, superado). | [0037](0037-global-locale-rename.md) | [0037](0037-global-locale-rename.pt-BR.md) |
+| 0038 | `keep_backup` default `false` + helper `delete_backup_quietly`; paridade de `--backup` em 4/4 subcomandos (write, edit, replace, rollback) e `--keep-backup` em 6/6 (write, edit, replace, rollback, apply, batch). | [0038](0038-backup-cumprido-deleta.md) | [0038](0038-backup-cumprido-deleta.pt-BR.md) |
+| 0039 | Sub-comando para N pares em 1 invocação; re-captura checksum opcional. | [0039](0039-edit-loop-helper.md) | [0039](0039-edit-loop-helper.pt-BR.md) |
+| 0040 | Cleanup manual para legados v0.1.20; flags --max-age-secs e --max-count. | [0040](0040-prune-backups-subcommand.md) | [0040](0040-prune-backups-subcommand.pt-BR.md) |
+| 0041 | allow_hyphen_values for 12 CLI text-accepting fields across 8 structs, since the three positionals require `--`; prevents exit 2 cascade in agent pipelines. | [0041](0041-allow-hyphen-values-edit.md) | [0041](0041-allow-hyphen-values-edit.pt-BR.md) |
+| 0042 | Backup default true in 9 content-mutating structs; --no-backup and ATOMWRITE_BACKUP=0 for opt-out (historical, pre-0.1.35, superseded). | [0042](0042-backup-by-default.md) | [0042](0042-backup-by-default.pt-BR.md) |
+| 0043 | Blocking shrink guard (exit 65) when --expect-checksum is active and stdin shrinks >50%; --allow-shrink for override. | [0043](0043-shrink-guard.md) | [0043](0043-shrink-guard.pt-BR.md) |
+| 0044 | --old-file/--new-file to bypass ARG_MAX; cross-mixing validation and trailing newline stripping. | [0044](0044-edit-old-file-new-file.md) | [0044](0044-edit-old-file-new-file.pt-BR.md) |
+| 0045 | ARGUMENT_PARSE_ERROR (exit 2) gains context-aware `suggestion` field pointing to --old-file/--new-file when error involves hyphen values. | [0045](0045-clap-error-actionable-suggestion.md) | [0045](0045-clap-error-actionable-suggestion.pt-BR.md) |
+| 0046 | `diff` now resolves file_a and file_b against workspace via validate_path (was the only command violating ADR-0027 convention). | [0046](0046-diff-resolve-first-retrofit.md) | [0046](0046-diff-resolve-first-retrofit.pt-BR.md) |
+| 0047 | `scope` read-only mode now correctly reports files_matched via Node::find_all; files_modified=None when no action configured. | [0047](0047-scope-readonly-mode-fix.md) | [0047](0047-scope-readonly-mode-fix.pt-BR.md) |
+| 0048 | Single BackupOpts struct flattened via #[command(flatten)] into 15 mutating subcommands; single resolve_backup() with precedence ATOMWRITE_BACKUP env > CLI flags > .atomwrite.toml [defaults] > built-in default (historical, pre-0.1.35, superseded). | [0048](0048-unified-backup-opts.md) | [0048](0048-unified-backup-opts.pt-BR.md) |
+| 0049 | load_config called once in lib.rs::run(); DefaultsSection propagated to every mutating handler, closing GAP-CONFIG-DEFAULTS-DEAD. | [0049](0049-live-config-plumbing.md) | [0049](0049-live-config-plumbing.pt-BR.md) |
+| 0050 | main.rs computes stdin.is_terminal() once and propagates stdin_is_tty down to cmd_edit; stdin-consuming edit modes fail fast with exit 65 instead of blocking indefinitely. | [0050](0050-stdin-tty-guard.md) | [0050](0050-stdin-tty-guard.pt-BR.md) |
+| 0051 | v0.1.29: fecha P0–P3 e residuais: fuzzy compartilhado, best_candidate, features core/slim, recipe real, durability, renameat2, agent-surface, foundation P3, schemas e documentação EN/PT alinhados à 0.1.29. | [0051](0051-v0-1-29-gap-close-and-docs.md) | [0051](0051-v0-1-29-gap-close-and-docs.pt-BR.md) |
+| 0052 | v0.1.30: fecha residual P17–P24: match_count, indent_adjusted, fuzzy off rejeitado, backup reflink_or_copy, recipe bak skip, sparse outline AST real, semantic-merge line-based, schema e docs. | [0052](0052-v0-1-30-residual-agent-contract.md) | [0052](0052-v0-1-30-residual-agent-contract.pt-BR.md) |
+| 0053 | Documented Clap audit exceptions (v0.1.32): `BackupOpts.backup: Option<bool>` tri-state; `prescan_json_schema` via `std::env::args` before Clap. | [0053](0053-clap-rules-audit-exceptions.md) | [0053](0053-clap-rules-audit-exceptions.pt-BR.md) |
+| 0054 | v0.1.34: one-pass fuzzy; embeds force 1; timeout default 120 / exit 124; cancel mid-cascade; caps; no telemetry; docs-complete of 0.1.33. Amended by 0065 and 0073. | [0054](0054-v0-1-34-oneshot-fuzzy-timeout.md) | [0054](0054-v0-1-34-oneshot-fuzzy-timeout.pt-BR.md) |
+| 0055 | v0.1.36: closes/mitigates GAP-2026-019…033: content-source jail + scratch init, error ok:false + match_count, fuzzy honesty (null similarity / dual-gate / soft-floor), agent-native --select/--filter/--limit, extract --field, CANONICAL_SUBCOMMAND_COUNT=45, ADR surface. Amended by 0061, 0065 and 0072. | [0055](0055-v0-1-36-agent-contract-gaps.md) | [0055](0055-v0-1-36-agent-contract-gaps.pt-BR.md) |
+| 0056 | Removes `release_max_level_info` so `-vv`/`-vvv` stay JSON-only with DEBUG/TRACE in release; measured median +1.60 % (inside noise), binary +17 216 bytes. | [0056](0056-tracing-no-compile-time-level-cap.md) | [0056](0056-tracing-no-compile-time-level-cap.pt-BR.md) |
+| 0057 | Documents third-party environment reads (`sys-locale`, `directories`, `ureq` proxy), keeps `tree-sitter-language-pack` `download` (measured: `outline`/`query` fail without it), MSRV 1.89, `rust-i18n` 4.2, `serde-saphyr`, `notify` 8. | [0057](0057-dependency-env-reads-parser-download-msrv-yaml.md) | [0057](0057-dependency-env-reads-parser-download-msrv-yaml.pt-BR.md) |
+| 0058 | v0.1.37: the 47th subcommand `config path\|list\|get\|set\|unset` over 37 typed keys, mandatory `--scope`, comment-preserving atomic write, answered before the config load. | [0058](0058-config-verb-typed-keys.md) | [0058](0058-config-verb-typed-keys.pt-BR.md) |
+| 0059 | v0.1.37: one `src/retry.rs` with full jitter, two stop conditions, 15 ms cancel slices and a budget cut to the global deadline. | [0059](0059-retry-full-jitter-global-deadline.md) | [0059](0059-retry-full-jitter-global-deadline.pt-BR.md) |
+| 0060 | v0.1.37: one 8 MiB byte budget shared by every `search` worker (`search.max_inflight_bytes`, 4 MiB to 1 GiB); default `-j` memory 142.6 MB to 45.3 MB. | [0060](0060-search-inflight-byte-budget.md) | [0060](0060-search-inflight-byte-budget.pt-BR.md) |
+| 0061 | v0.1.37: `NdjsonWriter::publish_failure` and `VerdictPublished`, so a failed run ends in exactly one terminal event; `files_failed` and `errors[]`. | [0061](0061-single-terminal-event-publish-failure.md) | [0061](0061-single-terminal-event-publish-failure.pt-BR.md) |
+| 0062 | v0.1.37: WAL H3 rate limit applies at journal creation only, `startup_wal_heal` limited to the argv directories with a 100 ms budget, cancelled runs leave no journal. | [0062](0062-wal-h3-at-creation-bounded-startup-heal.md) | [0062](0062-wal-h3-at-creation-bounded-startup-heal.pt-BR.md) |
+| 0063 | v0.1.37: SIGPIPE has a cooperative handler with exit 141, a DELIBERATE DEVIATION from the literal `SIG_DFL` owner rule (measured: 7 to 11 locks and 3 to 7 journals left with `SIG_DFL`). | [0063](0063-sigpipe-cooperative-handler-exit-141.md) | [0063](0063-sigpipe-cooperative-handler-exit-141.pt-BR.md) |
+| 0064 | v0.1.37: automatic threads `min(CPUs, 16, RAM cap)`, walker capped at 12, explicit `-j N` honoured, rayon pool built on demand. | [0064](0064-thread-ceiling-16-rayon-on-demand.md) | [0064](0064-thread-ceiling-16-rayon-on-demand.pt-BR.md) |
+| 0065 | v0.1.37: `fuzzy.max_content_bytes` ceiling (256 MiB), `escape_normalized` cut at 32 MiB, `CancelPoll` in every fuzzy loop, dual-gate ties only. | [0065](0065-fuzzy-content-ceiling-cancel-polls.md) | [0065](0065-fuzzy-content-ceiling-cancel-polls.pt-BR.md) |
+| 0066 | v0.1.37: `DoctorChecksFailed`, `doctor --strict` exits 1 with `DOCTOR_CHECKS_FAILED` and the report as the single terminal line. | [0066](0066-doctor-checks-failed-exit-1.md) | [0066](0066-doctor-checks-failed-exit-1.pt-BR.md) |
+| 0067 | v0.1.37: closed terminal schemas, `diff` as a `oneOf` of four branches, 55 names served by `--print-schema`. | [0067](0067-closed-terminal-schemas-print-schema.md) | [0067](0067-closed-terminal-schemas-print-schema.pt-BR.md) |
+| 0068 | v0.1.37: `common::hermetic` for tests plus two source guards (hardcode; `let _ =` and panics) with empty allowance lists. | [0068](0068-hermetic-tests-source-guards.md) | [0068](0068-hermetic-tests-source-guards.pt-BR.md) |
+| 0069 | v0.1.37: `constants.rs` split into three `include!` parts and large modules split into `.inc.rs` files, public paths unchanged. | [0069](0069-constants-split-inc-modules.md) | [0069](0069-constants-split-inc-modules.pt-BR.md) |
+| 0070 | v0.1.37: `watch` is an opt-in feature; the default binary answers exit 78 with a rebuild hint and `agent-surface` reports `available: false`. | [0070](0070-watch-opt-in-feature.md) | [0070](0070-watch-opt-in-feature.pt-BR.md) |
+| 0071 | v0.1.37: `extract-artifact` returns bounded signal from PDF, OOXML and image headers, never raw bytes; limits are `extract.*` config keys. | [0071](0071-extract-artifact-bounded-signal.md) | [0071](0071-extract-artifact-bounded-signal.pt-BR.md) |
+| 0072 | v0.1.37: agent-native surface with global stream shaping flags, `--print-schema` answered before clap, `--non-interactive` and `--confirm-side-effect`. | [0072](0072-agent-native-stream-shaping-surface.md) | [0072](0072-agent-native-stream-shaping-surface.pt-BR.md) |
+| 0073 | v0.1.37: one terminal cancel point in the dispatch, `deadline_exceeded` always serialized, exits 129, 130, 143 and 124. Amends 0054. | [0073](0073-single-terminal-cancel-deadline-exceeded.md) | [0073](0073-single-terminal-cancel-deadline-exceeded.pt-BR.md) |
+| 0074 | v0.1.37: read-modify-write verbs take the advisory lock before they read (`acquire_for_update`), `atomic_write_based` fails with `STATE_DRIFT` (exit 82) on a stale base, and `apply` is strict (`MATCH_FAILED`, nothing written). | [0074](0074-rmw-serialization-strict-apply.md) | [0074](0074-rmw-serialization-strict-apply.pt-BR.md) |
+| 0075 | v0.1.37: `tree-sitter-language-pack` 1.22.1, `ast-grep` 0.51 and `tree-sitter` 0.27 in one move, which takes `zstd` from 0.13.3 to 0.14.3 and clears 4 vulnerabilities and 10 unsound warnings; `rust-version` rises to 1.90. Amends 0057. | [0075](0075-grammar-pack-1-22-ast-grep-0-51-msrv-1-90.md) | [0075](0075-grammar-pack-1-22-ast-grep-0-51-msrv-1-90.pt-BR.md) |
+| 0076 | v0.1.37: `read` takes several operands and expands one level of `*`, `?` or `[` itself, so `--format raw` concatenates like `cat`; the byte channel never carries an error envelope; `--sort` summaries stop claiming `walker_stopped_early`. | [0076](0076-read-multi-file-raw.md) | [0076](0076-read-multi-file-raw.pt-BR.md) |
+| 0077 | v0.1.37: a match is a file that answered (`scope`), a failure counts once per distinct path (`transform --rules`), a broken ignore file is a reported failure, `case` joins the answer-keeping family, the five read verbs carry the target stamp, and `files_skipped`/`files_visited`/`total_matches` descriptions match their producers. | [0077](0077-answer-family-and-walk-honesty.md) | [0077](0077-answer-family-and-walk-honesty.pt-BR.md) |
+| 0078 | v0.1.37: one schema per verb describing the whole stream, the error envelope as a branch of every union, child tags declared, and the served list down from 59 to 55 names backed by 54 files. Supersedes the name list of 0067. | [0078](0078-one-schema-per-verb-union.md) | [0078](0078-one-schema-per-verb-union.pt-BR.md) |
+
+
+## ADRs of the 0.1.35 series (docs/adr)
+- These three ADRs live in `docs/adr/` with the name `ADR-0.1.35-*.md`, outside the `NNNN-slug.md` convention, and are indexed here so no ADR is left without a link.
+
+| ADR | Decision | EN | pt-BR |
+| --- | --- | --- | --- |
+| ADR-0.1.35-g035-env-detect-allowlist | G-035: OS environment probe allowlist for `env_detect`. Superseded in 0.1.37: no environment variable is read and `env_detect` uses file probes only. | [EN](../adr/ADR-0.1.35-g035-env-detect-allowlist.md) | [pt-BR](../adr/ADR-0.1.35-g035-env-detect-allowlist.pt-BR.md) |
+| ADR-0.1.35-p3-fuzzy-reject | Rejects the P3 fuzzy AVALIAR items (nucleo Smith-Waterman, phonetic, BM25, remote embeddings, OS multi-process fan-out) for v0.1.35 and keeps the local cascade. | [EN](../adr/ADR-0.1.35-p3-fuzzy-reject.md) | [pt-BR](../adr/ADR-0.1.35-p3-fuzzy-reject.pt-BR.md) |
+| ADR-0.1.35-simd-memchr | SIMD fuzzy locate: keeps `memchr` and `strsim` and rejects `triple_accel` as a default dependency for v0.1.35. | [EN](../adr/ADR-0.1.35-simd-memchr.md) | [pt-BR](../adr/ADR-0.1.35-simd-memchr.pt-BR.md) |

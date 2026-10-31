@@ -26,20 +26,19 @@ pub struct WatchArgs {
     /// Path to watch.
     #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
     pub path: PathBuf,
-    /// Debounce milliseconds (coalesce per-path quiet period).
+    /// Debounce in milliseconds: the quiet period per path before its event is emitted.
     ///
-    /// Default: CLI if set, else XDG `[watch].debounce_ms`, else
-    /// `constants::DEFAULT_WATCH_DEBOUNCE_MS` (A-XDG-002).
+    /// Default: the `[watch].debounce_ms` value of the config file, else 200.
     #[arg(long, value_name = "MS")]
     pub debounce_ms: Option<u64>,
     /// Maximum events before exit (0 = unlimited until signal).
     #[arg(long, default_value_t = 0)]
     pub max_events: u64,
-    /// Idle exit after N milliseconds with zero events (R-XDG-007).
+    /// Exit after N milliseconds without events.
     ///
-    /// Default: XDG / `.atomwrite.toml` `[watch].idle_exit_ms`, else
-    /// `constants::DEFAULT_WATCH_IDLE_EXIT_MS`. `0` disables idle-exit
-    /// (still requires `--max-events` and/or global `--timeout-secs`).
+    /// Default: the `[watch].idle_exit_ms` value of the config file, else 500.
+    /// `0` disables the idle exit, and then `--max-events` or the global
+    /// `--timeout-secs` is still required.
     #[arg(long, value_name = "MS")]
     pub idle_exit_ms: Option<u64>,
     /// Include BLAKE3 checksum of the file when the path is a regular file.
@@ -51,6 +50,15 @@ pub struct WatchArgs {
 }
 
 /// Watch filesystem events (requires `--features watch`).
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::InvalidInput` when neither `--max-events` nor the global
+/// `--timeout-secs` bounds the run.
+/// Returns `AtomwriteError::WorkspaceJail` when the watched path escapes the workspace.
+/// Returns `AtomwriteError::Io` when the notify watcher cannot be created or cannot watch the
+/// root, and the notify error itself when a filesystem event arrives in a failed state.
+/// Returns `AtomwriteError::BrokenPipe` when the consumer closes the NDJSON stream.
 #[cfg(feature = "watch")]
 #[cfg_attr(docsrs, doc(cfg(feature = "watch")))]
 #[tracing::instrument(skip_all, fields(command = "watch"))]
@@ -63,7 +71,7 @@ pub fn cmd_watch(
     watch_cfg: &crate::config::WatchSection,
 ) -> Result<()> {
     use std::collections::HashMap;
-    use std::sync::mpsc::channel;
+    use std::sync::mpsc::sync_channel;
     use std::time::{Duration, Instant};
 
     use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
@@ -83,8 +91,18 @@ pub fn cmd_watch(
 
     let workspace = global.resolve_workspace()?;
     let root = validate_path(&args.path, &workspace)?;
-    let (tx, rx) = channel();
-    let mut watcher = RecommendedWatcher::new(tx, Config::default())?;
+    // Bounded: a slow event loop makes the notify thread wait instead of letting
+    // a burst of filesystem events grow the queue without limit.
+    let (tx, rx) = sync_channel(crate::constants::WATCH_EVENT_CHANNEL_CAP);
+    let mut watcher = RecommendedWatcher::new(
+        move |res| {
+            // A send fails only after the loop below has returned and dropped `rx`.
+            if tx.send(res).is_err() {
+                tracing::debug!("watch event dropped: the event loop has finished");
+            }
+        },
+        Config::default(),
+    )?;
     watcher.watch(&root, RecursiveMode::Recursive)?;
 
     // CLI > XDG `[watch].debounce_ms` > constants (A-XDG-002).
@@ -99,15 +117,16 @@ pub fn cmd_watch(
     // path -> (last_seen, last_kind)
     let mut pending: HashMap<PathBuf, (Instant, String)> = HashMap::new();
     let mut count = 0u64;
-    let git = ignore::gitignore::GitignoreBuilder::new(&root);
     let matcher = if args.gitignore {
         let mut b = ignore::gitignore::GitignoreBuilder::new(&root);
-        let _ = b.add(root.join(".gitignore"));
+        // A workspace without a readable `.gitignore` just filters nothing.
+        if let Some(e) = b.add(root.join(crate::constants::GITIGNORE_FILE)) {
+            tracing::debug!(error = %e, "watch: no usable .gitignore; nothing filtered");
+        }
         b.build().ok()
     } else {
         None
     };
-    let _ = git;
 
     let exit_reason;
     loop {
@@ -183,7 +202,7 @@ pub fn cmd_watch(
     }
 
     // A-WATCH-001: always emit a terminal summary so agents never see silent idle.
-    writer.write_event(&crate::ndjson_types::WatchSummary {
+    writer.write_terminal(&crate::ndjson_types::WatchSummary {
         r#type: "watch_summary",
         events: count,
         reason: exit_reason.into(),
@@ -275,6 +294,11 @@ fn flush_pending(
 }
 
 /// Stub when `watch` feature is disabled.
+///
+/// # Errors
+///
+/// Always returns `AtomwriteError::ConfigInvalid` because this build was compiled without the
+/// `watch` feature.
 #[cfg(not(feature = "watch"))]
 #[tracing::instrument(skip_all, fields(command = "watch"))]
 pub fn cmd_watch(
@@ -286,7 +310,10 @@ pub fn cmd_watch(
     _watch_cfg: &crate::config::WatchSection,
 ) -> Result<()> {
     Err(crate::error::AtomwriteError::ConfigInvalid {
-        reason: "watch requires rebuild: cargo install atomwrite --features watch (or cargo build --features watch)".into(),
+        reason: format!(
+            "watch {}: build it with `cargo build --features watch` or `cargo install atomwrite --features watch`",
+            crate::constants::FEATURE_MISSING_REASON_MARKER
+        ),
     }
     .into())
 }

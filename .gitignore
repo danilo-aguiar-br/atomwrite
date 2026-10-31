@@ -21,7 +21,7 @@ Thumbs.db
 
 # ── AI tooling and project docs (not versioned) ──
 .claude/
-docs_prd/
+docs-prd/
 docs_rules/
 CLAUDE.md
 AGENTS.md
@@ -58,8 +58,12 @@ fuzz/corpus/
 .serena/
 
 
+# --- skills distribuídas do projeto: NÃO são artefato residual ---
+!skills/atomwrite-en/
+!skills/atomwrite-pt/
+
 # BEGIN GH_SKILL_HYGIENE
-# Managed by ~/.grok/skills/crates-io-gh/scripts/pre-commit-hygiene.sh — do not hand-edit inside markers
+# Managed by the crates-io-gh skill (pre-commit-hygiene.sh) — do not hand-edit inside markers
 # Ensures agent residual, secrets, DBs, media dumps and temp dirs never enter git
 # Empty/whitespace-only patterns are rejected (never added). No *.lock patterns.
 # --- extensions ---
@@ -125,8 +129,6 @@ graphrag.sqlite-wal
 **/.ingest-queue.sqlite-wal
 CLAUDE.md
 /CLAUDE.md
-.commit_hash
-**/.commit_hash
 # --- directories (prefix + contents) ---
 base_*/
 docs_rules*/
@@ -143,6 +145,10 @@ _agent_*/
 # --- exact directories + contents ---
 .setting.cyber/
 .setting.cyber/**
+docs-prd/
+docs-prd/**
+docs_prd/
+docs_prd/**
 docs_rules_ingest/
 docs_rules_ingest/**
 .claude/

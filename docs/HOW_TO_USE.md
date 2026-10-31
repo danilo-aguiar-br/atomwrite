@@ -3,593 +3,418 @@
 
 [Leia em Português](HOW_TO_USE.pt-BR.md)
 
-> One CLI replaces dozens of file-manipulation tool calls your agent makes today
+- One CLI replaces dozens of file-manipulation tool calls your agent makes today
+
+
+## Reading and Running Time
+- Reading time is about 45 minutes for the whole guide (about 10000 words at 230 words per minute)
+- First Command in 60 Seconds takes 2 minutes to read and run
+- Every example ran on Linux against atomwrite 0.1.37 inside an isolated home directory
+- A plain write finished in 8 ms on the measurement host, so examples answer at once
+- The first AST call downloads tree-sitter parsers, which takes seconds (see Prerequisites)
+- macOS and Windows were not measured for this guide
+- Examples use a POSIX shell, and on PowerShell you pipe text with `'text' | atomwrite ...`
+- When you are done, the [COOKBOOK](COOKBOOK.md) holds longer recipes
+
+
+## What's New in v0.1.37 (2026-10-31)
+- Pin agents to `^0.1.37` with `cargo install atomwrite --locked --version "^0.1.37"`
+- The surface has 47 subcommands (SSOT), and the new one is `config`
+- `config` reads and writes 37 persistent keys with `path|list|get|set|unset|doctor`
+- `--scope global|workspace` is required on `config path`, `config set` and `config unset`
+- Global stream flags `--sort-by`, `--dedupe`, `--aggregate` and `--diff-against` shape the data channel
+- `--join KEY:SUFFIX` reads an NDJSON table from stdin once and attaches the matching rows to each data event
+- Global flags `--redact`, `--normalize-encoding`, `--max-output-bytes` and `--allow-truncate` guard what leaves the process
+- `--max-output-bytes` and `--allow-truncate` are rejected with exit 2 unless both are present
+- `--print-schema [NAME]` lists the 55 schema names or emits one schema
+- `--non-interactive` is accepted on every command, while `--confirm-side-effect` is accepted on the verbs that change bytes on disk and rejected with exit 65 on the rest
+- `extract-artifact` reads PDF, OOXML and image headers and never emits raw artifact bytes
+- Every success envelope carries `ok: true`, and a failing run ends in one terminal event with `ok: false`
+- Every summary that publishes `files_failed` publishes `partial` beside it, and that covers `search`, `replace`, `transform`, `scope`, `count`, `list`, `sparse`, `semantic-search` and `case`
+- `search`, `replace`, `transform`, `scope`, `case`, `sparse`, `semantic-search` and `backup` keep exit 0 when they answered and some file failed, while `count`, `list`, `hash`, `copy`, `delete` and `prune-backups` exit with the first failure because their answer is a total over the tree; the contract is ADR-0077 (`docs/decisions/0077-answer-family-and-walk-honesty.md`)
+- `edit-loop` is all-or-nothing, and `edit-loop --partial` exits 87 (`EDIT_LOOP_PARTIAL`)
+- A fuzzy match above `[fuzzy].max_content_bytes` (256 MiB) fails with exit 65, and `--fuzzy off` stays exact-only
+- Exit codes to branch on are 65, 78, 83, 84, 87, 124, 129, 141 and 143
+- The write lock is automatic on Unix and on Windows, and a timeout exits 83 (`LOCK_TIMEOUT`)
+- `watch` left the default build, and the default binary answers it with exit 78
+
+### Changes That Can Break a Consumer
+- A summary that fails carries `ok`, `code` and `exit` itself, and no second error line follows it
+- Read `partial` and `files_failed` in every summary that publishes them before trusting a result, and read `errors[]` as the first `summary.errors_max_entries` causes (50 by default)
+- Cancelled scans end on a `cancelled` envelope with `deadline_exceeded`, so the last line may be a cancel record
+- `--print-schema` must come before the command name, and an unknown name exits 65 with an error envelope
+- `replace`, `scope`, `codemod`, `case`, `delete`, `backup` and `prune-backups` need explicit paths, or exit 2
+- `wal-heal` and `scratch init` take a positional path, and `recipe run` needs `--path` or `--target`
+- `transform` needs its positional paths, and a call without them is a usage error
+- `edit-loop` with an unmatched pair exits 65 and writes nothing, where it used to write the matching pairs
+- A missing pair reports `MATCH_FAILED` with `best_candidate`, where it used to report `INVALID_INPUT`
+- `doctor` no longer reports its former CI and privilege fields, and `agent-surface` no longer has the tool-protocol key
+- An unknown key or invalid file in `config.toml` or `.atomwrite.toml` exits 78
+- The workspace `.atomwrite.toml` and the global `config.toml` are merged key by key
+- `watch` needs a build with `--features watch`, or the call exits 78
 
-
-
-## What's New in v0.1.36 (2026-07-31)
-
-- **Agent staging:** `atomwrite scratch init` creates `{workspace}/.atomwrite/scratch/` (never OS `/tmp`). Stage `--old-file`/`--new-file` there (GAP-2026-019)
-- **Error envelope:** failures emit `ok: false` + stable `match_count` (0 on miss) — check exit **before** success fields (GAP-2026-020)
-- **Stdout shaping (agent-native):** global `--select`/`--fields KEYS`, `--filter key=value` (repeatable AND), `--limit N` on every subcommand (and error path). Prefer one process over `jq`
-- **Fuzzy honesty:** normalized strategies → `similarity: null`; dual-gate `block_anchor`; XDG `[fuzzy].soft_floor_delta` / `threshold_aggressive`
-- **Content-source jail tip:** WORKSPACE_JAIL on `--old-file` suggests staging under `.atomwrite/scratch/`
-- Contract suite: `cargo test --test cli_v0136_gaps`
-- Local release gate (no product GHA): `cargo test --lib && cargo test --tests && ./scripts/check-gaps-ssot.sh && cargo clippy --all-targets -- -D warnings`
-- Pin agents to `^0.1.36`. **45** subcommands (SSOT). Config still CLI + XDG / `.atomwrite.toml` only
-- Agent-native stdout shape: `--select`/`--fields`, `--filter` (top-level equality), `--limit` (**no global `-n`** — `replace` owns `-n`). Error envelopes **always emit** (filter does not silence failures)
-- `extract`: positional fields or local `--field` (repeatable). **NEVER** `extract --select` (global `--select` only projects the emitted line; local name collides with clap)
-
-```bash
-# Staging formula
-atomwrite --workspace . scratch init
-SCR=.atomwrite/scratch
-printf %s "$OLD" >"$SCR/old.txt"
-printf %s "$NEW" >"$SCR/new.txt"
-atomwrite --workspace . edit --old-file "$SCR/old.txt" --new-file "$SCR/new.txt" src/f.rs
-
-# Compact agent parse (no jq)
-atomwrite --workspace . --select ok,error,code,match_count,suggestion \
-  edit --old missing --new x --fuzzy off src/f.rs
-atomwrite --workspace . --filter ok=false --limit 1 edit --old a --new b src/f.rs
-```
-
-## What's New in v0.1.35 (2026-07-19)
-
-- Residual **A-*** gaps closed (gaps.md §20): suite green without `delete --yes`; large overwrite **default-deny** (`--ack-overwrite`); `watch` always emits `watch_summary`; semantic-merge conflict markers default ON; monólitos `include!` SRP splits
-- **Write large files:** existing targets above XDG `[write].confirm_large_bytes` (default 100 KiB) require `--ack-overwrite` (agent one-shot; no interactive Y/N). `--confirm` is a legacy awareness flag; `--require-large-ack` is independent (no alias collision)
-- **Delete:** use `--plan` or `--dry-run` for plan-only; `delete --confirm` and `delete --yes`/`-y` are **rejected** (fail-closed). Run again without those flags to delete
-- **Watch:** final NDJSON `type:watch_summary` on every exit path; idle default **500 ms** (`--idle-exit-ms` / XDG `[watch].idle_exit_ms`); debounce via CLI or XDG `[watch].debounce_ms`
-- **Semantic-merge:** conflict markers written by default; opt-out `--no-conflict-markers`
-- Local DoD (no product GitHub Actions): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`, `cargo check --target x86_64-pc-windows-gnu`, `cargo install --path . --force`
-- Contract suite: `cargo test --test cli_e2e_v0135`
-- **Historical pin** `^0.1.35` (superseded by **`^0.1.36`**). Configuration is CLI + XDG / `.atomwrite.toml` only (no product `ATOMWRITE_*` runtime knobs; no product telemetry)
-
-## What's New in v0.1.34
-
-v0.1.34 (2026-07-19) is the **docs-complete** publish of the v0.1.33 one-shot runtime. Same binary behavior; documentation aligned. **Historical (at v0.1.34):** still **41 subcommands**.
-
-### One-shot fuzzy + timeout default 120
-
-- Global `--timeout-secs` (alias `--timeout`) **default 120** (was 0); `0` disables; deadline → exit **124**
-- Fuzzy multi-apply is **one-pass** left-to-right on the original content (`apply_fuzzy_one_pass`); it **never** re-scans inserted text
-- Default max fuzzy applies = **1** when `--max-replacements` is omitted; hard ceiling 10_000
-- If the replacement **contains** the pattern (fixed-string), atomwrite forces a **single** apply — safe for expand-section edits where NEW embeds OLD
-- Cooperative cancel is polled mid-fuzzy cascade
-- Caps: pattern 64 KiB; lev 8192 chars; max windows 4096; growth max(4×,+16 MiB)
-- Regression: `cargo test --test cli_v0133_oneshot_fuzzy`
-- Fuzzy modes: `--fuzzy auto|aggressive|off` where `off` = exact-only (G-010 CLOSED in v0.1.35; historical 0.1.30 rejection superseded); default remains `auto`
-- See [ADR-0054](decisions/0054-v0-1-34-oneshot-fuzzy-timeout.md) for one-shot fuzzy + timeout (exit 124 vs 143)
-
-```bash
-# Expand a section safely — NEW contains OLD; one-pass, no hang
-atomwrite --workspace . replace --fuzzy auto \
-  $'## Install\n\nRun cargo install.' \
-  $'## Install\n\nRun cargo install.\n\n### Notes\nSee docs.' \
-  README.md
-
-# Bound long monorepo work (default is already 120s; 0 disables)
-atomwrite --workspace . --timeout-secs 0 replace --fuzzy auto 'old' 'new' packages/
-```
-
-## What Was New in v0.1.30
-
-v0.1.30 (2026-07-13) closes residual agent-contract gaps on top of the v0.1.29 surface. **Historical (at v0.1.30):** **41 subcommands**.
-
-### Fuzzy mandatory, match_count, indent_adjusted
-
-- Fuzzy modes: `--fuzzy auto|aggressive|off` where `off` = exact-only (G-010 CLOSED); default `auto` (cascade still default policy for agents)
-- Multi-occurrence edits require `--replace-all`; success NDJSON includes `match_count`
-- When indent delta realigns the replacement, success NDJSON includes `indent_adjusted: true`
-- Match failures emit ranked `best_candidate`, `candidates[]`, and `diff_preview`
-- Config `[fuzzy]` is live; `mode = "off"` in `.atomwrite.toml` is exact-only (G-010; not rejected)
-
-```bash
-atomwrite --workspace . replace --fuzzy auto $'fn main() {\n  let x = 1;\n}' $'fn main() {\n    let x = 2;\n}' src/main.rs
-
-# Multi-occurrence edit with match_count
-atomwrite --workspace . edit src/app.rs --old 'TODO' --new 'DONE' --replace-all --fuzzy auto \
-  | jaq '{match_count, indent_adjusted, strategy}'
-```
-
-### Carry-over from v0.1.29
-
-- Fixed-string `replace` uses `fuzzy=auto` after exact multi-match finds zero hits
-- Optional `--fuzzy-threshold <0.0-1.0>`
-
-### `write --durability`
-
-- `full` — strongest fsync + directory fsync
-- `fast` — file `sync_data` only
-- `auto` — config/full path default vs fast
-
-```bash
-echo payload | atomwrite --workspace . write --durability fast tmp/out.txt
-echo payload | atomwrite --workspace . write --durability full config.toml
-```
-
-### `recipe list` / `recipe run`
-
-- Built-ins include `search-replace-verify` and `edit-loop-syntax-check`
-
-```bash
-atomwrite --workspace . recipe list
-atomwrite --workspace . recipe run --name search-replace-verify \
-  --path src --pattern OLD --replacement NEW --fuzzy auto
-```
-
-### `sparse` (budgeted list/read/outline)
-
-- Budgeted monorepo list and read
-- Sparse outline emits real AST `outline_item` kinds under budget (v0.1.30 residual)
-
-```bash
-atomwrite --workspace . sparse list --max-files 50 --max-bytes 1048576 src/
-atomwrite --workspace . sparse read --paths-file /tmp/paths.txt --head 40
-atomwrite --workspace . sparse outline --max-files 20 src/
-```
-
-### `semantic-merge` (3-way, line-based)
-
-- Line-based three-way merge (honest: not AST-aware in v0.1.30)
-- Use for multi-agent conflict resolution when line-level merge is enough
-
-```bash
-atomwrite --workspace . semantic-merge \
-  --base base.rs --ours ours.rs --theirs theirs.rs --output merged.rs
-```
-
-### `stat`
-
-```bash
-atomwrite --workspace . stat src/lib.rs
-```
-
-### `agent-surface` (anti-MCP)
-
-- CLI-only surface inventory for agents
-- No MCP server; atomwrite stays a local CLI
-
-```bash
-atomwrite --workspace . agent-surface
-```
-
-### `semantic-search`
-
-- Offline Jaccard similarity over workspace text
-- Optional `--index-dir` for a local index cache
-- Requires feature `semantic`
-
-```bash
-atomwrite --workspace . semantic-search "atomic rename tempfile" src/ --k 10
-```
-
-### `codemod`
-
-- Rule-driven refactors emit `codemod_summary.by_rule_id` for per-rule counts
-
-```bash
-atomwrite --workspace . codemod --rules rules.yaml --dry-run src/
-```
-
-
-### Large overwrite (v0.1.35)
-
-```bash
-printf 'new content' | atomwrite --workspace . write --ack-overwrite path/to/file.txt
-printf 'new content' | atomwrite --workspace . write --require-large-ack --ack-overwrite path/to/file.txt
-```
-
-### Delete plan-only (v0.1.35)
-
-```bash
-atomwrite --workspace . delete --plan tmp/old.txt
-atomwrite --workspace . delete tmp/old.txt
-```
-
-### Watch summary (v0.1.35)
-
-```bash
-atomwrite --workspace . watch . --idle-exit-ms 500 --max-events 10
-```
-
-### Semantic-merge markers (v0.1.35)
-
-```bash
-atomwrite --workspace . semantic-merge --base b.txt --ours o.txt --theirs t.txt --output out.txt
-atomwrite --workspace . semantic-merge --base b.txt --ours o.txt --theirs t.txt --output out.txt --no-conflict-markers
-```
-
-### `watch`
-
-- Requires feature `watch`
-- Debounce, checksum filters, and gitignore-aware event streams
-
-```bash
-atomwrite --workspace . watch . --debounce-ms 200 --max-events 20
-```
-
-### Cooperative cancel
-
-- SIGINT/SIGTERM cancel stdin readers and chunked writes
-- Exit 143 with a cancelled event on cooperative shutdown
-
-### Binary size honesty
-
-- Core profile ~7.7 MiB (local size-gate ≤15 MiB)
-- Default/full build ~52 MB
-- PRD 5-8 MB target applies to core only
-
-### `progress-every` on bulk replace and batch
-
-- Bulk `replace` and long `batch` transactions emit NDJSON progress heartbeats
-
-```bash
-atomwrite --workspace . replace --progress-every 50 'old_api' 'new_api' src/
-```
-
-
-## What's New in v0.1.12
-
-## Quickstart: WAL Cleanup (G119)
-
-v0.1.15 ships a three-layer WAL management system (G119). The new `wal-stats` subcommand is read-only local diagnostics. The new `wal-heal` subcommand is scoped reaping. The new `--wal-policy` flag controls sidecar creation per write. Use the global `--no-auto-heal` to disable automatic healing during sensitive workflows.
-
-### Inspect with `wal-stats`
-
-```bash
-atomwrite --workspace . wal-stats
-# {"type":"result","journals_total":0,...,"reclaimable":0,...}
-```
-
-### Heal with `wal-heal`
-
-```bash
-# Remove all terminal journals (skips Started entries)
-atomwrite --workspace . wal-heal --threshold-secs 0
-```
-
-### Choose a `--wal-policy`
-
-```bash
-# Default: let the build decide
-atomwrite --workspace . write src/lib.rs < new.rs
-
-# Forbid any sidecar creation (workspace hygiene)
-atomwrite --workspace . write --wal-policy never ephemeral-output.txt < data.txt
-```
-
-### Disable Auto-Heal Globally
-
-When running scripted batch workflows or forensic captures, disable automatic healing so the script controls when reaping happens.
-
-```bash
-atomwrite --workspace . --no-auto-heal wal-stats
-```
-
-### Policy Decision Table
-
-| Workload | `--wal-policy` | Rationale |
-|---|---|---|
-| Local dev / interactive use | `auto` (default) | Optimized for general use; balanced trade-off |
-| ephemeral builds and ephemeral jobs | `never` | Sidecars have no consumer; skip the overhead |
-| Production deploys / audit trails | `always` | Forensic metadata required for postmortem |
-| Bulk migrations and batch jobs | `never` + `--no-auto-heal` | Speed and explicit control of reaping |
-| Forensic analysis / debugging | `always` + manual `wal-heal` | Keep all sidecars; reap only when you decide |
-
-
-This section summarizes how-to-use-relevant changes in v0.1.12.
-
-### New Subcommands (Tier 3)
-
-6 new subcommands for structured config and code operations:
-
-- `set <PATH> <KEY_PATH> <VALUE>` -- write a value at a dotted path in TOML/JSON
-- `get <PATH> <KEY_PATH>` -- read a value at a dotted path
-- `del <PATH> <KEY_PATH>` -- remove a key (`--force-missing` for idempotent scripts)
-- `case <PATHS...> --subvert OLD NEW --to <style>` -- rename identifiers in 5 case styles
-- `query <PATH> [--kinds|--query <KIND>|--tree] [--positions]` -- walk a tree-sitter AST
-- `outline <PATH> [--kind <KIND>] [--positions]` -- extract high-level structure
-
-See the Advanced Commands section below for detailed documentation of each.
-
-### New Flags for Existing Commands
-
-- `write --syntax-check` -- validate with tree-sitter after write (G72, exit 88)
-- `write --lock` and `--lock-timeout <ms>` -- advisory file lock via flock (G54, exit 83)
-- `write --include-fifo` -- allow writing to named pipes (G56)
-- `write --strict-atomic` -- abort on EXDEV instead of copy fallback (G90, exit 91)
-- `read --format raw` (alias `--raw`) -- emit raw bytes for Unix composability (G81)
-- `read --head N`, `--tail N`, `--line N`, `--grep <REGEX>` -- new read modes
-- `search --max-filesize <BYTES>` -- skip files larger than limit (G68, default 10 MiB)
-- `search --max-columns <N>` -- truncate matches with >N columns (G68, default 500)
-- `replace --literal` (alias `-F`) -- disable regex interpretation (G66)
-- `transform --rules <file.yaml>` -- multi-rule YAML for cascading refactors (G44)
-- `transform --inline-rules <YAML>` -- inline multi-rule YAML
-- `batch --batch-size <N>` -- control peak memory (G77, default 100)
-- `backup/copy --no-reflink` -- disable CoW for filesystems without support (G64)
-
-### 5 New Error Codes
-
-- 83 `LockTimeout` (G54)
-- 88 `SyntaxError` (G72)
-- 91 `ExdevFallbackDisabled` (G90)
-- 92 `CopyBackBlake3Failed` (G114)
-- 93 `OrphanJournal` (G114)
-
-### G72 REAL Syntax Check
-
-`atomwrite write --syntax-check` invokes the actual tree-sitter parser (24 languages) instead of the bracket-balance heuristic. Exit 88 with first error line/column. The parser is downloaded on first use via `tree-sitter-language-pack`.
-
-### G114 WAL Sidecar for Crash Recovery
-
-`atomic_write` writes `.atomwrite.journal.<target>.atomwrite.journal.json` with `Started`/`Committed` entries. `recover_orphan_journals(dir)` is consultive (no auto-replay, no auto-delete). The agent decides.
-
-### G64 Reflink CoW for Backup/Copy
-
-`backup` and `copy` use `reflink_or_copy` for O(1) backup on APFS/btrfs/XFS. Fallback to `fs::copy` on filesystems without CoW support. Use `--no-reflink` to force copy.
-
-### Test Coverage
-
-- 542 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118 in v0.1.15)
-- 9 ADRs in `docs/decisions/` (0019-0027)
-- 7 new JSON schemas in `docs/schemas/`
-- See [docs/decisions/README.md](decisions/README.md) for architectural decisions
 
 ## Prerequisites
-- Rust toolchain 1.88 or later
-- Install via `cargo install atomwrite`
-- Verify with `atomwrite --version`
-- Works on Linux, macOS and Windows
+- Rust toolchain 1.90 or later (edition 2024)
+- Linux, macOS and Windows are supported
+- Install from crates.io and confirm the version
+
+```bash
+cargo install atomwrite --locked --version "^0.1.37"
+atomwrite --version
+```
+
+- Expect a line that starts with `atomwrite 0.1.37`
+- The default build has the features `core`, `ast`, `lang-rust`, `lang-ts` and `lang-py`
+- `watch` and `lang-go` are opt-in, and `--features full` turns on everything
+- The default binary answers `watch` with exit 78 and the hint `cargo install atomwrite --features watch`
+- Tree-sitter parsers are not compiled in, and they are downloaded the first time a language is used
+- `outline`, `query`, `scope`, `transform`, `codemod`, `sparse outline` and `write --syntax-check` trigger the download
+- The download is a 23,031,807 byte bundle for linux-x86_64 (DERIVADO: 23031807 / 1048576 = 21,97 MiB), and it unpacks into 3,991,360 bytes across 6 shared libraries (DERIVADO: 3991360 / 1048576 = 3,81 MiB), measured on a cold cache on 2026-10-31
+- Parsers land in `$XDG_CACHE_HOME/tree-sitter-language-pack/v1.22.1/`, and `~/.cache/...` is the Linux default
+- The bundle comes from the `xberg-io/tree-sitter-language-pack` release `v1.22.1`, whose manifest lists 372 languages, and the HTTP client follows the system proxy
+- For a host without network, fill the cache directory on a connected host first (see ADR-0057)
+- `atomwrite doctor` reports the check `grammar_cache` with how many of the 23 grammars the AST verbs can need are already on disk, so the operator learns the condition before the run and not in the middle of it
+- A grammar that is missing and cannot be downloaded is exit 69 `GRAMMAR_UNAVAILABLE` with class `precondition_failed`, never exit 255, because the host is offline and the tool is not broken
+- `human-panic` writes a panic report as a local file in the temporary directory and sends nothing anywhere
+- See [INSTALL.md](INSTALL.md) for Windows build tools and troubleshooting
 
 
 ## First Command in 60 Seconds
-- Write a file atomically from stdin:
+- Pick a working directory and store its absolute path once
+- `--workspace` anchors the jail, so a wrong value moves the jail in silence
 
 ```bash
-echo "hello world" | atomwrite write src/hello.txt
+mkdir -p demo && cd demo
+WS="$(pwd)"
+printf 'hello world\n' | atomwrite --workspace "$WS" write src/hello.txt
 ```
 
-- Read it back with metadata and checksum:
+- Expect one NDJSON line on stdout with `type` set to `write` and `ok` set to `true`
+- The line carries `path`, `bytes_written`, `checksum`, `elapsed_ms`, `wal_policy` and `platform`
+- It also carries `target_resolved` and `target_source`, which prove which path was written
+
+```json
+{"type":"write","status":"success","path":"src/hello.txt","bytes_written":12,"checksum":"dc5a4edb8240b018124052c330270696f96771a63b45250a5c17d3000e823355","ok":true,"target_source":"argv"}
+```
+
+- This is an excerpt, and the real line has more fields
+- Read it back with metadata and checksum
 
 ```bash
-atomwrite read src/hello.txt
+atomwrite --workspace "$WS" read src/hello.txt
 ```
 
-- You get NDJSON on stdout with path, checksum, bytes and timing
-- Every write survives power failure and crashes
+- Expect `type` `read` with `content`, `lines`, `bytes`, `checksum`, `permissions`, `modified` and `ok`
+- Stdout is always NDJSON, stderr only carries diagnostics, and the exit code comes first
+- Every write survives a crash, because it goes through tempfile, fsync and rename
 
 
 ## Core Commands
+- Each command has a summary, its main flags, one tested example and the expected output
+- Examples share one sample workspace, so run them in order inside `demo`
+
+### Sample Workspace
+- Create the files that the next examples use
+
+```bash
+mkdir -p src tmp
+printf 'fn main() {\n    // TODO: wire config\n    let v = load().unwrap();\n    println!("{}", v);\n}\n\nfn load() -> Option<i32> {\n    Some(1)\n}\n' > src/main.rs
+printf 'pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n' > src/lib.rs
+printf 'fn alpha() {}\n' > src/a.rs
+printf 'fn beta() {}\n' > src/b.rs
+printf '[package]\nname = "demo"\nversion = "0.1.0"\n\n[database.pool]\nmax = 4\n' > Cargo.toml
+```
+
 ### write
-- Create or overwrite files atomically via stdin
-- The write follows tempfile, fsync, rename, fsync-dir sequence
-- Your data reaches disk or the operation fails cleanly
+- Creates or overwrites a file atomically from stdin, in the order tempfile, fsync, rename, fsync-dir
+- Your data reaches disk or the operation fails cleanly, and success carries a BLAKE3 `checksum`
 
 ```bash
-echo "fn main() {}" | atomwrite write src/main.rs
-cat config.toml | atomwrite write --backup config.toml
-echo "data" | atomwrite write --expect-checksum abc123 src/file.txt
+printf 'fn main() {}\n' | atomwrite --workspace "$WS" write src/scratch.rs
+printf 'longer content for the file\n' | atomwrite --workspace "$WS" write --backup --keep-backup src/hello.txt
+printf 'checked write\n' | atomwrite --workspace "$WS" write --dry-run src/dry.txt
 ```
 
-- Use `--backup` to create a timestamped backup before overwriting
-- Use `--expect-checksum` for optimistic locking on concurrent edits
-- Use `--line-ending lf|crlf|cr|auto` to normalize line endings (default: auto preserves original)
-- Since v0.1.15 append/prepend, line-ending auto-detection, and `--expect-checksum` resolve the target against `--workspace` (G118); on v0.1.14 and earlier keep CWD = workspace, or relative targets truncate on append and skip checksum verification
-- Use `--dry-run` to preview the operation without writing
-- Use `--syntax-check` to validate the file with tree-sitter after writing (G72, exit 88 on error)
-- Use `--preserve-timestamps` to keep the original mtime (default: mtime is updated so cargo/make/cmake rebuild)
-- Use `--include-fifo` to allow writing to FIFO/named pipes (default: exit 85)
-- Use `--strict-atomic` to abort on EXDEV (G90, default: copy fallback for Docker/NFS)
-- Use `--lock` to acquire an advisory file lock via `flock` (G54, exit 83 on timeout)
-- Use `--no-reflink` to disable CoW backup (G64, default: reflink in APFS/btrfs/XFS)
-- Use `--durability full|fast|auto` (v0.1.29)
-- `full` = strongest file+dir fsync; `fast` = sync_data only; `auto` = config/path policy
-- Success NDJSON reports `platform.durability`, `platform.rename_method`, `platform.backup_method`
-- Linux atomic rename prefers `renameat2` with ENOSYS fallback to rename
-- Backup uses reflink_or_copy (never hardlink of the live file)
+- Expect `type` `write` for the first two and `type` `plan` with `would_modify` for the dry run
+- A backup is made by default and removed after success, and `--keep-backup` keeps the `.bak.<timestamp>` sibling
+- A failed write always keeps its backup, `--no-backup` turns backups off and `--backup` with `--no-backup` exits 2
+- `--expect-checksum HASH` writes only if the current checksum matches, or exits 82 (`STATE_DRIFT`)
 
 ```bash
-echo payload | atomwrite --workspace . write --durability full config.toml
-echo payload | atomwrite --workspace . write --durability fast tmp/out.txt
+CS="$(atomwrite --workspace "$WS" hash src/hello.txt | jaq -r .checksum)"
+printf 'longer content, checked write\n' | atomwrite --workspace "$WS" write --expect-checksum "$CS" src/hello.txt
 ```
+
+- `--append` and `--prepend` add to the file, and `--line-ending lf|crlf|cr|auto` normalizes endings
+- `--durability full|fast|auto` picks the fsync strength, and the default `auto` uses full only for config files
+- `--wal-policy auto|always|never` controls the journal sidecar, and `always` forces it even for trivial writes
+- `--syntax-check` parses the result with tree-sitter and exits 88 (`SYNTAX_ERROR_DETECTED`) on error
+
+```bash
+printf 'fn ok() {}\n' | atomwrite --workspace "$WS" write --syntax-check src/ok.rs
+printf 'tail line\n' | atomwrite --workspace "$WS" write --append src/hello.txt
+```
+
+- A rewrite that shrinks the file by more than 50% needs `--allow-shrink`, or exits 65
+- An existing target above 100 KiB (`[write].confirm_large_bytes`) needs `--ack-overwrite`, or exits 65
+- Empty stdin exits 65 unless you pass `--allow-empty-stdin`
+- `--preserve-timestamps` keeps the old mtime, and by default mtime is updated so build tools rebuild
+- Other flags are `--max-size`, `--require-backup`, `--auto-rotate`, `--risk-threshold PERCENT` and `--retention N`
+- `--require-backup` and `--auto-rotate` take no value, and `--risk-threshold` is a percentage with default 255 (off)
+- Success reports `platform.durability`, `platform.rename_method` and `platform.backup_method`
+- A SIGTERM during a write removes the tempfile and exits 143
 
 ### read
-- Read files with metadata, checksum and optional content
-- Returns line count, byte size, permissions and modification time
+- Reads a file with `content`, `lines`, `bytes`, `checksum`, `permissions` and `modified`
+- The event also carries `target_resolved` and `target_source`, the same pair the writing verbs publish, so the agent confirms the path it read
+- Binary files are detected, and their content is omitted
 
 ```bash
-atomwrite read src/main.rs
-atomwrite read --stat src/main.rs
-atomwrite read --lines 1:50 src/main.rs
-atomwrite read --verify-checksum abc123 src/main.rs
+atomwrite --workspace "$WS" read --stat src/main.rs
+atomwrite --workspace "$WS" read --lines 1:3 src/main.rs
+atomwrite --workspace "$WS" read --head 2 src/main.rs
+atomwrite --workspace "$WS" read --tail 2 src/main.rs
+atomwrite --workspace "$WS" read --line 3 --context 1 src/main.rs
+atomwrite --workspace "$WS" read --grep unwrap src/main.rs
+atomwrite --workspace "$WS" read --format raw --head 2 src/main.rs
+atomwrite --workspace "$WS" read --format raw src/main.rs src/cli.rs
+atomwrite --workspace "$WS" read --format raw 'src/*.rs'
 ```
 
-- Use `--stat` to get metadata without file content
-- Use `--lines 1:50` to read a specific line range
-- Use `--head N` to read the first N lines
-- Use `--tail N` to read the last N lines
-- Use `--line N` to read line N with optional context via `--context N`
-- Use `--grep <REGEX>` to filter returned lines to those matching a regex
-- Use `--format raw` (or `--raw`) to emit raw bytes for Unix composability (G81, breaks NDJSON envelope)
-- Use `--verify-checksum <BLAKE3>` to verify file integrity
-- Binary files are detected and content is omitted automatically
+- Expect `type` `read` with `mode` `stat` or `full`, and `lines_total` when you read a slice
+- `--format ndjson` is the default, and `--format raw` writes the bytes to stdout without an envelope
+- `--bytes` is kept for old pipelines and means the same as `--format raw`
+- Several operands concatenate in argv order, and an operand that names an existing path is read as it is
+- An operand with `*`, `?` or `[` that does not exist is expanded by the binary against one level of its directory, in byte order, skipping hidden names
+- A missing file, a directory or a glob that matched nothing prints one line on stderr and the other targets still reach stdout, with the first failure's status
+- `--lines`, `--line`, `--context`, `--head`, `--tail`, `--grep`, `--stat` and `--verify-checksum` take a single target and exit 65 when several are named
+- `**` is not supported, and only the final name may be a pattern: a wildcard in a directory name exits 65 instead of expanding halfway
+- `--verify-checksum HASH` exits 81 (`CHECKSUM_VERIFY_FAILED`) with an error envelope on a mismatch
+- `--grep REGEX` keeps only matching lines, and an invalid regex exits 65
 
 ### edit
-- Surgically edit files by line number, text marker or exact match
-- The edit is atomic: tempfile, fsync, rename
+- Edits a file by exact text, by line number or by marker, and the write is atomic
+- A success line carries `checksum_before`, `checksum_after`, `lines_before`, `lines_after` and `mtime_preserved`
 
 ```bash
-echo "new line" | atomwrite edit src/main.rs --after-line 5
-echo "replacement block" | atomwrite edit src/main.rs --range 10:20
-atomwrite edit src/main.rs --old "old_text" --new "new_text"
+atomwrite --workspace "$WS" edit src/main.rs --old 'wire config' --new 'wired config'
+atomwrite --workspace "$WS" edit src/a.rs --old 'alpha' --new 'alpha_one' --old '{}' --new '{ 1 }'
+printf '    // inserted\n' | atomwrite --workspace "$WS" edit src/main.rs --after-line 1
+printf 'one\ntwo\nthree\nfour\n' | atomwrite --workspace "$WS" write tmp/five.txt
+printf 'TWO\n' | atomwrite --workspace "$WS" edit tmp/five.txt --range 2:2
+atomwrite --workspace "$WS" edit tmp/five.txt --delete-range 1:1
 ```
 
-- Use `--fuzzy auto|aggressive|off` for fuzzy text matching when exact match fails (9 strategies in cascade; `off` = exact-only, G-010; default `auto`)
-- Since v0.1.15 repeated `--old`/`--new` pairs also run the fuzzy cascade per pair (G117); responses include `pairs_total` and per-pair `pair_results`, and failures report `failed_pair_index`
-- Use `--partial` (v0.1.15) to apply the matching pairs and report the rest; zero applied pairs exits 1 (`NO_MATCHES`) without writing
-- Never pipe `edit` into `jaq` without `-e`: the error envelope goes to stdout, so `| jaq '.edits'` masks exit 65 as `null` — use `jaq -e '.edits'` or `${PIPESTATUS[0]}`
-- Use `--multi` to apply multiple NDJSON edits in a single atomic write via stdin
-- Use `--line-ending lf|crlf|cr|auto` to normalize line endings (default: auto preserves original)
-- Use `--preserve-timestamps` to keep the original mtime of the file (default: mtime is updated to reflect the edit)
-- Use `--after-line N` to insert content after line N
-- Use `--before-line N` to insert content before line N
-- Use `--range N:M` to replace a line range
-- Use `--delete-range N:M` to delete a line range
-- Use `--between START END` to replace content between two marker lines
-- Returns checksums before and after for verification
-- Returns line counts before and after for auditing
-- Returns `mtime_preserved` flag in the NDJSON response
-- Returns `fuzzy`, `strategy`, `strategies_tried`, `similarity` when fuzzy matching is used
+- Expect `type` `edit`, and repeated `--old`/`--new` pairs add `pairs_total` and `pair_results`
+- Position modes read the new text from stdin: `--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`
+- A terminal on stdin makes those modes exit 65 at once instead of waiting
+- `--delete-range N:M` needs no stdin, and `--multi` applies several NDJSON edits in one write
+- `--multi` reads one JSON object per line from stdin, never a JSON array, and applies them all in a single atomic write
+- Each object names its `op`: `exact`, `insert-after`, `insert-before`, `replace-range` or `delete-range`
+- The content field follows the op: `content` for the three line-insert and range-replace ops, `old` and `new` for `exact`, and nothing for `delete-range`
+- A field the chosen op does not read is exit 65 and nothing is written, so a stray `new` can never become a silent delete
+- Line numbers refer to the ORIGINAL file, and two operations that touch the same line are refused before anything is applied
+
+```bash
+printf "%s\n" \
+  '{"op":"replace-range","start":2,"end":2,"content":"TWO"}' \
+  '{"op":"insert-after","line":4,"content":"five"}' \
+  '{"op":"delete-range","start":6,"end":6}' \
+  | atomwrite --workspace "$WS" edit tmp/lines.txt --multi
+```
+
+- The example replaces line 2, inserts after line 4 and deletes line 6, all against the same original numbering
+- `--fuzzy auto|aggressive|off` handles near matches, and `off` means exact-only, with `auto` as the default
+- `--fuzzy-threshold 0.0-1.0` tunes the cascade, and a result may carry `fuzzy`, `strategy` and `similarity`
+- A miss exits 65 with `MATCH_FAILED`, `match_count` 0 and, when one exists, a `best_candidate`
+- Several matches need `--replace-all`, and the success line then reports `match_count`
+- A realigned indent adds `indent_adjusted: true`
+- `--partial` applies the pairs that match and reports the rest, with exit 1 when no pair applied
+- `--expect-checksum HASH` guards against drift, and `--allow-sequential-drift` accepts a chain of your own edits
+- `--old-file` and `--new-file` read text from files that live inside the workspace (see Advanced Patterns)
+- Never pipe `edit` into `jaq` without checking `${PIPESTATUS[0]}`, because the error envelope also goes to stdout
 
 ### search
-- Search file contents in parallel using the ripgrep engine
-- Returns matches as NDJSON with line numbers and byte offsets
+- Searches file contents in parallel with the ripgrep engine
+- Each file gets a `begin` event, its `match` events and an `end` event, then one `summary` closes the run
 
 ```bash
-atomwrite search 'TODO' src/
-atomwrite search --regex 'fn\s+\w+' src/
-atomwrite search --count 'error' logs/
-atomwrite search --files 'deprecated' src/
+atomwrite --workspace "$WS" search 'TODO' src/
+atomwrite --workspace "$WS" search --regex 'fn\s+\w+' src/
+atomwrite --workspace "$WS" search --count 'fn' src/
+atomwrite --workspace "$WS" search --files 'fn' src/
+atomwrite --workspace "$WS" --filter type=match search -F 'println!' src/
+atomwrite --workspace "$WS" search --target files lib src/
 ```
 
-- Use `--regex` for regular expression patterns
-- Use `--fixed` (`-F`) for literal string matching (no regex)
-- Use `--word` (`-w`) to match whole words only
-- Use `--case-insensitive` (`-i`) for case-insensitive search
-- Use `--context N` (`-C`) for lines of context around matches
-- Use `--max-count N` (`-m`) to limit matches per file
-- Use `--invert` to show non-matching lines
-- Use `--sort path` to sort results by file path
-- Use `--count` (`-c`) for match counts per file
-- Use `--files` (`-l`) for file paths only
-- Use `--include` (`-g`) and `--exclude` for glob-based file filtering
-- Use `--max-filesize <BYTES>` to skip files larger than the limit (G68, default 10 MiB)
-- Use `--max-columns <N>` to truncate lines longer than N columns (G68, default 500)
-- Exit code 1 means zero matches (not an error)
+- Expect a `match` event with `path`, `line_number`, `lines`, `byte_offset` and `submatches`
+- Exit 1 with `NO_MATCHES` means zero matches, and it is not a crash
+- `--regex` (`-e`), `--fixed` (`-F`), `--word` (`-w`), `--case-insensitive` (`-i`) and `--smart-case` (`-S`) pick the pattern mode
+- `--context N` (`-C`), `--max-count N` (`-m`), `--invert`, `--multiline` (`-U`) and `--pcre2` (`-P`) refine matching
+- A pattern that starts with `-` goes after `--`, like `rg`: `search -F -- '-deprecated' src/`; without it the token is an unknown flag and the run exits 2
+- `--count` (`-c`) and `--files` (`-l`) change the event shape, and `--target content|files|both` picks what is searched
+- `--include` (`-g`) and `--exclude` filter by glob, and `--sort path|modified|created|none` orders files
+- `--max-filesize BYTES` skips larger files (default 10 MiB, counted in `files_skipped`), and `--max-columns N` cuts long lines
+- `--binary` also searches binary files, and `--include-fifo` opens named pipes, which the default skips
+- `--offset N` and `--limit N` page through match events
+- Read `partial` and `files_failed` on the summary before you trust a result, and a root named in the invocation that does not exist fails the run with exit 4 even when it matched, in every summary that publishes them
 
 ### replace
-- Replace text across files with atomic writes
-- Each modified file goes through the full atomic write sequence
+- Replaces text across files with atomic writes, and the path argument is mandatory
+- Fixed strings use the fuzzy cascade after an exact miss, and `--regex` keeps the regex engine
 
 ```bash
-atomwrite replace 'old_name' 'new_name' src/
-atomwrite replace --regex 'v\d+\.\d+' 'v2.0' src/
-atomwrite replace --dry-run 'before' 'after' src/
+atomwrite --workspace "$WS" replace --dry-run alpha_one omega src/
+atomwrite --workspace "$WS" replace --preview alpha_one omega src/
+atomwrite --workspace "$WS" replace alpha_one omega src/a.rs
+atomwrite --workspace "$WS" replace --fuzzy auto --fuzzy-threshold 0.85 --progress-every 25 --dry-run omega alpha_one src/
 ```
 
-- Use `--dry-run` to preview replacements without modifying files
-- Use `--preserve-timestamps` to keep the original mtime of modified files (default: mtime is updated to reflect the change)
-- Fixed-string replace defaults to `--fuzzy auto` after zero exact multi-match hits (v0.1.29 BREAKING vs exact-only exit 1)
-- Modes: `--fuzzy auto|aggressive|off` (`off` = exact-only, G-010; default `auto`) and optional `--fuzzy-threshold <0.0-1.0>`
-- Shared 9-strategy cascade (same as edit) after exact multi-match finds zero hits (skipped when `--fuzzy off`)
-- Fuzzy multi-apply is **one-pass** L→R on original content (`apply_fuzzy_one_pass`); never re-scans inserted text
-- Default max fuzzy applies = **1** if `--max-replacements` omitted; hard ceiling 10_000
-- If replacement **contains** pattern (fixed-string), force single apply (prevents infinite growth when expanding a section)
-- Prefer `--fuzzy auto` for agents; use `--fuzzy off` only for intentional exact-only (exact miss → `MATCH_FAILED` exit 65)
-- Match failures may emit `best_candidate` with line, similarity, strategy, diff_preview
-- Use `--progress-every N` for NDJSON progress heartbeats on large trees
-- Regex mode (`--regex`) keeps the regex engine and does not run fuzzy cascade
-- Use `--literal` (alias `-F`, `--fixed-strings`) to disable regex interpretation (G66)
-- Use `--regex` to force regex mode (default)
-- Use `--include` and `--exclude` for glob filtering
-
-```bash
-# Prefer --fuzzy auto (default cascade). --fuzzy off = exact-only (G-010), not rejected.
-atomwrite --workspace . replace --progress-every 50 'old' 'new' packages/
-
-# Expand-section safe: NEW embeds OLD — one-pass forces single apply, no hang
-atomwrite --workspace . replace --fuzzy auto \
-  $'fn setup() {\n    init();\n}' \
-  $'fn setup() {\n    init();\n    // expanded\n    configure();\n}' \
-  src/lib.rs
-```
-
-- Returns per-file NDJSON with replacement count and checksums
-- Emits a summary line with total files and replacements
+- Expect `type` `plan` per file on a dry run, `type` `preview` with a diff, and `type` `replaced` on a write
+- Every run ends in a `summary` with `files_modified` and `total_replacements`
+- Zero matches exit 1 with `NO_MATCHES`, and a trailing summary carries `ok: false`
+- `--dry-run` and `--preview` show the plan, so use them before any bulk change
+- `--literal` (`-F`) turns regex off, `--word` (`-w`) matches whole words and `--preserve-case` adapts the case
+- `--max-replacements N` (`-n`) bounds the fuzzy applies, with a default of 1 when omitted and a hard ceiling of 10000
+- Fuzzy applies are one-pass from left to right, and inserted text is never scanned again
+- When the new text contains the old text, a single apply is forced, so expanding a section is safe
+- `--include`, `--exclude`, `--expect-checksum` and `--preserve-timestamps` work as in `edit`
+- `--progress-every N` emits progress heartbeats on large trees, and `--no-progress` silences them
+- A successful `replace` deletes its `.bak` like every other mutator, and `--keep-backup` is the only way to keep it
 
 
 ## Utility Commands
+
 ### hash
-- Compute BLAKE3 checksums for files or stdin
+- Computes the BLAKE3 checksum of files or of stdin
+- Read the field `checksum`, and never the old field `value`
 
 ```bash
-atomwrite hash src/main.rs
-echo "data" | atomwrite hash --stdin
-atomwrite hash --verify abc123 src/main.rs
+atomwrite --workspace "$WS" hash src/main.rs
+printf 'data\n' | atomwrite --workspace "$WS" hash --stdin
+atomwrite --workspace "$WS" hash --recursive --exclude '*.bak*' src/
+H="$(atomwrite --workspace "$WS" hash src/lib.rs | jaq -r .checksum)"
+atomwrite --workspace "$WS" hash --verify "$H" src/lib.rs
 ```
+
+- Expect `type` `hash` with `algorithm` `blake3`, `checksum`, `bytes` and `ok`
+- `--verify HASH` answers with `type` `hash_verify` and `verified`, and exits 81 on a mismatch
 
 ### delete
-- Delete files with optional backup and dry-run support
+- Deletes files or trees, keeps a `.bak.<timestamp>` backup and can print only the plan
+- Deleting never asks for confirmation, so use `--plan` first
 
 ```bash
-atomwrite delete src/old_file.rs
-atomwrite delete --backup src/old_file.rs
-atomwrite delete --dry-run src/old_file.rs
-atomwrite delete --recursive tmp/
+printf 'x' > tmp/old.txt
+atomwrite --workspace "$WS" delete --plan tmp/old.txt
+atomwrite --workspace "$WS" delete tmp/old.txt
+mkdir -p tmp/d && printf '1\n' > tmp/d/f
+atomwrite --workspace "$WS" delete --recursive tmp/d
 ```
+
+- Expect `type` `plan` with `would_modify`, then `type` `deleted` with `checksum_before`, then a `summary`
+- A directory without `--recursive` (`-r`) exits 65 and names the missing flag
+- `--dry-run` works like `--plan`, and `--older-than 1d` filters by age with the suffixes s, m, h, d and w
+- `--include` (`-g`) and `--exclude` filter by glob, and `--no-backup` skips the backup
+- `delete --confirm` and `delete --yes` (`-y`) are rejected with exit 65, so run again without them
+- A delete backup is always kept, so clear it with `prune-backups`
 
 ### count
-- Count lines, blank lines and files grouped by extension
+- Counts lines, blank lines and bytes, by extension or by size
 
 ```bash
-atomwrite count src/
-atomwrite count --by-extension src/
+atomwrite --workspace "$WS" count src/
+atomwrite --workspace "$WS" count --by-extension src/
+atomwrite --workspace "$WS" count --by-size --top 3 src/
 ```
+
+- Expect `type` `count` with `mode` `lines`, `by_extension` or `by_size`
+- `--include` (`-g`) and `--exclude` filter the walk
 
 ### diff
-- Compare two files using unified, stat or change-by-change output
+- Compares two files, with unified, stat or change-by-change output
+- A path of `-` reads that side from stdin
 
 ```bash
-atomwrite diff src/a.rs src/b.rs
-atomwrite diff --stat src/a.rs src/b.rs
-atomwrite diff --unified --context 5 src/a.rs src/b.rs
-atomwrite diff --algorithm patience src/a.rs src/b.rs
+atomwrite --workspace "$WS" diff src/a.rs src/b.rs
+atomwrite --workspace "$WS" diff --stat src/a.rs src/b.rs
+atomwrite --workspace "$WS" diff --unified --context 5 src/a.rs src/b.rs
+atomwrite --workspace "$WS" diff --algorithm patience src/a.rs src/b.rs
 ```
+
+- Expect `change` events and a closing `summary` with `identical` and `similarity_ratio`
+- `--stat` emits `type` `diff` with `insertions` and `deletions`, and `--unified` emits the patch in `content`
+- `--algorithm` takes `myers`, `patience` or `lcs`
 
 ### move
-- Move or rename files atomically
-- Falls back to copy-then-delete for cross-device moves
+- Moves or renames a file or directory atomically
+- Across devices it falls back to copy and delete, and reports `cross_device`
 
 ```bash
-atomwrite move src/old.rs src/new.rs
+atomwrite --workspace "$WS" copy src/lib.rs src/lib_copy.rs
+atomwrite --workspace "$WS" move src/lib_copy.rs src/lib_moved.rs
 ```
+
+- Expect `type` `moved` with `source`, `target`, `checksum`, `cross_device` and `atomic`
+- An existing target needs `--force` (`-f`) or `--backup`, or the call exits 65
+- `--preserve-hardlinks` keeps hard links, and `--dry-run` shows the plan
 
 ### copy
-- Copy files with BLAKE3 checksum verification after write
+- Copies files or trees and verifies the BLAKE3 checksum after the write
 
 ```bash
-atomwrite copy src/main.rs backup/main.rs
+atomwrite --workspace "$WS" copy --force src/lib.rs src/lib_copy.rs
+atomwrite --workspace "$WS" copy --recursive --preserve src/ tmp/srccopy
 ```
+
+- Expect `type` `copied` with `checksum` and `verified` set to `true`
+- `--recursive` (`-r`) copies trees, `--preserve` keeps metadata and `--preserve-xattr` keeps extended attributes
+- `--no-reflink` forces a byte copy, and reflink is the default where the filesystem supports it
+- Backups use `reflink_or_copy` and never a hard link of the live file
 
 ### list
-- List project file structure with optional metadata
+- Lists a directory tree with one NDJSON event per entry
 
 ```bash
-atomwrite list src/
-atomwrite list --long src/
-atomwrite list --count-by-ext src/
+atomwrite --workspace "$WS" list --long --depth 1 src/
+atomwrite --workspace "$WS" list --count-by-ext src/
+atomwrite --workspace "$WS" list --include '*.rs' --depth 1 src/
 ```
 
+- Expect `type` `entry` with `path` and `kind`, plus `size` and `modified` with `--long`
+- The closing `summary` has `files`, `dirs`, `symlinks` and `total_bytes`
+- `--all` includes hidden entries, and `--exclude` filters by glob
+
 ### extract
-- Extract fields from NDJSON lines or text columns
-- **Local field selection:** positional `KEY…` **or** repeatable `--field KEY` (not both — exit 65)
-- **NEVER** `extract --select` — `--select` is the **global** envelope projector only (clap collision). Use:
-  - `atomwrite extract --field path --field line_number`
-  - `atomwrite --select path extract --field path` (global shape + local field)
+- Picks fields from NDJSON read on stdin, or columns from plain text
+- Use positional keys or repeatable `--field`, and never both in one call
+- `--select` is a global flag, so `extract --select` is not valid
 
 ```bash
-echo "a b c" | atomwrite extract 0 2
+printf 'a b c\n' | atomwrite extract 0 2
 printf '{"a":1,"b":2}\n' | atomwrite extract --field a
-atomwrite search 'TODO' src/ | atomwrite extract path line_number
-atomwrite search 'TODO' src/ | atomwrite extract --field path --field line_number
-# Global shape only (projects keys on the extract output line):
+atomwrite --workspace "$WS" search 'TODO' src/ | atomwrite extract --field path --field line_number
 printf '{"a":1,"b":2}\n' | atomwrite --select a extract --field a
 ```
 
+- Expect `{"type":"text","values":["a","c"]}` for text columns and `{"a":1}` for the NDJSON case
+- `--delimiter` (`-d`) sets the column separator, and `--stdin` reads the input stream
+
+### extract-artifact
+- Extracts bounded signal from PDF, OOXML (documents, sheets, slides) and image headers
+- It never returns raw artifact bytes
+
+```bash
+printf '\211PNG\r\n\032\n\000\000\000\rIHDR\000\000\000\001\000\000\000\001\010\006\000\000\000\037\025\304\211' > img.png
+atomwrite --workspace "$WS" extract-artifact img.png
+```
+
+- Expect `type` `artifact` with `kind` `image`, `format` `png`, `width` and `height`
+- `--max-sample-rows` and `--max-text-chars` override the `extract.*` config keys
+
 ### calc
-- Evaluate math expressions and unit conversions
-- Powered by the fend engine with arbitrary precision
+- Evaluates math and unit conversions with the fend engine
 
 ```bash
 atomwrite calc "2 hours + 30 minutes to seconds"
@@ -597,302 +422,394 @@ atomwrite calc "sqrt(144) + 3^2"
 atomwrite calc "10 GiB to MB"
 ```
 
-- Quote expressions to prevent shell interpolation
+- Expect `type` `calc` with `expression` and `result`, such as `9000 seconds`
+- Quote the expression, because the shell would split it, and `--stdin` reads it from input
 
 ### regex
-- Generate regular expressions from example strings
-- Powered by the grex engine
+- Generates a regular expression from example strings, with the grex engine
 
 ```bash
 atomwrite regex "2024-01-15" "2025-12-31" "2026-06-01"
+atomwrite regex abc-12 xyz-99 id-7 --digits
 atomwrite regex --digits --words "user_123" "admin_456"
 ```
 
+- Expect `type` `regex` with `regex`, `examples` and `anchored`
+- `--digits` (`-d`), `--words` (`-w`), `--spaces` (`-s`), `--repetitions` (`-r`) and `--case-insensitive` (`-i`) widen the pattern
+- `--no-anchors` drops `^` and `$`, and `--stdin` reads examples from input
+
 
 ## Advanced Commands
+
 ### scope
-- Grammatical scoping with AST-based actions on code categories
-- Supports Rust, Python, JavaScript/TypeScript and Go
-- Use `--delete` to remove matched content
-- Use `--action upper|lower|titlecase|squeeze` to transform matched text
-- Use `--replace-with "text"` to replace matched content with custom text
+- Selects code by grammar and acts on it, with `--delete`, `--replace-with` or `--action`
+- It needs `--language` (`-l`, alias `--lang`) and exactly one of `--query` or `--pattern`
 
 ```bash
-atomwrite scope --query comments --delete src/main.rs
-atomwrite scope --query fn --action upper src/lib.rs
-atomwrite scope --query strings --action lower src/app.ts
-atomwrite scope --pattern '($$$ARGS)' --action squeeze -l rust src/
-atomwrite scope --query comments --replace-with "// updated" src/main.rs
+atomwrite --workspace "$WS" scope src/main.rs --language rust --query comments --delete --dry-run
+atomwrite --workspace "$WS" scope --query fn --action upper -l rust --dry-run src/lib.rs
+atomwrite --workspace "$WS" scope --pattern 'a + b' --action upper -l rust --dry-run src/lib.rs
 ```
 
-- Use `--query` for prepared queries (comments, fn, strings, struct, etc)
-- Use `--pattern` for custom AST patterns
-- Use `--action` to specify the transformation
-
-### backup
-- Create timestamped backups with BLAKE3 checksums
-
-```bash
-atomwrite backup src/main.rs src/lib.rs
-atomwrite backup --retention 30 src/config.toml
-atomwrite backup --dry-run src/main.rs
-```
-
-- Use `--retention` to set backup retention period in days
-- Use `--dry-run` to preview without creating backups
-- Use `--no-reflink` to disable CoW backup (G64, default: reflink in APFS/btrfs/XFS for O(1) copy)
-- Use `--output-dir <DIR>` to write backups to a specific directory
-
-### rollback
-- Restore files from a previous backup
-
-```bash
-atomwrite rollback src/main.rs --latest
-atomwrite rollback src/main.rs --timestamp 2026-05-29T12-00-00
-atomwrite rollback --verify --dry-run src/main.rs
-```
-
-- Use `--latest` to restore the most recent backup
-- Use `--timestamp` to restore a specific backup
-- Use `--verify` to validate BLAKE3 checksum before restoring
-- Use `--dry-run` to preview without restoring
-
-### apply
-- Apply patches from stdin with auto-format detection
-- Supports unified diff, SEARCH/REPLACE blocks, markdown-fenced and full file
-
-```bash
-cat fix.patch | atomwrite apply src/main.rs
-cat changes.md | atomwrite apply --format markdown src/main.rs
-cat fix.patch | atomwrite apply --backup src/main.rs
-cat fix.patch | atomwrite apply --dry-run src/main.rs
-```
-
-- Use `--format` to force a specific patch format
-- Use `--backup` to create a backup before applying
-- Use `--dry-run` to preview without applying
+- Expect `type` `scoped` with `scopes_matched`, `bytes_before` and `bytes_after`, then a `summary`
+- The summary reports `total_matches` as the sum of `scopes_matched` across the run, beside `files_visited` and `files_matched`
+- `files_matched` counts the files that matched something, and a file that failed or was skipped never counts
+- `--action` takes `upper`, `lower`, `titlecase`, `squeeze`, `symbols` and `normalize`
+- Queries include `comments`, `strings`, `fn`, `pub-fn`, `async-fn`, `struct`, `enum`, `trait`, `impl`, `mod` and `use`
+- Always run `--dry-run` before `--delete`, and remove the flag to apply
 
 ### transform
-- Structural AST search and rewrite powered by ast-grep
-- Supports 306 programming languages
-- Understands code syntax, not just text patterns
+- Searches and rewrites code by AST pattern with the ast-grep engine
+- `$NAME` captures one node, `$$$ARGS` captures several, and `-p` and `-r` are used together
 
 ```bash
-atomwrite transform --pattern 'println!($$$ARGS)' --rewrite 'tracing::info!($$$ARGS)' -l rust src/
-atomwrite transform --pattern 'console.log($$$ARGS)' --rewrite 'logger.info($$$ARGS)' -l js src/
-atomwrite transform --pattern '$EXPR.unwrap()' --rewrite '$EXPR?' -l rust src/
+atomwrite --workspace "$WS" transform --dry-run -p '$E.unwrap()' -r '$E?' -l rust src/
+atomwrite --workspace "$WS" transform --dry-run -p 'println!($$$ARGS)' -r 'tracing::info!($$$ARGS)' -l rust src/
 ```
 
-- Use `$VAR` for single AST node capture
-- Use `$$$VAR` for multiple AST nodes capture
-- Both `--pattern` and `--rewrite` are required
-- Use `--rules <file.yaml>` to apply multiple refactor rules in one pass (G44)
-- Use `--inline-rules <YAML>` for inline multi-rule YAML
-- Supports all/any/not/inside/has/follows/precedes ast-grep YAML predicates
+- Expect `type` `transformed` with `matches` and `replacements`, then a `summary`
+- Exit 1 means zero matches, and the paths are required
+- `--rules FILE` and `--inline-rules YAML` apply a list of rules, in the format shown under `codemod`, and the single summary adds the failures of every rule in `files_failed`, `partial` and `errors[]` beside the counters
+- A file that fails counts once in `files_failed` and once in `errors[]`, whatever the number of rules, because each rule walks the whole tree
+- `files_visited`, `files_matched` and `total_replacements` still sum per rule, because every rule is a full pass
+- `--verify-parse` checks that the result still parses, and `--include` and `--exclude` filter files
 
 ### batch
-- Execute multiple operations from an NDJSON manifest
-- Supports write, replace, delete, edit, hash, move and copy operations
-- Use `--transaction` for all-or-nothing execution with automatic rollback
+- Runs operations from an NDJSON manifest, with `write`, `replace`, `delete`, `edit`, `hash`, `move` and `copy`
+- `--transaction` makes it all-or-nothing, and a failure rolls back
 
 ```bash
-cat manifest.ndjson | atomwrite batch
-cat manifest.ndjson | atomwrite batch --dry-run
+printf '%s\n' '{"op":"write","target":"batch.txt","content":"x"}' '{"op":"hash","target":"batch.txt"}' | atomwrite --workspace "$WS" batch --transaction
+printf '%s\n' '{"op":"write","target":"batch.txt","content":"y"}' | atomwrite --workspace "$WS" batch --dry-run
 ```
 
-- Each line in the manifest is one operation
-- Returns per-operation results plus an aggregate summary
-- Use `--dry-run` to validate the manifest without executing
-- Use `--batch-size <N>` to control peak memory (G77, default 100, processes in chunks)
-- Use `--file <PATH>` to read the manifest from a file instead of stdin
+- Expect one `batch_op` per line and a closing `summary` with `succeeded`, `failed` and `committed`
+- `--file PATH` reads the manifest from a file, and the manifest is read one line at a time
+- `move` and `copy` operations take `"force":true` to overwrite
+- `--input-schema` prints the JSON Schema of the manifest, and `--batch-size N` sets how many operations buffer before the summary
 
+### apply
+- Applies a patch from stdin: unified diff, SEARCH/REPLACE blocks, markdown-fenced or a full file
+- Detection is automatic, and `--format auto|unified|search-replace|full|markdown` forces one
+- A body with no marker at all is refused with exit 65, and only `--format full` replaces the whole file, so a malformed patch can no longer become a silent overwrite
+- `--format full` walks the same two barriers as `write`: `--ack-overwrite` above `[write].confirm_large_bytes` and `--allow-shrink` below `[write].shrink_block_percent`
+- A `---`/`+++` header with no `@@` hunk is refused with exit 65, because applying it as a full file would overwrite the target with the patch text
+
+```bash
+printf 'new body\n' | atomwrite --workspace "$WS" apply --format full tmp/applied.txt
+printf -- '--- a/src/b.rs\n+++ b/src/b.rs\n@@ -1 +1 @@\n-fn beta() {}\n+fn beta_v2() {}\n' > tmp/fix.patch
+atomwrite --workspace "$WS" apply --dry-run src/b.rs < tmp/fix.patch
+atomwrite --workspace "$WS" apply src/b.rs < tmp/fix.patch
+```
+
+- Expect `type` `plan` on the dry run and `type` `applied` with `format_detected` and `hunks_applied`
+- A unified diff must match context and removed lines within 64 lines, or it exits 65 with `MATCH_FAILED`
+- A SEARCH/REPLACE block that is missing fails the whole batch, and nothing is written
 
 ### set
-- Write a value at a dotted path in a TOML or JSON file
-- Preserves comments, key order and whitespace via `toml_edit`
-- Auto-coerces the value to int, float, bool or string
-- Returns NDJSON with `old_value`, `new_value`, `format`, `comments_preserved`
+- Writes a value at a dotted path in a TOML or JSON file and keeps comments and key order
+- The type is inferred from the value, so `9` becomes an integer and `true` a boolean
 
 ```bash
-atomwrite set Cargo.toml package.version 0.2.0
-atomwrite set package.json scripts.build "tsc -b"
+atomwrite --workspace "$WS" set Cargo.toml package.version 0.2.0
+atomwrite --workspace "$WS" set Cargo.toml database.pool.max 9
+printf '{"scripts":{"build":"tsc"}}\n' > package.json
+atomwrite --workspace "$WS" set package.json scripts.build "tsc -b"
 ```
 
-- Use `--type int|float|bool|string|array` to force type coercion
-- Use `--type null` to set a key to `null` in JSON
-- Use `--force-missing` to create intermediate keys
-- TOML arrays use `key[N]` notation: `dependencies.serde[0].version = "1.0"`
+- Expect `type` `set` with `key_path`, `old_value`, `new_value`, `format` and `comments_preserved`
+- `set` accepts the backup flags and `--preserve-timestamps`, and it needs no type flag
+- Use `config set` for the tuning keys of atomwrite itself
 
 ### get
-- Read a value at a dotted path in a TOML or JSON file
-- Returns NDJSON with `value`, `found`, `format`
+- Reads a value at a dotted path in a TOML or JSON file
 
 ```bash
-atomwrite get Cargo.toml package.version
-atomwrite get package.json scripts.build
+atomwrite --workspace "$WS" get Cargo.toml package.version
+atomwrite --workspace "$WS" get package.json scripts.build
 ```
 
-- If the key is missing, returns `{"found": false, "value": null}`
-- TOML dotted path: `dependencies.serde.features[0]`
-- JSON pointer (RFC 6901): `/dependencies/serde/features/0`
-- Exit 65 when key is missing (v0.1.27 BUG-GET; was exit 4 in v0.1.26, exit 65 in v0.1.25, exit 0 in v0.1.24)
+- Expect `type` `get` with `value`, `found` and `format`
+- A missing key exits 65 with `INVALID_INPUT`, and it does not return `found: false`
+- A file that is not valid TOML or JSON also exits 65
 
 ### del
-- Remove a key at a dotted path in a TOML or JSON file
-- Returns NDJSON with `removed`, `path_was_array_index`, `old_value`
+- Removes a key at a dotted path in a TOML or JSON file
 
 ```bash
-atomwrite del Cargo.toml package.metadata.deprecated
-atomwrite del package.json scripts.build
+atomwrite --workspace "$WS" del Cargo.toml database.pool.max
+atomwrite --workspace "$WS" del --force-missing Cargo.toml package.metadata.deprecated
 ```
 
-- Use `--force-missing` to treat missing keys as a no-op success (exit 0 instead of error)
-- Removing an array element shifts subsequent indices (TOML) or uses nulls (JSON)
-- Cannot remove a key whose parent does not exist; use `--force-missing` for idempotent scripts
+- Expect `type` `del` with `removed_value` and `existed`
+- `--force-missing` turns a missing key into a success with `existed` set to `false`
 
 ### case
-- Rename identifiers across multiple files using `heck` for case conversion
-- Renames `old_id` → `new_id` and all 5 case variants: `oldId`, `OLD_ID`, `old-id`, `OldId`, `old_id`
+- Renames an identifier across source files and converts the new name to a case style
+- `--to` takes `snake` (default), `camel`, `pascal`, `kebab` and `screaming-snake`
+- Pass files, because a directory exits 0 and changes nothing (`identifiers_total` is 0)
 
 ```bash
-atomwrite case src/ --subvert user_id account_id --to snake
-atomwrite case src/ lib/ --subvert user_id account_id --to camel
+printf 'fn user_id() {}\nlet userId = 1;\n' > src/c.rs
+atomwrite --workspace "$WS" case --subvert user_id account_id --to camel --dry-run src/c.rs
+atomwrite --workspace "$WS" case --subvert user_id account_id --to camel src/c.rs
 ```
 
-- Styles: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`
-- Multi-file: pass multiple paths to rename across an entire module
-- Detects identifier boundaries in 5 case styles; pure ASCII only
-- Preserves comments, strings and other code structure
+- Expect `type` `case_preview` on the dry run and `type` `case` with `before` and `after` on a write
+- A closing `summary` reports `identifiers_total` and `files_modified`
+- Name several files to rename across a module, and run `--dry-run` first on a large tree
 
 ### query
-- Walk a tree-sitter AST and emit nodes as NDJSON
-- 305 languages via `tree-sitter-language-pack` (parsers download on first use)
-- Modes: `--kinds` (list all kinds), `--query <KIND>` (filter by kind), `-Q <KIND>` (alias), `--tree` (full tree), `--positions` (line:column)
+- Walks the tree-sitter AST of a file and emits nodes as NDJSON
 
 ```bash
-atomwrite query src/main.rs --kinds
-atomwrite query src/main.rs --query function_item --positions
-atomwrite query src/main.rs --tree
+atomwrite --workspace "$WS" query --kinds src/lib.rs
+atomwrite --workspace "$WS" query --query function_item --positions src/lib.rs
+atomwrite --workspace "$WS" query --tree src/lib.rs
 ```
 
-- `--positions` adds `line` and `column` to each node
-- `--query` and `--kinds` are mutually exclusive
-- Returns one NDJSON object per node with `kind`, `start_byte`, `end_byte`, `text`
-- S-expression query support is deferred to v0.1.13 (see ADR-0021)
+- Expect `query_kind`, `query_match` or `query_summary` events with `kind`, `text` and byte offsets
+- `--query KIND` (`-Q`) filters by node kind, `--kinds` lists kinds and `--tree` lists every node
+- `--positions` adds line and column, and `--language` sets the language when the extension is unclear
+- An invalid query exits 65, and a slim build without `ast` exits 78
 
 ### outline
-- Extract high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON
-- 305 languages via `tree-sitter-language-pack`
-- Returns one object per top-level definition with `kind`, `name`, `line`, `column`
+- Emits the high-level structure of a source file: functions, structs, enums, traits and modules
+- It needs a file, and a directory is not accepted
 
 ```bash
-atomwrite outline src/main.rs
-atomwrite outline src/lib.rs --kind function_item
-atomwrite outline src/main.rs --positions
+atomwrite --workspace "$WS" outline src/lib.rs
+atomwrite --workspace "$WS" outline --kind function_item --positions src/lib.rs
 ```
 
-- `--kind` filters to a specific tree-sitter kind (e.g. `function_item`, `struct_item`, `impl_item`)
-- `--positions` adds `start_line`, `start_column`, `end_line`, `end_column`
-- Returns 28 structural node kinds across all languages
-- Faster than `query --kinds` because it skips leaf nodes
-
-## Global Flags
-- `--workspace <PATH>` -- restrict all operations to this root directory
-- `--config <PATH>` -- explicit `.atomwrite.toml` path (overrides workspace + XDG config; fails if missing/malformed)
-- `--verbose` / `-v` -- enable tracing output on stderr
-- `--quiet` / `-q` -- suppress non-essential output
-- `--color <auto|always|never>` -- control colored output
-- `--no-color` -- disable colored output (equivalent to `--color never`)
-- `--no-gitignore` -- do not respect .gitignore rules
-- `--hidden` -- include hidden files and directories
-- `--follow-symlinks` -- follow symbolic links
-- `--threads <N>` / `-j <N>` -- number of parallel threads (0 = all cores)
-- `--max-filesize <BYTES>` -- skip files larger than this limit
-- `--json-schema` -- emit JSON schema for the subcommand output
-- `--locale <en|pt-BR>` -- override display locale (en, pt-BR); use `--locale` only (no product environment variables; XDG locale preference via `atomwrite locale`)
-- `--timeout-secs <SECONDS>` (alias `--timeout`) -- global operation timeout; **default 120**; `0` disables; deadline → exit **124**
-- `--no-auto-heal` -- skip the on-startup `wal-heal` pass (G119 L3)
-- `--no-progress` -- suppress NDJSON `progress` heartbeats on long ops (batch/replace)
-- `--select KEYS` / `--fields KEYS` -- project NDJSON to top-level keys (CSV; agent-native; long-only)
-- `--filter key=value` -- keep only NDJSON events matching top-level equality (repeatable AND; applies to errors too)
-- `--limit N` -- emit at most N NDJSON events after filtering (**long-only**; **no global `-n`** — `replace` owns `-n`)
-- `--grep <REGEX>` on `read` to filter returned lines to those matching a regex
+- Expect `outline_item` events with `kind`, `name`, `signature`, `start_line` and `end_line`, then an `outline_summary`
+- `--kind` is repeatable, and `--positions` adds bytes and columns
+- A slim build without `ast` exits 78 with a rebuild hint
 
 
-## 45 Subcommands (SSOT)
+## Safety and Maintenance Commands
 
-Pin agents to `^0.1.36`. SSOT via `atomwrite agent-surface` / `CANONICAL_SUBCOMMAND_COUNT` = 45; machine tree: `atomwrite commands --include-globals`.
-
-- `read` -- reads files with metadata, checksum, optional content; `--format raw` (alias `--raw`) emits raw bytes for Unix composability (G81); `--grep <REGEX>` filters returned lines
-- `write` -- creates or overwrites files atomically via stdin; `--syntax-check` validates with tree-sitter after write (G72, exit 88); large existing targets require `--ack-overwrite` (default-deny above XDG `[write].confirm_large_bytes`)
-- `edit` -- edits surgically by line number, text marker, or exact match; `--fuzzy auto|aggressive|off` where `off` = exact-only (G-010); default `auto`; success NDJSON may include `match_count` and `indent_adjusted`; `--multi` for NDJSON multi-edit
-- `search` -- searches file content in parallel (ripgrep engine); supports `--context N`, `--max-count N`, `--invert`, `--sort path`, `--fixed`, `--word`, `--case-insensitive`, `--include`, `--exclude`
-- `replace` -- replaces text across multiple files with atomic writes; `--fuzzy auto|aggressive|off` where `off` = exact-only (G-010); default `auto`; `--fuzzy-threshold`, `--progress-every`; fuzzy multi-apply is **one-pass** L→R (`apply_fuzzy_one_pass`, never re-scans inserted text); default max applies **1** if `--max-replacements` omitted (hard ceiling 10_000); if replacement **contains** pattern (fixed-string), force single apply; match failures may emit `best_candidate`
-- `hash` -- computes BLAKE3 checksums
-- `delete` -- deletes files with optional backup; `--plan` for plan-only listing; `delete --confirm` / `--yes` / `-y` are **rejected**
-- `count` -- counts lines, files by extension
-- `diff` -- compares two files (unified, stat, or changes); second path `-` reads stdin (G-003)
-- `move` -- moves or renames files atomically
-- `copy` -- copies files with checksum verification
-- `list` -- lists project file structure with metadata
-- `extract` -- extracts fields from NDJSON or text columns; positional fields or local `--field` (never local `--select`)
-- `calc` -- evaluates mathematical expressions and unit conversions (fend engine)
-- `regex` -- generates regex from examples (grex engine)
-- `transform` -- structural AST search and rewrite (ast-grep, 306 languages)
-- `scope` -- grammatical scope over code categories; `--delete` to remove matches; `--action upper|lower|titlecase|squeeze` for text transformations; `--replace-with "text"` for custom substitution; `--query` for prepared queries (comments, fn, strings, struct, etc); `--pattern` for custom AST patterns; supports Rust (30 queries), Python (13), JS/TS (11), Go (8)
-- `backup` -- creates timestamped backups with BLAKE3 checksums; `--retention` for retention period, `--dry-run` for preview
-- `rollback` -- restores from backup; `--timestamp` or `--latest` to select backup, `--verify` for checksum validation, `--dry-run` for preview
-- `apply` -- applies patches from stdin with automatic format detection (unified diff, SEARCH/REPLACE blocks, markdown-fenced, full file); `--format` to force format, `--backup` for safety, `--dry-run` for preview
-- `batch` -- executes multiple operations from NDJSON manifest (write, replace, delete, edit, hash, move, copy); supports `--transaction` for all-or-nothing
-- `completions` -- generates shell completions
-- `set` -- (v0.1.12, v14 Tier 3) writes a value at a dotted path in a TOML or JSON file via `toml_edit`; auto-coerces int/bool/float/string
-- `get` -- (v0.1.12, v14 Tier 3) reads a value at a dotted path; NDJSON: `{"type":"get","key_path","value","found","format"}`
-- `del` -- (v0.1.12, v14 Tier 3) removes a key; `--force-missing` flag treats absent keys as no-op success
-- `case` -- (v0.1.12, v14 Tier 3) renames identifiers across multiple files via `heck`; styles: `snake`, `camel`, `pascal`, `kebab`, `screaming-snake`
-- `query` -- (v0.1.12, v14 Tier 3, G72) walks a tree-sitter AST and emits nodes as NDJSON; 305 languages via `tree-sitter-language-pack`; modes: `--kinds`, `--query <KIND>`, `-Q <KIND>`, `--tree`, `--positions`
-- `outline` -- (v0.1.12, v14 Tier 3) extracts high-level structure (functions, classes, structs, enums, traits, modules) as NDJSON
-- `wal-stats` -- (v0.1.18) inspects WAL journal state for local diagnostics and debugging; scope via `--workspace <DIR>`; NDJSON report with `terminal_committed`, `terminal_aborted`, `total_bytes`, `oldest_age_secs`
-- `wal-heal` -- (v0.1.18) removes orphan terminal journals older than `--threshold-secs` (default 3600s); wall-clock budget via `--max-duration-ms` (default 100ms)
-- `edit-loop` -- (v0.1.22) applies N `{old, new}` pairs in 1 invocation via NDJSON on stdin; supports `--partial`, `--backup`, `--keep-backup`, `--line-ending`, `--preserve-timestamps`, `--fuzzy`, `--expect-checksum`
-- `prune-backups` -- (v0.1.22) manual cleanup of legacy `.bak.YYYYMMDD_HHMMSS` files (v0.1.20 and earlier); flags `--max-age-secs <SECONDS>`, `--max-count <N>`, `--dry-run` (default `true` for safety); NDJSON output with `path`, `reason`, `action`, `total`
-- `verify` -- (v0.1.25) verify a file checksum against an expected BLAKE3 hash; delegates to `hash --verify`; exit 0 on match, exit 81 on mismatch
-- `recipe` -- (v0.1.29/v0.1.30) list/run versioned multi-step pipelines; recursive hash skips `*.bak.*`
-- `sparse` -- (v0.1.29/v0.1.30) budgeted monorepo list/read/outline; outline emits real AST kinds
-- `semantic-merge` -- (v0.1.29/v0.1.30) three-way line-based merge for multi-agent conflicts (not AST); conflict markers default ON; opt-out `--no-conflict-markers`
-- `agent-surface` -- (v0.1.29) clap-derived tool manifesto (CLI only; MCP forbidden)
-- `watch` -- (v0.1.29, feature `watch`) filesystem events with debounce/checksum/gitignore; always emits final NDJSON `type:watch_summary`
-- `codemod` -- (v0.1.29) multi-rule AST campaign with `by_rule_id` summary
-- `semantic-search` -- (v0.1.29, feature `semantic`) offline token ranking / inverted index
-- `stat` -- (v0.1.29) alias of `read --stat`
-- `doctor` -- host readiness diagnostics
-- `locale` -- show/set/clear UI locale preference (XDG); distinct from global `--locale`
-- `commands` -- emit full command tree JSON for discovery
-- `scratch` -- `scratch init` creates staging under `$WS/.atomwrite/scratch/` for `--old-file`/`--new-file` (NEVER OS `/tmp` outside workspace; exit 126 `WORKSPACE_JAIL`)
-
-
-## Agent discovery commands
-
-Host readiness and surface inventory for LLM agents. Prefer these before inventing flag lists by hand.
-
-### `doctor` — host readiness
+### backup
+- Creates a timestamped `.bak.<timestamp>` copy of a file with a BLAKE3 checksum
 
 ```bash
-atomwrite --workspace . doctor --strict
+atomwrite --workspace "$WS" backup src/lib.rs --retention 3
+atomwrite --workspace "$WS" backup --dry-run src/lib.rs
 ```
 
-### `commands` — full command tree JSON
+- Expect `type` `backup` with `backup_path` and `checksum`, then a `summary` with `files_backed_up`
+- `--retention N` keeps the N newest backups, `--output-dir DIR` writes elsewhere and `--dry-run` previews
+
+### rollback
+- Restores a file from a previous backup, and `--verify` checks the BLAKE3 checksum first
 
 ```bash
-atomwrite --workspace . commands --include-globals
+atomwrite --workspace "$WS" rollback src/lib.rs --latest --verify --dry-run
+atomwrite --workspace "$WS" rollback src/lib.rs --latest --verify
 ```
 
-### `agent-surface` — clap tool manifesto
+- Expect `type` `plan` on the dry run and `type` `rollback` with `restored_from` and `verified`
+- `--timestamp STAMP` restores a specific backup, and a prefix of the stamp is accepted
+- The pre-rollback safety snapshot is opt-in through `--backup`
+
+### verify
+- Checks a file against an expected BLAKE3 hash, with exit 0 on a match and 81 on a mismatch
+- The hash is positional, so the call is `verify PATH HASH`
 
 ```bash
-atomwrite --workspace . agent-surface --format json
+H="$(atomwrite --workspace "$WS" hash src/lib.rs | jaq -r .checksum)"
+atomwrite --workspace "$WS" verify src/lib.rs "$H"
 ```
 
-### `locale` — show / set / clear preference
+- Expect `type` `hash_verify` with `verified` set to `true` and `ok` set to `true`
+- On a mismatch the same event carries `verified: false`, `code` `CHECKSUM_VERIFY_FAILED` and `exit` 81
+
+### edit-loop
+- Applies N old/new pairs to one file in a single write, all or nothing
+- Send a JSON array or one JSON object per line on stdin
+
+```bash
+printf 'alpha\nbeta\ngamma\n' > tmp/loop.txt
+printf '[{"old":"alpha","new":"ALPHA"},{"old":"beta","new":"BETA"}]\n' | atomwrite --workspace "$WS" edit-loop tmp/loop.txt
+printf '{"old":"gamma","new":"GAMMA"}\n{"old":"absent","new":"X"}\n' | atomwrite --workspace "$WS" edit-loop --partial tmp/loop.txt
+```
+
+- Expect `type` `result` with `pairs_total`, `pairs_applied`, `pairs_unmatched` and `pair_results`
+- Without `--partial`, an unmatched pair exits 65 with `MATCH_FAILED` and `failed_pair_index`, and nothing is written
+- With `--partial`, matching pairs are written and the run exits 87 (`EDIT_LOOP_PARTIAL`) when any pair missed
+- `--syntax-check`, `--line-ending` and `--allow-sequential-drift` are also accepted
+
+### prune-backups
+- Removes `.bak` siblings of the named target files by age or by count
+- Name the target files, not a directory, and pass `--max-age-secs` or `--max-count`
+- `--dry-run` is a flag without a value, so omit it to apply
+
+```bash
+atomwrite --workspace "$WS" prune-backups --max-age-secs 0 --dry-run src/hello.txt
+atomwrite --workspace "$WS" prune-backups --max-age-secs 0 src/hello.txt
+atomwrite --workspace "$WS" prune-backups --max-count 3 src/lib.rs
+```
+
+- Expect `pruned` events with `reason` `age` or `count`, then a `summary` whose `action` is `dry_run` or `pruned`
+- Only names carrying a real backup stamp (`.bak.YYYYMMDD_HHMMSS` or `.bak.YYYYMMDD_HHMMSS_mmm`) are candidates, so `f.txt.bak.0-user-note` is never touched
+- `--dry-run false` does not apply anything, because `false` is read as a path
+
+### wal-stats
+- Shows the state of WAL journals under the workspace, read only
+
+```bash
+atomwrite --workspace "$WS" wal-stats
+```
+
+- Expect `type` `wal_stats` with `total_journals`, `by_state`, `oldest_journal_age_secs` and `auto_heal_recommended`
+
+### wal-heal
+- Removes terminal journals older than a threshold, and keeps journals that are still `Started`
+- It needs a path, and `--threshold-secs` defaults to 3600
+
+```bash
+atomwrite --workspace "$WS" wal-heal --threshold-secs 3600 .
+atomwrite --workspace "$WS" wal-heal --max-duration-ms 200 .
+```
+
+- Expect `type` `wal_heal` with `removed`, `preserved`, `malformed` and `bytes_reclaimed`
+- `--max-duration-ms` bounds the wall-clock budget, and `--dry-run` previews
+- A crash (`kill -9`) can leave a journal in the `Started` state, and `wal-heal` preserves it for you to inspect
+- The global `--no-auto-heal` skips the startup heal pass, which runs only on commands that write
+- A cancelled run (SIGTERM, SIGINT or a deadline) leaves no journal behind
+
+
+## Orchestration Commands
+
+### recipe
+- Lists and runs built-in multi-step recipes: `search-replace-verify` and `edit-loop-syntax-check`
+- `recipe run` needs `--path` or `--target`, and recipe steps skip `*.bak.*` files
+
+```bash
+atomwrite --workspace "$WS" recipe list
+atomwrite --workspace "$WS" recipe run --name search-replace-verify --pattern beta --replacement omega --path src --dry-run
+```
+
+- Expect `recipe` events for the list and a final `recipe_result` with `steps`, `dry_run` and `ok`
+- A recipe whose search finds nothing stops at the replace step with exit 1 and `failed_step_id`
+- `edit-loop-syntax-check` needs `--pairs-file FILE`, `--target FILE` and `--syntax-check LANGUAGE`
+- `--fuzzy`, `--fuzzy-threshold`, `--include` and `--exclude` tune the search-replace recipe
+
+### sparse
+- Lists, reads and outlines large trees under a file and byte budget
+
+```bash
+printf 'src/lib.rs\nsrc/b.rs\n' > tmp/paths.txt
+atomwrite --workspace "$WS" sparse list src/ --max-files 10 --max-bytes 1048576
+atomwrite --workspace "$WS" sparse read --paths-file tmp/paths.txt --head 2
+atomwrite --workspace "$WS" sparse outline --max-files 5 src/
+```
+
+- Expect `sparse_entry`, `sparse_read` or `outline_item` events and a `sparse_summary` with `truncated`
+- `sparse list` also takes `--include` and `--exclude` globs, and an invalid glob exits 65
+- `sparse outline` reports `sparse_outline_budget`, and a slim build without `ast` exits 78
+
+### semantic-merge
+- Merges three files line by line (base, ours, theirs), and it is not AST-aware
+- Conflict markers are written by default, and `--no-conflict-markers` turns them off
+
+```bash
+printf 'a\nb\nc\n' > tmp/base.txt
+printf 'a\nB\nc\n' > tmp/ours.txt
+printf 'a\nb\nC\n' > tmp/theirs.txt
+atomwrite --workspace "$WS" semantic-merge --base tmp/base.txt --ours tmp/ours.txt --theirs tmp/theirs.txt --output tmp/merged.txt --fail-on-conflict
+```
+
+- Expect `type` `semantic_merge` with `status` `merged` and the three input checksums
+- A real conflict has `status` `conflict`, and `--fail-on-conflict` turns it into exit 84 (`MERGE_CONFLICT`)
+- `--expect-checksum` and the backup flags guard the output file
+
+### semantic-search
+- Ranks files and lines by offline Jaccard similarity to a query, and it is always compiled in
+
+```bash
+atomwrite --workspace "$WS" semantic-search "unwrap value" src/ --k 5 --min-score 0.01
+atomwrite --workspace "$WS" semantic-search "fn" src/ --k 2 --index-dir .atomwrite/semantic-index
+```
+
+- Expect `semantic_match` events with `rank`, `score`, `path`, `line` and `snippet`, then a `semantic_summary`
+- `backend` is `jaccard`, or `inverted-index` when `--index-dir` is used
+- `--include-backups` also scans `.bak` files, and zero hits is not a crash
+
+### codemod
+- Applies a YAML list of AST rewrite rules across a tree
+- Each rule is an item with `id`, `language`, `pattern` and `rewrite`
+
+```bash
+printf -- '- id: unwrap-to-try\n  language: rust\n  pattern: "$E.unwrap()"\n  rewrite: "$E?"\n' > rules.yaml
+atomwrite --workspace "$WS" codemod --rules rules.yaml --dry-run src/
+```
+
+- Expect `transformed` events and a `codemod_summary` with `by_rule_id`
+- A rules file in ast-grep style with `rule:` and `fix:` exits 65
+- `transform --rules` and `--inline-rules` read the same format
+
+### watch
+- Streams filesystem events with debounce and always ends with a `watch_summary`
+- It needs a build with `--features watch`, and the default build exits 78 with a rebuild hint
+
+```bash
+atomwrite --workspace "$WS" watch src/ --max-events 1 --idle-exit-ms 500
+```
+
+- On the default build, expect `code` `CONFIG_INVALID` and exit 78
+- On a `watch` build, expect `watch_summary` as the last line, even on a signal
+- Always pass `--max-events` or `--idle-exit-ms` (default idle exit is 500 ms), or `--timeout-secs`
+- `--debounce-ms MS`, `--checksum` and `--gitignore true|false` tune the stream
+
+### stat
+- Returns metadata only, as an alias of `read --stat`
+
+```bash
+atomwrite --workspace "$WS" stat src/lib.rs
+```
+
+- Expect `type` `read` with `mode` `stat`, plus `lines`, `bytes` and `checksum`
+
+
+## Discovery and Host Commands
+- Use these before you invent flag lists by hand
+
+### doctor
+- Diagnoses the host and reports checks for heal, concurrency, features and the environment
+- It reads no environment variable, and `--strict` exits 1 (`DOCTOR_CHECKS_FAILED`) when a check fails
+
+```bash
+atomwrite --workspace "$WS" doctor --strict
+```
+
+- Expect `type` `doctor_report` with `ok` and a `checks` array
+- On the default build a check reports that `watch` is disabled
+
+### commands
+- Prints the full command tree as JSON, with or without the global arguments
+
+```bash
+atomwrite --workspace "$WS" commands --include-globals
+```
+
+- Expect `type` `commands_tree` with 47 `commands` and, with the flag, 33 `global_args`
+- Aliases such as `--max-concurrency`, `--timeout`, `--fields` and the hidden `--json` are not listed
+
+### agent-surface
+- Prints the tool manifest for agents, and it is the single source of truth for the subcommands
+
+```bash
+atomwrite --workspace "$WS" agent-surface --format json
+```
+
+- Expect `type` `agent_surface` with `tools`, `exit_codes`, `discovery`, `flag_contract` and `notes`
+- `tools` has 47 entries, and `exit_codes` has 41 entries with 33 distinct numbers
+- `discovery` lists the `--print-schema` names, and `watch` reports `available: false` on the default build
+
+### locale
+- Shows, persists or clears the display language, and it is distinct from the global `--locale`
+- Precedence is `--locale`, then the saved preference, then the system language, then `en`
 
 ```bash
 atomwrite locale
@@ -900,295 +817,345 @@ atomwrite locale --set pt-BR
 atomwrite locale --clear
 ```
 
-### `scratch init` — staging under `.atomwrite/scratch/`
+- Expect `type` `locale_report` with `resolved`, `source`, `available` and `preference_path`
+- Only `en` and `pt-BR` exist, and any other tag exits 2 with the list of available tags
+- The preference lives in `$XDG_CONFIG_HOME/atomwrite/locale`
+- Error `code` and `message` stay in English, and `suggestion` follows the locale, with `suggestion_lang` saying which
+
+### completions
+- Prints a shell completion script, or installs it under the XDG data directory
+- Supported shells are bash, zsh, fish, elvish and powershell
 
 ```bash
-atomwrite --workspace . scratch init
-# Stage content-source files here (GAP-019); never OS /tmp for --old-file/--new-file
-SCR=.atomwrite/scratch
-printf %s "$OLD" >"$SCR/old.txt"
-printf %s "$NEW" >"$SCR/new.txt"
-atomwrite --workspace . edit --old-file "$SCR/old.txt" --new-file "$SCR/new.txt" src/f.rs
+atomwrite completions bash > atomwrite.bash
+atomwrite completions bash --install
 ```
+
+- Expect the raw script on stdout for the first call and an `installed` event for the second
+- That event is `{"type":"installed","path":"<completion file>","ok":true,"target_resolved":"<same path>","target_source":"argv"}`
+- The path comes from the XDG data directory of the shell, as listed in Where Files Live
+- A write that fails because the reader closed exits 141 (`BROKEN_PIPE`) with no panic and no crash report
+- Very short output, such as `--version | head -1`, can finish before the reader closes and then exits 0
+
+### scratch
+- Creates the staging directory under the workspace jail, and never under the OS temporary directory
+- `scratch init` needs a path
+
+```bash
+atomwrite --workspace "$WS" scratch init .atomwrite/scratch
+```
+
+- Expect `type` `scratch_init` with `path`, `relative` and `already_existed`
+- Stage `--old-file` and `--new-file` content there, because paths outside the jail exit 126
+
+### config
+- Reads and writes persistent tuning keys in the global `config.toml` or the workspace `.atomwrite.toml`
+- `list` and `get` need no scope, and `set`, `unset` and `path` need `--scope global|workspace`
+
+```bash
+atomwrite --workspace "$WS" config get fuzzy.threshold
+atomwrite --workspace "$WS" config list
+atomwrite --workspace "$WS" config set fuzzy.threshold 0.9 --scope workspace
+atomwrite --workspace "$WS" config path --scope workspace
+atomwrite --workspace "$WS" config unset fuzzy.threshold --scope workspace
+```
+
+- Expect `type` `config` with `action`, `key`, `value`, `origin` and `default`
+- `origin` is `default`, `global`, `workspace`, or `explicit` when `--config PATH` is used
+- The 37 keys, their ranges and scopes are in the Configuration section
+
+
+## 47 Subcommands (SSOT)
+- Pin agents to `^0.1.37`, and read `atomwrite agent-surface` for the live manifest
+- `CANONICAL_SUBCOMMAND_COUNT` is 47, and the machine tree is `atomwrite commands --include-globals`
+
+| Command | Summary |
+|---|---|
+| `read` | Reads a file with checksum, size and lines, or only a slice |
+| `write` | Creates or overwrites a file atomically from stdin |
+| `edit` | Edits by exact or fuzzy text, line number or marker |
+| `delete` | Deletes files or trees with backup, or prints the plan |
+| `copy` | Copies a file or tree with checksum verification |
+| `move` | Moves or renames a file atomically |
+| `apply` | Applies a unified diff, SEARCH/REPLACE or full file from stdin |
+| `search` | Searches file contents in parallel with the ripgrep engine |
+| `replace` | Replaces text across files with atomic writes and fuzzy matching |
+| `transform` | Rewrites code by AST pattern with ast-grep |
+| `hash` | Prints the BLAKE3 checksum of files or stdin |
+| `count` | Counts lines and files by extension or by size |
+| `diff` | Compares two files as unified, stat or changes |
+| `list` | Lists a directory tree with metadata |
+| `extract` | Picks fields from NDJSON on stdin |
+| `extract-artifact` | Extracts bounded signal from PDF, OOXML and image headers |
+| `scope` | Acts on comments, strings, functions and other code categories |
+| `regex` | Generates a regex from example strings |
+| `calc` | Evaluates math and unit conversions |
+| `completions` | Prints or installs shell completions |
+| `backup` | Creates timestamped backups with BLAKE3 checksums |
+| `rollback` | Restores a file from a previous backup |
+| `batch` | Runs NDJSON operations from stdin, optionally as one transaction |
+| `edit-loop` | Applies N old/new pairs in one write, all or nothing |
+| `prune-backups` | Removes old `.bak` files by age or count |
+| `wal-stats` | Shows the state of WAL journals, read only |
+| `wal-heal` | Removes stale terminal WAL journals |
+| `verify` | Checks a file against an expected BLAKE3 hash |
+| `set` | Writes a value at a dotted path in TOML or JSON |
+| `get` | Reads a value at a dotted path in TOML or JSON |
+| `del` | Removes a key from a TOML or JSON file |
+| `case` | Renames identifiers between case styles in files |
+| `query` | Walks the tree-sitter AST and emits nodes |
+| `outline` | Emits the structure of a source file |
+| `semantic-merge` | Three-way line-based merge with conflict markers |
+| `sparse` | Budgeted list, read and outline for large trees |
+| `recipe` | Lists and runs built-in multi-step recipes |
+| `stat` | Metadata only, alias of `read --stat` |
+| `agent-surface` | Tool manifest for agents |
+| `watch` | Streams filesystem events, needs the `watch` build feature |
+| `codemod` | Applies a YAML list of AST rewrite rules |
+| `semantic-search` | Offline Jaccard ranking of files by query |
+| `doctor` | Host readiness diagnostics |
+| `scratch` | Creates the staging directory inside the jail |
+| `locale` | Shows, sets or clears the display language |
+| `commands` | Prints the full command tree as JSON |
+| `config` | Reads and writes persistent tuning keys |
+
+
+## Global Flags
+- Global flags go before the subcommand, and `atomwrite commands --include-globals` lists all 33
+- `--json` is accepted and ignored, because stdout is always NDJSON
+- There is no global `-n`, because `replace` owns `-n`
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-v`, `--verbose` | off | Raises tracing on stderr: `-v` info, `-vv` debug, `-vvv` trace |
+| `-q`, `--quiet` | off | Lowers tracing: `-q` error, `-qq` off |
+| `--workspace PATH` | current directory | Jail root, and every path must stay inside it |
+| `--config PATH` | none | Explicit `.atomwrite.toml`, and it fails if missing or malformed |
+| `--color auto\|always\|never` | `auto` | Controls colored output |
+| `--no-color` | off | Same as `--color never` |
+| `--ready-file PATH` | none | Test harness: writes the PID once signal handlers are ready |
+| `--no-gitignore` | off | Does not respect `.gitignore` |
+| `--hidden` | off | Includes hidden files and directories |
+| `--follow-symlinks` | off | Follows symbolic links |
+| `-j`, `--threads N` | automatic | Alias `--max-concurrency`, omitted or 0 means all cores up to 16, limited by RAM, and an explicit N is honored above 16 |
+| `--max-filesize BYTES` | 1 GiB | Rejects larger files with exit 65, while `search` skips above its own 10 MiB limit and counts the skips in `files_skipped` |
+| `--timeout-secs N` | 120 | Alias `--timeout`, 0 disables the deadline, and a deadline exits 124 |
+| `--no-progress` | off | Disables NDJSON progress events on long operations |
+| `--json-schema` | off | Emits the JSON Schema of the subcommand output and exits |
+- `--print-schema [NAME]` | off | Lists the 55 schema names, or emits one, and it goes before the command |
+| `--non-interactive` | off | Declares agent-hosted execution: never prompts, never reads confirmation from stdin |
+| `--confirm-side-effect` | off | Acknowledges a side effect where the command contract asks for it |
+| `--allow-truncate` | off | Opt-in to value truncation, required by `--max-output-bytes` |
+| `--locale en\|pt-BR` | resolved | Overrides the display language of suggestions |
+| `--no-auto-heal` | off | Skips the startup `wal-heal` pass |
+| `--select KEYS` | all keys | Alias `--fields`, projects events to top-level keys (CSV) |
+| `--filter EXPR` | none | Keeps events where `key=value`, `key==value` or `key!=value`, repeatable AND |
+| `--limit N` | none | Work budget: cuts the target list before the action and stops the walk at the record that reaches the cap, so at most N answer records leave; and the terminal summary carries `walker_stopped_early: true` only when the walk was actually cut before the tree ended |
+| `--sort-by KEY` | arrival order | Orders buffered events by a key, `path-line` or `line-path` |
+| `--dedupe KEYS` | off | Keeps the first event of each group of equal key values |
+| `--aggregate KEY[:OP[:FIELD]]` | off | Collapses events per group, with OP `count`, `sum`, `min` or `max` |
+| `--join KEY:SUFFIX` | off | Reads an NDJSON table from stdin once (up to 16 MiB) and attaches the matching rows under SUFFIX |
+| `--truncate-content KEY:LEN` | off | Cuts string values of KEY to LEN characters |
+| `--redact` | off | Replaces secret-shaped values with `[redacted]` |
+| `--normalize-encoding` | off | Normalizes every string value to Unicode NFC |
+| `--diff-against PATH` | off | Replaces the stream with one `stream_diff` line of added, removed and unchanged counts |
+| `--max-output-bytes BYTES` | off | Caps every string value, `checksum` included, and needs `--allow-truncate` |
+
+- `--select`, `--filter` and `--limit` keep error envelopes, so a failure with `ok: false` still appears
+- Ordering, dedupe, aggregate and stream diff buffer the whole run and apply at the end
+- `--max-output-bytes` cuts every string value, so never use it when the full `checksum` or `content` matters
+- `--diff-against` needs a baseline file inside the workspace, and `--print-schema NAME` or `--print-schema=NAME` both work
+- A tail shape flag never hides the `cancelled` record of an interrupted run
+
+```bash
+atomwrite --workspace "$WS" --sort-by path-line --select type,path,line_number --filter type=match search 'fn' src/
+atomwrite --workspace "$WS" --aggregate kind:count list --depth 1 src/
+atomwrite --workspace "$WS" --max-output-bytes 12 --allow-truncate --select path,checksum hash src/lib.rs
+atomwrite --workspace "$WS" --select ok,error,code,match_count,suggestion --filter ok=false --limit 5 edit src/main.rs --old nothere --new x --fuzzy off
+atomwrite --print-schema search
+atomwrite --workspace "$WS" list --depth 1 src/ > tmp/base.ndjson
+atomwrite --workspace "$WS" --diff-against tmp/base.ndjson list --depth 1 src/
+printf '%s\n' '{"path":"src/lib.rs","owner":"alice"}' | atomwrite --workspace "$WS" --join path:owners --select type,path,owners list --depth 1 src/
+```
+
+- Expect sorted `match` events, then group lines such as `{"kind":"file","count":11}`, then cut strings, then one error envelope
+- The last call prints the JSON Schema of the whole `search` stream
+- `--aggregate` with `sum` reads a numeric field, as in `--aggregate kind:sum:size`
+- `--diff-against` compares the stream with a saved baseline, as shown next
+- The `--join` call prints `{"type":"entry","path":"src/lib.rs","owners":[{"path":"src/lib.rs","owner":"alice"}]}` and exits 0
+- `--join` runs once after sorting and before dedupe, select, filter and limit
+- An event without KEY, or with no matching row, stays as it was
+- Failure events and the `summary` are never changed by a join
+- A join exits 65 (`INVALID_INPUT`) when stdin is a terminal or the table is over 16 MiB
+- It also exits 65 for a non-object line, a bad `KEY:SUFFIX`, or a table with no string KEY
+- Commands that read stdin refuse with exit 65: `write`, `edit`, `edit-loop`, `apply`, `extract`, `batch` (no `--file`), `hash --stdin`, `diff -`
+- Use it with read-only commands such as `search`, `list` and `count`
+- A `.gitignore` or `.ignore` at the top of a root that cannot be read or parsed is reported in `files_failed` and `errors[]` with its own path, so a scan never hides a broken ignore file
+
+
+## Exit Codes and Error Classes
+- Read the exit code before parsing stdout, because an error envelope also goes to stdout
+- The table has 41 rows and 33 distinct exit numbers, and it comes from `atomwrite agent-surface`
+- `atomwrite --help` prints the same list under `Exit codes`
+- The error enum has 34 variants, and `code` in the envelope is a free string, not a closed enum
+
+| Exit | Code | Class | Retryable |
+|---|---|---|---|
+| 0 | `SUCCESS` | none | no |
+| 1 | `NO_MATCHES` | permanent | no |
+| 1 | `DOCTOR_CHECKS_FAILED` | precondition_failed | no |
+| 2 | `UNSUPPORTED_COMBINATION` | permanent | no |
+| 2 | `ARGUMENT_PARSE_ERROR` | permanent | no |
+| 4 | `FILE_NOT_FOUND` | permanent | no |
+| 4 | `GLOB_NO_MATCHES` | permanent | no |
+| 13 | `PERMISSION_DENIED` | permanent | no |
+| 28 | `DISK_FULL` | transient | yes |
+| 30 | `QUOTA_EXCEEDED` | transient | yes |
+| 65 | `INVALID_INPUT` | permanent | no |
+| 65 | `MATCH_FAILED` | permanent | no |
+| 65 | `MATCH_AMBIGUOUS` | permanent | no |
+| 65 | `BINARY_FILE` | precondition_failed | no |
+| 65 | `FILE_TOO_LARGE` | precondition_failed | no |
+| 69 | `GRAMMAR_UNAVAILABLE` | precondition_failed | no |
+| 73 | `CROSS_DEVICE` | conflict | yes |
+| 74 | `IO_ERROR` | transient | yes |
+| 78 | `CONFIG_INVALID` | permanent | no |
+| 80 | `TRANSACTION_ROLLBACK_FAILED` | permanent | no |
+| 81 | `CHECKSUM_VERIFY_FAILED` | precondition_failed | no |
+| 82 | `STATE_DRIFT` | conflict | yes |
+| 83 | `LOCK_TIMEOUT` | conflict | yes |
+| 84 | `MERGE_CONFLICT` | permanent | no |
+| 85 | `FIFO_DETECTED` | precondition_failed | no |
+| 86 | `DEVICE_FILE` | precondition_failed | no |
+| 87 | `EDIT_LOOP_PARTIAL` | permanent | no |
+| 88 | `SYNTAX_ERROR_DETECTED` | precondition_failed | no |
+| 91 | `EXDEV_FALLBACK_DISABLED` | precondition_failed | no |
+| 92 | `COPY_BACK_BLAKE3_FAILED` | conflict | yes |
+| 93 | `ORPHAN_JOURNAL` | precondition_failed | no |
+| 124 | `TIMEOUT` | precondition_failed | no |
+| 126 | `WORKSPACE_JAIL` | precondition_failed | no |
+| 127 | `SYMLINK_BLOCKED` | precondition_failed | no |
+| 128 | `IMMUTABLE_FILE` | precondition_failed | no |
+| 129 | `SIGHUP` | none | no |
+| 130 | `CANCELLED` | permanent | no |
+| 130 | `SIGINT` | none | no |
+| 141 | `BROKEN_PIPE` | permanent | no |
+| 143 | `SIGTERM` | none | no |
+| 255 | `INTERNAL_ERROR` | permanent | no |
+
+- Exit 0 is success and exit 1 `NO_MATCHES` is a normal answer of `search`, `replace`, `transform`, `scope` and `semantic-search`
+- A failing run ends in exactly one terminal event with `ok: false`, and `error_class`, `retryable` and `suggestion` live inside it
+- Error envelopes carry `error`, `ok`, `code`, `exit`, `message`, `path`, `error_class`, `retryable` and often `suggestion`
+- `MATCH_FAILED` adds `match_count` and `best_candidate`, and `MATCH_AMBIGUOUS` adds `best_candidate` and `match_count`
+- Classes are `none`, `permanent`, `precondition_failed`, `transient` and `conflict`
+- Retry only when `retryable` is true, back off on `transient` and re-read the file on `conflict`
+- Exit 82 means reload the checksum, exit 124 means raise `--timeout-secs` or narrow the path
+- Exit 126 is the jail and exit 143 is a clean SIGTERM
+- Exit 129 is SIGHUP, and exit 130 is SIGINT or a cancelled run
+- Exit 141 means the reader closed the pipe, so output is incomplete and the state needs a re-check
+- Exit 78 covers a bad config file, an unknown config key and a verb that is missing from the build
+- Every verb that walks a tree lists unreadable files in `files_failed`, `partial` and `errors[]`, so read them, and `errors[].path` is the marker `<walk>` when the walk failed without naming a file of its own
+- A write that fails because the reader closed exits 141 (`BROKEN_PIPE`), including `completions`, `--print-schema`, `--help` and every verb
+
+```json
+{"error":true,"ok":false,"code":"MATCH_FAILED","exit":65,"message":"match failed: old string not found (fuzzy mode off = exact-only): \"nothere\"","error_class":"permanent","retryable":false,"suggestion":"inspect best_candidate in the error NDJSON and adjust --old, or lower --fuzzy-threshold","match_count":0,"suggestion_lang":"en"}
+```
+
+- SIGPIPE has a cooperative handler that ends the run with exit 141 after cleanup
+- The run never leaves a lock, journal or tempfile behind
+- This is a deliberate deviation from the literal rule of resetting SIGPIPE to its default action
 
 
 ## Configuration
-- Since v0.1.25, atomwrite supports an optional `.atomwrite.toml` config file
-- Hierarchy: CLI flags > local `.atomwrite.toml` > XDG `config.toml` (`atomwrite set/get`) > built-in defaults (no product environment variables)
-- The config file is optional; atomwrite works without any configuration
-- Use `--workspace` to set the project root boundary
-- Use `--json-schema` to introspect output format at runtime
-- Generate shell completions with `atomwrite completions bash` or auto-install with `atomwrite completions bash --install` (writes to XDG data dir)
-- Locale: `--locale <en|pt-BR>` or `atomwrite locale` (XDG preference). No product env knobs.
-- Workspace jail: always pass `--workspace <root>` (never environment variables).
-- Color: `--color auto|always|never` or `--no-color` (CLI only; no `NO_COLOR` product path).
-- Threads: `--threads` / `-j` / `--max-concurrency` (CLI only).
+- Precedence is flags first, then the workspace `.atomwrite.toml`, then the global `config.toml`, then built-in defaults
+- The two files are merged key by key, so a workspace file hides only the keys it names
+- `--config PATH` replaces both files, and `config get` then reports `origin` `explicit`
+- atomwrite has no product environment variables, so a value comes from a flag or from one of these files
+- Change a key with `atomwrite config set KEY VALUE --scope global|workspace`, and avoid editing the files by hand
+- A `set` keeps comments, validates the whole file and lands atomically, with mode 0600 for the global file on Unix
+- `config` still works when `config.toml` is broken, and a file that is not valid TOML is never rewritten
+- The terminal event of `set` and `unset` carries `target_resolved`, so check that the path is the file you meant
 
+### The 37 Keys
+- Run `atomwrite config list` for the live table with type, default, value, origin and scopes
+- `log.file`, `log.rotation`, `storage.home` and `locale` are global-only, and the workspace scope exits 65
+- An unknown key or a value outside its range exits 65 and writes nothing
 
-## Modification Time And Build Systems
+| Key | Type | Default | Accepted values | Scopes |
+|---|---|---|---|---|
+| `defaults.line_ending` | string | `auto` | `auto`, `lf`, `crlf` | global, workspace |
+| `defaults.backup` | boolean | true | `true`, `false` | global, workspace |
+| `defaults.retention` | integer | 5 | 0 to 255 | global, workspace |
+| `defaults.max_filesize` | integer | 1073741824 | 1 or more | global, workspace |
+| `fuzzy.mode` | string | `auto` | `auto`, `aggressive`, `off` | global, workspace |
+| `fuzzy.threshold` | float | 0.7 | 0 to 1 | global, workspace |
+| `fuzzy.threshold_aggressive` | float | 0.5 | 0 to 1 | global, workspace |
+| `fuzzy.threshold_context` | float | 0.8 | 0 to 1 | global, workspace |
+| `fuzzy.threshold_jw` | float | 0.85 | 0 to 1 | global, workspace |
+| `fuzzy.soft_floor_delta` | float | 0.05 | 0 to 1 | global, workspace |
+| `fuzzy.max_content_bytes` | integer | 268435456 | 1 or more | global, workspace |
+| `write.confirm_large_bytes` | integer | 102400 | 1 or more | global, workspace |
+| `write.shrink_block_percent` | integer | 50 | 1 to 99 | global, workspace |
+| `write.auto_rotate_max_age_secs` | integer | 86400 | 1 or more | global, workspace |
+| `watch.idle_exit_ms` | integer | 500 | 0 or more (0 disables) | global, workspace |
+| `watch.debounce_ms` | integer | 200 | 1 or more | global, workspace |
+| `log.file` | boolean | false | `true`, `false` | global |
+| `log.rotation` | string | `daily` | `daily`, `hourly` | global |
+| `storage.home` | string | none | a directory | global |
+| `locale` | string | none | `en`, `pt-BR` | global |
+| `concurrency.max_threads` | integer | 16 | 1 to 256 | global, workspace |
+| `concurrency.ram_fraction_percent` | integer | 50 | 1 to 100 | global, workspace |
+| `search.context` | integer | 0 | 0 or more | global, workspace |
+| `search.smart_case` | boolean | true | `true`, `false` | global, workspace |
+| `search.max_filesize` | integer | 10485760 | 1 or more | global, workspace |
+| `search.max_columns` | integer | 500 | 1 or more | global, workspace |
+| `search.max_inflight_bytes` | integer | 8388608 | 4 MiB to 1 GiB | global, workspace |
+| `summary.errors_max_entries` | integer | 50 | 1 to 1000 | global, workspace |
+| `lock.acquire_timeout_ms` | integer | 5000 | 100 to 3600000 | global, workspace |
+| `retry.base_ms` | integer | 50 | 1 to 60000, not above `retry.max_ms` | global, workspace |
+| `retry.max_ms` | integer | 400 | 1 to 60000 | global, workspace |
+| `retry.max_elapsed_ms` | integer | 2000 | 1 to 3600000 | global, workspace |
+| `extract.max_sample_rows` | integer | 10 | 0 to 100000 | global, workspace |
+| `extract.max_text_chars` | integer | 400 | 1 to 10000000 | global, workspace |
+| `extract.max_sheets` | integer | 32 | 1 to 10000 | global, workspace |
+| `extract.max_slides` | integer | 64 | 1 to 10000 | global, workspace |
 
-By default, `edit` and `replace` update the file modification time (`mtime`) to the moment the write completes. This is the correct behavior for build systems that use `mtime` to detect source changes (cargo, make, cmake, gradle, sbt, bazel, ninja, msbuild).
-
-What happens if you opt out of mtime updates:
-- Cargo compares the mtime of each source file against the `dep-info` file in `target/.fingerprint/`
-- When source mtime is older than dep-info mtime, cargo assumes nothing changed and skips the rebuild
-- This produces a silent no-op (`Finished in 0.29s`) where the binary is stale but cargo reports success
-
-When to preserve mtime with `--preserve-timestamps`:
-- You are creating a backup or snapshot of the file and want to keep its original timestamp
-- You are implementing a version control operation that mirrors historical state
-- You are generating a reproducible build artifact where source timestamps must match recorded metadata
-- You are writing to a file outside any build system context
-
-For interactive agent workflows, the safe default is to let `atomwrite` update the mtime. The `mtime_preserved` field in the NDJSON response tells you whether the timestamp was preserved or updated, which is critical for diagnosing missed rebuilds in build systems.
-
-
-## Integration With AI Agents
-- Every subcommand produces deterministic NDJSON on stdout
-- Every write includes a BLAKE3 checksum in the response
-- The checksum eliminates the need for verification reads
-- Use `--expect-checksum` for optimistic locking in concurrent workflows
-- Use `--workspace` to sandbox agents within a project root
-- Use `--dry-run` before destructive operations
-- Batch mode replaces hundreds of individual tool calls
-- Exit codes follow sysexits conventions for programmatic handling
-- See [AGENTS.md](AGENTS.md) for the full agent integration contract
-
-
-## Error Suggestions (v0.1.4)
-- Every error envelope on stdout includes a `suggestion` field with actionable recovery guidance
-- All 25 error variants now carry a `suggestion` (the only exception is `BrokenPipe` because SIGPIPE is not actionable)
-- Suggestions are **context-aware**: the `WorkspaceJail` suggestion changes depending on whether the user already supplied `--workspace`
-- When the workspace IS provided: `"use a path inside the workspace (<root>)"`
-- When the workspace is NOT provided: `"set --workspace <root> (XDG/config only; no environment variables)"`
-- When `--old-file`/`--new-file` content-sources are outside the jail: stage with `scratch init` under `$WS/.atomwrite/scratch/` (GAP-019); never OS `/tmp` outside `--workspace`
-- `FileImmutable` suggests `chattr -i` (Unix) or `fsutil` (Windows) to clear the immutable attribute
-- `NoMatches` guides the user to broaden the pattern and review `--include`/`--exclude` filters
-- `BinaryFile` recommends `read --stat` for metadata-only reads (no longer references the phantom `--force-text` flag that was removed in v0.1.4)
-- `PermissionDenied` retries are automatic with exponential backoff (Windows-specific via `persist_with_retry`)
-
-Example of a context-aware error envelope (when workspace is NOT provided):
-```json
-{"error":true,"ok":false,"code":"WORKSPACE_JAIL","exit":126,"message":"path outside workspace jail: /etc/passwd (workspace: /home/user/project)","path":"/etc/passwd","error_class":"precondition_failed","retryable":false,"suggestion":"set --workspace <root> (XDG/config only; no environment variables)","workspace":"/home/user/project"}
-```
-
-Example when workspace IS provided via `--workspace /home/user/project`:
-```json
-{"error":true,"ok":false,"code":"WORKSPACE_JAIL","exit":126,"message":"path outside workspace jail: /etc/passwd (workspace: /home/user/project)","path":"/etc/passwd","error_class":"precondition_failed","retryable":false,"suggestion":"use a path inside the workspace (/home/user/project)","workspace":"/home/user/project"}
-```
-
-Match failures always include stable agent sentinels (`ok: false`, `match_count: 0` on miss):
-```json
-{"error":true,"ok":false,"code":"MATCH_FAILED","exit":65,"message":"no match for pattern","path":"src/f.rs","error_class":"precondition_failed","retryable":false,"match_count":0,"suggestion":"widen the pattern or use --fuzzy auto"}
-```
-
-
-## Windows Installation (v0.1.4)
-- v0.1.4 finally fixes `cargo install atomwrite` on Windows 10/11
-- Prerequisite: Visual Studio 2019+ Build Tools with "Desktop development with C++" workload
-- Prerequisite: Rust 1.88 or later
-- Recommended terminal: Windows Terminal or PowerShell 7+ (for UTF-8 output and ANSI escape sequences)
-- See [INSTALL.md](INSTALL.md) for the full Windows 10/11 installation guide with troubleshooting
-
-
-## v0.1.20 — What Is New
-
-This release introduces a new safety layer called **intention guards** and renames the global `--lang` flag to `--locale` to disambiguate from the tree-sitter `--lang` selector used by `scope` and `transform`.
-
-### Intention Guards (5 OPT-IN flags)
-
-- `--require-backup <N>` — refuse the operation when fewer than `N` retained backups exist for the target
-- `--confirm` — legacy awareness flag on `write` (historical: interactive Y/N on large overwrite). **Superseded in v0.1.35:** large overwrite is one-shot default-deny via `--ack-overwrite` (no Y/N); `delete --confirm` is **rejected** (use `--plan`)
-- `--auto-rotate <N>` — automatically rotate the backup ring down to `N` entries after a successful write
-- `--risk-threshold <LOW|MEDIUM|HIGH>` — block operations whose classified risk meets or exceeds the threshold
-- `--locale <en|pt-BR>` — renamed from `--lang` to disambiguate from the tree-sitter `--lang`
-
-### Other Additions
-
-- `count --by-size` — list the largest files in the tree with sizes and line counts
-- `read --mode raw|envelope` — select between byte-stream output and structured NDJSON envelope
-- `search --no-begin-end` — disable the implicit `^` and `$` anchor decoration in regex output
-- `write --preserve-timestamps` — keep the source file mtime when overwriting
-- `scope --lang rust` — explicit alias accepted for ergonomic symmetry with `transform --lang`
-
-### Statistics
-
-- 542 tests passing in 47 integration suites, 0 failures
-- 11 GAP-2026 closed
-- 3 Windows cross-compile targets green
-- 19 ADRs in `docs/decisions/` (0019-0037)
-
-### Migration `--lang` to `--locale`
+- A flag still wins over a key, as `extract-artifact --max-text-chars` wins over `extract.max_text_chars`
+- `fuzzy.max_content_bytes` is the ceiling above which the fuzzy cascade does not run, and exact matches still work
+- `write.confirm_large_bytes` is the size above which an overwrite needs `--ack-overwrite`
+- `retry.*` shapes the jittered retry of lock and rename waits, and `--timeout-secs` still caps it
+- `storage.home` relocates config and state under `{home}/config` and `{home}/state`
 
 ```bash
-# Discover all files using --lang
-rg -l -- '--lang\b' .
-
-# Bulk replace while preserving other matches
-fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
-
-# Or via ruplacer
-ruplacer --subvert --lang --locale
+atomwrite --workspace "$WS" config set fuzzy.threshold 0.9 --scope workspace
+atomwrite --workspace "$WS" config get fuzzy.threshold
+atomwrite --workspace "$WS" config set log.file true --scope global
 ```
 
-## v0.1.21 — What Is New
+- The first call writes `.atomwrite.toml` in the workspace, and the second reports `origin` `workspace`
+- The third call turns on the diagnostics file, which only the global scope can do
 
-This release closes 3 GAP-2026 items (012, 013 Problem C, 014 v2) and adds one ADR (0038 backup cumprido deleta). The most visible change is that `--backup` operations now DELETE the backup after success by default; add `--keep-backup` to preserve it. The second visible change is that `edit` and `rollback` now accept `--backup`, closing the API parity hole from v0.1.20. The third change is `--allow-sequential-drift` on `edit` for sequential pipelines.
+### Config File Layout
+- A file that is found must be readable, valid TOML and free of unknown keys
+- Otherwise the run exits 78 with `CONFIG_INVALID`
+- The message names the file, and a `version` newer than the supported value 1 also exits 78
+- The loader accepts `version` and 11 sections: `[defaults]`, `[write]`, `[watch]`, `[fuzzy]`, `[search]`, `[storage]`, `[log]`, `[concurrency]`, `[lock]`, `[retry]` and `[extract]`
+- Some fields have no `config` key, so you set them by editing the file
 
-### Backup Operations
-
-- `write --backup` and `replace --backup` DELETE the backup after success by default
-- `edit --backup` and `rollback --backup` are NEW in v0.1.21; the flag is honored on all 4 mutating subcommands
-- `--keep-backup` is the OPT-IN flag to preserve the backup after success on `write`, `edit`, `replace`, `rollback`, `apply`, and `batch`
-- `apply --keep-backup` and `batch --keep-backup` are NEW in v0.1.21 for parity
-- Backups are ALWAYS preserved on the FAILURE path, regardless of `--keep-backup`
-
-#### Examples
-
-```bash
-# Backup deleted after success (default v0.1.21 behavior)
-echo "new" | atomwrite --workspace . write --backup config.toml
-
-# Backup preserved after success (opt-in to v0.1.20 behavior)
-echo "new" | atomwrite --workspace . write --backup --keep-backup config.toml
-
-# Edit with backup (new in v0.1.21)
-echo "new" | atomwrite --workspace . edit --backup src/main.rs --old foo --new bar
-
-# Batch with keep-backup (new in v0.1.21)
-echo '{"op":"write","target":"config.toml","content":"new","keep_backup":true}' \
-  | atomwrite --workspace . batch
-```
-
-### Sequential Edit Pattern
-
-- Chaining multiple `edit` calls on the same file without re-capturing `checksum_after` produces `STATE_DRIFT` (exit 82) on every call after the first
-- Two valid patterns: re-capture checksum (Pattern A) or pass `--allow-sequential-drift` (Pattern B)
-- Default behavior is unchanged: `STATE_DRIFT` still fires on checksum mismatch when the flag is absent
-
-#### Example — Pattern A
-
-```bash
-# Initial checksum
-CS=$(atomwrite --workspace . read src/main.rs | jaq -r '.checksum')
-
-# Edit 1 — pass the captured checksum
-echo "line 2" | atomwrite --workspace . edit --expect-checksum "$CS" src/main.rs --append
-
-# Re-capture the post-edit checksum
-CS=$(atomwrite --workspace . read src/main.rs | jaq -r '.checksum')
-
-# Edit 2 — uses the new checksum
-printf 'line 1\nline 2\n' | atomwrite --workspace . edit --expect-checksum "$CS" src/main.rs --append
-```
-
-#### Example — Pattern B
-
-```bash
-# Edit 1 — initial checksum
-CS=$(atomwrite --workspace . read src/main.rs | jaq -r '.checksum')
-echo "line 2" | atomwrite --workspace . edit --expect-checksum "$CS" src/main.rs --append
-
-# Edit 2 — drift allowed, the pre-state differs from CS
-printf 'line 1\nline 2\n' | atomwrite --workspace . edit --allow-sequential-drift src/main.rs --append
-```
-
-
-#### Example Copy-Paste — `while` Loop with Re-capture
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-WORKSPACE="/path/to/workspace"
-TARGET="$WORKSPACE/src/foo.rs"
-
-# Canonical pattern: re-capture checksum before each edit
-while IFS= read -r change; do
-  CS=$(atomwrite --workspace "$WORKSPACE" read "$TARGET" | jaq -r '.checksum')
-  echo "$change" | atomwrite --workspace "$WORKSPACE" edit \
-    --expect-checksum "$CS" "$TARGET"
-done <<INNER
-primeira mudança
-segunda mudança
-terceira mudança
-INNER
-```
-
-
-## v0.1.22 — What Is New
-
-This release adds 2 new subcommands to address the legacy backup cleanup and the N-edits-in-1-invocation operator pattern. Both are additive: no flag, schema, or default behavior changed for existing commands.
-
-### `prune-backups` Subcommand
-
-- Manual cleanup of `.bak.YYYYMMDD_HHMMSS` siblings left by v0.1.20-era `--backup` operations
-- Flags: `--max-age-secs <SECONDS>` (delete older than N), `--max-count <N>` (keep at most N most-recent), `--dry-run` (default `true` for safety)
-- NDJSON output: one line per backup (`path`, `age_secs`, `size_bytes`, `action`) plus a `summary` line
-- Exit 0 (scan complete), 1 (NO_MATCHES), 65 (precondition failed)
-- Refuses to run without `--max-age-secs` or `--max-count` (VAI-PSIQUE-CHECK)
-
-```bash
-# List backups that would be removed (default --dry-run true)
-atomwrite --workspace . prune-backups --max-age-secs 86400 .
-
-# Actually remove backups older than 24 hours
-atomwrite --workspace . prune-backups --max-age-secs 86400 --dry-run false .
-
-# Keep only the 3 most recent backups per directory
-atomwrite --workspace . prune-backups --max-count 3 --dry-run false .
-```
-
-### `edit-loop` Subcommand
-
-- Apply N `{old, new}` substitution pairs in 1 invocation via NDJSON on stdin
-- Flags: `--workspace`, `--expect-checksum`, `--partial`, `--fuzzy`, `--line-ending`, `--preserve-timestamps`, `--backup`, `--keep-backup`, `--retention`
-- NDJSON output: one `pair_result` per input line plus a `summary` line with `pairs_total`, `pairs_matched`, `pairs_unmatched`
-- Exit 0 (all matched, or `--partial` with ≥1 matched), 1 (NO_MATCHES), 65 (precondition failed)
-
-```bash
-# Apply 2 pairs to one file in 1 invocation
-printf '%s
-' '{"old":"foo","new":"bar"}' '{"old":"baz","new":"qux"}'   | atomwrite --workspace . edit-loop src/foo.rs
-
-# With backup preserved
-printf '%s
-' '{"old":"foo","new":"bar"}'   | atomwrite --workspace . edit-loop --backup --keep-backup src/foo.rs
-
-# With --partial (apply matched, report unmatched)
-printf '%s
-' '{"old":"exists","new":"X"}' '{"old":"absent","new":"Y"}'   | atomwrite --workspace . edit-loop --partial src/foo.rs
-```
-
-### Statistics
-
-- 575+ tests passing in 56+ integration suites, 0 failures
-- 2 new ADRs: 0039 (edit-loop helper), 0040 (prune-backups subcommand)
-- 2 new NDJSON schemas: `edit-loop-output.schema.json`, `prune-backups-output.schema.json`
-- 32 subcommands total (up from 30 in v0.1.20)
-
-
-## v0.1.25 — What Is New
-
-This release resolves 49 gaps (GAP-071 through GAP-134) discovered in 6 rounds of end-to-end audit with ~505 scenarios.
-
-### New Subcommand: verify
-
-```bash
-# Verify a file checksum against an expected BLAKE3 hash
-atomwrite --workspace . verify src/main.rs abc123def456
-# Exit 0 on match, exit 81 on mismatch
-```
-
-### Configuration File: .atomwrite.toml
-
-atomwrite now supports an optional configuration file. Hierarchy: CLI > env > local `.atomwrite.toml` > XDG `~/.config/atomwrite/config.toml` > defaults.
+| Field | Meaning |
+|---|---|
+| `defaults.backup`, `defaults.retention` | Default backup switch and retention for mutating commands |
+| `write.shrink_block_percent` | Shrink guard threshold, default 50 |
+| `write.auto_rotate_max_age_secs` | Age window of `--auto-rotate`, default 24 hours |
+| `write.content_risk_patterns` | Extra patterns for the write risk assessment |
+| `watch.idle_exit_ms`, `watch.debounce_ms` | Defaults of `watch` |
+| `search.context`, `search.smart_case`, `search.max_filesize`, `search.max_columns` | Defaults of `search` |
+| `defaults.line_ending`, `defaults.max_filesize` | Read by the loader but not used by any command |
 
 ```toml
-# .atomwrite.toml (project root)
 [defaults]
 backup = true
-workspace = "."
+retention = 5
 
 [fuzzy]
 mode = "auto"
@@ -1198,183 +1165,286 @@ threshold = 0.85
 max_filesize = 10485760
 ```
 
-### New Flags
+- This is a valid `.atomwrite.toml` for the workspace root, and an unknown field such as `defaults.workspace` would exit 78
+- `[log]` in a workspace file is ignored, because tracing starts before the workspace file is read
 
-- `delete --older-than <DURATION>` — filter by age with suffixes s/m/h/d/w
-- `delete --plan` — plan-only (emits `type: "plan"` NDJSON); `delete --confirm`/`--yes` **rejected** since v0.1.35
-- `replace --preserve-case` — adapts replacement case (UPPER/lower/Title)
-- `search --pcre2` — request PCRE2 backend (exit 65 when feature not compiled)
-- `edit --fuzzy-threshold <FLOAT>` — override the default fuzzy matching threshold
-- `scope --action symbols` — convert operators to Unicode symbols (=> → ⇒, -> → →)
-- `scope --action normalize` — apply NFC Unicode normalization
-- `copy --no-reflink`, `copy --preserve-xattr`, `move --preserve-hardlinks`
+### Where Files Live
+- Linux paths were measured, and macOS and Windows paths come from the code (`directories::ProjectDirs`) and were not validated
 
-### Fuzzy Matching Improvements
+| Item | Linux path |
+|---|---|
+| Global config | `$XDG_CONFIG_HOME/atomwrite/config.toml` (default `~/.config/atomwrite/config.toml`) |
+| Workspace config | `.atomwrite.toml` in the workspace root |
+| Locale preference | `$XDG_CONFIG_HOME/atomwrite/locale` |
+| Diagnostics log | `$XDG_STATE_HOME/atomwrite/logs/atomwrite.<date>.jsonl`, file mode 0600 in a 0700 folder |
+| Tree-sitter parsers | `$XDG_CACHE_HOME/tree-sitter-language-pack/v1.22.1/` |
+| Bash completions | `$XDG_DATA_HOME/bash-completion/completions/atomwrite` |
+| Zsh completions | `$XDG_DATA_HOME/zsh/site-functions/_atomwrite` |
+| Fish completions | `$XDG_DATA_HOME/fish/vendor_completions.d/atomwrite.fish` |
+| Elvish and PowerShell | `$XDG_DATA_HOME/elvish/lib/atomwrite.elv` and `$XDG_DATA_HOME/powershell/Completions/_atomwrite.ps1` |
 
-- Jaro-Winkler added as `context_aware_jw` strategy for short strings (<60 chars)
-- `diff_preview` field in edit responses shows a mini-diff when fuzzy match is used
-- `--fuzzy-threshold` allows per-invocation threshold tuning (0.0 to 1.0)
-- Property-based tests via proptest validate 5 fuzzy invariants
-
-### Critical Bug Fixes
-
-- `write --backup` no longer reports phantom `backup_path` for auto-deleted backups
-- `set` no longer misroutes keys when descending into scalar TOML values
-- `size_delta_pct` overflow fixed (u8 → u32 for deltas >255%)
-- I/O errors now emit structured NDJSON envelope (previously text on stderr + exit 1)
-- `hash` output field renamed from `value` to `checksum` (schema alignment)
-
-### Statistics
-
-- 33 subcommands (verify added)
-- 631 tests passing, 0 failures, 3 ignored
-- 49 gaps resolved across 6 audit rounds
-- 3 JSON schemas updated
+- The diagnostics log is off by default, so no file is opened and no writer thread starts
+- When on, it rotates daily or hourly, keeps 7 files and writes JSON lines
+- Stderr diagnostics stay JSON lines either way
 
 
-## v0.1.28 — What Is New
+## Advanced Patterns
 
-This release closes two audit gaps (GAP-CLI-SURFACE-DRIFT, GAP-CONFIG-DEFAULTS-DEAD) by unifying backup flag handling across all 15 mutating subcommands and wiring `.atomwrite.toml` `[defaults]` end-to-end, plus adds a stdin-tty guard to `edit`'s stdin-consuming modes.
-
-### BREAKING Changes
-
-- `delete` now creates a backup by default (was opt-in) — pass `--no-backup` to disable
-- `--keep-backup` on `delete` is redundant (deletion backups are always preserved and never auto-removed) — now surfaces a `warnings` field in the NDJSON envelope instead of a silent no-op
-- `move`/`copy` overwriting an existing destination now require `--force` OR an explicit `--backup` — previously enforced inconsistently between the two subcommands
-
-### Unified BackupOpts (ADR-0048)
-
-- A single `BackupOpts` struct (`--backup`, `--no-backup`, `--keep-backup`, `--retention <N>`) is now flattened via `#[command(flatten)]` into all 15 mutating subcommands: `write`, `edit`, `edit-loop`, `replace`, `transform`, `scope`, `apply`, `set`, `del`, `case`, `batch`, `delete`, `move`, `copy`, `rollback`
-- `replace --retention` and `delete --no-backup` now parse successfully — previously returned exit 2 `ARGUMENT_PARSE_ERROR` because each struct redeclared the flags by hand with divergent presence and defaults
-- `--backup` and `--no-backup` are mutually exclusive via `conflicts_with` (exit 2) instead of the last flag silently winning
-- `rollback` keeps its pre-rollback safety snapshot opt-in via explicit `--backup` — a documented exception to the unified default-true contract
-- Zero hardcoded `retention: 5` literals remain; `Default` impls in `config.rs`/`atomic.rs` read `constants::DEFAULT_BACKUP_RETENTION`
-
-### Live Config Plumbing (ADR-0049)
-
-- `.atomwrite.toml` `[defaults]` `backup`/`retention` keys are now effective across every mutating subcommand, closing GAP-CONFIG-DEFAULTS-DEAD
-- Precedence: CLI flags (`--backup`/`--no-backup`/`--retention`) > `.atomwrite.toml` `[defaults]` > XDG config > built-in default (`true`/`5`) — no product env knobs
-- `batch --retention <N>` and `batch --backup` are now effective end-to-end, including the transactional pre-backup step and the `delete` operation inside a batch
-
-### Edit stdin-tty Guard (ADR-0050)
-
-- `edit`'s stdin-consuming modes (`--after-line`, `--before-line`, `--range`, `--after-match`, `--before-match`, `--between`, `--multi`) now fail fast with exit 65 (`INVALID_INPUT`) and an actionable `suggestion` when stdin is a terminal, instead of blocking indefinitely
-- These same stdin-consuming modes now reject `--old`/`--new`/`--old-file`/`--new-file` at parse time via `conflicts_with_all` (exit 2) instead of silently dispatching into `edit_by_marker`
+### Optimistic Locking With a Checksum
+- Capture the checksum, then write only if the file did not change
 
 ```bash
-# Interactive terminal now fails fast instead of hanging
-atomwrite --workspace . edit src/main.rs --after-line 10
-# exit 65 INVALID_INPUT — suggestion: pipe content via stdin, e.g. `echo "text" | atomwrite ... edit --after-line 10`
+CS="$(atomwrite --workspace "$WS" read src/lib.rs | jaq -r .checksum)"
+printf 'pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\npub fn sub(a: i32, b: i32) -> i32 {\n    a - b\n}\n' | atomwrite --workspace "$WS" write --expect-checksum "$CS" src/lib.rs
 ```
 
-### Statistics
+- Expect `type` `write` with `checksum_before` equal to `$CS`
+- A changed file exits 82 (`STATE_DRIFT`), and you reload the checksum and decide again
 
-- 661 tests passing, 0 failures, 3 ignored
-- 3 new ADRs: 0048 (unified BackupOpts), 0049 (live config plumbing), 0050 (stdin-tty guard)
-- New test files: `cli_v0128_backup_matrix.rs` (12 tests), `cli_v0128_config_defaults.rs` (6 tests), `cli_v0128_edit_stdin_guard.rs` (3 tests), `cli_v0128_batch_backup.rs` (6 tests)
-
-
-## v0.1.24 — What Is New
-
-- ERROR HANDLING OVERHAUL
-  - ALL user-facing errors now emit structured JSON on stdout with typed exit codes
-  - 20 `anyhow::bail!()` calls converted to `AtomwriteError` variants
-  - Exit code mapping: `NotFound` → exit 4, `InvalidInput` → exit 65
-  - Agents and parsers receive actionable JSON in ALL error paths (no more silent exit 1)
-- CRITICAL BUG FIXES
-  - `delete --recursive` now traverses directories (was silently skipping)
-  - `hash --recursive` now walks directories (was accepted but never walked)
-  - `search --multiline` now propagates flag to SearcherBuilder (was broken)
-  - `replace` rejects empty pattern (was destroying files silently)
-  - `batch --transaction` reverts `move`/`copy` on rollback (was leaving orphans)
-  - `read --line/--lines` no longer panics on out-of-range indices
-- WORKSPACE PATH RESOLUTION
-  - `scope`, `count`, `transform`, `diff` now resolve paths against `--workspace`
-  - Previously these commands used CWD, bypassing the workspace jail
-- BACKUP IMPROVEMENTS
-  - Timestamp format: `YYYYMMDD_HHMMSS_mmm` (millisecond resolution prevents collisions)
-  - `rollback --timestamp` accepts prefix match (backward-compatible)
-  - `prune-backups --max-count` sorts by filename instead of mtime (deterministic)
-- VALUE QUOTING FIXES
-  - `get` JSON/TOML values no longer doubly-quoted (returns raw value)
-  - `set`/`del` `old_value`/`removed_value` no longer doubly-quoted
-  - `set` TOML nested keys now correctly return `old_value`
-- MINOR FIXES
-  - `write` skips risk_assessment for `--append`/`--prepend`
-  - `scope` reports `files_modified: null` in read-only mode
-  - `wal-stats`/`wal-heal` include `type` field in NDJSON
-  - `hash --stdin` no longer requires PATHS argument
-  - `edit --multi` field `op` now optional (inferred as "exact")
-  - `regex` warns when examples look like flags
-  - `case --subvert` uses exact `num_args=2` (was greedy)
-  - `scope --query comments --delete` removes entire line_comment nodes
-
-
-## v0.1.23 — What Is New
-
-### backup-by-default (GAP-2026-016)
-
-All 9 content-mutating commands now create a backup before writing by default. The backup is auto-deleted after success.
+### Sequential Edits on One File
+- Re-capture the checksum before each guarded edit, or accept drift on purpose
 
 ```bash
-# Before v0.1.23: no backup unless explicitly requested
-atomwrite --workspace . write target.rs < new.rs
-
-# v0.1.23+: backup created automatically, deleted after success
-# Same command, now safer by default
-
-# Opt-out when performance matters:
-atomwrite --workspace . write --no-backup target.rs < new.rs
-
-# Global opt-out via environment:
-atomwrite --workspace . write --no-backup target.rs < new.rs
+CS="$(atomwrite --workspace "$WS" hash src/b.rs | jaq -r .checksum)"
+atomwrite --workspace "$WS" edit --expect-checksum "$CS" src/b.rs --old 'beta' --new 'beta_one'
+atomwrite --workspace "$WS" edit --expect-checksum "$CS" --allow-sequential-drift src/b.rs --old 'beta_one' --new 'beta_two'
 ```
 
-### shrink guard (GAP-2026-017)
+- The first edit passes, and the second would exit 82 without `--allow-sequential-drift`
+- Drift accepted that way is logged as a warning on stderr
 
-Writes that shrink file size by >50% are blocked when `--expect-checksum` is active.
+### Scratch Staging for Multi-line Patches
+- Text with quotes, `$` or slashes is fragile in argv, so stage it in files inside the jail
 
 ```bash
-# This is BLOCKED if stdin is <50% of target size:
-CS=$(atomwrite --workspace . read --json target.rs | jaq -r '.checksum')
-echo "tiny" | atomwrite --workspace . write --expect-checksum "$CS" target.rs
-# Exit 65: stdin is 99% smaller than target; pass --allow-shrink to confirm
-
-# Override when truncation is intentional:
-echo "tiny" | atomwrite --workspace . write --expect-checksum "$CS" --allow-shrink target.rs
+atomwrite --workspace "$WS" scratch init .atomwrite/scratch
+SCR=".atomwrite/scratch"
+OLD=$'fn load() -> Option<i32> {\n    Some(1)\n}'
+NEW=$'fn load() -> Option<i32> {\n    Some(2)\n}'
+printf %s "$OLD" > "$SCR/old.txt"
+printf %s "$NEW" > "$SCR/new.txt"
+atomwrite --workspace "$WS" edit src/main.rs --old-file "$SCR/old.txt" --new-file "$SCR/new.txt"
 ```
 
-### --old-file/--new-file for edit (GAP-2026-018 + GAP-019 staging)
+- Expect `type` `edit` with `edits` 1
+- A content file under the OS temporary directory exits 126 (`WORKSPACE_JAIL`)
 
-Read match/replacement content from files instead of CLI arguments, bypassing kernel ARG_MAX.
-
-**Content-source paths are jail-checked** (GAP-019). Stage under the workspace via `scratch init` — never OS `/tmp` for `--old-file`/`--new-file` (that yields exit **126** `WORKSPACE_JAIL`).
+### Find, Preview, Replace, Confirm
+- Locate first, preview the change, apply it, then confirm nothing is left
 
 ```bash
-# Before: content in argv (limited to ~131 KB) — also fragile with quotes / $ / //
-atomwrite --workspace . edit target.rs --old "$(cat old.txt)" --new "$(cat new.txt)"
-
-# Canonical (v0.1.36): stage inside workspace, then edit
-atomwrite --workspace . scratch init
-SCR=.atomwrite/scratch
-printf %s "$OLD" >"$SCR/old.txt"
-printf %s "$NEW" >"$SCR/new.txt"
-atomwrite --workspace . edit target.rs --old-file "$SCR/old.txt" --new-file "$SCR/new.txt"
-
-# Multi-pair with files (also under workspace):
-atomwrite --workspace . edit target.rs \
-  --old-file "$SCR/a.txt" --new-file "$SCR/a2.txt" \
-  --old-file "$SCR/b.txt" --new-file "$SCR/b2.txt"
+atomwrite --workspace "$WS" search 'beta' src/
+atomwrite --workspace "$WS" replace --dry-run beta_two beta src/
+atomwrite --workspace "$WS" replace beta_two beta src/b.rs
+atomwrite --workspace "$WS" search 'beta_two' src/b.rs
 ```
 
-### allow_hyphen_values (GAP-2026-015)
+- The last search exits 1, which means no match is left in the file
+- A successful `replace` deletes the `.bak` copy it made, and `search` still walks `.bak` files, so name the file
 
-Values starting with `-` are now accepted as data in 15 CLI fields.
+### Atomic Multi-file Change
+- A batch with `--transaction` commits all operations or none
 
 ```bash
-# Before v0.1.23: exit 2 (ARGUMENT_PARSE_ERROR)
-atomwrite --workspace . edit target.md --old "- old bullet" --new "- new bullet"
-
-# v0.1.23+: works correctly
-atomwrite --workspace . edit target.md --old "- old bullet" --new "- new bullet"
+printf '%s\n' '{"op":"write","target":"b1.txt","content":"x"}' '{"op":"copy","source":"b1.txt","target":"b2.txt"}' '{"op":"move","source":"b2.txt","target":"b3.txt"}' '{"op":"delete","target":"b3.txt"}' > tmp/manifest.ndjson
+atomwrite --workspace "$WS" batch --file tmp/manifest.ndjson --transaction
 ```
+
+- Expect four `batch_op` lines and a `summary` with `committed` set to `true`
+
+### Undo a Bad Edit
+- Take a backup before a risky change and restore it if the result is wrong
+
+```bash
+atomwrite --workspace "$WS" backup src/lib.rs
+printf 'broken\n' | atomwrite --workspace "$WS" write --allow-shrink src/lib.rs
+atomwrite --workspace "$WS" rollback src/lib.rs --latest --verify
+```
+
+- Expect `type` `rollback` with `verified` set to `true`
+- The file is back to its content before the bad write
+
+### Compact Output for Agents
+- Ask for only the keys you need, and filter on the outcome
+
+```bash
+atomwrite --workspace "$WS" --select ok,code,match_count,suggestion --filter ok=false --limit 5 edit src/main.rs --old nothere --new x --fuzzy off
+```
+
+- Expect one line such as `{"ok":false,"code":"MATCH_FAILED","match_count":0,"suggestion":"..."}` and exit 65
+- `--filter` never hides an error envelope, so a failure with `ok: false` always arrives
+
+
+## Integration With Shell Scripts
+- Check the exit code first, and treat exit 1 from search-like commands as an answer
+- Use `jaq` for fields, and keep `${PIPESTATUS[0]}` when a pipe follows `atomwrite`
+
+```bash
+if atomwrite --workspace "$WS" search 'TODO' src/ > tmp/hits.ndjson; then
+  echo "found"
+else
+  code=$?
+  if [ "$code" -eq 1 ]; then echo "none"; else echo "failed: $code"; fi
+fi
+```
+
+- Expect `found` while a `TODO` exists, and `none` once it is gone
+- A write whose pipe feeds `jaq` hides its status unless you read `${PIPESTATUS[0]}`
+
+```bash
+out="$(atomwrite --workspace "$WS" edit src/main.rs --old nothere --new x --fuzzy off)"; code=$?
+printf '%s\n' "$out" | jaq -r .ok
+echo "$code"
+```
+
+- Expect `false` and `65`
+- Pass an absolute `--workspace` to detached processes, because they do not inherit a useful working directory
+
+
+## Integration With AI Agents
+- Every subcommand writes deterministic NDJSON on stdout, and every write returns a BLAKE3 `checksum`
+- Run `atomwrite agent-surface --format json` once to learn tools, exit codes and schema names
+- Always pass `--workspace` as an absolute path, and use `--select`, `--filter` and `--limit` to save tokens
+- Read the exit code before the fields, and read `best_candidate` after exit 65
+- Run `--dry-run`, `--plan` or `--preview` before any bulk change
+- Use `--expect-checksum` for concurrent edits, and `--ack-overwrite` only for intended large overwrites
+- Never pass `delete --confirm` or `delete --yes`, and never run `watch` without `--max-events` or a timeout
+- See [AGENTS.md](AGENTS.md) for the full agent contract and the exit code handling
+
+
+## Integration With Rust Crates
+- atomwrite is a command line tool, and the supported way to call it from Rust is a subprocess
+- Check the exit status first, then parse the NDJSON lines from stdout
+
+```rust
+use std::process::Command;
+
+fn main() -> std::io::Result<()> {
+    let ws = std::env::current_dir()?;
+    let out = Command::new("atomwrite")
+        .arg("--workspace")
+        .arg(&ws)
+        .args(["hash", "src/lib.rs"])
+        .output()?;
+    match out.status.code() {
+        Some(0) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let first = stdout.lines().next().unwrap_or("");
+            println!("ok: {first}");
+        }
+        Some(code) => eprintln!("atomwrite exited with {code}: {}", String::from_utf8_lossy(&out.stdout)),
+        None => eprintln!("atomwrite was killed by a signal"),
+    }
+    Ok(())
+}
+```
+
+- Expect `ok:` followed by the `hash` event when run from the sample workspace
+- Parse each line with `serde_json` in a real project, and validate it against `atomwrite --print-schema NAME`
+
+
+## Common Errors
+- The first bullet of each entry is the symptom, and the next ones are cause and fix
+
+### Exit 65 MATCH_FAILED
+- An `edit` or `edit-loop` pair found no match
+- Read `best_candidate`, widen `--old`, or use `--fuzzy auto` or `--fuzzy aggressive`
+
+### Exit 65 on a Large or Shrinking Write
+- The target is above 100 KiB, or the new content is under half of the old size
+- Pass `--ack-overwrite` for the first case and `--allow-shrink` for the second, only when intended
+
+### Exit 82 STATE_DRIFT
+- The file changed since you read its checksum
+- Reload the checksum and decide again, or use `--allow-sequential-drift` in a controlled pipeline
+
+### Exit 126 WORKSPACE_JAIL
+- A path points outside `--workspace`
+- Use a path inside the workspace, and stage content files under `.atomwrite/scratch`
+
+```json
+{"error":true,"ok":false,"code":"WORKSPACE_JAIL","exit":126,"message":"path outside workspace jail: /etc/passwd (workspace: /home/user/project)","path":"/etc/passwd","error_class":"precondition_failed","retryable":false,"suggestion":"use a path inside the workspace (/home/user/project); for --old-file/--new-file stage under /home/user/project/.atomwrite/scratch/ (never OS /tmp outside the jail)","workspace":"/home/user/project","suggestion_lang":"en"}
+```
+
+### Exit 4 FILE_NOT_FOUND
+- The path does not exist, and the envelope lists `similar_paths`
+- Check the spelling, or use `list` and `search --target files` to find the file
+
+### Exit 2 ARGUMENT_PARSE_ERROR
+- A flag does not exist or a required argument is missing, and `message` carries the clap usage
+- Run `atomwrite COMMAND --help` and use only flags listed there
+
+### Exit 1 NO_MATCHES
+- A search-like command found nothing, which is an answer and not a crash
+- Broaden the pattern, or review `--include`, `--exclude` and `--max-filesize`
+
+### Exit 78 CONFIG_INVALID
+- A config file is malformed, has an unknown key, or the verb is missing from the build, as with `watch`
+- Fix the file named in `message`, or reinstall with `--features watch`
+
+### Exit 88 SYNTAX_ERROR_DETECTED
+- `--syntax-check` or `--verify-parse` found a parse error in the result
+- Fix the content, and expect the first call per language to download the parser
+
+### Silent Zero From case on a Directory
+- `case` on a directory exits 0 with `identifiers_total` 0 and changes nothing
+- Pass the files instead
+
+### The prune-backups Dry Run
+- `--dry-run` takes no value, and `--dry-run false` reads `false` as a path
+- Omit `--dry-run` to apply, and name the target files whose backups you want to prune
+
+### Broken Pipe
+- `read` and `search` exit 141 when the reader closes the pipe, and the output is incomplete
+- This covers `completions`, `--print-schema`, `--help` and every verb, with no panic and no crash report
+
+
+## Modification Time And Build Systems
+- `edit` and `replace` update the file mtime to the end of the write, which build tools need
+- Cargo, make, cmake, gradle, bazel and ninja compare mtimes to decide what to rebuild
+- A preserved old mtime can make cargo skip a rebuild and report a stale binary as finished
+- Use `--preserve-timestamps` only for snapshots, reproducible artifacts or files outside any build
+- The field `mtime_preserved` in the response tells you which case happened
+
+
+## Windows Installation
+- Install Visual Studio Build Tools with the C++ desktop workload and Rust 1.90 or later
+- Use Windows Terminal or PowerShell 7 for UTF-8 output and ANSI sequences
+- The advisory write lock is Unix-only, and Windows has no write lock yet
+- See [INSTALL.md](INSTALL.md) for the full Windows guide and troubleshooting
+
+
+## Release History
+- This section is historical, and the details live in the [CHANGELOG](../CHANGELOG.md) and [MIGRATION](MIGRATION.md)
+
+### v0.1.36 (2026-07-31)
+- Historical: 46 subcommands, and `scratch init` staging under `.atomwrite/scratch/`
+- Failures emit `ok: false` and a stable `match_count`, so check the exit before success fields
+- Global `--select`, `--filter` and `--limit` shape stdout on every subcommand
+- Normalized fuzzy strategies report `similarity: null`, and `block_anchor` uses a dual gate
+
+### v0.1.35 (2026-07-19)
+- Large overwrites became default-deny, and `--ack-overwrite` is the one-shot acknowledgement
+- `delete --plan` became the way to list targets, and `delete --confirm` and `--yes` were rejected
+- `watch` always emits a final `watch_summary`, with a default idle exit of 500 ms
+- `semantic-merge` writes conflict markers by default
+
+### v0.1.34 and v0.1.30
+- The global timeout default became 120 seconds, and exit 124 marks a deadline
+- Fuzzy multi-apply became one-pass from left to right, with a default of one apply
+- Success lines gained `match_count` and `indent_adjusted`, and misses gained `best_candidate`
+- Historical: 41 subcommands at that point
+
+### v0.1.12 to v0.1.29
+- v0.1.12 added `set`, `get`, `del`, `case`, `query` and `outline`
+- v0.1.18 added `wal-stats` and `wal-heal`, v0.1.22 added `edit-loop` and `prune-backups`, v0.1.25 added `verify`
+- v0.1.23 made backups default on, and v0.1.28 unified the backup flags across the mutating commands
+- v0.1.29 added `recipe`, `sparse`, `semantic-merge`, `agent-surface`, `watch`, `codemod`, `semantic-search` and `stat`
+
+
+## Next Steps
+- Browse longer recipes in the [COOKBOOK](COOKBOOK.md)
+- Read the agent contract in [AGENTS.md](AGENTS.md)
+- Check platform notes in [CROSS_PLATFORM.md](CROSS_PLATFORM.md)
+- Upgrade with [MIGRATION.md](MIGRATION.md), and install with [INSTALL.md](INSTALL.md)
+- Validate output with the schemas in [docs/schemas](schemas/README.md)

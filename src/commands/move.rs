@@ -132,7 +132,7 @@ pub fn cmd_move(
             }
             (false, true)
         }
-        Err(e) if e.raw_os_error() == Some(18) => {
+        Err(e) if e.raw_os_error() == Some(crate::constants::ERRNO_EXDEV) => {
             // EXDEV = 18 on Linux — cross-device: copy + delete
             if is_dir {
                 // G-004: cross-device directory move is not supported without recursive copy.
@@ -173,7 +173,7 @@ pub fn cmd_move(
             }
             (true, false)
         }
-        Err(e) if e.raw_os_error() == Some(21) => {
+        Err(e) if e.raw_os_error() == Some(crate::constants::ERRNO_EISDIR) => {
             // EISDIR — permanent precondition, not transient I/O (G-023).
             return Err(AtomwriteError::InvalidInput {
                 reason: format!(

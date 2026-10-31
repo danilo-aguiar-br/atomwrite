@@ -29,18 +29,25 @@ pub fn rfc3339_now() -> String {
 
 /// Convert Unix epoch seconds to `(year, month, day, hour, min, sec)` UTC.
 pub fn epoch_to_utc(epoch: u64) -> (u64, u64, u64, u64, u64, u64) {
-    let sec_of_day = epoch % 86400;
-    let hour = sec_of_day / 3600;
-    let min = (sec_of_day % 3600) / 60;
-    let sec = sec_of_day % 60;
+    use crate::constants as C;
 
-    let mut days = (epoch / 86400) as i64;
-    days += 719_468;
-    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
-    let doe = (days - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = (yoe as i64) + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let sec_of_day = epoch % C::SECS_PER_DAY;
+    let hour = sec_of_day / C::SECS_PER_HOUR;
+    let min = (sec_of_day % C::SECS_PER_HOUR) / C::SECS_PER_MINUTE;
+    let sec = sec_of_day % C::SECS_PER_MINUTE;
+
+    // Howard Hinnant's civil-from-days; the month terms below (153, 5, 2, 9,
+    // 10, 3) map the March-based month index and belong to the algorithm.
+    let era_last_day = C::CIVIL_DAYS_PER_ERA - 1;
+    let mut days = (epoch / C::SECS_PER_DAY) as i64;
+    days += C::CIVIL_EPOCH_SHIFT_DAYS;
+    let era = if days >= 0 { days } else { days - era_last_day } / C::CIVIL_DAYS_PER_ERA;
+    let doe = (days - era * C::CIVIL_DAYS_PER_ERA) as u64;
+    let yoe = (doe - doe / C::CIVIL_DAYS_PER_FOUR_YEARS + doe / C::CIVIL_DAYS_PER_CENTURY
+        - doe / era_last_day as u64)
+        / C::CIVIL_DAYS_PER_YEAR;
+    let y = (yoe as i64) + era * C::CIVIL_YEARS_PER_ERA;
+    let doy = doe - (C::CIVIL_DAYS_PER_YEAR * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };

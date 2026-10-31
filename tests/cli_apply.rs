@@ -8,8 +8,10 @@ fn apply_full_file_replacement() {
     let file = common::create_test_file(dir.path(), "test.txt", "old content");
     let ws = dir.path().to_str().unwrap();
 
+    // A whole-file replacement is now an explicit declaration: auto-detection
+    // refuses a marker-less body instead of overwriting the target.
     let output = common::atomwrite()
-        .args(["--workspace", ws, "apply"])
+        .args(["--workspace", ws, "apply", "--format", "full"])
         .arg(&file)
         .write_stdin("new content\n")
         .output()
@@ -52,7 +54,7 @@ fn apply_dry_run_does_not_modify() {
     let ws = dir.path().to_str().unwrap();
 
     let output = common::atomwrite()
-        .args(["--workspace", ws, "apply", "--dry-run"])
+        .args(["--workspace", ws, "apply", "--dry-run", "--format", "full"])
         .arg(&file)
         .write_stdin("replacement")
         .output()

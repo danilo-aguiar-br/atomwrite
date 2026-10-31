@@ -33,6 +33,6 @@ mod write;
 pub(crate) use inplace::{create_backup, create_backup_in};
 pub use time_fmt::{epoch_to_utc, rfc3339_now};
 pub use types::{AtomicWriteOptions, WriteResult, WriteStrategy};
-pub use write::atomic_write;
+pub use write::{atomic_write, atomic_write_based};
 
 include!("tests.inc.rs");

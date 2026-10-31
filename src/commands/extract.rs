@@ -88,7 +88,8 @@ fn extract_json(
     fields: &[String],
     writer: &mut NdjsonWriter<impl Write>,
 ) -> Result<()> {
-    let mut parsed: serde_json::Value = serde_json::from_str(line)?;
+    let mut parsed: serde_json::Value = serde_json::from_str(line)
+        .map_err(|e| crate::error::AtomwriteError::invalid("invalid JSON line", e))?;
 
     if !crate::output::check_json_depth(&parsed, crate::constants::MAX_JSON_DEPTH) {
         return Err(crate::error::AtomwriteError::InvalidInput {

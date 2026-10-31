@@ -61,7 +61,7 @@ pub struct DiffArgs {
         short = 'C',
         long,
         default_value_t = crate::constants::DEFAULT_DIFF_CONTEXT_LINES,
-        help = "Lines of context in unified diff (default constants::DEFAULT_DIFF_CONTEXT_LINES)"
+        help = "Lines of context in unified diff"
     )]
     pub context: usize,
 
@@ -72,8 +72,8 @@ pub struct DiffArgs {
 
 /// Arguments for the move subcommand.
 ///
-/// G-021: directories rename on the same filesystem without `-r`.
-/// Cross-device directory trees: use `copy --recursive` then `delete`.
+/// Directories are renamed on the same filesystem without `-r`.
+/// For cross-device directory trees use `copy --recursive` then `delete`.
 #[derive(Args, Debug)]
 pub struct MoveArgs {
     /// Source file or directory path.
@@ -95,7 +95,7 @@ pub struct MoveArgs {
     #[arg(long, help = "Show what would be done without moving", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 
-    /// Preserve hardlink count on move (G55).
+    /// Preserve hardlink count on move.
     #[arg(long, help = "Preserve hardlink count on move", action = clap::ArgAction::SetTrue)]
     pub preserve_hardlinks: bool,
 }
@@ -105,8 +105,7 @@ pub struct MoveArgs {
 pub enum OutputFormat {
     /// Structured NDJSON output.
     Ndjson,
-    /// Dual-mode raw: TTY → file bytes; non-TTY → NDJSON envelope (agent contract G-013).
-    /// Use `--bytes` to force raw bytes on non-TTY pipes (A-003).
+    /// Raw file bytes on stdout with no NDJSON envelope, on a terminal and in a pipe alike.
     Raw,
 }
 
@@ -143,7 +142,7 @@ pub struct WriteArgs {
     )]
     pub prepend: bool,
 
-    /// Run post-write tree-sitter syntax check (G72). Aborts the
+    /// Run post-write tree-sitter syntax check. Aborts the
     /// write with exit code 88 if the new content has parse errors.
     /// Languages covered: rust, python, javascript, typescript, tsx,
     /// go, c, cpp, java, ruby, php, bash, html, css, json, yaml,
@@ -151,12 +150,12 @@ pub struct WriteArgs {
     /// no parser available fall back to a bracket-balance heuristic.
     #[arg(
         long,
-        help = "Run tree-sitter syntax check (G72). Aborts on parse errors (exit 88).",
+        help = "Run a tree-sitter syntax check and abort on parse errors (exit 88)",
         action = clap::ArgAction::SetTrue
     )]
     pub syntax_check: bool,
 
-    /// Durability trade-off for fsync (v0.1.29 P2-1): full|fast|auto.
+    /// Durability trade-off for fsync: full|fast|auto.
     #[arg(
         long,
         value_enum,
@@ -172,10 +171,10 @@ pub struct WriteArgs {
     )]
     pub expect_checksum: Option<String>,
 
-    /// Allow writes that shrink past XDG `[write].shrink_block_percent` (default 50).
+    /// Allow writes that shrink the target past `[write].shrink_block_percent` (default 50).
     #[arg(
         long,
-        help = "Allow writes that shrink past XDG [write].shrink_block_percent (default constants::SHRINK_BLOCK_PERCENT=50; also applies without CAS)",
+        help = "Allow writes that shrink the target past [write].shrink_block_percent of the config file (default 50), also without --expect-checksum",
         action = clap::ArgAction::SetTrue
     )]
     pub allow_shrink: bool,
@@ -189,41 +188,44 @@ pub struct WriteArgs {
     )]
     pub line_ending: crate::line_endings::LineEnding,
 
-    /// Allow zero-byte stdin (default: reject empty stdin as invalid input,
-    /// G120 L1 guard). Use this flag to confirm the empty write is intentional
+    /// Allow zero-byte stdin (default: reject empty stdin as invalid input).
+    /// Use this flag to confirm the empty write is intentional
     /// (e.g. truncating a file to zero bytes).
     #[arg(
         long,
-        help = "Allow zero-byte stdin (G120 L1 guard; default: reject empty stdin)",
+        help = "Allow zero-byte stdin (default: reject empty stdin)",
         action = clap::ArgAction::SetTrue
     )]
     pub allow_empty_stdin: bool,
 
     /// Skip the `--expect-checksum` verification when the resolved
-    /// stdin payload is empty (G120 L3 cross-validation). Use this
+    /// stdin payload is empty. Use this
     /// when the combination `--append --expect-checksum <HASH> < /dev/null`
     /// is intentional (no-op append, checksum match preserved).
     #[arg(
         long,
-        help = "Allow --expect-checksum to be skipped when stdin is empty (G120 L3)",
+        help = "Allow --expect-checksum to be skipped when stdin is empty",
         action = clap::ArgAction::SetTrue
     )]
     pub no_checksum_when_empty: bool,
 
-    /// WAL sidecar creation policy (G119 L1 prevention).
+    /// WAL sidecar creation policy.
     ///
     /// `auto` (default) skips the sidecar for trivial writes (small file in
     /// a git-tracked directory, plain write, set/del). `always` forces the
-    /// sidecar even for trivial cases (legacy semantics, equivalent to
-    /// `--strict-atomic`). `never` suppresses sidecar creation entirely,
-    /// even when `--strict-atomic` is set or WAL policy Always.
+    /// sidecar even for trivial cases. `never` suppresses sidecar creation
+    /// entirely.
     #[arg(
         long,
         value_enum,
         default_value_t = crate::wal::WalPolicy::Auto,
-        help = "WAL sidecar policy: auto (default), always, never (G119 L1)"
+        help = "WAL sidecar policy: auto (default), always, never"
     )]
     pub wal_policy: crate::wal::WalPolicy,
+
+    /// Refuse the cross-device copy-then-rename fallback (exit 91).
+    #[command(flatten)]
+    pub strict: crate::cli_args::StrictAtomicArgs,
 
     /// Preserve original mtime+atime of the target file (default: update to now).
     /// Useful for backup/snapshot workflows that depend on stable mtimes.
@@ -235,23 +237,23 @@ pub struct WriteArgs {
     )]
     pub preserve_timestamps: bool,
 
-    /// GAP-2026-011 L2: Require `--backup` to be set. Aborts the write with
+    /// Require `--backup` to be set. Aborts the write with
     /// exit 65 if the target file exists and `--backup` is not provided.
     /// Useful for scripted agent runs where backups are non-negotiable.
     #[arg(
         long,
-        help = "Require --backup; abort if missing and target file exists (defense-in-depth L2)",
+        help = "Require --backup: abort with exit 65 when the target exists and --backup is missing",
         action = clap::ArgAction::SetTrue
     )]
     pub require_backup: bool,
 
-    /// Legacy alias flag for large-file awareness (A-WRITE-001/002).
+    /// Optional legacy flag for large-file awareness.
     ///
-    /// Large overwrite is **default-deny**: existing targets above
+    /// Overwriting a large file is denied by default: existing targets above
     /// `[write].confirm_large_bytes` always require `--ack-overwrite`.
-    /// `--confirm` is optional documentation noise and does **not** enable the
-    /// guard by itself. **Not** `delete --confirm` (rejected). Independent of
-    /// `--require-large-ack` (no clap alias collision).
+    /// `--confirm` is optional and does not enable the guard by itself. It is
+    /// not `delete --confirm` (rejected) and is independent of
+    /// `--require-large-ack`.
     #[arg(
         long,
         help = "Optional legacy flag; large overwrite still requires --ack-overwrite (not delete --confirm)",
@@ -259,8 +261,8 @@ pub struct WriteArgs {
     )]
     pub confirm: bool,
 
-    /// Independent documentation flag (A-WRITE-002); same semantics as `--confirm`
-    /// — does not replace `--ack-overwrite`. Not a clap alias of `--confirm`.
+    /// Optional large-ack reminder flag with the same semantics as `--confirm`:
+    /// it does not replace `--ack-overwrite`.
     #[arg(
         long = "require-large-ack",
         help = "Optional large-ack reminder flag; still pass --ack-overwrite for large targets",
@@ -271,24 +273,23 @@ pub struct WriteArgs {
     /// Explicit non-interactive acknowledgement that overwriting a large file is intentional.
     #[arg(
         long,
-        help = "Acknowledge overwrite of large existing target above XDG [write].confirm_large_bytes (agent one-shot; required)",
+        help = "Acknowledge overwriting an existing target above [write].confirm_large_bytes (100 KiB by default); required for large targets",
         action = clap::ArgAction::SetTrue
     )]
     pub ack_overwrite: bool,
 
-    /// GAP-2026-011 L5: Auto-rotation. When `--backup` is active, ensures a
+    /// Auto-rotation. When `--backup` is active, ensures a
     /// rotation backup is created if the target file was modified within
     /// the last 24 hours (heuristic: recent files need backups).
     #[arg(
         long,
-        help = "Force auto-rotation backup for recently-modified files (age from XDG [write].auto_rotate_max_age_secs, default 24h) (defense-in-depth L5)",
+        help = "Force a rotation backup for recently modified files (age from [write].auto_rotate_max_age_secs of the config file, default 24 h)",
         action = clap::ArgAction::SetTrue
     )]
     pub auto_rotate: bool,
 
-    /// GAP-2026-011 / G-039: Size delta threshold (percent) for L1 risk warning.
-    /// Default [`crate::constants::DEFAULT_RISK_THRESHOLD_OFF`] (255 = off).
-    /// Enable with e.g. [`crate::constants::DEFAULT_RISK_THRESHOLD_ON`] (50).
+    /// Size delta threshold (percent) for the risk warning.
+    /// Default 255 (off). Enable with e.g. 50.
     #[arg(
         long,
         value_name = "PERCENT",

@@ -11,11 +11,11 @@
 //! | Workload | Tool | Bound |
 //! |----------|------|-------|
 //! | Directory walk + per-file I/O | `ignore::WalkParallel` | `WalkBuilder::threads(N)` |
-//! | Generic walk map/collect | [`collect_mapped_parallel`] | same walk threads |
-//! | Budgeted walk collect | [`collect_mapped_parallel_budgeted`] | walk threads + Atomic cap |
+//! | Generic walk map/collect | [`crate::concurrency::collect_mapped_parallel`] | same walk threads |
+//! | Budgeted walk collect | [`crate::concurrency::collect_mapped_parallel_budgeted`] | walk threads + Atomic cap |
 //! | CPU-bound multi-file (hash, score) | `rayon::par_iter` | global rayon pool size `N` |
 //! | Independent multi-file mutations | `rayon::par_iter` | same pool |
-//! | Event fan-in to NDJSON stdout | `crossbeam_channel::bounded` | [`EVENT_CHANNEL_CAP`] |
+//! | Event fan-in to NDJSON stdout | `crossbeam_channel::bounded` | [`crate::concurrency::EVENT_CHANNEL_CAP`] |
 //!
 //! # Workload classification (per command family)
 //!
@@ -36,12 +36,16 @@
 //! # Bound formula
 //!
 //! ```text
-//! // CLI: --threads / -j / --max-concurrency  (0 = all logical CPUs)
-//! // When omitted: N = available_parallelism()  (full-core modus operandi)
+//! // CLI: --threads / -j / --max-concurrency
+//! // Omitted or 0: N = min(available_parallelism(), MAX_AUTO_THREADS, ram_cap)
+//! // Explicit N > 0: N, as asked (the operator names the number, so the
+//! //                 automatic ceiling does not apply)
 //! //
 //! // RAM safety (Linux /proc/meminfo MemAvailable; else skip):
-//! //   ram_cap = max(1, (MemAvailable_bytes * 50%) / RAM_PER_TASK_BYTES)
-//! //   N       = min(cpu_cap, ram_cap)
+//! //   ram_cap = max(1, (MemAvailable_bytes * RAM_FRACTION_PERCENT%) / RAM_PER_TASK_BYTES)
+//! //
+//! // Directory walks, automatic: min(N, WALK_AUTO_MAX_THREADS), the same
+//! // protection `ignore::WalkParallel` applies on its own.
 //! //
 //! // RAM_PER_TASK_BYTES = 16 MiB — conservative ceiling for one CLI file
 //! // task (open + buffer + BLAKE3). Ground truth sample (debug binary,
@@ -50,8 +54,12 @@
 //! // heavy optional features change the RSS profile.
 //! ```
 //!
-//! Rayon `build_global` is called **once** per process from `run()` so every
-//! `par_iter` and every `WalkBuilder::threads` share the same operator bound.
+//! The rayon pool is built **on demand**, once per process, and only for
+//! commands that can reach `par_iter` or `rayon::join` (see
+//! [`command_uses_rayon`](crate::concurrency::command_uses_rayon)); `read` and the other single-file verbs never pay for
+//! it. Code that reaches rayon from a command outside that list must call
+//! [`ensure_global_pool`](crate::concurrency::ensure_global_pool) first so the pool still honours the operator bound.
+//! Every `par_iter` and every `WalkBuilder::threads` share that bound.
 //!
 //! # Nested rayon (BLAKE3 × multi-file)
 //!
@@ -80,18 +88,21 @@ pub const EVENT_CHANNEL_CAP: usize = crate::constants::EVENT_CHANNEL_CAP;
 /// `--threads` is omitted.
 pub const RAM_PER_TASK_BYTES: u64 = crate::constants::RAM_PER_TASK_BYTES;
 
-/// Fraction of free RAM eligible for concurrent tasks (50% safety margin).
-const RAM_SAFETY_FRACTION_NUM: u64 = 1;
-const RAM_SAFETY_FRACTION_DEN: u64 = 2;
-
 static CONFIGURED_SIZE: OnceLock<usize> = OnceLock::new();
 
-/// Logical CPU count (`available_parallelism`), falling back to 4.
+/// `--threads` value recorded by [`plan_global_pool`] for the lazy pool build.
+static POOL_REQUEST: OnceLock<Option<usize>> = OnceLock::new();
+
+/// Guards the one-time build of the rayon pool.
+static POOL_BUILD: std::sync::Once = std::sync::Once::new();
+
+/// Logical CPU count (`available_parallelism`), falling back to
+/// [`crate::constants::CPU_FALLBACK_COUNT`].
 #[must_use]
 pub fn available_cpus() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
-        .unwrap_or(4)
+        .unwrap_or(crate::constants::CPU_FALLBACK_COUNT)
         .max(1)
 }
 
@@ -103,11 +114,11 @@ pub fn free_ram_bytes() -> Option<u64> {
 
 #[cfg(target_os = "linux")]
 fn free_ram_bytes_impl() -> Option<u64> {
-    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let text = std::fs::read_to_string(crate::constants::PROC_MEMINFO_PATH).ok()?;
     for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("MemAvailable:") {
+        if let Some(rest) = line.strip_prefix(crate::constants::PROC_MEMINFO_AVAILABLE_KEY) {
             let kb: u64 = rest.split_whitespace().next()?.parse().ok()?;
-            return Some(kb.saturating_mul(1024));
+            return Some(kb.saturating_mul(crate::constants::BYTES_PER_KIB));
         }
     }
     None
@@ -118,32 +129,40 @@ fn free_ram_bytes_impl() -> Option<u64> {
     None
 }
 
-/// RAM-derived concurrency cap (`max(1, free*50% / RAM_PER_TASK)`).
+/// RAM-derived concurrency cap
+/// (`max(1, free * RAM_FRACTION_PERCENT% / RAM_PER_TASK)`).
 #[must_use]
 pub fn ram_concurrency_cap() -> Option<usize> {
     let free = free_ram_bytes()?;
-    let usable = free.saturating_mul(RAM_SAFETY_FRACTION_NUM) / RAM_SAFETY_FRACTION_DEN;
+    let usable = free.saturating_mul(crate::config::tuning().ram_fraction_percent)
+        / crate::constants::PERCENT_SCALE;
     let cap = (usable / RAM_PER_TASK_BYTES).max(1);
     usize::try_from(cap).ok().map(|n| n.max(1))
 }
 
 /// Resolve the effective worker bound from CLI `--threads` / `--max-concurrency`.
 ///
-/// * `None` → full-core modus operandi, still RAM-capped when possible.
-/// * `Some(0)` → all logical CPUs, still RAM-capped.
-/// * `Some(n)` → exactly `n` (operator override; not RAM-clamped so explicit
-///   load tests and `--threads 1` determinism stay predictable).
+/// * `None` or `Some(0)` → all logical CPUs, bounded by the automatic ceiling
+///   [`crate::constants::MAX_AUTO_THREADS`] and by the RAM cap when known.
+/// * `Some(n)` → exactly `n`. The operator named the number, so neither the
+///   automatic ceiling nor the RAM cap applies; `--threads 1` determinism and
+///   explicit load tests stay predictable.
 #[must_use]
 pub fn effective_threads(cli_threads: Option<usize>) -> usize {
     match cli_threads {
         Some(0) | None => {
-            let cpus = available_cpus();
+            let cpus = available_cpus().min(crate::config::tuning().max_threads);
             match ram_concurrency_cap() {
                 Some(ram) => cpus.min(ram).max(1),
                 None => cpus,
             }
         }
-        Some(n) => n.max(1),
+        // An explicit bound is honoured, up to the hard ceiling the config
+        // validator accepts: past it `-j` stops being a request and starts
+        // being a way to exhaust the process.
+        Some(n) => n
+            .max(1)
+            .min(crate::constants::CONCURRENCY_MAX_THREADS_CEILING as usize),
     }
 }
 
@@ -159,14 +178,34 @@ pub fn should_parallelize(item_count: usize) -> bool {
 /// (docs.rs / ignore). Pair this with [`collect_files_parallel`] or
 /// `build_parallel().run(...)`, never with bare `build()` if the operator
 /// expects `--threads` to speed discovery.
+///
+/// An explicit `--threads N` is passed as is. When it is omitted or `0`, the
+/// count is the automatic bound capped at
+/// [`crate::constants::WALK_AUTO_MAX_THREADS`], the protection `ignore` applies
+/// by itself; handing the walker the full CPU count would override it.
 pub fn apply_walk_threads(builder: &mut WalkBuilder, cli_threads: Option<usize>) {
-    builder.threads(effective_threads(cli_threads));
+    builder.threads(walk_thread_count(cli_threads));
+}
+
+/// Walk threads for a `--threads` value (see [`apply_walk_threads`]).
+#[must_use]
+pub fn walk_thread_count(cli_threads: Option<usize>) -> usize {
+    match cli_threads {
+        Some(n) if n > 0 => n.min(crate::constants::CONCURRENCY_MAX_THREADS_CEILING as usize),
+        _ => effective_threads(None).min(crate::constants::WALK_AUTO_MAX_THREADS),
+    }
+}
+
+/// Walk threads of this run, from the `--threads` value `run()` recorded.
+#[must_use]
+pub fn requested_walk_threads() -> usize {
+    walk_thread_count(POOL_REQUEST.get().copied().flatten())
 }
 
 /// Minimum length for parallel path sort (`par_sort_unstable`).
 ///
 /// Below this, sequential `sort` is cheaper than rayon split overhead.
-pub const PAR_SORT_THRESHOLD: usize = 4096;
+pub const PAR_SORT_THRESHOLD: usize = crate::constants::PAR_SORT_THRESHOLD;
 
 /// Sort paths for stable NDJSON: sequential for small lists, parallel for large.
 ///
@@ -182,6 +221,10 @@ pub fn sort_paths_parallel(paths: &mut [PathBuf]) {
 /// Sort any `Ord` slice with the same threshold policy as path lists.
 pub fn sort_parallel<T: Ord + Send>(items: &mut [T]) {
     if items.len() >= PAR_SORT_THRESHOLD {
+        // A verb that never fans out eagerly (see
+        // [`command_uses_rayon`]) reaches its pool only here, so the bound
+        // still comes from `--threads` and not from rayon's default.
+        ensure_global_pool();
         items.par_sort_unstable();
     } else {
         items.sort();
@@ -194,6 +237,7 @@ pub fn sort_by_parallel<T: Send>(
     cmp: impl Fn(&T, &T) -> std::cmp::Ordering + Sync,
 ) {
     if items.len() >= PAR_SORT_THRESHOLD {
+        ensure_global_pool();
         items.par_sort_unstable_by(cmp);
     } else {
         items.sort_by(cmp);
@@ -339,6 +383,40 @@ mod tests {
         assert!(n.unwrap() >= 1);
         // Explicit override request is stored even if build_global fails later.
         assert!(effective_threads(Some(2)) == 2);
+    }
+
+    #[test]
+    fn auto_threads_stay_under_the_hard_ceiling() {
+        assert!(effective_threads(None) <= crate::constants::MAX_AUTO_THREADS);
+        assert!(effective_threads(Some(0)) <= crate::constants::MAX_AUTO_THREADS);
+    }
+
+    #[test]
+    fn explicit_threads_may_exceed_the_ceiling() {
+        let asked = crate::constants::MAX_AUTO_THREADS + 8;
+        assert_eq!(effective_threads(Some(asked)), asked);
+    }
+
+    #[test]
+    fn single_file_verbs_skip_the_rayon_pool() {
+        use clap::Parser;
+        let uses = |argv: &[&str]| {
+            let cli = crate::cli::Cli::try_parse_from(argv).expect("argv parses");
+            command_uses_rayon(&cli.command)
+        };
+        assert!(!uses(&["atomwrite", "read", "f.txt"]));
+        assert!(!uses(&["atomwrite", "write", "f.txt"]));
+        assert!(uses(&["atomwrite", "search", "needle", "."]));
+        assert!(uses(&[
+            "atomwrite",
+            "edit",
+            "f.txt",
+            "--old",
+            "a",
+            "--new",
+            "b"
+        ]));
+        assert!(uses(&["atomwrite", "hash", "f.txt"]));
     }
 
     #[test]

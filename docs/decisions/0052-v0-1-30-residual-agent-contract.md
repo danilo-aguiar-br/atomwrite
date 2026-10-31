@@ -1,31 +1,33 @@
-# ADR-0052 — v0.1.30 residual de contrato de agente
+# ADR-0052 — v0.1.30 residual agent contract
+
+> **Status: Superseded in v0.1.37 for `--fuzzy off`.** `--fuzzy off` is accepted and means exact-only; a miss exits 65 `MATCH_FAILED` (measured with `edit a.txt --old zzz --new bar --fuzzy off`).
 
 ## Status
-- Aceito em 2026-07-13
-- Residual FECHADO sobre a superfície v0.1.29
+- Accepted on 2026-07-13
+- Residual CLOSED on top of the v0.1.29 surface
 
-## Contexto
-- A v0.1.29 fechou P0–P3 e superfície de agente
-- Auditoria pós-0.1.29 encontrou residual P17–P24 no contrato NDJSON e config
-- gaps.md é a fonte de verdade do status residual
+## Context
+- v0.1.29 closed P0–P3 and the agent surface
+- The post-0.1.29 audit found the residual P17–P24 in the NDJSON contract and in the config
+- gaps.md is the source of truth for the residual status
 
-## Decisão
-- Emitir `match_count` e `indent_adjusted` no EditOutput NDJSON
-- Rejeitar `--fuzzy off` e `[fuzzy] mode = "off"` com exit 65 INVALID_INPUT
-- Reportar `platform.backup_method` como `reflink_or_copy` ou `copy` (nunca hardlink do vivo)
-- Excluir `*.bak.*` de recipe/hash recursivo
-- Sparse outline emite `outline_item` AST real sob orçamento
-- Help de `semantic-merge` admite merge line-based (não AST)
-- Suíte `tests/cli_v0130_agent_contract.rs` trava o contrato
-- Regenerar `docs/schemas/edit-output.schema.json` com os campos residuais
+## Decision
+- Emit `match_count` and `indent_adjusted` in the NDJSON EditOutput
+- Reject `--fuzzy off` and `[fuzzy] mode = "off"` with exit 65 INVALID_INPUT
+- Report `platform.backup_method` as `reflink_or_copy` or `copy` (never a hardlink of the live file)
+- Exclude `*.bak.*` from recursive recipe/hash
+- Sparse outline emits real AST `outline_item` under budget
+- The `semantic-merge` help states that the merge is line-based (not AST)
+- The `tests/cli_v0130_agent_contract.rs` suite locks the contract
+- Regenerate `docs/schemas/edit-output.schema.json` with the residual fields
 
-## Consequências
-- Agentes NÃO podem usar exact-only via `--fuzzy off`
-- Pipelines devem parsear `match_count` em edições multi-ocorrência com `--replace-all`
-- Documentação agent-facing (docs/, skill, llms, README) deve refletir 0.1.30
-- Merge AST real e remoção do enum `FuzzyMode::Off` ficam como oportunidades (não bloqueiam)
+## Consequences
+- Agents can NOT use exact-only through `--fuzzy off`
+- Pipelines must parse `match_count` in multi-occurrence edits with `--replace-all`
+- Agent-facing documentation (docs/, skill, llms, README) must reflect 0.1.30
+- Real AST merge and removal of the `FuzzyMode::Off` enum remain as opportunities (they do not block)
 
-## Referências
+## References
 - [gaps.md](../../gaps.md)
 - [MIGRATION.md](../MIGRATION.md#v0129-to-v0130-current)
 - ADR-0051 (v0.1.29 gap close)

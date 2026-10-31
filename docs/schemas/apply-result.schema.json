@@ -1,82 +1,121 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ApplyResult",
-  "description": "NDJSON output for the atomwrite apply subcommand. Emits one event per file (type: applied) followed by a final summary event (type: summary).",
+  "description": "NDJSON output for a patch apply operation.",
   "type": "object",
-  "required": ["type", "path"],
-  "additionalProperties": false,
   "properties": {
     "type": {
-      "description": "Event discriminator. 'applied' for the per-file event, 'summary' for the final rollup, 'error' on failure.",
-      "type": "string",
-      "enum": ["applied", "summary", "error"]
+      "description": "Event type discriminator.",
+      "type": "string"
     },
     "path": {
-      "description": "Absolute path of the target file (absent in summary events).",
+      "description": "Path of the patched file.",
       "type": "string"
     },
     "format_detected": {
-      "description": "Patch format that was detected and applied (unified, search-replace, full, markdown, or auto).",
+      "description": "Detected or specified patch format.",
       "type": "string"
     },
     "hunks_applied": {
-      "description": "Number of patch hunks successfully applied to the file.",
+      "description": "Number of hunks or blocks applied.",
       "type": "integer",
+      "format": "uint64",
       "minimum": 0
     },
     "bytes_before": {
-      "description": "File size in bytes before applying the patch.",
+      "description": "File size in bytes before patching.",
       "type": "integer",
+      "format": "uint64",
       "minimum": 0
     },
     "bytes_after": {
-      "description": "File size in bytes after applying the patch.",
+      "description": "File size in bytes after patching.",
       "type": "integer",
+      "format": "uint64",
       "minimum": 0
     },
     "checksum_before": {
-      "description": "BLAKE3 checksum of the file before applying the patch.",
+      "description": "BLAKE3 checksum before patching.",
       "type": "string"
     },
     "checksum_after": {
-      "description": "BLAKE3 checksum of the file after applying the patch.",
+      "description": "BLAKE3 checksum after patching.",
       "type": "string"
-    },
-    "mtime_preserved": {
-      "description": "Whether the original mtime was preserved (true) or updated to reflect the change (false). Default is false since v0.1.3+.",
-      "type": "boolean"
-    },
-    "dry_run": {
-      "description": "True if the patch was previewed without writing.",
-      "type": "boolean"
     },
     "elapsed_ms": {
       "description": "Operation duration in milliseconds.",
       "type": "integer",
+      "format": "uint64",
       "minimum": 0
     },
-    "files_modified": {
-      "description": "Number of files modified (present in summary event).",
-      "type": "integer",
-      "minimum": 0
-    },
-    "files_skipped": {
-      "description": "Number of files skipped (present in summary event).",
-      "type": "integer",
-      "minimum": 0
-    },
-    "files_failed": {
-      "description": "Number of files that failed (present in summary event).",
-      "type": "integer",
-      "minimum": 0
-    },
-    "error": {
-      "description": "Error message string when type is 'error'.",
-      "type": "string"
+    "ok": {
+      "description": "Outcome of the run, stamped by the writer",
+      "type": "boolean"
     },
     "code": {
-      "description": "Machine-readable error code (e.g. SYNTAX_ERROR) when type is 'error'.",
+      "description": "Machine error code, present when ok is false",
       "type": "string"
+    },
+    "exit": {
+      "description": "Process exit status, present when ok is false",
+      "type": "integer",
+      "minimum": 0
+    },
+    "target_resolved": {
+      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+      "type": "string"
+    },
+    "target_source": {
+      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+      "type": "string",
+      "enum": [
+        "argv",
+        "workspace",
+        "stdin"
+      ]
+    },
+    "workspace_source": {
+      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+      "type": "string",
+      "enum": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "records_suppressed": {
+      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_budget_dropped": {
+      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_planned": {
+      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+      "type": "boolean"
+    },
+    "truncated_records": {
+      "description": "Records the writer cut this run, counted once per record",
+      "type": "integer",
+      "minimum": 0
     }
-  }
+  },
+  "required": [
+    "type",
+    "path",
+    "format_detected",
+    "hunks_applied",
+    "bytes_before",
+    "bytes_after",
+    "checksum_before",
+    "checksum_after",
+    "elapsed_ms"
+  ]
 }

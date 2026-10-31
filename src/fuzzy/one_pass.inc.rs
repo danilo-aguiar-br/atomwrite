@@ -3,8 +3,8 @@
 /// Result of [`apply_fuzzy_one_pass`] (v0.1.33).
 #[derive(Debug, Clone)]
 pub struct FuzzyOnePassResult {
-    /// Edited buffer (or original when `applied == 0`).
-    pub edited: String,
+    /// Edited buffer; `None` when `applied == 0` (the input is never copied).
+    pub edited: Option<String>,
     /// Number of successful applies (never re-scans inserted text).
     pub applied: u64,
     /// Last successful match diagnostics.
@@ -13,14 +13,15 @@ pub struct FuzzyOnePassResult {
     pub replacement_embeds_pattern: bool,
 }
 
-#[inline]
-fn check_cancel() -> std::result::Result<(), AtomwriteError> {
-    if crate::signal::is_global_shutdown() {
-        return Err(crate::signal::cancelled_error(
-            "fuzzy match cancelled by signal or --timeout-secs",
-        ));
-    }
-    Ok(())
+/// True for the errors that mean "pattern not found" (a zero-match outcome).
+///
+/// Everything else (`Cancelled`, `InvalidInput`, `InternalError`, ...) is a
+/// failure and must reach the caller instead of becoming "0 matches".
+pub(crate) fn is_no_match(err: &AtomwriteError) -> bool {
+    matches!(
+        err,
+        AtomwriteError::MatchFailed { .. } | AtomwriteError::MatchAmbiguous { .. }
+    )
 }
 
 fn max_edited_len(input_len: usize) -> usize {
@@ -38,6 +39,12 @@ fn max_edited_len(input_len: usize) -> usize {
 ///
 /// Multi-hit (`max_replacements > 1`) advances a cursor on the **original**
 /// content only: each subsequent search starts after the previous match end.
+///
+/// # Errors
+///
+/// Only "pattern not found" (and ambiguity) yields `applied == 0`. A cancel
+/// ([`AtomwriteError::Cancelled`]), content above `[fuzzy].max_content_bytes`
+/// or a bad pattern ([`AtomwriteError::InvalidInput`]) are returned as errors.
 pub fn apply_fuzzy_one_pass(
     content: &str,
     pattern: &str,
@@ -54,7 +61,8 @@ pub fn apply_fuzzy_one_pass(
     if pattern.len() > crate::constants::FUZZY_MAX_PATTERN_BYTES {
         return Err(AtomwriteError::InvalidInput {
             reason: format!(
-                "fuzzy pattern too large ({} bytes > {} max); shorten the block",
+                "{} ({} bytes > {} max); shorten the block",
+                crate::constants::FUZZY_PATTERN_CAP_REASON_MARKER,
                 pattern.len(),
                 crate::constants::FUZZY_MAX_PATTERN_BYTES
             ),
@@ -71,7 +79,7 @@ pub fn apply_fuzzy_one_pass(
     limit = limit.min(crate::constants::FUZZY_HARD_MAX_REPLACEMENTS);
     if limit == 0 {
         return Ok(FuzzyOnePassResult {
-            edited: content.to_string(),
+            edited: None,
             applied: 0,
             info: None,
             replacement_embeds_pattern: embeds,
@@ -93,32 +101,25 @@ pub fn apply_fuzzy_one_pass(
                     });
                 }
                 Ok(FuzzyOnePassResult {
-                    edited,
+                    edited: Some(edited),
                     applied: 1,
                     info: Some(info),
                     replacement_embeds_pattern: embeds,
                 })
             }
-            Err(AtomwriteError::Cancelled { .. }) => Err(crate::signal::cancelled_error(
-                "fuzzy match cancelled by signal or --timeout-secs",
-            )),
-            Err(_) => Ok(FuzzyOnePassResult {
-                edited: content.to_string(),
+            Err(err) if is_no_match(&err) => Ok(FuzzyOnePassResult {
+                edited: None,
                 applied: 0,
                 info: None,
                 replacement_embeds_pattern: embeds,
             }),
+            Err(err) => Err(err),
         }
     } else {
         // Multi-hit on ORIGINAL content with advancing cursor (never search inside inserts).
         let mut pos = 0usize;
         let mut out = String::new();
         let cap = max_edited_len(content.len());
-        out.try_reserve(content.len().min(cap)).map_err(|e| {
-            AtomwriteError::InvalidInput {
-                reason: format!("failed to reserve edit buffer: {e}"),
-            }
-        })?;
         let mut applied = 0u64;
         let mut last_info: Option<FuzzyInfo> = None;
 
@@ -136,6 +137,14 @@ pub fn apply_fuzzy_one_pass(
                     let (rel_start, rel_end, adjusted_new) =
                         locate_applied_span(slice, pattern, replacement, &edited_slice, &info)
                             .unwrap_or((0, slice.len(), edited_slice.clone()));
+                    if applied == 0 {
+                        // Reserve only once a hit exists: a miss never allocates.
+                        out.try_reserve(content.len().min(cap)).map_err(|e| {
+                            AtomwriteError::InvalidInput {
+                                reason: format!("failed to reserve edit buffer: {e}"),
+                            }
+                        })?;
+                    }
                     out.push_str(&content[pos..pos + rel_start]);
                     out.push_str(&adjusted_new);
                     if out.len() > cap {
@@ -153,17 +162,21 @@ pub fn apply_fuzzy_one_pass(
                         pos = pos.saturating_add(1);
                     }
                 }
-                Err(AtomwriteError::Cancelled { .. }) => {
-                    return Err(crate::signal::cancelled_error(
-                        "fuzzy match cancelled by signal or --timeout-secs",
-                    ));
-                }
-                Err(_) => break,
+                Err(err) if is_no_match(&err) => break,
+                Err(err) => return Err(err),
             }
+        }
+        if applied == 0 {
+            return Ok(FuzzyOnePassResult {
+                edited: None,
+                applied: 0,
+                info: None,
+                replacement_embeds_pattern: embeds,
+            });
         }
         out.push_str(&content[pos..]);
         Ok(FuzzyOnePassResult {
-            edited: out,
+            edited: Some(out),
             applied,
             info: last_info,
             replacement_embeds_pattern: embeds,

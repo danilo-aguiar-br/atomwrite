@@ -7,14 +7,13 @@
 //! 2. CLI override (`--locale` flag; XDG preference via locale command)
 //! 3. Persisted XDG preference (`directories::ProjectDirs`)
 //! 4. OS locale via `sys-locale` (never raw `LANG` in portable code)
-//! 5. Deterministic fallback [`Idioma::En`]
+//! 5. Deterministic fallback [`crate::locale::Language::En`]
 //!
 //! Agent contract: NDJSON **codes** and **Display** error messages stay English.
 //! Human-oriented **suggestions** (and future stderr copy) follow the resolved
 //! locale via `rust-i18n` (`t!`).
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::Mutex;
@@ -39,8 +38,6 @@ pub enum TextDirection {
 pub enum LocaleSource {
     /// Explicit `--locale` CLI flag (highest priority).
     CliFlag,
-    /// CLI `--locale` when provided as the same field.
-    EnvVar,
     /// User preference under XDG config (`locale` file).
     Persisted,
     /// `sys-locale` OS detection.
@@ -54,7 +51,6 @@ impl LocaleSource {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::CliFlag => "cli",
-            Self::EnvVar => "env",
             Self::Persisted => "persisted",
             Self::System => "system",
             Self::Default => "default",
@@ -68,16 +64,16 @@ impl LocaleSource {
 /// are **not** embedded until translations are complete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum Idioma {
+pub enum Language {
     /// Neutral English (`en`) — technical logs and NDJSON machine fields.
     En,
     /// Brazilian Portuguese (`pt-BR`) — human suggestions / stderr when selected.
     PtBr,
 }
 
-impl Idioma {
+impl Language {
     /// Locales available in the default (non-feature) build.
-    pub const AVAILABLE: &'static [Idioma] = &[Idioma::En, Idioma::PtBr];
+    pub const AVAILABLE: &'static [Language] = &[Language::En, Language::PtBr];
 
     /// BCP 47 tag used by `rust-i18n` and locale files.
     pub const fn as_str(self) -> &'static str {
@@ -88,7 +84,7 @@ impl Idioma {
     }
 
     /// Ultimate fallback for any regional variant (always English in MVP).
-    pub const fn fallback(self) -> Idioma {
+    pub const fn fallback(self) -> Language {
         match self {
             Self::En => Self::En,
             Self::PtBr => Self::En,
@@ -96,12 +92,12 @@ impl Idioma {
     }
 
     /// Script direction (MVP locales are LTR only).
-    pub const fn direcao(self) -> TextDirection {
+    pub const fn direction(self) -> TextDirection {
         TextDirection::Ltr
     }
 
-    /// Parse a canonical tag (`en`, `pt-BR`) into [`Idioma`].
-    pub fn from_tag(tag: &str) -> Option<Idioma> {
+    /// Parse a canonical tag (`en`, `pt-BR`) into [`Language`].
+    pub fn from_tag(tag: &str) -> Option<Language> {
         match tag {
             "en" | "en-US" | "en-GB" | "en-AU" | "en-CA" | "en-IE" | "en-IN" | "en-IL" => {
                 Some(Self::En)
@@ -119,8 +115,8 @@ impl Idioma {
         }
     }
 
-    /// Map a structured BCP 47 identifier onto a supported [`Idioma`].
-    pub fn from_langid(id: &LanguageIdentifier) -> Option<Idioma> {
+    /// Map a structured BCP 47 identifier onto a supported [`Language`].
+    pub fn from_langid(id: &LanguageIdentifier) -> Option<Language> {
         let tag = id.to_string();
         Self::from_tag(&tag).or_else(|| {
             // Language-only: `pt` negotiates to `pt-BR` only via fluent-langneg;
@@ -134,11 +130,18 @@ impl Idioma {
         })
     }
 
-    /// `unic-langid` identifier for this idioma.
-    pub fn language_identifier(self) -> LanguageIdentifier {
+    /// `unic-langid` identifier for this language.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AtomwriteError::InternalError` if the built-in tag is not valid
+    /// BCP 47 (a programming error, never user input).
+    pub fn language_identifier(self) -> Result<LanguageIdentifier, crate::error::AtomwriteError> {
         self.as_str()
             .parse()
-            .expect("Idioma::as_str is always valid BCP 47")
+            .map_err(|e| crate::error::AtomwriteError::InternalError {
+                reason: format!("built-in locale tag {:?} is not BCP 47: {e}", self.as_str()),
+            })
     }
 }
 
@@ -146,8 +149,8 @@ impl Idioma {
 #[derive(Debug, Clone)]
 pub struct LocaleState {
     /// Negotiated UI language.
-    pub idioma: Idioma,
-    /// Which precedence layer selected `idioma`.
+    pub language: Language,
+    /// Which precedence layer selected `language`.
     pub source: LocaleSource,
     /// Raw string from `sys-locale` (if any), before normalization.
     pub system_raw: Option<String>,
@@ -164,7 +167,7 @@ static RESOLVED: OnceLock<LocaleState> = OnceLock::new();
 /// Normalize OS / user tags: `_` → `-`, strip encoding (`.UTF-8`), drop `@variant` modifiers.
 ///
 /// Does **not** invent English for `C` / `POSIX` / `C.UTF-8` — those yield empty language
-/// after strip and must fall through to the default idioma.
+/// after strip and must fall through to the default language.
 pub fn normalize_bcp47_tag(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -197,7 +200,7 @@ pub fn available_tags() -> &'static [&'static str] {
 ///
 /// Uses `fluent-langneg` [`NegotiationStrategy::Lookup`] so exactly one locale
 /// is returned (with English default).
-pub fn negotiate_to_idioma(requested_tags: &[&str]) -> Idioma {
+pub fn negotiate_to_language(requested_tags: &[&str]) -> Language {
     let requested: Vec<fluent_langneg::LanguageIdentifier> = requested_tags
         .iter()
         .filter_map(|t| {
@@ -216,10 +219,13 @@ pub fn negotiate_to_idioma(requested_tags: &[&str]) -> Idioma {
         .filter_map(|t| t.parse().ok())
         .collect();
 
-    let default: fluent_langneg::LanguageIdentifier = "en".parse().expect("en is valid BCP 47");
+    // `en` is the built-in default; if even it cannot parse, answer it anyway.
+    let Ok(default) = "en".parse::<fluent_langneg::LanguageIdentifier>() else {
+        return Language::En;
+    };
 
     if requested.is_empty() {
-        return Idioma::En;
+        return Language::En;
     }
 
     let supported = negotiate_languages(
@@ -233,77 +239,20 @@ pub fn negotiate_to_idioma(requested_tags: &[&str]) -> Idioma {
         .first()
         .and_then(|id| {
             let tag = id.to_string();
-            Idioma::from_tag(&tag).or_else(|| {
+            Language::from_tag(&tag).or_else(|| {
                 // Lookup may return `pt` when only `pt` was requested and `pt-BR` is available
                 // depending on strategy — map language subtag.
                 match id.language.as_str() {
-                    "pt" => Some(Idioma::PtBr),
-                    "en" => Some(Idioma::En),
+                    "pt" => Some(Language::PtBr),
+                    "en" => Some(Language::En),
                     _ => None,
                 }
             })
         })
-        .unwrap_or(Idioma::En)
+        .unwrap_or(Language::En)
 }
 
-/// XDG config path for the persisted locale preference.
-pub fn preference_path() -> Option<PathBuf> {
-    crate::storage::config_dir().map(|d| d.join("locale"))
-}
-
-/// Read a validated persisted preference (`en` or `pt-BR`), if any.
-pub fn read_persisted_preference(path: &Path) -> Option<String> {
-    let text = fs::read_to_string(path).ok()?;
-    let tag = text.lines().next()?.trim();
-    if tag.is_empty() {
-        return None;
-    }
-    let idioma = negotiate_to_idioma(&[tag]);
-    // Only accept if the tag actually maps to a supported locale cleanly.
-    Idioma::from_tag(tag)
-        .or({
-            // Allow `pt` / `pt_BR.UTF-8` style values in the file via negotiation.
-            Some(idioma)
-        })
-        .map(|i| i.as_str().to_string())
-}
-
-/// Persist a UI locale preference (owner-only file when possible).
-pub fn write_persisted_preference(idioma: Idioma) -> std::io::Result<PathBuf> {
-    let path = preference_path().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "cannot resolve XDG config directory for atomwrite",
-        )
-    })?;
-    if let Some(parent) = path.parent() {
-        crate::storage::ensure_dir(parent)?;
-    }
-    {
-        let mut f = fs::File::create(&path)?;
-        writeln!(f, "{}", idioma.as_str())?;
-        f.flush()?;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-    }
-    Ok(path)
-}
-
-/// Remove the persisted preference file (no error if missing).
-pub fn clear_persisted_preference() -> std::io::Result<Option<PathBuf>> {
-    let Some(path) = preference_path() else {
-        return Ok(None);
-    };
-    match fs::remove_file(&path) {
-        Ok(()) => Ok(Some(path)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Some(path)),
-        Err(e) => Err(e),
-    }
-}
-
+include!("locale_persist.inc.rs");
 /// Pure resolution used by [`init_locale`] and unit tests (no global side effects).
 pub fn resolve_locale(
     cli_override: Option<&str>,
@@ -316,9 +265,9 @@ pub fn resolve_locale(
 
     // Layer 1 — explicit CLI `--locale`.
     if let Some(raw) = cli_override.map(str::trim).filter(|s| !s.is_empty()) {
-        let idioma = negotiate_to_idioma(&[raw]);
+        let language = negotiate_to_language(&[raw]);
         return LocaleState {
-            idioma,
+            language,
             source: LocaleSource::CliFlag,
             system_raw,
             detection_failed: false,
@@ -329,9 +278,9 @@ pub fn resolve_locale(
 
     // Layer 3 — persisted preference (layer 2 env is already folded into cli_override by clap).
     if let Some(ref tag) = persisted_tag {
-        let idioma = negotiate_to_idioma(&[tag.as_str()]);
+        let language = negotiate_to_language(&[tag.as_str()]);
         return LocaleState {
-            idioma,
+            language,
             source: LocaleSource::Persisted,
             system_raw,
             detection_failed: false,
@@ -344,9 +293,9 @@ pub fn resolve_locale(
     if let Some(ref raw) = system_raw {
         if let Some(id) = parse_langid(raw) {
             let tag = id.to_string();
-            let idioma = negotiate_to_idioma(&[tag.as_str()]);
+            let language = negotiate_to_language(&[tag.as_str()]);
             return LocaleState {
-                idioma,
+                language,
                 source: LocaleSource::System,
                 system_raw,
                 detection_failed: false,
@@ -356,7 +305,7 @@ pub fn resolve_locale(
         }
         // Unparsable / C / POSIX → fall through with failure flag.
         return LocaleState {
-            idioma: Idioma::En,
+            language: Language::En,
             source: LocaleSource::Default,
             system_raw,
             detection_failed: true,
@@ -367,7 +316,7 @@ pub fn resolve_locale(
 
     // Layer 5 — default English.
     LocaleState {
-        idioma: Idioma::En,
+        language: Language::En,
         source: LocaleSource::Default,
         system_raw: None,
         detection_failed: true,
@@ -385,14 +334,17 @@ pub fn detect_system_locale() -> Option<String> {
 ///
 /// Safe to call once from `main`. Subsequent calls still update `rust-i18n`
 /// (for tests) but do not replace the published [`LocaleState`].
-pub fn init_locale(cli_override: Option<&str>) -> Idioma {
+pub fn init_locale(cli_override: Option<&str>) -> Language {
     let system_raw = detect_system_locale();
     let pref = preference_path();
     let state = resolve_locale(cli_override, system_raw, pref);
-    let idioma = state.idioma;
-    rust_i18n::set_locale(idioma.as_str());
-    let _ = RESOLVED.set(state);
-    idioma
+    let language = state.language;
+    rust_i18n::set_locale(language.as_str());
+    // The first resolved state wins; a later call (tests, embedding) keeps it.
+    if RESOLVED.set(state).is_err() {
+        tracing::debug!("locale already resolved; keeping the first state");
+    }
+    language
 }
 
 /// Resolved locale state after [`init_locale`], if initialization ran.
@@ -400,9 +352,9 @@ pub fn resolved_state() -> Option<&'static LocaleState> {
     RESOLVED.get()
 }
 
-/// Resolved idioma (defaults to English when init has not run — e.g. unit tests).
-pub fn resolved_idioma() -> Idioma {
-    RESOLVED.get().map(|s| s.idioma).unwrap_or(Idioma::En)
+/// Resolved language (defaults to English when init has not run — e.g. unit tests).
+pub fn resolved_language() -> Language {
+    RESOLVED.get().map(|s| s.language).unwrap_or(Language::En)
 }
 
 /// Process-wide lock for locale-mutating unit tests (A-012).
@@ -422,15 +374,12 @@ pub struct LocaleTestGuard {
 
 #[cfg(test)]
 impl LocaleTestGuard {
-    /// Lock the locale test mutex, set `idioma`, restore `en` on drop.
-    pub fn set(idioma: Idioma) -> Self {
+    /// Lock the locale test mutex, set `language`, restore `en` on drop.
+    pub fn set(language: Language) -> Self {
         let lock = LOCALE_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        let prev = resolved_idioma().as_str();
-        // Prefer previous rust-i18n locale if init already ran; else English.
-        let prev = if prev.is_empty() { "en" } else { prev };
-        // Capture before overwrite — rust-i18n has no get; always restore en.
-        let _ = prev;
-        rust_i18n::set_locale(idioma.as_str());
+        // rust-i18n has no getter for the active locale, so the guard always
+        // restores `en` on drop.
+        rust_i18n::set_locale(language.as_str());
         Self {
             _lock: lock,
             prev: "en",
@@ -445,18 +394,32 @@ impl Drop for LocaleTestGuard {
     }
 }
 
-/// Apply an idioma for tests without requiring OS detection.
+/// Apply an language for tests without requiring OS detection.
 ///
 /// Prefer [`LocaleTestGuard::set`] so the locale is restored and tests serialize.
 #[cfg(test)]
-pub fn set_locale_for_test(idioma: Idioma) {
+pub fn set_locale_for_test(language: Language) {
     // Backward-compatible: still sets locale, but callers that need isolation
     // should use LocaleTestGuard. Holding a brief lock reduces race windows.
     let _g = LOCALE_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    rust_i18n::set_locale(idioma.as_str());
+    rust_i18n::set_locale(language.as_str());
 }
 
 /// Clap `value_parser` for `--locale`: accept aliases, return canonical tag.
+///
+/// # Examples
+///
+/// ```
+/// use atomwrite::locale::parse_cli_locale;
+///
+/// assert_eq!(parse_cli_locale("pt-br"), Ok("pt-BR".to_string()));
+/// assert_eq!(parse_cli_locale("en"), Ok("en".to_string()));
+/// assert!(parse_cli_locale("ja").is_err());
+/// ```
+///
+/// # Errors
+///
+/// Returns `Err` with the formatted message listing `available_tags()` when the normalized tag is empty, when `parse_langid` rejects it as malformed BCP 47, or when its language is neither `en` nor `pt` (for example `ja`).
 pub fn parse_cli_locale(raw: &str) -> Result<String, String> {
     let tag = normalize_bcp47_tag(raw);
     if tag.is_empty() {
@@ -466,7 +429,6 @@ pub fn parse_cli_locale(raw: &str) -> Result<String, String> {
         ));
     }
     // Reject completely unknown language families (do not silently map `zh` → en).
-    let idioma = negotiate_to_idioma(&[&tag]);
     let parsed = parse_langid(&tag);
     if parsed.is_none() {
         return Err(format!(
@@ -485,8 +447,7 @@ pub fn parse_cli_locale(raw: &str) -> Result<String, String> {
             ));
         }
     }
-    let _ = idioma;
-    Ok(negotiate_to_idioma(&[&tag]).as_str().to_string())
+    Ok(negotiate_to_language(&[&tag]).as_str().to_string())
 }
 
 /// Emit a tracing event for detection failure / resolved locale (call after tracing init).
@@ -496,12 +457,12 @@ pub fn log_resolved_locale() {
             if state.detection_failed {
                 tracing::debug!(
                     system_raw = ?state.system_raw,
-                    fallback = state.idioma.as_str(),
+                    fallback = state.language.as_str(),
                     "locale OS detection missing or unparsable; using fallback"
                 );
             }
             tracing::debug!(
-                locale = state.idioma.as_str(),
+                locale = state.language.as_str(),
                 source = state.source.as_str(),
                 system_raw = ?state.system_raw,
                 persisted = ?state.persisted_tag,

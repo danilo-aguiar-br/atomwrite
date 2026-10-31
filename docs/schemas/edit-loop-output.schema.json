@@ -1,54 +1,201 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "edit-loop output",
+  "title": "EditLoopSummary",
+  "description": "NDJSON final summary for `edit-loop`.",
   "type": "object",
-  "required": ["type"],
   "properties": {
     "type": {
-      "const": "result"
+      "description": "Event type discriminator: \"result\".",
+      "type": "string"
     },
     "action": {
-      "const": "edit_loop"
+      "description": "Action label: `\"edit_loop\"`.",
+      "type": "string"
     },
     "path": {
+      "description": "Target file path.",
       "type": "string"
     },
     "pairs_total": {
-      "type": "integer"
+      "description": "Total number of pairs read from stdin.",
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0
     },
     "pairs_applied": {
-      "type": "integer"
+      "description": "Number of pairs that matched and were applied.",
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0
     },
     "pairs_unmatched": {
-      "type": "integer"
+      "description": "Number of pairs that did not match.",
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0
     },
     "elapsed_ms": {
-      "type": "integer"
+      "description": "Operation duration in milliseconds.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
     },
     "pair_results": {
+      "description": "Per-pair result array, in input order.",
       "type": "array",
       "items": {
-        "type": "object",
-        "required": ["index", "matched"],
-        "properties": {
-          "index": {
-            "type": "integer"
-          },
-          "matched": {
-            "type": "boolean"
-          },
-          "old": {
-            "type": "string",
-            "description": "The old text that was searched for in this pair."
-          },
-          "new": {
-            "type": "string",
-            "description": "The new text that would replace the old text."
-          }
-        },
-        "additionalProperties": false
+        "$ref": "#/$defs/EditLoopPairResult"
       }
+    },
+    "risk_assessment": {
+      "description": "Local diagnostic for a payload that looks destructive (B-013).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WriteRiskAssessment"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ok": {
+      "description": "Outcome of the run, stamped by the writer",
+      "type": "boolean"
+    },
+    "code": {
+      "description": "Machine error code, present when ok is false",
+      "type": "string"
+    },
+    "exit": {
+      "description": "Process exit status, present when ok is false",
+      "type": "integer",
+      "minimum": 0
+    },
+    "target_resolved": {
+      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+      "type": "string"
+    },
+    "target_source": {
+      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+      "type": "string",
+      "enum": [
+        "argv",
+        "workspace",
+        "stdin"
+      ]
+    },
+    "workspace_source": {
+      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+      "type": "string",
+      "enum": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "records_suppressed": {
+      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_budget_dropped": {
+      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_planned": {
+      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+      "type": "boolean"
+    },
+    "truncated_records": {
+      "description": "Records the writer cut this run, counted once per record",
+      "type": "integer",
+      "minimum": 0
     }
   },
-  "additionalProperties": false
+  "required": [
+    "type",
+    "action",
+    "path",
+    "pairs_total",
+    "pairs_applied",
+    "pairs_unmatched",
+    "elapsed_ms",
+    "pair_results"
+  ],
+  "$defs": {
+    "EditLoopPairResult": {
+      "description": "Per-pair result emitted in the `pair_results` array of `edit-loop`.",
+      "type": "object",
+      "properties": {
+        "index": {
+          "description": "1-based index of the pair in NDJSON order.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "matched": {
+          "description": "Whether the pair matched and was applied.",
+          "type": "boolean"
+        },
+        "old": {
+          "description": "The search text for this pair.",
+          "type": "string"
+        },
+        "new": {
+          "description": "The replacement text for this pair.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "matched",
+        "old",
+        "new"
+      ]
+    },
+    "WriteRiskAssessment": {
+      "description": "GAP-2026-011 L1/L6: Local diagnostics describing why a write was classified\nas risky (G-031: not product telemetry). Emitted in `WriteOutput.risk_assessment`\nwhen the size delta exceeds the user-configured `--risk-threshold`.",
+      "type": "object",
+      "properties": {
+        "original_bytes": {
+          "description": "File size before the write.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "new_bytes": {
+          "description": "New file size after the write.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "size_delta_pct": {
+          "description": "|new - original| / original * 100.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "risk_level": {
+          "description": "\"low\" (<70%) | \"medium\" (70-89%) | \"high\" (>=90%).",
+          "type": "string"
+        },
+        "guard_triggered": {
+          "description": "Which guard triggered the assessment (always \"size\" for L1).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "original_bytes",
+        "new_bytes",
+        "size_delta_pct",
+        "risk_level",
+        "guard_triggered"
+      ]
+    }
+  }
 }

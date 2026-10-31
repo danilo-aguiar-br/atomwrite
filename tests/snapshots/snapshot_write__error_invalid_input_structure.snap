@@ -3,12 +3,13 @@ source: tests/snapshot_write.rs
 expression: event
 ---
 {
-  "code": "INVALID_INPUT",
   "error": true,
-  "error_class": "permanent",
+  "ok": false,
+  "code": "INVALID_INPUT",
   "exit": 65,
   "message": "[redacted]",
-  "ok": false,
+  "error_class": "permanent",
   "retryable": false,
-  "suggestion": "[redacted]"
+  "suggestion": "[redacted]",
+  "suggestion_lang": "pt-BR"
 }

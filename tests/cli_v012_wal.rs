@@ -78,6 +78,7 @@ fn wal_heal_reaps_stale_committed_journals() {
             workspace,
             "--no-auto-heal",
             "wal-heal",
+            workspace,
             "--threshold-secs",
             "0",
         ])
@@ -125,6 +126,7 @@ fn wal_heal_preserves_started_orphans() {
             "--workspace",
             workspace,
             "wal-heal",
+            workspace,
             "--threshold-secs",
             "0",
         ])

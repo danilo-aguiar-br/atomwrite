@@ -17,8 +17,8 @@ use crate::signal::ShutdownSignal;
 /// Arguments for the scope subcommand (shared shape with the full module).
 #[derive(Args, Debug)]
 pub struct ScopeArgs {
-    /// Paths to search within.
-    #[arg(default_value = ".", value_hint = ValueHint::AnyPath)]
+    /// Paths to search within (at least one; omitting them is a usage error).
+    #[arg(required = true, value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
     /// Source language for AST parsing.
     #[arg(short = 'l', long = "language", alias = "lang", required = true)]
@@ -70,12 +70,18 @@ pub enum ScopeAction {
 }
 
 /// Grammatical scope requires feature `ast`.
+///
+/// # Errors
+///
+/// Always returns `AtomwriteError::ConfigInvalid` because this build was compiled without the
+/// `ast` feature.
 pub fn cmd_scope(
     _args: &ScopeArgs,
     _global: &GlobalArgs,
     _writer: &mut NdjsonWriter<impl Write>,
     _shutdown: &ShutdownSignal,
     _defaults: &DefaultsSection,
+    _write_cfg: &crate::config::WriteSection,
 ) -> Result<()> {
     Err(AtomwriteError::ConfigInvalid {
         reason: "scope requires --features ast (included in default features)".into(),

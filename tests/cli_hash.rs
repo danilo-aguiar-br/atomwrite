@@ -135,8 +135,15 @@ fn hash_multi_file_sorted_parallel() {
         String::from_utf8_lossy(&output.stderr)
     );
     let events = common::parse_ndjson(&output.stdout);
-    assert_eq!(events.len(), 3);
-    let paths: Vec<&str> = events
+    // Three digests plus the terminal summary `hash` always closes with.
+    assert_eq!(events.len(), 4);
+    let digests: Vec<&serde_json::Value> = events.iter().filter(|e| e["type"] == "hash").collect();
+    assert_eq!(digests.len(), 3);
+    assert_eq!(
+        events.last().map(|e| e["type"].clone()),
+        Some("summary".into())
+    );
+    let paths: Vec<&str> = digests
         .iter()
         .map(|e| e["path"].as_str().expect("path"))
         .collect();
@@ -144,7 +151,7 @@ fn hash_multi_file_sorted_parallel() {
     assert!(paths[0].ends_with("a.txt"), "got {paths:?}");
     assert!(paths[1].ends_with("b.txt"), "got {paths:?}");
     assert!(paths[2].ends_with("c.txt"), "got {paths:?}");
-    for e in &events {
+    for e in &digests {
         assert_eq!(e["type"], "hash");
         assert_eq!(e["algorithm"], "blake3");
         assert!(e["checksum"].is_string());

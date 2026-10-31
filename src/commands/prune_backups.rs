@@ -83,9 +83,15 @@ pub fn cmd_prune_backups(
     };
 
     let mut to_prune: Vec<PathBuf> = Vec::new();
+    // A target that does not exist is emitted here, before any backup is
+    // selected, so the count is taken in this loop and not in the unlink one.
+    let mut targets_missing = 0u64;
     for item in phase1 {
         let (backups, skip) = item?;
         if let Some(entry) = skip {
+            if entry.reason == "not_found" {
+                targets_missing += 1;
+            }
             writer.write_event(&entry)?;
         }
         to_prune.extend(backups);
@@ -93,37 +99,59 @@ pub fn cmd_prune_backups(
 
     crate::concurrency::sort_paths_parallel(&mut to_prune);
     to_prune.dedup();
+    // `--limit` bounds the work: `prune-backups --limit 1` deletes one backup.
+    crate::output::cap_collected(&mut to_prune);
 
     // Phase 2 — one fan-out across all selected backups (multi-target).
-    let outcomes: Vec<PruneBackupEntry> = if should_parallelize(to_prune.len()) {
-        to_prune
-            .par_iter()
-            .map(|backup| prune_one(backup, dry_run, &reason_owned))
-            .collect()
-    } else {
-        to_prune
-            .iter()
-            .map(|backup| prune_one(backup, dry_run, &reason_owned))
-            .collect()
-    };
+    let outcomes: Vec<(PruneBackupEntry, Option<anyhow::Error>)> =
+        if should_parallelize(to_prune.len()) {
+            to_prune
+                .par_iter()
+                .map(|backup| prune_one(backup, dry_run, &reason_owned))
+                .collect()
+        } else {
+            to_prune
+                .iter()
+                .map(|backup| prune_one(backup, dry_run, &reason_owned))
+                .collect()
+        };
 
     // Emit in path order for stable NDJSON (par_iter order is not sorted).
     let mut outcomes = outcomes;
-    outcomes.sort_by(|a, b| a.path.cmp(&b.path));
+    outcomes.sort_by(|(a, _), (b, _)| a.path.cmp(&b.path));
 
-    for entry in outcomes {
+    // A backup that could not be removed leaves the disk as it was, so the run
+    // has to say so through the exit code: the summary is a verdict about the
+    // whole set, and a hole in it makes the verdict `partial`.
+    let mut failures = crate::ndjson_types::FailureTally::default();
+    for (entry, err) in outcomes {
         if entry.r#type == "pruned" {
             total_pruned += 1;
+        }
+        if let Some(err) = err {
+            failures.record(std::path::Path::new(&entry.path), err);
         }
         writer.write_event(&entry)?;
     }
 
-    writer.write_event(&PruneBackupSummary {
+    let (failed_count, failed_items, first) = failures.into_parts();
+    let files_failed = (failed_count > 0).then_some(failed_count);
+    let summary = PruneBackupSummary {
         r#type: "summary",
         action: if dry_run { "dry_run" } else { "pruned" }.to_string(),
         total: total_pruned,
+        files_budget_dropped: Some(crate::output::budget_dropped()).filter(|n| *n > 0),
         elapsed_ms: start.elapsed().as_millis() as u64,
-    })?;
+        walker_stopped_early: crate::output::limit_reached().then_some(true),
+        files_failed,
+        partial: crate::ndjson_types::partial_of(files_failed),
+        errors: (!failed_items.is_empty()).then_some(failed_items),
+        targets_missing: (targets_missing > 0).then_some(targets_missing),
+    };
+    if let Some(err) = first {
+        return Err(writer.publish_failure(&summary, err));
+    }
+    writer.write_terminal(&summary)?;
 
     Ok(())
 }
@@ -149,22 +177,38 @@ fn collect_backups_for_target(
         ));
     }
 
+    // A directory is not a backup subject. Before this guard the verb derived a
+    // prefix from the directory name, found nothing and exited 0, which reads as
+    // "nothing to prune" for a request that named the wrong kind of path. A
+    // verb that deletes files fails closed instead (ETD: the subject is the file
+    // argv named, never a tree guessed from it).
+    if target.is_dir() {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: format!(
+                "{} is a directory [{}]; prune-backups takes the files whose backups are pruned",
+                target.display(),
+                crate::constants::PRUNE_DIRECTORY_REASON_MARKER
+            ),
+        }
+        .into());
+    }
+
     let parent = target.parent().unwrap_or_else(|| std::path::Path::new("."));
     let file_name = target
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_string();
-    let prefix = format!("{file_name}.bak.");
+    let prefix = format!("{file_name}{}", crate::constants::BACKUP_INFIX);
 
     let mut backups: Vec<PathBuf> = fs::read_dir(parent)
         .with_context(|| format!("cannot list directory {}", parent.display()))?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with(&prefix))
+            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                n.starts_with(&prefix) && crate::commands::is_backup_timestamp_name(n)
+            })
         })
         .collect();
 
@@ -190,21 +234,26 @@ fn collect_backups_for_target(
     Ok((backups, None))
 }
 
-fn prune_one(backup: &PathBuf, dry_run: bool, reason: &str) -> PruneBackupEntry {
-    if !dry_run {
-        if let Err(e) = fs::remove_file(backup) {
-            return PruneBackupEntry {
-                r#type: "error",
-                path: backup.display().to_string(),
-                reason: "remove_failed".to_string(),
-                error: Some(e.to_string()),
-            };
-        }
+fn prune_one(
+    backup: &PathBuf,
+    dry_run: bool,
+    reason: &str,
+) -> (PruneBackupEntry, Option<anyhow::Error>) {
+    if !dry_run && let Err(e) = fs::remove_file(backup) {
+        let entry = PruneBackupEntry {
+            r#type: "error",
+            path: backup.display().to_string(),
+            reason: "remove_failed".to_string(),
+            error: Some(e.to_string()),
+        };
+        let err = crate::error::AtomwriteError::from_io_at(backup, e).into();
+        return (entry, Some(err));
     }
-    PruneBackupEntry {
+    let entry = PruneBackupEntry {
         r#type: "pruned",
         path: backup.display().to_string(),
         reason: reason.to_string(),
         error: None,
-    }
+    };
+    (entry, None)
 }

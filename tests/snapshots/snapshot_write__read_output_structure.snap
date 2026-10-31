@@ -3,15 +3,19 @@ source: tests/snapshot_write.rs
 expression: event
 ---
 {
-  "binary": false,
+  "type": "read",
+  "path": "[redacted]",
+  "content": "hello world\n",
+  "lines": 1,
   "bytes": 12,
   "checksum": "[redacted]",
-  "content": "hello world\n",
-  "kind": "text",
-  "lines": 1,
-  "mode": "full",
-  "modified": "[redacted]",
-  "path": "[redacted]",
   "permissions": "[redacted]",
-  "type": "read"
+  "modified": "[redacted]",
+  "kind": "text",
+  "binary": false,
+  "mode": "full",
+  "ok": true,
+  "workspace_source": "argv",
+  "target_resolved": "[redacted]",
+  "target_source": "argv"
 }

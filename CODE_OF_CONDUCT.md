@@ -1,7 +1,8 @@
-[Leia em Portugues](CODE_OF_CONDUCT.pt-BR.md)
+[Leia em Português](CODE_OF_CONDUCT.pt-BR.md)
 
 
 # Contributor Covenant Code of Conduct
+
 
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 

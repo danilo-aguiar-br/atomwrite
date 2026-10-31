@@ -1,0 +1,295 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ArtifactOutput",
+  "description": "One bounded NDJSON record per artifact, carrying signal and never payload.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "NDJSON discriminator.",
+      "type": "string"
+    },
+    "path": {
+      "description": "Artifact path inside the workspace jail.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "Coarse family: `pdf`, `document`, `spreadsheet`, `presentation`, `image`.",
+      "type": "string"
+    },
+    "format": {
+      "description": "Precise container or codec detected from the magic bytes.",
+      "type": "string"
+    },
+    "bytes": {
+      "description": "Artifact size in bytes as reported by the filesystem.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "pages": {
+      "description": "Page count (PDF).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "title": {
+      "description": "Document title from the artifact metadata.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "author": {
+      "description": "Document author from the artifact metadata.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "producer": {
+      "description": "Producing application from the artifact metadata.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "width": {
+      "description": "Width in pixels (image).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "height": {
+      "description": "Height in pixels (image).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "megapixels": {
+      "description": "`width * height / 1e6` (image) — the size figure a human reasons about.",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "paragraphs": {
+      "description": "Paragraph count (word-processing document).",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "text_chars": {
+      "description": "Total extracted text length in characters, independent of the excerpt.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "text_excerpt": {
+      "description": "Bounded head of the document text.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sheets": {
+      "description": "Per-sheet signal (spreadsheet).",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/SheetSignal"
+      }
+    },
+    "slides": {
+      "description": "Per-slide signal (presentation).",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/SlideSignal"
+      }
+    },
+    "truncated_parts": {
+      "description": "Container members that reached the `max_part` safety ceiling.\n\nThe ceiling is the anti zip-bomb bound and it does not move; a member\nthat reached it may have been read as a prefix, so the parsed signal\ncomes with this warning instead of passing as complete.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "elapsed_ms": {
+      "description": "Wall-clock milliseconds spent on extraction.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "ok": {
+      "description": "Outcome of the run, stamped by the writer",
+      "type": "boolean"
+    },
+    "code": {
+      "description": "Machine error code, present when ok is false",
+      "type": "string"
+    },
+    "exit": {
+      "description": "Process exit status, present when ok is false",
+      "type": "integer",
+      "minimum": 0
+    },
+    "target_resolved": {
+      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+      "type": "string"
+    },
+    "target_source": {
+      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+      "type": "string",
+      "enum": [
+        "argv",
+        "workspace",
+        "stdin"
+      ]
+    },
+    "workspace_source": {
+      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+      "type": "string",
+      "enum": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "records_suppressed": {
+      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_budget_dropped": {
+      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_planned": {
+      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+      "type": "boolean"
+    },
+    "truncated_records": {
+      "description": "Records the writer cut this run, counted once per record",
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "type",
+    "path",
+    "kind",
+    "format",
+    "bytes",
+    "elapsed_ms"
+  ],
+  "$defs": {
+    "SheetSignal": {
+      "description": "Bounded signal for one spreadsheet sheet.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Sheet name as declared by the workbook, or the part index when absent.",
+          "type": "string"
+        },
+        "rows": {
+          "description": "Number of populated rows.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "columns": {
+          "description": "Number of columns in the first populated row.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "header": {
+          "description": "Column labels taken from the first populated row, blank when unlabeled.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "types": {
+          "description": "Inferred scalar type per column over the sampled rows.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sample": {
+          "description": "Sample rows, each holding one value per column.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "required": [
+        "name",
+        "rows",
+        "columns",
+        "header",
+        "types",
+        "sample"
+      ]
+    },
+    "SlideSignal": {
+      "description": "Bounded signal for one presentation slide.",
+      "type": "object",
+      "properties": {
+        "index": {
+          "description": "One-based slide position in presentation order.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "title": {
+          "description": "First text run of the slide, which carries the slide heading.",
+          "type": "string"
+        },
+        "text_chars": {
+          "description": "Total characters of text on the slide.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "index",
+        "title",
+        "text_chars"
+      ]
+    }
+  }
+}

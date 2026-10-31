@@ -4,17 +4,8 @@
   "description": "Closest near-miss when a fuzzy/exact match fails (v0.1.29 P0-2).\n\nAgents use this to correct `old` without re-reading the full file.",
   "type": "object",
   "properties": {
-    "column": {
-      "description": "1-based column of the candidate start.",
-      "type": [
-        "integer",
-        "null"
-      ],
-      "format": "uint64",
-      "minimum": 0
-    },
-    "diff_preview": {
-      "description": "Optional short unified-diff style preview.",
+    "text": {
+      "description": "Snippet of the best matching region (truncated to 500 chars).",
       "type": [
         "string",
         "null"
@@ -22,6 +13,15 @@
     },
     "line": {
       "description": "1-based line of the candidate start in the file.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "column": {
+      "description": "1-based column of the candidate start.",
       "type": [
         "integer",
         "null"
@@ -44,8 +44,8 @@
         "null"
       ]
     },
-    "text": {
-      "description": "Snippet of the best matching region (truncated to 500 chars).",
+    "diff_preview": {
+      "description": "Optional short unified-diff style preview.",
       "type": [
         "string",
         "null"

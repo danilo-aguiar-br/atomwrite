@@ -16,11 +16,13 @@
 
 #![allow(clippy::needless_raw_string_hashes)]
 
+mod common;
+
 use assert_cmd::Command;
 use tempfile::tempdir;
 
 fn aw() -> Command {
-    Command::cargo_bin("atomwrite").expect("atomwrite binary not found")
+    common::hermetic(Command::cargo_bin("atomwrite").expect("atomwrite binary not found"))
 }
 
 #[test]
@@ -364,6 +366,7 @@ fn syntax_check_large_streaming_file() {
     );
 }
 
+#[cfg(feature = "ast")]
 #[test]
 fn query_threads_1() {
     let dir = tempdir().unwrap();
@@ -388,6 +391,7 @@ fn query_threads_1() {
     assert!(stdout.contains("function_item"));
 }
 
+#[cfg(feature = "ast")]
 #[test]
 fn outline_threads_1() {
     let dir = tempdir().unwrap();

@@ -57,9 +57,9 @@ pub struct DeleteArgs {
 
     /// Plan-only: list files that would be deleted without mutating.
     ///
-    /// One-shot CLIs cannot prompt interactively; run again without `--plan`/
-    /// `--dry-run` to actually delete (B-005 / A-004).
-    /// `--confirm` is **not** an alias — it is rejected (fail-closed).
+    /// A one-shot CLI cannot prompt interactively; run again without `--plan`
+    /// or `--dry-run` to actually delete. `--confirm` is not an alias of this
+    /// flag: it is rejected (fail-closed).
     #[arg(
         long,
         conflicts_with = "dry_run",
@@ -72,10 +72,10 @@ pub struct DeleteArgs {
     #[arg(long, help = "Show what would be done without deleting", action = clap::ArgAction::SetTrue)]
     pub dry_run: bool,
 
-    /// Legacy interactive flag — **rejected** (B-005/B-014).
+    /// Rejected legacy flag: `delete` never asks for confirmation.
     ///
-    /// Was previously an alias of `--plan`, which agents misread as “confirm and
-    /// delete”. Use `--plan` to list or omit flags to delete.
+    /// It was once an alias of `--plan`, which agents misread as "confirm and
+    /// delete". Use `--plan` to list targets or omit the flag to delete.
     #[arg(
         long,
         help = "Rejected: use --plan to list targets, or omit flags to delete (one-shot; not write --confirm)",
@@ -83,10 +83,9 @@ pub struct DeleteArgs {
     )]
     pub confirm: bool,
 
-    /// Legacy interactive “yes” — **rejected** (B-015).
+    /// Rejected legacy flag: there is no interactive confirmation to skip.
     ///
-    /// There is no interactive confirmation to skip. Use `--plan` to list or
-    /// omit flags to delete.
+    /// Use `--plan` to list targets or omit the flag to delete.
     #[arg(
         short = 'y',
         long,
@@ -99,9 +98,17 @@ pub struct DeleteArgs {
 /// Arguments for the read subcommand.
 #[derive(Args, Debug, Clone)]
 pub struct ReadArgs {
-    /// File path to read.
-    #[arg(value_hint = ValueHint::FilePath)]
-    pub path: PathBuf,
+    /// One or more files to read.
+    ///
+    /// Explicit paths are read in argv order. An operand that carries `*`, `?`
+    /// or `[` is a pattern expanded by the binary itself against ONE level of
+    /// its directory, in byte order (the `LC_ALL=C` shell order), skipping
+    /// hidden names. An absolute operand is judged by the part that sits under
+    /// `--workspace`, so `'/w/*.rs'` and `/w/a.rs` face the same one-level rule
+    /// and the same jail. `--format raw` concatenates every target with no
+    /// header, no separator and no added newline, the way `cat` does.
+    #[arg(value_hint = ValueHint::FilePath, num_args = 1.., required = true)]
+    pub paths: Vec<PathBuf>,
 
     /// Line range to read (1-based, e.g. "1:50").
     #[arg(long, help = "Line range to read (1-based, e.g. 1:50)")]
@@ -134,8 +141,8 @@ pub struct ReadArgs {
 
     /// Output format selection.
     ///
-    /// `raw`: always emit file bytes on stdout (TTY and non-TTY) — B-006.
-    /// Agent NDJSON contract uses the default format (not `raw`).
+    /// `raw` always writes the file bytes to stdout, on a terminal and in a
+    /// pipe alike. The default `ndjson` is the agent contract.
     #[arg(
         long,
         value_enum,
@@ -144,10 +151,9 @@ pub struct ReadArgs {
     )]
     pub format: OutputFormat,
 
-    /// Redundant with `--format raw` (B-006): raw always emits bytes.
+    /// Redundant with `--format raw`, which always emits bytes.
     ///
-    /// Kept for compatibility with pipelines that passed `--bytes` under the
-    /// old dual-mode contract.
+    /// Kept for compatibility with pipelines that already pass `--bytes`.
     #[arg(
         long,
         help = "With --format raw: emit raw bytes (implied by --format raw; kept for compatibility)",
@@ -170,22 +176,26 @@ pub struct ReadArgs {
 
 /// Fuzzy matching behavior for --old/--new edit mode.
 ///
-/// Product policy (v0.1.35 / G-010): `Off` is exact-only (no cascade). Exact miss
-/// yields [`crate::AtomwriteError::MatchFailed`] (exit 65, code `MATCH_FAILED`).
+/// `Off` is exact-only (no cascade). Exact miss
+/// yields [`crate::error::AtomwriteError::MatchFailed`] (exit 65, code `MATCH_FAILED`).
 /// Prefer `Auto` (default) or `Aggressive` for agent workflows.
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum FuzzyMode {
     /// Try exact match first, then fuzzy strategies automatically (default).
     Auto,
-    /// Exact match only — no fuzzy cascade (G-010).
+    /// Exact match only — no fuzzy cascade.
     Off,
     /// Try all fuzzy strategies including low-confidence block anchor.
     Aggressive,
 }
 
-/// Arguments for the `edit-loop` subcommand (ADR-0039).
+/// Arguments for the `edit-loop` subcommand.
 #[derive(Args, Debug)]
 pub struct EditLoopArgs {
+    /// Refuse the cross-device copy-then-rename fallback (exit 91).
+    #[command(flatten)]
+    pub strict: crate::cli_args::StrictAtomicArgs,
+
     #[arg(value_hint = ValueHint::FilePath)]
     /// File path to apply all pairs against.
     pub path: PathBuf,
@@ -201,11 +211,24 @@ pub struct EditLoopArgs {
     )]
     pub allow_sequential_drift: bool,
 
+    /// Write the pairs that match instead of aborting the whole batch.
+    /// Default (off) is all-or-nothing, like `edit`: any unmatched pair
+    /// aborts with exit 65 and nothing is written. With `--partial` the
+    /// matching pairs are written and the command exits 87
+    /// (`EDIT_LOOP_PARTIAL`) when at least one pair missed.
+    #[arg(
+        long,
+        help = "Write the matching pairs and exit 87 when some miss (default: all-or-nothing, exit 65)",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub partial: bool,
+
     /// Shared backup flags.
     #[command(flatten)]
     pub backup_opts: BackupOpts,
 
-    /// Validate syntax after writing (G72). Pass a language name
+
+    /// Validate syntax after writing. Pass a language name
     /// (`rust`, `python`, `js`, etc.). When the file is invalid, the
     /// write is aborted with `SyntaxError` (exit 88).
     #[arg(

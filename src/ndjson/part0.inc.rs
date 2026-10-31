@@ -76,28 +76,94 @@ pub struct SearchCount {
 }
 
 /// Aggregate summary emitted at the end of multi-file operations.
-#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+#[derive(Debug, PartialEq, Default, Serialize, JsonSchema)]
 pub struct Summary {
     /// Event type discriminator.
     pub r#type: &'static str,
     /// Total files examined.
+    ///
+    /// `search --target files` counts the files the walk handed over, and
+    /// `copy` counts the sources it examined, so a copy that failed is counted
+    /// here and in `files_failed` instead of disappearing.
     pub files_visited: u64,
-    /// Files with at least one match.
+    /// Files that contributed at least one published answer record.
     pub files_matched: u64,
-    /// Files actually modified (replace/transform only).
+    /// Files actually modified: rewritten by `replace`, `transform`, `case`,
+    /// `scope` or `codemod`, deleted by `delete`, copied by `copy`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files_modified: Option<u64>,
-    /// Files skipped due to binary detection or size limits.
+    /// Files a dry run would have modified.
+    ///
+    /// Present only on a dry run: `files_modified` stays at zero because no
+    /// byte changed, and this is the blast radius the caller asked to see. It
+    /// is never a claim that the write happened.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_planned: Option<u64>,
+    /// Files the run did not answer: binary detection, size cap, no match,
+    /// unchanged after a rewrite or an unreadable file. Which of these apply
+    /// depends on the verb, and the verb's own section in `HOW_TO_USE` says.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files_skipped: Option<u64>,
-    /// Total matches found across all files.
+    /// Answer records `search` paged out because `--offset` skipped them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset_skipped: Option<u64>,
+    /// Files where `search --max-count` cut at least one match.
+    ///
+    /// Each file counted here hid at least one more match, so the number is a
+    /// floor on what the page left out, not an exact count of the remainder.
+    /// The ceiling is on records, not on reading: to prove that a file held
+    /// more, the search reads at most one match past the ceiling in that file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matches_suppressed: Option<u64>,
+    /// Occurrences `replace --max-replacements` left unchanged.
+    ///
+    /// The verb counts every occurrence of `old` before it applies the ceiling,
+    /// so this is exact and the agent can size the second run from it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replacements_suppressed: Option<u64>,
+    /// Lines `semantic-search --min-score` discarded for scoring below it.
+    ///
+    /// A zero-match answer with a high floor is otherwise indistinguishable from
+    /// a tree that has nothing to say about the query.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub below_min_score: Option<u64>,
+    /// Files opened and read, the stage between the walk handing a path over
+    /// and the scoring that decides whether it answers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_read: Option<u64>,
+    /// Items the `--limit` budget cut before the verb worked on them.
+    ///
+    /// The unit is the one the verb produces: files for a verb that walks
+    /// paths, records for a verb that streams them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_budget_dropped: Option<u64>,
+    /// Files the progress precount found eligible, published only when that
+    /// precount ran (`--progress-every` on and quiet off); it is the total the
+    /// run is working through, not the page it published.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_total: Option<u64>,
+    /// Files refused because they hold binary content, a subset of
+    /// `files_skipped` that lets the agent tell a binary refusal from a size cap
+    /// or an unchanged rewrite.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binary_rejects: Option<u64>,
+    /// Answer records actually published, after `--limit` and `--offset`; for
+    /// `transform` and `transform --rules` it is the replacements performed,
+    /// and for `scope` it is the scopes matched across every file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_matches: Option<u64>,
     /// Total replacements performed across all files.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_replacements: Option<u64>,
+    /// Bytes the run left on disk or moved: the size after a rewrite, the size
+    /// copied, or the size hashed, depending on the verb.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
     /// Operation duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Present and true when the walker itself quit before the tree ended.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub walker_stopped_early: Option<bool>,
 }
 
 /// Closest near-miss when a fuzzy/exact match fails (v0.1.29 P0-2).
@@ -139,6 +205,11 @@ pub struct DryRunPlan {
     /// Additional details about the planned change.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
+    /// Risk diagnostics of the payload the plan would write. Omitted when
+    /// nothing matched the configured patterns, so the field never appears
+    /// as an empty object.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk_assessment: Option<WriteRiskAssessment>,
 }
 
 /// Aggregate summary for a directory listing operation.
@@ -152,14 +223,36 @@ pub struct ListSummary {
     pub dirs: u64,
     /// Total number of symlinks found.
     pub symlinks: u64,
-    /// Total bytes across all files, present when --long is used.
+    /// Total bytes across all files.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_bytes: Option<u64>,
+    /// Entries the `--limit` budget cut before the page was written.
+    ///
+    /// `files`, `dirs` and `total_bytes` describe the page actually published;
+    /// this is how much of the tree that page left out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_budget_dropped: Option<u64>,
     /// File counts grouped by extension, present when --count-by-ext is used.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub by_extension: Option<std::collections::BTreeMap<String, u64>>,
     /// Operation duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Entries the walk could not stat; present only when some failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_failed: Option<u64>,
+    /// First failures, capped at `summary.errors_max_entries` (50 by default);
+    /// `files_failed` is the full count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<FileFailure>>,
+    /// The run answered from part of its targets, so the answer is partial.
+    ///
+    /// Present exactly when `files_failed` is present, so a consumer reads one
+    /// flag instead of comparing two counters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial: Option<bool>,
+    /// Present and true when the walker itself quit before the tree ended.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub walker_stopped_early: Option<bool>,
 }
 
 /// NDJSON output for regex generation from examples.
@@ -202,6 +295,10 @@ pub struct ScopeResult {
     pub checksum_after: String,
     /// Operation duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Risk diagnostics of the content the scoping wrote. Omitted on a
+    /// read-only run and when nothing matched the configured patterns.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk_assessment: Option<WriteRiskAssessment>,
 }
 
 /// NDJSON output for a patch apply operation.
@@ -229,6 +326,7 @@ pub struct ApplyResult {
 
 /// NDJSON output for diff stat mode.
 #[derive(Debug, Serialize, JsonSchema)]
+#[schemars(inline)]
 pub struct DiffStatOutput {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -250,6 +348,7 @@ pub struct DiffStatOutput {
 
 /// NDJSON event for a single diff change line.
 #[derive(Debug, Serialize, JsonSchema)]
+#[schemars(inline)]
 pub struct DiffChangeOutput<'a> {
     /// Event type discriminator.
     pub r#type: &'static str,
@@ -302,10 +401,30 @@ pub struct CountByExtOutput {
     pub r#type: &'static str,
     /// Count mode name.
     pub mode: &'static str,
-    /// Counts grouped by extension.
+    /// Counts grouped by extension, after the `--top` cut.
     pub by_extension: std::collections::BTreeMap<String, ExtCountOutput>,
+    /// Totals over every file counted, across all groups and before the cut.
+    pub total: CountTotals,
+    /// Groups the `--top` cut left out of `by_extension`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items_omitted: Option<u64>,
     /// Duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Files the walk saw but could not read; present only when some failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_failed: Option<u64>,
+    /// First read failures, capped; `files_failed` is the full count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<FileFailure>>,
+    /// The run answered from part of its targets, so the answer is partial.
+    ///
+    /// Present exactly when `files_failed` is present, so a consumer reads one
+    /// flag instead of comparing two counters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial: Option<bool>,
+    /// Present and true when the walker itself quit before the tree ended.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub walker_stopped_early: Option<bool>,
 }
 
 /// One entry in `CountBySizeOutput.items` (GAP-2026-001).
@@ -422,6 +541,9 @@ pub struct QueryMatchEvent {
     pub is_named: bool,
     /// Truncated node text.
     pub text: String,
+    /// Present and true when `text` was cut at `QUERY_NODE_TEXT_MAX_CHARS`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_truncated: Option<bool>,
     /// S-expression capture name when present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capture_name: Option<String>,
@@ -457,4 +579,3 @@ pub struct SparseReadEvent {
     /// Number of head lines requested.
     pub lines: u64,
 }
-

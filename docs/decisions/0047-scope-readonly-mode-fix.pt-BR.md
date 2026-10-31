@@ -1,24 +1,24 @@
-# ADR-0047: Fix do modo read-only do scope e migração para find_all
+# ADR-0047: correção do modo somente leitura do scope e migração para find_all
 
-- **Status**: Aceito
-- **Date**: 2026-06-21
-- **Context**: O subcomando `scope` reportava `files_matched: 0` quando invocado sem ação (`--delete`, `--action` ou `--replace-with`). A investigação revelou que a causa raiz NÃO era o mecanismo de matching (DFS + `match_node` funciona corretamente) mas sim a lógica de contagem de resultados. Quando nenhuma ação está configurada, `apply_scope_action()` retorna o texto original inalterado. Após aplicar as "edits" (que são operações identidade), `checksum_before == checksum_after`, fazendo o código contar o arquivo como "skipped" e nunca emitir evento `ScopeResult`. Isso tornava o modo read-only/auditoria do scope completamente inoperante — usuários não podiam listar quais nós AST casavam com um pattern sem também especificar uma mutação. Adicionalmente, o matching usava `root.dfs().filter(|node| pattern.match_node(node.clone()).is_some())` que ignora a pré-filtragem por `potential_kinds()` que `Node::find_all()` fornece.
+- Status: Aceito
+- Data: 2026-06-21
+- Contexto: O subcomando `scope` informava `files_matched: 0` quando invocado sem uma ação (`--delete`, `--action` ou `--replace-with`). A investigação revelou que a causa raiz NÃO era o mecanismo de casamento (DFS + `match_node` funciona corretamente), mas a lógica de contagem do resultado. Quando nenhuma ação está configurada, o `apply_scope_action()` devolve o texto original inalterado. Depois de aplicar as "edições" (que são operações de identidade), `checksum_before == checksum_after`, fazendo o código contar o arquivo como "pulado" e nunca emitir um evento `ScopeResult`. Isso tornou o modo somente leitura/auditoria do scope completamente inoperante: os usuários não conseguiam listar quais nós da AST casavam com um padrão sem também especificar uma mutação. Além disso, o casamento usava `root.dfs().filter(|node| pattern.match_node(node.clone()).is_some())`, que contorna o pré-filtro `potential_kinds()` que o `Node::find_all()` oferece.
 
-- **Decision**: Duas mudanças aplicadas:
-  1. **Branch de modo read-only**: Após coletar matches e antes do loop de edits, detectar `is_read_only = !delete && action.is_none() && replace_with.is_none()`. Quando true, emitir `ScopeResult` com contagem de matches, incrementar `files_matched`, e retornar early sem comparação de checksum ou tentativa de escrita.
-  2. **Migração DFS → find_all**: Substituir o `root.dfs().filter(...)` manual por `root.find_all(&pattern)`. O método `find_all` (ast-grep-core 0.43.0, `Node::find_all`) chama `pat.potential_kinds()` uma vez e usa o resultado como filtro de curto-circuito antes de invocar `match_node` em cada candidato. Isso reduz chamadas desnecessárias a `match_node` em nós cujo `kind_id` nunca pode casar com a raiz do pattern. `find_all` retorna `Iterator<Item = NodeMatch>` onde `NodeMatch: Deref<Target = Node>`, então `.range()` funciona inalterado no código downstream.
+- Decisão: Duas mudanças aplicadas:
+  1. Ramo do modo somente leitura: Depois de coletar os casamentos e antes do loop de edição, detectar `is_read_only = !delete && action.is_none() && replace_with.is_none()`. Quando verdadeiro, emitir `ScopeResult` com a contagem de casamentos, incrementar `files_matched` e retornar cedo, sem comparação de checksum nem tentativa de escrita.
+  2. Migração de DFS para find_all: Substituir o manual `root.dfs().filter(...)` por `root.find_all(&pattern)`. O método `find_all` (ast-grep-core 0.43.0, `Node::find_all`) chama `pat.potential_kinds()` uma vez e usa o resultado como filtro de curto-circuito antes de invocar `match_node` em cada candidato. Isso reduz chamadas desnecessárias a `match_node` em nós cujo `kind_id` nunca pode casar com a raiz do padrão. O `find_all` devolve `Iterator<Item = NodeMatch>`, em que `NodeMatch: Deref<Target = Node>`, então `.range()` funciona sem mudanças a jusante.
 
-- **Consequences**:
-  - **+** `scope` sem ação agora reporta matches corretamente (modo read-only/auditoria funciona).
-  - **+** Melhoria de performance pela pré-filtragem via `potential_kinds()` no `find_all`.
-  - **+** Consistência com `transform` que usa `replace_all` (internamente usa o mesmo mecanismo Visitor/find_all).
-  - **+** Todos os 30+ queries preparados produzem resultados em modo read-only.
-  - **+** Import `MatcherExt` não utilizado removido.
-  - **-** (nenhuma) Modo de mutação (`--delete`, `--action`, `--replace-with`) continua funcionando inalterado.
+- Consequências:
+  - + O `scope` sem ação agora informa corretamente os casamentos (o modo somente leitura/auditoria funciona).
+  - + Ganho de desempenho com o pré-filtro `potential_kinds()` do `find_all`.
+  - + Consistência com o `transform`, que usa `replace_all` (internamente usa o mesmo mecanismo Visitor/find_all).
+  - + Todas as 30+ consultas preparadas produzem resultados quando invocadas no modo somente leitura.
+  - + Removido o import `MatcherExt` não utilizado.
+  - - (nenhuma) O modo de mutação (`--delete`, `--action`, `--replace-with`) continua funcionando sem mudanças.
 
-- **Alternatives considered**:
-  1. **Apenas adicionar branch read-only, manter DFS manual.** Rejeitado: find_all é estritamente melhor (mesma semântica + performance da pré-filtragem por kind) e é a API idiomática do ast-grep-core.
-  2. **Usar `Visitor` diretamente em vez de `find_all`.** Rejeitado: `Visitor` é mais baixo nível e requer mais boilerplate; `find_all` encapsula a mesma lógica em uma única linha.
-  3. **Emitir warning quando nenhuma ação é especificada.** Rejeitado: modo read-only é um caso de uso legítimo (auditoria, contagem, listagem de matches) e deve funcionar silenciosamente.
+- Alternativas consideradas:
+  1. Apenas adicionar o ramo somente leitura, mantendo o DFS manual. Rejeitado: o find_all é estritamente melhor (mesma semântica + desempenho do pré-filtro por kind) e é a API idiomática do ast-grep-core.
+  2. **Usar o `Visitor` diretamente em vez do `find_all`.** Rejeitado: o `Visitor` é de mais baixo nível e exige mais código repetitivo, enquanto o `find_all` encapsula a mesma lógica em uma linha.
+  3. Emitir um aviso quando nenhuma ação for especificada. Rejeitado: o modo somente leitura é um caso de uso legítimo (auditar, contar, listar casamentos) e deve funcionar em silêncio.
 
-- **Trigger to revisit**: Se ast-grep-core mudar a API do `find_all` ou se uma abordagem streaming/não-coletora for necessária para arquivos muito grandes.
+- Gatilho para revisitar: Se o ast-grep-core mudar a API do `find_all` ou se uma abordagem em streaming/sem coleta for necessária para arquivos muito grandes.

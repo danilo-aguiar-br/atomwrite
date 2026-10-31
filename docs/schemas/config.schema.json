@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConfigOutput",
+  "description": "Terminal event of `config`.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "Event type discriminator: `\"config\"`.",
+      "type": "string"
+    },
+    "command": {
+      "description": "Subcommand name.",
+      "type": "string"
+    },
+    "action": {
+      "description": "`path`, `list`, `get`, `set` or `unset`.",
+      "type": "string"
+    },
+    "scope": {
+      "description": "Scope written or printed.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "config_path": {
+      "description": "Config file acted on.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "exists": {
+      "description": "Whether that file exists.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "key": {
+      "description": "Dotted key.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "value": {
+      "description": "Effective value (`get`) or the value written (`set`); the effective value\nafter `unset` depends on the other scopes, so `unset` omits it."
+    },
+    "origin": {
+      "description": "Where the value comes from.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "default": {
+      "description": "Built-in value of the key."
+    },
+    "old_value": {
+      "description": "Value the scope file held before `set` or `unset`; absent when it held none."
+    },
+    "changed": {
+      "description": "Whether `set` or `unset` changed the file.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "dry_run": {
+      "description": "Present and true when `--dry-run` suppressed the write.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "keys": {
+      "description": "Every key (`list`).",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/KeyEntry"
+      }
+    },
+    "status": {
+      "description": "`pass` when `doctor` loaded every layer without error.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "config_files": {
+      "description": "Config files `doctor` found, highest priority first.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "warnings": {
+      "description": "Problems that did not stop the run.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "elapsed_ms": {
+      "description": "Wall-clock time in milliseconds.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "ok": {
+      "description": "Outcome of the run, stamped by the writer",
+      "type": "boolean"
+    },
+    "code": {
+      "description": "Machine error code, present when ok is false",
+      "type": "string"
+    },
+    "exit": {
+      "description": "Process exit status, present when ok is false",
+      "type": "integer",
+      "minimum": 0
+    },
+    "target_resolved": {
+      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
+      "type": "string"
+    },
+    "target_source": {
+      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+      "type": "string",
+      "enum": [
+        "argv",
+        "workspace",
+        "stdin"
+      ]
+    },
+    "workspace_source": {
+      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+      "type": "string",
+      "enum": [
+        "argv",
+        "cwd"
+      ]
+    },
+    "records_suppressed": {
+      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_budget_dropped": {
+      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+      "type": "integer",
+      "minimum": 0
+    },
+    "files_planned": {
+      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+      "type": "boolean"
+    },
+    "truncated_records": {
+      "description": "Records the writer cut this run, counted once per record",
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "type",
+    "command",
+    "action",
+    "elapsed_ms",
+    "ok"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "KeyEntry": {
+      "description": "One key as `config list` and `config get` report it.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "Dotted key.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Effective value; absent when the key has no value at all."
+        },
+        "origin": {
+          "description": "`default`, `global`, `workspace` or `explicit` (`--config`).",
+          "type": "string"
+        },
+        "default": {
+          "description": "Built-in value; absent when the key has none."
+        },
+        "kind": {
+          "description": "`integer`, `float`, `boolean` or `string`.",
+          "type": "string"
+        },
+        "scopes": {
+          "description": "Scopes the key can be written in.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source": {
+          "description": "File the effective value was read from; absent for the default.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "origin",
+        "kind",
+        "scopes"
+      ]
+    }
+  }
+}

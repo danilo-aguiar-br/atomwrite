@@ -136,9 +136,9 @@ mod tests {
             .expect("must succeed");
         assert!(r.replacement_embeds_pattern);
         assert_eq!(r.applied, 1, "embeds must force single apply");
-        assert_eq!(r.edited, "header\nAAA\nBBB\nfooter\n");
+        assert_eq!(r.edited.as_deref(), Some("header\nAAA\nBBB\nfooter\n"));
         // Second conceptual apply would grow forever without the guard.
-        assert!(!r.edited.contains("AAA\nBBB\nBBB"));
+        assert!(!r.edited.as_deref().unwrap_or("").contains("AAA\nBBB\nBBB"));
     }
 
     #[test]
@@ -149,7 +149,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r.applied, 1);
-        assert_eq!(r.edited, "unique_token_omega beta\n");
+        assert_eq!(r.edited.as_deref(), Some("unique_token_omega beta\n"));
         assert!(!r.replacement_embeds_pattern);
     }
 
@@ -275,6 +275,220 @@ mod tests {
             }
             Err(AtomwriteError::MatchFailed { .. }) => {}
             Err(other) => panic!("unexpected {other:?}"),
+        }
+    }
+
+    fn capped(max_content_bytes: u64) -> MatchOpts {
+        MatchOpts {
+            max_content_bytes,
+            ..Default::default()
+        }
+    }
+
+    /// v0.1.37: exact matching never consults the content cap.
+    #[test]
+    fn exact_match_ignores_content_cap() {
+        let (out, info) =
+            match_pair_with("hello world foo bar", "world", "rust", capped(4)).unwrap();
+        assert_eq!(out, "hello rust foo bar");
+        assert!(!info.fuzzy);
+    }
+
+    /// v0.1.37: above the cap the cascade does not run and the miss is a typed error.
+    #[test]
+    fn content_above_cap_is_invalid_input_not_a_miss() {
+        let content = "alpha beta gamma delta epsilon\n";
+        let err = match_pair_with(content, "wrongword", "x", capped(8)).unwrap_err();
+        match err {
+            AtomwriteError::InvalidInput { reason } => {
+                assert!(reason.contains("max_content_bytes"), "{reason}");
+                assert!(reason.contains("--fuzzy off"), "{reason}");
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    /// `--fuzzy off` is the documented way out of the cap: it stays an exact-only miss.
+    #[test]
+    fn fuzzy_off_above_cap_stays_exact_only_miss() {
+        let opts = MatchOpts {
+            mode: FuzzyMode::Off,
+            max_content_bytes: 8,
+            ..Default::default()
+        };
+        let err = match_pair_with("alpha beta gamma delta\n", "wrongword", "x", opts).unwrap_err();
+        assert!(matches!(err, AtomwriteError::MatchFailed { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn content_at_cap_still_runs_the_cascade() {
+        let content = "alpha beta\n";
+        let err =
+            match_pair_with(content, "wrongword", "x", capped(content.len() as u64)).unwrap_err();
+        assert!(matches!(err, AtomwriteError::MatchFailed { .. }), "{err:?}");
+    }
+
+    /// The one-pass wrapper must pass the cap error on, never report zero matches.
+    #[test]
+    fn one_pass_passes_cap_error_through() {
+        let err = apply_fuzzy_one_pass(
+            "alpha beta gamma delta\n",
+            "wrongword",
+            "x",
+            capped(8),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, AtomwriteError::InvalidInput { .. }), "{err:?}");
+        let err = apply_fuzzy_one_pass(
+            "alpha beta gamma delta\n",
+            "wrongword",
+            "x",
+            capped(8),
+            Some(5),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AtomwriteError::InvalidInput { .. }), "{err:?}");
+    }
+
+    /// A real miss is zero matches and does not copy the input buffer.
+    #[test]
+    fn one_pass_miss_is_zero_applied_without_a_copy() {
+        for max in [None, Some(5)] {
+            let r = apply_fuzzy_one_pass(
+                "alpha beta\n",
+                "zzzzqqqq",
+                "x",
+                MatchOpts::default(),
+                max,
+            )
+            .unwrap();
+            assert_eq!(r.applied, 0);
+            assert!(r.edited.is_none());
+            assert!(r.info.is_none());
+        }
+    }
+
+    #[test]
+    fn is_no_match_only_for_misses() {
+        let miss = AtomwriteError::MatchFailed {
+            reason: "r".into(),
+            best_candidate: None,
+            candidates: None,
+        };
+        assert!(is_no_match(&miss));
+        assert!(!is_no_match(&AtomwriteError::InvalidInput { reason: "r".into() }));
+        assert!(!is_no_match(&AtomwriteError::Cancelled {
+            reason: "r".into(),
+            exit: 124
+        }));
+    }
+
+    #[test]
+    fn cancel_poll_masks_checks_without_global_flag() {
+        let mut lines = CancelPoll::lines();
+        let mut heavy = CancelPoll::heavy();
+        for _ in 0..(crate::constants::FUZZY_CANCEL_POLL_MASK * 4) {
+            lines.tick().unwrap();
+            heavy.tick().unwrap();
+        }
+        check_cancel().unwrap();
+    }
+
+    #[test]
+    fn collect_lines_matches_str_lines() {
+        for s in ["", "a", "a\n", "a\nb", "a\r\nb\r\n", "\n\n", "x\n\ny\n"] {
+            assert_eq!(collect_lines(s).unwrap(), s.lines().collect::<Vec<_>>(), "{s:?}");
+        }
+    }
+
+    /// Reference implementation of the previous O(n) line/column walk.
+    fn naive_line_col(content: &str, byte_offset: usize) -> (u64, u64) {
+        let (mut line, mut col) = (1u64, 1u64);
+        for (i, ch) in content.char_indices() {
+            if i >= byte_offset {
+                break;
+            }
+            if ch == '\n' {
+                line += 1;
+                col = 1;
+            } else {
+                col += 1;
+            }
+        }
+        (line, col)
+    }
+
+    #[test]
+    fn line_col_matches_reference_walk() {
+        let content = "ab\ncafé — x\n\nlast line without newline";
+        for off in (0..=content.len()).filter(|o| content.is_char_boundary(*o)) {
+            assert_eq!(line_col_of_offset(content, off), naive_line_col(content, off), "{off}");
+        }
+        // Line starts: the O(1) helper equals the walk to the first column of each line.
+        let mut start = 0usize;
+        for (idx, line) in content.split('\n').enumerate() {
+            assert_eq!(line_start_position(idx), naive_line_col(content, start));
+            start += line.len() + 1;
+        }
+    }
+
+    /// The char loop replaced a `\s*([(){}\[\]<>,;:])\s*` regex; both must agree.
+    #[test]
+    fn punctuation_normalization_matches_previous_regex() {
+        let re = regex::Regex::new(r"\s*([(){}\[\]<>,;:])\s*").unwrap();
+        for s in [
+            "fn  main ( a : i32 ,  b ) { }",
+            "  foo (  ) ;  ",
+            "a<b>c , d ; e",
+            "((  ))",
+            "no punctuation here",
+            "x\t:\ty",
+            "",
+        ] {
+            let expected = re.replace_all(&normalize_whitespace(s), "$1").to_string();
+            assert_eq!(normalize_punctuation_whitespace(s), expected, "{s:?}");
+        }
+    }
+
+    /// Strategy finders surface the work done as a plain miss when nothing matches.
+    #[test]
+    fn finders_report_miss_as_ok_none() {
+        let content = ["alpha", "beta"];
+        let pattern = ["nothing", "here"];
+        assert!(match_line_trimmed(&content, &pattern).unwrap().is_none());
+        assert!(match_whitespace_normalized(&content, &pattern).unwrap().is_none());
+        assert!(match_punctuation_normalized(&content, &pattern).unwrap().is_none());
+        assert!(match_indent_flexible(&content, &pattern).unwrap().is_none());
+        assert!(match_trimmed_boundary(&content, &pattern).unwrap().is_none());
+        assert!(match_unicode_normalized(&content, &pattern).unwrap().is_none());
+        assert!(match_block_anchor(&content, &pattern, 0.7).unwrap().is_none());
+        assert!(match_context_aware(&content, &pattern, 0.9, 0.0).unwrap().is_none());
+    }
+
+    /// FAIL-7: an absent block among many merely similar lines is a miss, not a tie.
+    #[test]
+    fn absent_block_among_similar_lines_is_a_miss_not_ambiguous() {
+        let content: String = (0..200).map(|n| format!("line {n:03}\n")).collect();
+        for needle in ["line 999 NOT THERE", "line 099 WRONG", "line 12 NOT THERE"] {
+            let err = match_pair(&content, needle, "x", FuzzyMode::Auto, None).unwrap_err();
+            match err {
+                AtomwriteError::MatchFailed { best_candidate, .. } => {
+                    assert!(best_candidate.is_some(), "{needle}: miss must carry best_candidate");
+                }
+                other => panic!("{needle}: expected MatchFailed, got {other:?}"),
+            }
+        }
+    }
+
+    /// FAIL-7: genuine ties (equivalent after normalization) stay ambiguous.
+    #[test]
+    fn equivalent_duplicates_stay_ambiguous() {
+        let err = match_pair("dup line\nmid\ndup line\n", "dup  line", "x", FuzzyMode::Auto, None)
+            .unwrap_err();
+        match err {
+            AtomwriteError::MatchAmbiguous { count, .. } => assert_eq!(count, 2),
+            other => panic!("expected MatchAmbiguous, got {other:?}"),
         }
     }
 

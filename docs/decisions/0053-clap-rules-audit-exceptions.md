@@ -20,7 +20,7 @@ Rule text forbids `Option<bool>` for boolean flags. Atomwrite needs three states
 |-----|---------|
 | (absent) | Use `.atomwrite.toml` `[defaults].backup` or built-in default `true` |
 | `--backup` | Force on (`Some(true)` via `ArgAction::SetTrue`) |
-| `--no_backup` | Force off (`conflicts_with = "backup"`) |
+| `--no-backup` | Force off (`conflicts_with = "backup"`) |
 
 A plain `bool` cannot represent “defer to config”. Documented on the field; covered by `tests/cli_v0128_backup_matrix.rs`.
 
@@ -29,13 +29,11 @@ A plain `bool` cannot represent “defer to config”. Documented on the field; 
 Rule text forbids manual argv parsing before Clap. Exception: agents must dump JSON Schema for a subcommand via `--json-schema` even when remaining argv would fail required-arg validation. Normal command paths still use `Cli::try_parse()` exclusively. Documented in `src/runtime.rs`.
 
 ## Consequences
-
-- Future audits must treat these as **documented exceptions**, not silent violations.
+- Future audits must treat these as documented exceptions, not silent violations.
 - Prefer not to expand pre-Clap argv scanning beyond schema prescan.
 - If Clap gains first-class “schema dump without required args”, remove the prescan path.
 
 ## Related
-
 - `src/cli_args.rs` (`BackupOpts`)
 - `src/runtime.rs` (`prescan_json_schema`)
 - `tests/cli_clap_debug_assert.rs`
