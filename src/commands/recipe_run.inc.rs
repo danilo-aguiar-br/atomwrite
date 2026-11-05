@@ -39,9 +39,10 @@ fn run_search_replace_verify(
         return cancelled(1);
     }
     let search_args = SearchArgs {
-        pattern: pattern.to_string(),
+        pattern: Some(pattern.to_string()),
         paths: vec![root.clone()],
-        regex: false,
+        regex: Vec::new(),
+        line_number: false,
         fixed: true,
         word: false,
         case_insensitive: false,
@@ -69,7 +70,7 @@ fn run_search_replace_verify(
         target: crate::cli_args::SearchTarget::Content,
         offset: 0,
         limit: None,
-        format: crate::cli_args::SearchFormat::Ndjson,
+        format: Some(crate::cli_args::SearchFormat::Ndjson),
     };
     {
         let mut buf = Vec::new();

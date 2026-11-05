@@ -6,6 +6,34 @@
 - Practical recipes you can copy-paste into your agent workflows
 
 
+## Objectives
+- Spend fewer tokens: one NDJSON object per call replaces the shell pipeline, and `commands --brief` answers in 5 020 bytes where the full tree costs 67 492
+- Lower the financial cost, because the bill follows the tokens and the round trips, and one call replaces the several shell calls a file task needs
+- Reduce errors with an atomic write and a BLAKE3 checksum on every response, so a stale or partial result is caught instead of assumed
+- Reduce hallucinations with a `type` discriminator, a closed schema per verb and an exit code that names the failure
+- Reduce the time spent on each task, because the read, the search and the write run in one process instead of a chain of shell tools
+- Reduce latency with local execution and no network on the file path, measured at medians of 5.6 ms on `read` and 6.7 ms on `write` for small files
+- Multiply the speed of operations with `batch`, `edit-loop`, `replace`, `case`, `transform` and `codemod` settling many files in one call
+- Cut the lead time between the request and the verified result, because the response already carries the checksum, the `target_resolved` and the next step
+- Make the agent faster, more effective and more assertive, since the exit code, the `code` and the `suggestion` say what to do next without a retry guess
+
+
+## What's New in v0.1.38 (2026-11-04)
+- The failure envelope carries `ok`, `code` and `exit`, and `error: true` left it because it duplicated `ok: false` plus `code`, cost 13 bytes on every failure and no caller branched on it alone
+- `read --format raw` stops at 24,000 bytes and prints one stderr line with the `--lines` that reads the rest, and it honors `--max-filesize` with exit 65 `FILE_TOO_LARGE`
+- A picture arrives as one `data:` URI, and `read doc.pdf` returns the text of every page, with `--ocr` recognizing a picture or a rendered page in pure Rust
+- A file whose image signature is damaged fails `read` with exit 65 `INVALID_INPUT` instead of returning its bytes as text
+- `outline` reads a Markdown heading as a `section` that runs to the end of its own section, and `read --symbol Part` returns that whole section with its sub-sections
+- `search --format text` writes one `path:line:col:text` per match, and a tree where every file was binary exits `89 ALL_SKIPPED_BINARY` instead of `NO_MATCHES`
+- `apply` matches whole lines, applies several files in one invocation and publishes the changed lines with `--show`
+- `delete -r <dir>` owns the whole named tree, including hidden, ignored, linked, fifo, socket and device entries
+- `target_resolved` is always an array in invocation order, because a path may contain the comma that used to join several targets
+- The lock targets the inode, and `delete` takes the same lock before it hashes and unlinks
+- `output.profile = "lean"` drops the digests, the byte counts and the timing from a successful mutation record, which took one `apply` on a three-line file from 433 bytes to 196
+- `config` lists 43 keys, and `atomwrite commands --brief` prints one line per subcommand
+- Pin agents to `^0.1.38`. 47 subcommands (SSOT via `agent-surface`)
+
+
 ## What's New in v0.1.37 (2026-10-31)
 - Pin agents to `^0.1.37`. 47 subcommands (SSOT via `agent-surface`); the new one is `config`
 - One terminal event per run: a failing summary carries `ok:false`, `code` and `exit` itself, and every summary that publishes `files_failed` adds `partial: true` and `errors[]` beside it
@@ -43,7 +71,8 @@
 
 ## 47 Subcommands (SSOT)
 
-Recipes below cover common agent paths; the complete surface is 47 tools (`CANONICAL_SUBCOMMAND_COUNT` / `atomwrite agent-surface`). Discovery:
+Recipes below cover common agent paths; the complete surface is 47 tools (`CANONICAL_SUBCOMMAND_COUNT` / `atomwrite agent-surface`). Every command in this list carries its complete local flag surface in [docs/AGENTS.md](AGENTS.md) and [docs/HOW_TO_USE.md](HOW_TO_USE.md).
+Discovery:
 
 ```bash
 atomwrite agent-surface
@@ -63,8 +92,8 @@ atomwrite commands --include-globals
 - `copy` — copy files with checksum verification, e.g. `atomwrite copy a.txt b.txt`
 - `count` — count lines, matches, or files by extension, e.g. `atomwrite count src/`
 - `del` — delete a key from a structured config file (TOML/JSON), e.g. `atomwrite del Cargo.toml workspace.members`
-- `delete` — delete files with optional backup (`--plan` plan-only)
-- `diff` — compare two files (unified, stat, or changes)
+- `delete` — delete files or trees, owning the whole named tree on `-r`, with optional backup (`--plan` plan-only)
+- `diff` — compare two files or a file against stdin (unified or stat)
 - `doctor` — diagnose environment and host readiness
 - `edit` — surgically edit by line, marker, or exact match
 - `edit-loop` — apply N `old`/`new` pairs from NDJSON stdin in one atomic write, e.g. `atomwrite edit-loop src/main.rs < pairs.ndjson`
@@ -72,11 +101,11 @@ atomwrite commands --include-globals
 - `extract-artifact` — bounded signal from PDF, OOXML and image headers (never raw artifact bytes), e.g. `atomwrite extract-artifact report.pdf`
 - `get` — read a value at a dotted path in TOML/JSON, e.g. `atomwrite get Cargo.toml package.version`
 - `hash` — calculate BLAKE3 checksums
-- `list` — list files in a directory tree
+- `list` — list the project file structure with metadata (one NDJSON record per entry)
 - `locale` — show / set / clear UI locale preference (XDG)
 - `move` — move or rename files atomically (EXDEV copy-fallback), e.g. `atomwrite move a.txt b.txt`
 - `outline` — extract high-level AST structure (functions, classes, …), e.g. `atomwrite outline src/main.rs`
-- `prune-backups` — prune `.bak.*` backups by age or count, e.g. `atomwrite prune-backups --max-count 5 .`
+- `prune-backups` — prune `.bak.*` backups by age or count, e.g. `atomwrite prune-backups --max-count 5 --recursive .`
 - `query` — walk a tree-sitter AST and emit nodes as NDJSON, e.g. `atomwrite query --kinds src/main.rs`
 - `read` — read files with metadata, checksum, optional content
 - `recipe` — named multi-step recipes (`list` / `run`), e.g. `atomwrite recipe list`
@@ -337,9 +366,9 @@ atomwrite --workspace . replace --fuzzy aggressive --progress-every 50 \
 
 
 ## How to Install Slim vs Full
-- Slim (10,908,040 bytes measured on 2026-10-31, DERIVADO 10908040 / 1048576 = 10.40 MiB, local size-gate ≤15 MiB): core-only, no AST stack
-- Default (57,096,064 bytes measured on 2026-10-31, DERIVADO 57096064 / 1048576 = 54.45 MiB): AST languages included
-- Both numbers come from `cargo build --release --locked` with and without `--no-default-features --features core`, and the slim binary answers `atomwrite 0.1.37` and exits 78 on `outline`
+- Slim (26,560,352 bytes measured on 2026-11-04, DERIVADO 26560352 / 1048576 = 25.33 MiB, above the local size-gate of 15 MiB): core-only, no AST stack
+- Default (71,084,440 bytes measured on 2026-11-04, DERIVADO 71084440 / 1048576 = 67.79 MiB): AST languages included
+- Both numbers come from `cargo build --release --locked` with and without `--no-default-features --features core`, and the slim binary answers `atomwrite 0.1.38` and exits 78 on `outline`
 
 ```bash
 # Slim
@@ -676,7 +705,7 @@ atomwrite --print-schema no-such-schema          # exit 65
 
 
 ## How to Branch on the Exit Code and Retry Only When Retryable
-- Read the exit code before the output, then read `error_class` and `retryable` from the single terminal event
+- Read the exit code before the output, then read `error_class` and `retryable` from the single terminal event, which means passing `-v`: the default envelope keeps `code`, `exit` and `suggestion` and drops the diagnostic prose
 - Retry only when `retryable` is `true` (exit 28, 30, 73, 74, 82, 83 and 92); `permanent`, `precondition_failed` and `conflict` with `retryable: false` need a different action
 - 82 `STATE_DRIFT`: read the file again and rebuild the command; 83 `LOCK_TIMEOUT`: the verb already waited `lock.acquire_timeout_ms` (5 s by default)
 - 65 `MATCH_FAILED` or `MATCH_AMBIGUOUS`: read `best_candidate` and `match_count`; 124: raise `--timeout-secs` or narrow the path; 141: the reader closed the pipe, so the output is incomplete
@@ -685,7 +714,7 @@ atomwrite --print-schema no-such-schema          # exit 65
 ```bash
 attempt=1
 while [ "$attempt" -le 3 ]; do
-  out=$(atomwrite --workspace "$WS" edit src/main.rs --old "let x = 1;" --new "let x = 2;")
+  out=$(atomwrite -v --workspace "$WS" edit src/main.rs --old "let x = 1;" --new "let x = 2;")
   code=$?
   [ "$code" -eq 0 ] && break
   [ "$(printf '%s' "$out" | jaq -r '.retryable // false')" = "true" ] || break
@@ -734,13 +763,14 @@ atomwrite --workspace "$WS" replace --dry-run TODO DONE src/ \
 
 
 ## How to Read the Single Terminal Event of a Run
-- A failing run ends with exactly one event that has `ok: false`, and it carries `code`, `exit`, `error_class`, `retryable` and `suggestion` itself; do not wait for a second error line
+- A failing run ends with exactly one event that has `ok: false`, and it carries `code`, `exit` and `suggestion` itself; do not wait for a second error line
+- Add `-v` when the run is being investigated, because `message`, `error_class`, `retryable` and `suggestion_lang` are the four keys the default envelope drops
 - A summary that fails (`search`, `replace`, `transform`, `scope`, `batch`) is that terminal event, so one `jaq` filter on `ok` is enough
 - Every verb that writes ends with `target_resolved` (the absolute path it acted on) and `target_source: "argv"`: compare it with the path you meant
 - `--filter ok=false` does not hide a failure, because errors are always emitted
 
 ```bash
-atomwrite --workspace "$WS" --locale en edit src/main.rs --old zzz_missing --new x \
+atomwrite -v --workspace "$WS" --locale en edit src/main.rs --old zzz_missing --new x \
   | jaq -c '{ok, code, exit, error_class, retryable, suggestion}'
 atomwrite --workspace "$WS" edit src/main.rs --old "let x = 2;" --new "let x = 3;" --select ok,target_resolved,target_source
 ```
@@ -1481,11 +1511,11 @@ atomwrite replace --preserve-timestamps 'old_api' 'new_api' src/
 ```bash
 # When workspace is NOT provided, the suggestion prompts for the flag
 atomwrite --locale en read /etc/passwd 2>/dev/null
-# Output: {"error":true,"code":"WORKSPACE_JAIL","exit":126,...,"suggestion":"set --workspace <root> (XDG/config only; no environment variables)",...}
+# Output: {"ok":false,"code":"WORKSPACE_JAIL","exit":126,...,"suggestion":"set --workspace <root> (XDG/config only; no environment variables)",...}
 
 # When workspace IS provided, the suggestion says "use a path inside"
 atomwrite --locale en --workspace /home/user/project read /etc/passwd 2>/dev/null
-# Output: {"error":true,"code":"WORKSPACE_JAIL","exit":126,...,"suggestion":"use a path inside the workspace (/home/user/project); for --old-file/--new-file stage under /home/user/project/.atomwrite/scratch/ (never OS /tmp outside the jail)",...}
+# Output: {"ok":false,"code":"WORKSPACE_JAIL","exit":126,...,"suggestion":"use a path inside the workspace (/home/user/project); for --old-file/--new-file stage under /home/user/project/.atomwrite/scratch/ (never OS /tmp outside the jail)",...}
 ```
 
 
@@ -1527,8 +1557,8 @@ atomwrite --json-schema error  # shared by all subcommands
 atomwrite --print-schema error > error.schema.json
 
 # 2. Run the actual command and check the required keys of the error envelope
-atomwrite --workspace . read /missing 2>/dev/null \
-  | jaq -e 'has("error") and has("ok") and has("code") and has("exit") and has("error_class") and has("retryable")'
+atomwrite -v --workspace . read /missing 2>/dev/null \
+  | jaq -e '(.ok == false) and has("code") and has("exit") and has("error_class") and has("retryable")'
 ```
 
 
@@ -1547,7 +1577,7 @@ atomwrite search 'TODO' src/ | jaq -r 'select(.type=="match") | .path' | sort | 
 atomwrite batch < manifest.ndjson | jaq -c 'select(.type=="summary") | {operations, succeeded, failed}'
 
 # Filter error envelopes by error class
-atomwrite read /missing 2>/dev/null | jaq 'select(.error_class == "permanent")'
+atomwrite -v read /missing 2>/dev/null | jaq 'select(.error_class == "permanent")'
 ```
 
 
@@ -1784,6 +1814,9 @@ atomwrite --workspace . delete --recursive --older-than 7d logs/
 atomwrite --workspace . delete --recursive --plan --older-than 1h tmp/
 ```
 
+- A run narrowed by `--older-than` exits 0 and publishes `dirs_left` and `entries_left` while it keeps the younger files, and an unfiltered `delete -r` removes hidden and ignored entries as well
+- A link inside the tree is removed as an entry and never followed, and `--backup` with a directory root is refused before any change
+
 ### Replace with Case Preservation
 
 ```bash
@@ -1951,3 +1984,54 @@ atomwrite --workspace . semantic-merge --base b --ours o --theirs t --output out
 # Exit 84 MERGE_CONFLICT on a conflict
 atomwrite --workspace . semantic-merge --base b --ours o --theirs t --output out.txt --fail-on-conflict
 ```
+
+
+## Every local flag, by command
+- This list names every local flag of each command, and the global flags stay in `atomwrite --help`.
+- `agent-surface`: `--format`
+- `apply`: `--ack-overwrite`, `--all`, `--allow-shrink`, `--backup`, `--dry-run`, `--format`, `--keep-backup`, `--no-backup`, `--no-syntax-check`, `--retention`, `--show`, `--strict-atomic`
+- `backup`: `--dry-run`, `--output-dir`, `--retention`
+- `batch`: `--backup`, `--batch-size`, `--dry-run`, `--file`, `--input-schema`, `--keep-backup`, `--no-backup`, `--retention`, `--strict-atomic`, `--transaction`
+- `calc`: `--stdin`
+- `case`: `--backup`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`, `--subvert`, `--to`
+- `codemod`: `--backup`, `--dry-run`, `--keep-backup`, `--no-backup`, `--retention`, `--rules`, `--strict-atomic`
+- `commands`: `--brief`, `--include-globals`
+- `completions`: `--install`
+- `config`: no local flag of its own, only the global set
+- `copy`: `--backup`, `--dry-run`, `--force`, `--keep-backup`, `--no-backup`, `--no-reflink`, `--preserve-xattr`, `--preserve`, `--recursive`, `--retention`, `--strict-atomic`
+- `count`: `--by-extension`, `--by-size`, `--exclude`, `--include`, `--top`
+- `del`: `--backup`, `--dry-run`, `--force-missing`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`
+- `delete`: `--backup`, `--confirm`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--no-backup`, `--older-than`, `--plan`, `--recursive`, `--retention`, `--yes`
+- `diff`: `--algorithm`, `--context`, `--stat`, `--unified`
+- `doctor`: `--strict`
+- `edit`: `--after-line`, `--after-match`, `--allow-sequential-drift`, `--backup`, `--before-line`, `--before-match`, `--between`, `--delete-range`, `--dry-run`, `--expect-checksum`, `--fuzzy-threshold`, `--fuzzy`, `--keep-backup`, `--line-ending`, `--multi`, `--new-file`, `--new`, `--no-backup`, `--old-file`, `--old`, `--partial`, `--preserve-timestamps`, `--range`, `--replace-all`, `--retention`, `--strict-atomic`, `--wal-policy`
+- `edit-loop`: `--allow-sequential-drift`, `--backup`, `--keep-backup`, `--line-ending`, `--no-backup`, `--partial`, `--retention`, `--strict-atomic`, `--syntax-check`
+- `extract`: `--delimiter`, `--field`, `--stdin`
+- `extract-artifact`: `--max-sample-rows`, `--max-text-chars`
+- `get`: no local flag of its own, only the global set
+- `hash`: `--exclude`, `--recursive`, `--stdin`, `--verify`
+- `list`: `--all`, `--count-by-ext`, `--depth`, `--exclude`, `--format`, `--include`, `--long`
+- `locale`: `--clear`, `--set`
+- `move`: `--backup`, `--dry-run`, `--force`, `--keep-backup`, `--no-backup`, `--preserve-hardlinks`, `--retention`
+- `outline`: `--format`, `--kind`, `--language`, `--positions`
+- `prune-backups`: `--dry-run`, `--max-age-secs`, `--max-count`, `--recursive`
+- `query`: `--kinds`, `--language`, `--positions`, `--query`, `--tree`
+- `read`: `--all`, `--bytes`, `--context`, `--crop`, `--dpi`, `--enclosing`, `--force`, `--format`, `--grep`, `--head`, `--high-res`, `--line`, `--lines`, `--max-tokens`, `--no-comments`, `--number`, `--ocr`, `--page`, `--pages`, `--stat`, `--symbol`, `--tail`, `--verify-checksum`
+- `recipe`: no local flag of its own, only the global set
+- `regex`: `--case-insensitive`, `--digits`, `--no-anchors`, `--repetitions`, `--spaces`, `--stdin`, `--words`
+- `replace`: `--backup`, `--dry-run`, `--exclude`, `--expect-checksum`, `--fuzzy-threshold`, `--fuzzy`, `--include`, `--keep-backup`, `--literal`, `--max-replacements`, `--no-backup`, `--preserve-case`, `--preserve-timestamps`, `--preview`, `--progress-every`, `--regex`, `--retention`, `--strict-atomic`, `--word`
+- `rollback`: `--backup`, `--dry-run`, `--keep-backup`, `--latest`, `--no-backup`, `--retention`, `--strict-atomic`, `--timestamp`, `--verify`
+- `scope`: `--action`, `--backup`, `--delete`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--language`, `--no-backup`, `--pattern`, `--query`, `--replace-with`, `--retention`, `--strict-atomic`
+- `scratch`: no local flag of its own, only the global set
+- `search`: `--binary`, `--case-insensitive`, `--context`, `--count`, `--exclude`, `--files`, `--fixed`, `--format`, `--include-fifo`, `--include`, `--invert`, `--limit`, `--max-columns`, `--max-count`, `--max-filesize`, `--multiline`, `--no-begin-end`, `--offset`, `--pcre2`, `--regex`, `--smart-case`, `--sort`, `--target`, `--word`
+- `semantic-merge`: `--backup`, `--base`, `--dry-run`, `--expect-checksum`, `--fail-on-conflict`, `--keep-backup`, `--no-backup`, `--no-conflict-markers`, `--ours`, `--output`, `--retention`, `--strict-atomic`, `--theirs`, `--write-conflict-markers`
+- `semantic-search`: `--include-backups`, `--index-dir`, `--k`, `--min-score`
+- `set`: `--backup`, `--dry-run`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`
+- `sparse`: no local flag of its own, only the global set
+- `stat`: `--all`, `--bytes`, `--context`, `--crop`, `--dpi`, `--enclosing`, `--force`, `--format`, `--grep`, `--head`, `--high-res`, `--line`, `--lines`, `--max-tokens`, `--no-comments`, `--number`, `--ocr`, `--page`, `--pages`, `--stat`, `--symbol`, `--tail`, `--verify-checksum`
+- `transform`: `--backup`, `--dry-run`, `--exclude`, `--include`, `--inline-rules`, `--keep-backup`, `--language`, `--no-backup`, `--pattern`, `--retention`, `--rewrite`, `--rules`, `--strict-atomic`, `--verify-parse`
+- `verify`: no local flag of its own, only the global set
+- `wal-heal`: `--dry-run`, `--max-duration-ms`, `--threshold-secs`
+- `wal-stats`: `--dry-run`
+- `watch`: `--checksum`, `--debounce-ms`, `--gitignore`, `--idle-exit-ms`, `--max-events`
+- `write`: `--ack-overwrite`, `--allow-empty-stdin`, `--allow-shrink`, `--append`, `--auto-rotate`, `--backup`, `--confirm`, `--dry-run`, `--durability`, `--expect-checksum`, `--keep-backup`, `--line-ending`, `--max-size`, `--no-backup`, `--no-checksum-when-empty`, `--prepend`, `--preserve-timestamps`, `--require-backup`, `--require-large-ack`, `--retention`, `--risk-threshold`, `--strict-atomic`, `--syntax-check`, `--wal-policy`

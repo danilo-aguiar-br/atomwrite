@@ -368,6 +368,8 @@ pub fn cmd_scope(
                             checksum_before: checksum.clone(),
                             checksum_after: checksum,
                             elapsed_ms: file_start.elapsed().as_millis() as u64,
+                            write_strategy: "none",
+                            backup_skipped: None,
                             risk_assessment: None,
                         })),
                     );
@@ -415,6 +417,8 @@ pub fn cmd_scope(
                     return ignore::WalkState::Continue;
                 }
 
+                // A dry run takes no write path, so the verdict starts at `none`.
+                let mut verdict: (&'static str, Option<String>) = ("none", None);
                 if !dry_run {
                     let opts = AtomicWriteOptions {
                         backup,
@@ -422,18 +426,23 @@ pub fn cmd_scope(
                         ..Default::default()
                     };
                     // A1: refuse to overwrite a file that changed since it was read.
-                    if let Err(e) = crate::atomic::atomic_write_based(
+                    match crate::atomic::atomic_write_based(
                         &path,
                         content.as_bytes(),
                         &opts,
                         &ws,
                         Some(&checksum_before),
                     ) {
-                        tracing::warn!(path = %path.display(), error = %e, "scope write failed");
-                        ff.fetch_add(1, Ordering::Relaxed);
-                        // Receiver may have dropped during shutdown — send failure is expected
-                        send_to_consumer(&tx, ScopeEvent::Failed(path, e));
-                        return ignore::WalkState::Continue;
+                        Ok(result) => {
+                            verdict = (result.write_strategy, result.backup_skipped);
+                        }
+                        Err(e) => {
+                            tracing::warn!(path = %path.display(), error = %e, "scope write failed");
+                            ff.fetch_add(1, Ordering::Relaxed);
+                            // Receiver may have dropped during shutdown — send failure is expected
+                            send_to_consumer(&tx, ScopeEvent::Failed(path, e));
+                            return ignore::WalkState::Continue;
+                        }
                     }
                 }
                 // Counted only after the write succeeded (or on dry-run).
@@ -470,6 +479,8 @@ pub fn cmd_scope(
                         checksum_before,
                         checksum_after,
                         elapsed_ms: file_start.elapsed().as_millis() as u64,
+                        write_strategy: verdict.0,
+                        backup_skipped: verdict.1,
                         risk_assessment,
                     })),
                 );

@@ -120,6 +120,7 @@ fn staged(name: &str, bytes: &[u8]) -> (TempDir, std::path::PathBuf) {
 fn run_extract(path: &Path) -> (i32, Vec<serde_json::Value>, usize) {
     let workspace = path.parent().expect("fixture parent");
     let output = common::atomwrite()
+        .arg("-v")
         .arg("--workspace")
         .arg(workspace)
         .arg("extract-artifact")
@@ -409,7 +410,6 @@ fn corrupt_zip_fails_closed_with_a_clear_error() {
     assert_eq!(code, 65, "INVALID_INPUT owns the corrupt-artifact case");
     let event = &events[0];
     assert_eq!(event["ok"], false);
-    assert_eq!(event["error"], true);
     assert_eq!(event["code"], "INVALID_INPUT");
     assert_eq!(event["exit"], 65);
     assert!(
@@ -498,6 +498,7 @@ fn directory_target_fails_closed_with_a_redirect() {
     let nested = dir.path().join("pasta");
     std::fs::create_dir(&nested).expect("create dir");
     let output = common::atomwrite()
+        .arg("-v")
         .arg("--workspace")
         .arg(dir.path())
         .arg("extract-artifact")
@@ -557,6 +558,7 @@ fn default_binary_does_not_carry_the_continuous_mode() {
     // with the closed-feature error instead of a live filesystem watcher.
     let dir = tempfile::tempdir().expect("temp dir");
     let output = common::atomwrite()
+        .arg("-v")
         .arg("--workspace")
         .arg(dir.path())
         .arg("watch")

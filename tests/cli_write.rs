@@ -202,6 +202,7 @@ fn write_expect_checksum_drift_after_external_modify() {
 
     let output = common::atomwrite()
         .args([
+            "-v",
             "--workspace",
             dir.path().to_str().unwrap(),
             "write",
@@ -396,7 +397,7 @@ fn g120_empty_stdin_rejected_by_default() {
     std::fs::write(&target, "original content\n").expect("seed");
 
     let output = common::atomwrite()
-        .args(["--workspace", dir.path().to_str().unwrap(), "write"])
+        .args(["-v", "--workspace", dir.path().to_str().unwrap(), "write"])
         .arg(&target)
         .write_stdin("") // explicit empty stdin
         .output()
@@ -410,7 +411,7 @@ fn g120_empty_stdin_rejected_by_default() {
 
     let events = common::parse_ndjson(&output.stdout);
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0]["error"], true);
+    assert_eq!(events[0]["ok"], false);
     assert_eq!(events[0]["code"], "INVALID_INPUT");
     assert!(
         events[0]["message"].as_str().unwrap().contains("0 bytes"),
@@ -483,6 +484,7 @@ fn g120_append_empty_stdin_rejected_with_existing_file() {
 
     let output = common::atomwrite()
         .args([
+            "-v",
             "--workspace",
             dir.path().to_str().unwrap(),
             "write",

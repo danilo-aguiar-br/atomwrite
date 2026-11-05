@@ -238,6 +238,7 @@ fn edit_rejects_old_argv_with_new_file() {
 
     let output = common::atomwrite()
         .args([
+            "-v",
             "--workspace",
             dir.path().to_str().unwrap(),
             "edit",
@@ -273,6 +274,7 @@ fn edit_rejects_old_file_with_new_argv() {
 
     let output = common::atomwrite()
         .args([
+            "-v",
             "--workspace",
             dir.path().to_str().unwrap(),
             "edit",

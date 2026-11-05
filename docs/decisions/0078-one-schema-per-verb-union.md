@@ -19,7 +19,7 @@ Accepted (2026-10-31), supersedes the name list of ADR-0067
 
 ### 2. The error envelope is a branch of every union
 - `union_of` appends the `ErrorJson` branch to every union it builds, including the ones that already existed.
-- `diff` keeps its `oneOf` and gains the envelope as a fifth branch, exclusive because no record of the verb carries `error`.
+- `diff` keeps its `oneOf` and gains the envelope as a fifth branch, exclusive because no record of the verb carries `ok: false` with a `code`.
 
 ### 3. The terminal branch stays closed
 - `close_terminal_schema` returns early when the root holds `anyOf` or `oneOf`, because a union root declares no keys of its own.

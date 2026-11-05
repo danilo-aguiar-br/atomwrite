@@ -65,7 +65,11 @@ fn explicit_target_roots(command: &Commands) -> Option<Vec<std::path::PathBuf>> 
         Commands::EditLoop(a) => vec![a.path.clone()],
         Commands::Set(a) => vec![a.path.clone()],
         Commands::Del(a) => vec![a.path.clone()],
-        Commands::Apply(a) => vec![a.file.clone()],
+        // A patch that names its own files carries the target inside the
+        // stdin document, so there is no root on the invocation line. Each
+        // written file publishes its own `path`, and the envelope of that
+        // event names it.
+        Commands::Apply(a) => a.file.clone().map(|file| vec![file])?,
         Commands::Rollback(a) => vec![a.path.clone()],
         Commands::Copy(a) => vec![a.target.clone()],
         Commands::Move(a) => vec![a.target.clone()],
@@ -144,14 +148,14 @@ fn read_target_roots(
 fn resolve_read_targets(
     command: &Commands,
     workspace: &std::path::Path,
-) -> Option<(String, commands::path_resolution::TargetSource)> {
+) -> Option<(Vec<String>, commands::path_resolution::TargetSource)> {
     use commands::path_resolution::{
         STDIN_TARGET, TargetMode, TargetSource, resolve_mutation_targets,
     };
     if let Commands::Hash(a) = command
         && a.stdin
     {
-        return Some((STDIN_TARGET.to_string(), TargetSource::Stdin));
+        return Some((vec![STDIN_TARGET.to_string()], TargetSource::Stdin));
     }
     let (roots, ambient) = read_target_roots(command)?;
     let source = if ambient {
@@ -185,7 +189,7 @@ fn resolve_read_targets(
             parts.push(resolved.next()?);
         }
     }
-    Some((parts.join(","), source))
+    Some((parts, source))
 }
 
 /// Stamp `target_resolved` / `target_source` for the read-only answer verbs.
@@ -194,10 +198,10 @@ fn stamp_read_target<W: Write>(
     writer: &mut NdjsonWriter<W>,
     workspace: &std::path::Path,
 ) {
-    let Some((joined, source)) = resolve_read_targets(command, workspace) else {
+    let Some((parts, source)) = resolve_read_targets(command, workspace) else {
         return;
     };
-    writer.set_target(joined, source.as_str());
+    writer.set_targets(parts, source.as_str());
 }
 
 /// Refuse `--confirm-side-effect` on a verb that writes nothing.
@@ -220,7 +224,7 @@ fn reject_side_effect_ack_without_side_effect(
     if global.side_effect_mode() != cli::SideEffectMode::Acknowledged {
         return Ok(());
     }
-    if explicit_target_roots(command).is_some() {
+    if explicit_target_roots(command).is_some() || matches!(command, Commands::Apply(_)) {
         return Ok(());
     }
     Err(crate::error::AtomwriteError::InvalidInput {
@@ -253,12 +257,11 @@ fn stamp_explicit_target<W: Write>(
     let Ok(resolved) = resolve_mutation_targets(&roots, workspace, TargetMode::Explicit) else {
         return;
     };
-    let joined = resolved
+    let parts = resolved
         .iter()
         .map(|t| t.target_resolved.display().to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    writer.set_target(joined, TargetSource::Argv.as_str());
+        .collect::<Vec<_>>();
+    writer.set_targets(parts, TargetSource::Argv.as_str());
 }
 
 /// Resolved subject of a failing run, for the error envelope `main` writes.
@@ -269,13 +272,15 @@ fn stamp_explicit_target<W: Write>(
 /// answer is the same one the success path uses: the roots in argv for a verb
 /// with side effects, and the config file of `--scope` for `config`.
 #[must_use]
-pub fn error_envelope_target(cli: &cli::Cli) -> Option<(String, String)> {
+pub fn error_envelope_target(cli: &cli::Cli) -> Option<(serde_json::Value, String)> {
     use commands::path_resolution::{TargetMode, TargetSource, resolve_mutation_targets};
     let workspace = cli.global.resolve_workspace().ok()?;
     if let Commands::Config(args) = &cli.command {
         let file = commands::config_cmd::target_file(args, &workspace)?;
         return Some((
-            file.display().to_string(),
+            serde_json::Value::Array(vec![serde_json::Value::String(
+                file.display().to_string(),
+            )]),
             TargetSource::Argv.as_str().to_string(),
         ));
     }
@@ -284,24 +289,46 @@ pub fn error_envelope_target(cli: &cli::Cli) -> Option<(String, String)> {
         && let Some(path) = locale::preference_path()
     {
         return Some((
-            path.display().to_string(),
+            serde_json::Value::Array(vec![serde_json::Value::String(
+                path.display().to_string(),
+            )]),
+            TargetSource::Argv.as_str().to_string(),
+        ));
+    }
+    // A patch that names its own files carries the target inside the request,
+    // so the invocation line has none of it. The verb hands the refused file
+    // over instead of leaving the envelope unable to say what was not touched.
+    if matches!(&cli.command, Commands::Apply(_))
+        && let Some(path) = commands::apply::refused_target()
+    {
+        return Some((
+            serde_json::Value::Array(vec![serde_json::Value::String(path)]),
             TargetSource::Argv.as_str().to_string(),
         ));
     }
     // The failing run names the subject the same way the succeeding one does:
     // `count`/`list` over the default `.` is `workspace` on both paths, and a
     // `hash --stdin` failure names the stream instead of staying unstamped.
-    if let Some((joined, source)) = resolve_read_targets(&cli.command, &workspace) {
-        return Some((joined, source.as_str().to_string()));
+    if let Some((parts, source)) = resolve_read_targets(&cli.command, &workspace) {
+        return Some((targets_value(parts), source.as_str().to_string()));
     }
     let roots = explicit_target_roots(&cli.command)?;
     let resolved = resolve_mutation_targets(&roots, &workspace, TargetMode::Explicit).ok()?;
-    let joined = resolved
+    let parts = resolved
         .iter()
         .map(|t| t.target_resolved.display().to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    Some((joined, TargetSource::Argv.as_str().to_string()))
+        .collect::<Vec<_>>();
+    Some((targets_value(parts), TargetSource::Argv.as_str().to_string()))
+}
+
+/// JSON form of the resolved subjects, always an array.
+///
+/// The array is what lets a caller read every subject back: a joined string
+/// cannot be split, because a path may hold the separator the join used. One
+/// subject is a one-item array, so the shape never depends on the count the
+/// caller has not read yet.
+fn targets_value(parts: Vec<String>) -> serde_json::Value {
+    serde_json::Value::Array(parts.into_iter().map(serde_json::Value::String).collect())
 }
 
 /// Stamp the preference file that `locale --set` / `--clear` writes.
@@ -400,6 +427,22 @@ fn dispatch_command<R: Read, W: Write>(
             }
             if search_cfg.smart_case && !args.case_insensitive {
                 args.smart_case = true;
+            }
+            // The flag wins over the config: `None` means the caller did not
+            // name a format at all. A parsed `Ndjson` cannot tell the two
+            // apart, which is why the field is an `Option`.
+            if args.format.is_none() {
+                args.format = Some(match search_cfg.format.as_str() {
+                    "text" => crate::cli::SearchFormat::Text,
+                    _ => crate::cli::SearchFormat::Ndjson,
+                });
+            }
+            // `rg -e` semantics: once any pattern comes from `-e`, every
+            // positional is a path, so the file name is not eaten as a pattern.
+            if !args.regex.is_empty() {
+                if let Some(positional) = args.pattern.take() {
+                    args.paths.insert(0, std::path::PathBuf::from(positional));
+                }
             }
             commands::search::cmd_search(&args, &cli.global, writer, shutdown)
         }

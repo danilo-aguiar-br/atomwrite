@@ -17,12 +17,15 @@ expression: event
   "fuzzy": false,
   "strategy": "exact",
   "strategies_tried": 1,
-  "diff_preview": " old_text",
+  "diff_preview": "-old_text+new_text",
   "mtime_preserved": false,
   "match_count": 1,
   "indent_adjusted": false,
+  "write_strategy": "rename",
   "ok": true,
   "workspace_source": "argv",
-  "target_resolved": "[redacted]",
-  "target_source": "argv"
+  "target_source": "argv",
+  "target_resolved": [
+    "[redacted]"
+  ]
 }

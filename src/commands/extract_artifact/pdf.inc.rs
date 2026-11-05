@@ -5,15 +5,21 @@ use lopdf::{Document, Object};
 
 /// Extract page count, page geometry and document information from a `PDF`.
 ///
-/// Only the object model is read: page content streams are never decoded and
-/// never forwarded. A `MediaBox` is reported for the first page, because that is
-/// the figure an agent uses to decide printability.
+/// The `MediaBox` is reported for the first page, because that is the figure an
+/// agent uses to decide printability. The text of the first pages is decoded
+/// with the same decompression ceiling the reader uses, so this verb no longer
+/// answers `text: null` for a document that has text.
 ///
 /// # Errors
 ///
 /// Returns `AtomwriteError::InvalidInput` when the file is not a parseable PDF
 /// or when it is encrypted with a password this command cannot supply.
-fn extract_pdf(path: &std::path::Path, _max_part: u64, output: &mut ArtifactOutput) -> Result<()> {
+fn extract_pdf(
+    path: &std::path::Path,
+    max_text_chars: usize,
+    _max_part: u64,
+    output: &mut ArtifactOutput,
+) -> Result<()> {
     let doc = Document::load(path).map_err(|e| {
         corrupt(
             path,
@@ -46,6 +52,32 @@ fn extract_pdf(path: &std::path::Path, _max_part: u64, output: &mut ArtifactOutp
     output.title = title;
     output.author = author;
     output.producer = producer;
+
+    // Text the document carries, bounded by the page budget and the caller's
+    // character ceiling. A page whose stream inflates past the ceiling is
+    // skipped rather than aborting the whole extraction.
+    let probe: Vec<u32> = (1..=pages.len() as u32)
+        .take(crate::constants::PDF_TEXT_MAX_PAGES)
+        .collect();
+    let mut text = String::new();
+    if let Ok(extracted) = crate::media::pdf_text::extract_pages(
+        path,
+        &probe,
+        crate::constants::PDF_MAX_DECOMPRESSED_BYTES,
+    ) {
+        for page in extracted {
+            if page.text.trim().is_empty() {
+                continue;
+            }
+            text.push_str(&page.text);
+            text.push('\n');
+        }
+    }
+    let trimmed = text.trim();
+    if !trimmed.is_empty() {
+        output.text_chars = Some(trimmed.chars().count() as u64);
+        output.text_excerpt = Some(truncate_chars(trimmed, max_text_chars));
+    }
     Ok(())
 }
 

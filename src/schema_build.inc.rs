@@ -229,7 +229,7 @@ fn writer_stamped_properties() -> Vec<(&'static str, serde_json::Value)> {
         ),
         (
             "target_resolved",
-            serde_json::json!({"type": "string", "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order"}),
+            serde_json::json!({"type": "array", "items": {"type": "string"}, "description": "Absolute targets the run resolved, in invocation order, and never a joined string, so a path holding `,` stays readable; a run with one target publishes a one-item array, so the shape never depends on the count"}),
         ),
         (
             "target_source",
@@ -276,6 +276,29 @@ fn with_envelope_keys(mut schema: schemars::Schema) -> schemars::Schema {
                 map.entry(key).or_insert(definition);
             }
         }
+    }
+    schema
+}
+
+/// Schema of the error envelope this build really writes.
+///
+/// `message`, `error_class` and `retryable` are declared but not required: the
+/// default envelope drops them because they restate `code`, `exit` and
+/// `suggestion`, and only `-v` brings them back. A schema that demanded them
+/// would reject every failure the product publishes without `-v`.
+fn error_output_schema() -> schemars::Schema {
+    let mut schema = with_envelope_keys(schemars::schema_for!(crate::error::ErrorJson));
+    if let Some(required) = schema
+        .as_object_mut()
+        .and_then(|root| root.get_mut("required"))
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        required.retain(|key| {
+            !matches!(
+                key.as_str(),
+                Some("message" | "error_class" | "retryable")
+            )
+        });
     }
     schema
 }
@@ -337,7 +360,7 @@ fn file_verb_schema(name: &str) -> Option<schemars::Schema> {
         "scope" => return scope_output_schema(),
         "backup" => return backup_output_schema(),
         "rollback" => schemars::schema_for!(ndjson_types::RollbackResult),
-        "apply" => schemars::schema_for!(ndjson_types::ApplyResult),
+        "apply" => return apply_output_schema(),
         "prune-backups" => {
             return record_with_own_summary(
                 schemars::schema_for!(ndjson_types::PruneBackupEntry),
@@ -396,7 +419,7 @@ fn event_schema(name: &str) -> Option<schemars::Schema> {
         "progress" => schemars::schema_for!(ndjson_types::ProgressEvent),
         // The writer stamps the resolved target on the error envelope too, so
         // the served schema declares the same two keys the success path has.
-        "error" => with_envelope_keys(schemars::schema_for!(crate::error::ErrorJson)),
+        "error" => error_output_schema(),
         "best-candidate" => schemars::schema_for!(ndjson_types::BestCandidate),
         "cancelled" => schemars::schema_for!(ndjson_types::CancelledEvent),
         "stream_diff" => schemars::schema_for!(crate::output::StreamDiffOutput),

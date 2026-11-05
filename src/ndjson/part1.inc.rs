@@ -39,6 +39,14 @@ pub struct ReadOutput {
     /// line count.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lines_total: Option<u64>,
+    /// Whether the byte ceiling cut the content (v0.1.39).
+    ///
+    /// Absent when nothing was cut, so a full read keeps its old shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncated: Option<bool>,
+    /// Ready-made command that reads the rest, when the ceiling cut content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
     /// File size in bytes.
     pub bytes: u64,
     /// BLAKE3 checksum of the file contents.
@@ -61,6 +69,40 @@ pub struct ReadOutput {
     /// "line" | "lines" | "grep" | "stat" | "raw". Allows downstream consumers to
     /// distinguish partial reads from full reads without parsing content.
     pub mode: String,
+    /// What the media channel measured, for a picture or a PDF.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media: Option<MediaInfo>,
+}
+
+/// Facts about a picture or a PDF page set, measured before delivery.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct MediaInfo {
+    /// Media family: `image` or `pdf`.
+    pub kind: String,
+    /// Picture width after orientation, absent for a PDF.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    /// Picture height after orientation, absent for a PDF.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    /// Format named by the magic bytes, or `pdf`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    /// Visual tokens the delivered picture costs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visual_tokens: Option<u64>,
+    /// Frames of an animated GIF.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frames: Option<u32>,
+    /// EXIF orientation that was applied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<u16>,
+    /// Pages whose text was returned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pages: Option<Vec<u32>>,
+    /// Pages that carry no text and therefore need the drawn page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub needs_vision: Option<Vec<u32>>,
 }
 
 /// NDJSON output for a per-file replace operation.
@@ -104,6 +146,23 @@ pub struct ReplaceResult {
     /// Local diagnostic for a payload that looks destructive (B-013).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub risk_assessment: Option<WriteRiskAssessment>,
+    /// Backup file written before the replacement, when one was requested.
+    ///
+    /// Without it the caller that asked for a backup had to list the directory
+    /// and guess which `.bak.*` belonged to this run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_path: Option<String>,
+    /// Write strategy the atomic layer used: `rename`, `inplace` or `copyback`.
+    ///
+    /// `replace` rewrites a file that already exists, so a target with more than
+    /// one hard link is written in place and keeps its inode. The checksums
+    /// cannot tell the two apart, and this field names the path that ran.
+    pub write_strategy: &'static str,
+    /// Why the requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_skipped: Option<String>,
 }
 
 /// NDJSON output for a surgical edit operation.
@@ -162,6 +221,15 @@ pub struct EditOutput {
     /// True when fuzzy indent delta realigned the replacement text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indent_adjusted: Option<bool>,
+    /// Write strategy the atomic layer used: `rename`, `inplace` or `copyback`.
+    ///
+    /// A target with more than one hard link is written in place so the other
+    /// links keep pointing at the same inode, and the event says which ran.
+    pub write_strategy: &'static str,
+    /// Why the requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_skipped: Option<String>,
     /// Local diagnostic for a payload that looks destructive (B-013).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub risk_assessment: Option<WriteRiskAssessment>,
@@ -184,6 +252,12 @@ pub struct RollbackResult {
     /// Whether checksum was verified post-restore.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verified: Option<bool>,
+    /// Write strategy the atomic engine used to restore the file.
+    pub write_strategy: &'static str,
+    /// Why a requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_skipped: Option<String>,
     /// Operation duration in milliseconds.
     pub elapsed_ms: u64,
 }
@@ -209,6 +283,12 @@ pub struct BatchSummary {
     /// Whether the transaction was committed (all operations succeeded).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub committed: Option<bool>,
+    /// Snapshots the commit kept because they are the only way back.
+    ///
+    /// A deletion or an overwritten destination has no other copy, so the
+    /// summary names them instead of leaving the caller to list the directory.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backups_preserved: Vec<String>,
 }
 
 /// NDJSON summary for a diff operation.
@@ -260,7 +340,15 @@ pub struct MoveOutput {
     pub atomic: bool,
     /// Path to backup file, if created.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
     pub backup_path: Option<String>,
+    /// Write strategy this move used: `rename` same-device, or the atomic
+    /// engine's value when the move crossed devices.
+    pub write_strategy: &'static str,
+    /// Why a requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_skipped: Option<String>,
     /// Duration in milliseconds.
     pub elapsed_ms: u64,
 }

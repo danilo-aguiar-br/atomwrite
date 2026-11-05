@@ -36,8 +36,19 @@ pub struct DeleteArgs {
     #[command(flatten)]
     pub backup_opts: BackupOpts,
 
-    /// Recurse into directories.
-    #[arg(short, long, help = "Recurse into directories", action = clap::ArgAction::SetTrue)]
+    /// Recurse into directories and own the whole named tree.
+    ///
+    /// Without a narrowing filter the verb removes hidden, ignored, linked,
+    /// fifo, socket and device entries, and a link is unlinked without being
+    /// followed. `--hidden`, `--no-gitignore` and `--follow-symlinks` are
+    /// accepted as no-ops that emit one diagnostic line, and `--backup` is
+    /// refused with a directory root because the copy would outlive the tree.
+    #[arg(
+        short,
+        long,
+        help = "Recurse into directories and remove the whole named tree",
+        action = clap::ArgAction::SetTrue
+    )]
     pub recursive: bool,
 
     /// Glob patterns for file inclusion.
@@ -111,8 +122,63 @@ pub struct ReadArgs {
     pub paths: Vec<PathBuf>,
 
     /// Line range to read (1-based, e.g. "1:50").
-    #[arg(long, help = "Line range to read (1-based, e.g. 1:50)")]
-    pub lines: Option<String>,
+    ///
+    /// Repeat the flag for several ranges (`--lines 1:3 --lines 10:12`), or
+    /// separate them with commas (`--lines 1:3,10:12`); they are emitted in
+    /// ascending order, with no line repeated.
+    #[arg(
+        long,
+        action = clap::ArgAction::Append,
+        visible_alias = "range",
+        help = "Line range to read (1-based, e.g. 1:50; repeatable)"
+    )]
+    pub lines: Vec<String>,
+
+    /// Read the whole file, ignoring the byte ceiling.
+    #[arg(
+        long,
+        help = "Read the whole file, ignoring the byte ceiling",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub all: bool,
+
+    /// Prefix every raw line with its 1-based number.
+    #[arg(
+        long,
+        help = "Prefix every raw line with its 1-based number",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub number: bool,
+
+    /// Drop comment and blank lines before selecting.
+    ///
+    /// The selector still counts the original line numbers, so `--lines` keeps
+    /// meaning the same lines it means without this flag.
+    #[arg(
+        long,
+        help = "Drop comment and blank lines before selecting",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub no_comments: bool,
+
+    /// Read only the named symbol, resolved through tree-sitter.
+    ///
+    /// The name is matched against the structural nodes of the file, so the
+    /// answer is the whole definition and never a text guess.
+    #[arg(
+        long,
+        value_name = "NAME",
+        help = "Read only the named symbol, resolved through tree-sitter"
+    )]
+    pub symbol: Option<String>,
+
+    /// Expand `--line` to the structural block that contains it.
+    #[arg(
+        long,
+        help = "Expand --line to the enclosing structural block",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub enclosing: bool,
 
     /// Single line number to read.
     #[arg(long, help = "Single line number with optional context")]
@@ -172,6 +238,86 @@ pub struct ReadArgs {
         help = "Filter returned lines to those matching this regex"
     )]
     pub grep: Option<String>,
+
+    /// Crop window `X,Y,W,H` in source pixels, applied before the resize.
+    ///
+    /// A picture is delivered as a `data:` URI on stdout; cropping first means
+    /// the model pays for the region it asked about and not for the page
+    /// around it.
+    #[arg(long, value_name = "X,Y,W,H", help = "Crop a picture to X,Y,W,H before resizing")]
+    pub crop: Option<String>,
+
+    /// Hard ceiling on visual tokens, overrides the tier ceiling.
+    ///
+    /// The picture is resized until the 28-pixel patch rule fits the number,
+    /// so the cost is chosen by the caller instead of discovered afterwards.
+    #[arg(long, value_name = "N", help = "Resize a picture to at most N visual tokens")]
+    pub max_tokens: Option<u32>,
+
+    /// Deliver a picture again after it was already delivered in this session.
+    ///
+    /// The first read of a picture records its BLAKE3 under the agent session,
+    /// and a repeat answers with the facts instead of paying for the same
+    /// `data:` URI twice. This flag asks for the bytes again.
+    #[arg(
+        long,
+        help = "Deliver a picture again after it was already delivered in this session",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub force: bool,
+
+    /// Pages of a PDF to read, as `N` or `A:B`.
+    ///
+    /// Repeatable, so several windows arrive in one call. A page that carries
+    /// no text is reported with `needs_vision`, because a scanned page is not
+    /// an empty page.
+    #[arg(
+        long,
+        value_name = "PAGES",
+        action = clap::ArgAction::Append,
+        help = "PDF pages to read, as N or A:B (repeatable)"
+    )]
+    pub pages: Vec<String>,
+
+    /// Render one PDF page and deliver it as a picture.
+    ///
+    /// A scanned page has no text to extract, so `--pages` reports it as
+    /// `needs_vision`. This flag renders the page instead, and the result
+    /// arrives through the same `data:` URI a picture uses.
+    #[arg(long, value_name = "N", help = "Render PDF page N and deliver it as a picture")]
+    pub page: Option<u32>,
+
+    /// Resolution a rendered PDF page comes out at, in dots per inch.
+    ///
+    /// The default is the smallest one that keeps small print legible. Drop it
+    /// when the page would exceed the pixel ceiling, and raise it when the
+    /// text is too small to read.
+    #[arg(
+        long,
+        value_name = "DPI",
+        help = "Resolution of a rendered PDF page, in dots per inch"
+    )]
+    pub dpi: Option<f32>,
+
+    /// Read the page as text by recognizing the characters on it.
+    ///
+    /// A scan has no text layer, so every text verb answers "nothing" and the
+    /// caller believes the page is empty. This runs the recognition models in
+    /// process and returns what the page actually says. The model files are
+    /// fetched once into the cache directory, so the first run needs a network.
+    #[arg(
+        long,
+        help = "Read a picture or a rendered page as text, by recognizing its characters"
+    )]
+    pub ocr: bool,
+
+    /// Use the high-resolution image tier.
+    #[arg(
+        long,
+        help = "Use the high-resolution image tier (2576 px, 4784 visual tokens)",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub high_res: bool,
 }
 
 /// Fuzzy matching behavior for --old/--new edit mode.

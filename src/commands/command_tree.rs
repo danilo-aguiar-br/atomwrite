@@ -29,6 +29,25 @@ pub struct CommandsTreeArgs {
         help = "Include global flags under the root node"
     )]
     pub include_globals: bool,
+
+    /// One record per subcommand, name and one-line summary, no arguments.
+    ///
+    /// The full tree answers "what can I call"; a caller that only needs the
+    /// verb names paid for every flag of every verb to read a list of 47 names.
+    #[arg(
+        long,
+        action = clap::ArgAction::SetTrue,
+        help = "One line per subcommand: name and summary only"
+    )]
+    pub brief: bool,
+}
+
+/// One subcommand in `commands --brief` output.
+#[derive(Serialize)]
+struct BriefCommand<'a> {
+    r#type: &'static str,
+    name: &'a str,
+    about: &'a str,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -80,6 +99,17 @@ pub fn cmd_commands_tree(
     let about = cmd.get_about().map(|s| s.to_string()).unwrap_or_default();
     let mut commands: Vec<CommandNode> = cmd.get_subcommands().map(command_node).collect();
     commands.sort_by(|a, b| a.name.cmp(&b.name));
+
+    if args.brief {
+        for command in &commands {
+            writer.write_event(&BriefCommand {
+                r#type: "command",
+                name: &command.name,
+                about: &command.about,
+            })?;
+        }
+        return Ok(());
+    }
 
     let global_args = if args.include_globals {
         arg_nodes(&cmd)

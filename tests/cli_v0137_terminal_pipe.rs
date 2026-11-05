@@ -202,6 +202,11 @@ fn read_closed_pipe_exits_141_instead_of_zero() {
                 "read",
                 "--format",
                 "raw",
+                // v0.1.38 stops `read` at 24.000 bytes, which fits inside the
+                // pipe buffer and would let the run finish before the reader
+                // closes. `--all` asks for the whole stream, which is the case
+                // this contract is about.
+                "--all",
                 target.to_str().expect("utf8 path"),
             ],
         );

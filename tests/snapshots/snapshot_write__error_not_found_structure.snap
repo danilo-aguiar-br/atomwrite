@@ -3,16 +3,12 @@ source: tests/snapshot_write.rs
 expression: event
 ---
 {
-  "error": true,
   "ok": false,
   "code": "FILE_NOT_FOUND",
   "exit": 4,
-  "message": "[redacted]",
-  "path": "[redacted]",
-  "error_class": "permanent",
-  "retryable": false,
   "suggestion": "[redacted]",
-  "suggestion_lang": "pt-BR",
-  "target_resolved": "[redacted]",
-  "target_source": "argv"
+  "path": "[redacted]",
+  "target_resolved": [
+    "[redacted]"
+  ]
 }

@@ -18,7 +18,7 @@ use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::atomic::{AtomicWriteOptions, atomic_write};
+use crate::atomic::{AtomicWriteOptions, atomic_write, atomic_write_based};
 use crate::checksum;
 use crate::cli::GlobalArgs;
 use crate::concurrency::should_parallelize;

@@ -117,4 +117,9 @@ pub struct WriteResult {
     pub rename_method: &'static str,
     /// Backup method if backup was created (v0.1.29 P2-3).
     pub backup_method: Option<&'static str>,
+    /// Why the requested backup was skipped, when the directory refused it.
+    ///
+    /// The write proceeds without a copy, so the caller must learn that
+    /// `backup_path` is empty for a reason and not because none was asked.
+    pub backup_skipped: Option<String>,
 }

@@ -66,7 +66,7 @@ fn get_toml_missing_key_returns_not_found() {
     let events = common::parse_ndjson(stdout.as_bytes());
     let err_event = events
         .iter()
-        .find(|e| e.get("error").and_then(|v| v.as_bool()) == Some(true));
+        .find(|e| e.get("ok").and_then(|v| v.as_bool()) == Some(false));
     assert!(err_event.is_some(), "should emit JSON error envelope");
     let err = err_event.unwrap();
     assert_eq!(

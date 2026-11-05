@@ -4,14 +4,37 @@
 [Leia em Português](INSTALL.pt-BR.md)
 
 - Complete instructions for installing atomwrite on Linux, macOS, and Windows
-- Current target version: v0.1.37 (risk assessment on every writing verb; typed exit 69 `GRAMMAR_UNAVAILABLE`; `write.content_risk_patterns` reachable by `config`; workspace `[log]` honoured; 47 subcommands; slim/full feature builds)
+- Current target version: v0.1.38 (failure envelope with `ok`, `code` and `exit`; inode lock shared by `delete`; recursive `delete` owns the whole named tree; picture, PDF and OCR reading; 47 subcommands; slim/full feature builds)
 - Sections ordered by platform, with prerequisites and troubleshooting
+
+
+## Objectives
+- Spend fewer tokens: one NDJSON object per call replaces the shell pipeline, and `commands --brief` answers in 5 020 bytes where the full tree costs 67 492
+- Lower the financial cost, because the bill follows the tokens and the round trips, and one call replaces the several shell calls a file task needs
+- Reduce errors with an atomic write and a BLAKE3 checksum on every response, so a stale or partial result is caught instead of assumed
+- Reduce hallucinations with a `type` discriminator, a closed schema per verb and an exit code that names the failure
+- Reduce the time spent on each task, because the read, the search and the write run in one process instead of a chain of shell tools
+- Reduce latency with local execution and no network on the file path, measured at medians of 5.6 ms on `read` and 6.7 ms on `write` for small files
+- Multiply the speed of operations with `batch`, `edit-loop`, `replace`, `case`, `transform` and `codemod` settling many files in one call
+- Cut the lead time between the request and the verified result, because the response already carries the checksum, the `target_resolved` and the next step
+- Make the agent faster, more effective and more assertive, since the exit code, the `code` and the `suggestion` say what to do next without a retry guess
+
+
+## What's New in v0.1.38
+- The failure envelope carries `ok`, `code` and `exit`, and `error: true` left it, which removes 13 bytes from every failure
+- `delete` takes the same inode lock before it hashes and unlinks, and `delete -r` owns the whole named tree
+- `read` sends a picture as one `data:` URI, returns PDF text by page, and `--ocr` recognizes a picture or a rendered page in pure Rust
+- `output.profile = "lean"` drops the digests, the byte counts and the timing from a successful mutation record, which took one `apply` on a three-line file from 433 bytes to 196
+- `outline` reads a Markdown heading as a `section` that runs to the end of its own section, and `read --symbol Part` returns that whole section with its sub-sections
+- A file whose image signature is damaged fails `read` with exit 65 `INVALID_INPUT` instead of returning its bytes as text
+- `config` lists 43 keys, and the full suite ran 134 test executables with 1486 tests on 2026-11-04
+- Pin agents to `^0.1.38`
 
 
 ## What's New in v0.1.37
 - Risk assessment: `edit`, `edit-loop`, `replace`, `case`, `transform` and `codemod` publish `risk_assessment` when the payload matches a content-risk pattern, the same field `write` already had
 - New exit status `69` `GRAMMAR_UNAVAILABLE` with class `precondition_failed`: a grammar that is missing and cannot be downloaded names the language instead of reporting exit 255 `INTERNAL_ERROR`
-- `write.content_risk_patterns` is a list value in `config get` / `config set`, so the risk patterns are XDG configuration; the table holds 37 keys
+- `write.content_risk_patterns` is a list value in `config get` / `config set`, so the risk patterns are XDG configuration; the table holds 43 keys
 - `log.file` and `log.rotation` are accepted in the workspace scope too, and the `[log]` section of `.atomwrite.toml` now starts the log sink
 - `batch --transaction` publishes one verdict: the `rollback` event carries `ok: false` with the `code` and `exit` of the failure that caused it
 - `atomwrite doctor` publishes the check `grammar_cache` with how many of the 23 grammars the AST verbs can need are already cached
@@ -21,7 +44,7 @@
 - Agent-contract residual: `scratch init`, content-source jail, global `--select`/`--fields`, `--filter`, `--limit` (long-only; no global `-n`)
 - Error envelopes always emit (`ok:false`); `--filter` does not silence failures
 - SSOT surface: 47 subcommands — `atomwrite agent-surface` / `CANONICAL_SUBCOMMAND_COUNT`
-- New `config` verb (`path|list|get|set|unset`, 37 keys, `--scope global|workspace` required on `path`, `set` and `unset`); `cargo xtask check-features` checks the slim feature sets
+- New `config` verb (`path|list|get|set|unset`, 43 keys, `--scope global|workspace` required on `path`, `set` and `unset`); `cargo xtask check-features` checks the slim feature sets
 - `atomwrite --version` prints `atomwrite 0.1.37 (no-git) <target triple>` at that release (the source is `no-git` when no git repository tracks this crate, otherwise the short commit id). Since v0.1.37 the string no longer carries a `-dirty` suffix, so an untracked file cannot change it
 - Pin agents to `^0.1.37`. Suites: `cargo test --test cli_v0137_config_verb --test cli_v0137_terminal_event --test cli_v0137_version`. Decisions: ADR-0058 onward (index in `docs/decisions/README.md`)
 - Minimum Rust is 1.90 (`rust-version` in `Cargo.toml`, edition 2024). The repository `rust-toolchain.toml` pins the 1.94 channel for contributors
@@ -41,7 +64,7 @@ atomwrite commands --include-globals
 atomwrite doctor --strict
 ```
 
-Compact inventory of all 47 names (`CANONICAL_SUBCOMMAND_COUNT`), each with a one-line summary and an example that was run against `atomwrite 0.1.37`:
+Compact inventory of all 47 names (`CANONICAL_SUBCOMMAND_COUNT`), each with a one-line summary and an example that was run against `atomwrite 0.1.38` on 2026-11-04:
 
 - Setup of the examples: `WS` is the absolute path of an empty workspace that holds `src/a.rs` (an `unwrap()` and a comment), `src/b.rs` (the word `beta` once), `src/c.rs` (with `user_id`), `src/tmp.rs`, `config.toml` (a `[package]` table with `name` and a `[features]` table with `x`), `notes.txt`, `tmp.txt`, `base.txt`, `ours.txt`, `theirs.txt`, `img.png` and `rules.yaml` (a YAML list with `id`, `language`, `pattern` and `rewrite`)
 - `HASH_A` is the `checksum` that `hash src/a.rs` prints
@@ -51,7 +74,7 @@ Compact inventory of all 47 names (`CANONICAL_SUBCOMMAND_COUNT`), each with a on
 - `read` — Read a file with checksum, size and lines, optionally only head/tail/range. Example: `atomwrite --workspace "$WS" read --head 2 src/a.rs`
 - `write` — Create or overwrite a file atomically from stdin. Example: `printf 'x\n' | atomwrite --workspace "$WS" write notes/new.txt`
 - `edit` — Edit a file by exact or fuzzy text match, line number or marker. Example: `atomwrite --workspace "$WS" edit src/b.rs --old beta --new gamma`
-- `delete` — Delete files or trees with backup, or only print the plan. Example: `atomwrite --workspace "$WS" delete --plan tmp.txt`
+- `delete` — Delete files or trees, copying one only when the call asks, or only print the plan. Example: `atomwrite --workspace "$WS" delete --plan tmp.txt`
 - `copy` — Copy a file or tree with checksum verification. Example: `atomwrite --workspace "$WS" copy src/a.rs src/a_copy.rs`
 - `move` — Move or rename a file atomically. Example: `atomwrite --workspace "$WS" move src/tmp.rs src/tmp2.rs`
 - `apply` — Apply a patch (unified diff, SEARCH/REPLACE, full file) from stdin. Example: `printf 'new body\n' | atomwrite --workspace "$WS" apply --format full notes.txt`
@@ -72,7 +95,7 @@ Compact inventory of all 47 names (`CANONICAL_SUBCOMMAND_COUNT`), each with a on
 - `rollback` — Restore a file from a previous backup. Example: `atomwrite --workspace "$WS" rollback src/a.rs --latest --verify`
 - `batch` — Run NDJSON operations from stdin, optionally as one transaction. Example: `printf '{"op":"write","target":"batch.txt","content":"x"}\n' | atomwrite --workspace "$WS" batch --transaction`
 - `edit-loop` — Apply N old/new pairs in one write, all or nothing. Example: `printf '[{"old":"gamma","new":"delta"}]\n' | atomwrite --workspace "$WS" edit-loop src/b.rs`
-- `prune-backups` — Remove old .bak files by age or count. Example: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run .`
+- `prune-backups` — Remove old .bak files by age or count. Example: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run --recursive .`
 - `wal-stats` — Show the state of WAL journals (read only). Example: `atomwrite --workspace "$WS" wal-stats`
 - `wal-heal` — Remove orphan terminal WAL journals older than a threshold. Example: `atomwrite --workspace "$WS" wal-heal --threshold-secs 3600 .`
 - `verify` — Check a file against an expected BLAKE3 hash (exit 0 match, 81 mismatch). Example: `atomwrite --workspace "$WS" verify src/a.rs HASH_A`
@@ -94,7 +117,7 @@ Compact inventory of all 47 names (`CANONICAL_SUBCOMMAND_COUNT`), each with a on
 - `scratch` — Create the staging dir .atomwrite/scratch inside the workspace jail. Example: `atomwrite --workspace "$WS" scratch init .atomwrite/scratch`
 - `locale` — Show, set or clear the UI locale. Example: `atomwrite --workspace "$WS" locale`
 - `commands` — Print the full command tree as JSON. Example: `atomwrite --workspace "$WS" commands --include-globals`
-- `config` — Read and write persistent tuning keys (37 keys, scopes global and workspace). Example: `atomwrite --workspace "$WS" config get fuzzy.threshold`
+- `config` — Read and write persistent tuning keys (43 keys, scopes global and workspace). Example: `atomwrite --workspace "$WS" config get fuzzy.threshold`
 
 
 ## What's New in v0.1.35
@@ -142,8 +165,8 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 - `posix_fadvise` is correctly gated to `cfg(target_os = "linux")` only (no-op on macOS).
 
 ### Test Coverage
-- Current (v0.1.37): 131 test targets ran 1486 tests with 0 failures and 9 ignored (the `cross_compile_*` tests), as recorded in `CHANGELOG.md`
-- ADRs in `docs/decisions/` (0058 onward are the v0.1.37 decisions)
+- Current (v0.1.38): 131 test targets ran 1486 tests with 0 failures and 9 ignored (the `cross_compile_*` tests), measured on 2026-11-04 with `cargo test --no-fail-fast`
+- ADRs in `docs/decisions/` (0058 onward cover the v0.1.37 and v0.1.38 decisions)
 - The JSON schemas in `docs/schemas/`, where 54 files describe the 55 names `atomwrite --print-schema` lists
 - See [docs/decisions/README.md](decisions/README.md) for architectural decisions
 
@@ -157,8 +180,8 @@ The Windows 10/11 fix from v0.1.4 is preserved (cargo install now succeeds). v0.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Install atomwrite v0.1.37 from crates.io
-cargo install atomwrite --locked --version "^0.1.37"
+# Install atomwrite v0.1.38 from crates.io
+cargo install atomwrite --locked --version "^0.1.38"
 # Or from a local clone:
 # cargo install --path . --locked --force
 
@@ -172,8 +195,8 @@ atomwrite --version
 # Install build tools (the distribution Rust must be 1.90 or newer; check `rustc --version`, otherwise use rustup as above)
 sudo dnf install rust cargo gcc
 
-# Install atomwrite v0.1.37 from crates.io
-cargo install atomwrite --locked --version "^0.1.37"
+# Install atomwrite v0.1.38 from crates.io
+cargo install atomwrite --locked --version "^0.1.38"
 # Or from a local clone:
 # cargo install --path . --locked --force
 ```
@@ -184,8 +207,8 @@ cargo install atomwrite --locked --version "^0.1.37"
 # The distribution Rust must be 1.90 or newer; check `rustc --version`, otherwise use rustup as above
 sudo pacman -S rust
 
-# Install atomwrite v0.1.37 from crates.io
-cargo install atomwrite --locked --version "^0.1.37"
+# Install atomwrite v0.1.38 from crates.io
+cargo install atomwrite --locked --version "^0.1.38"
 # Or from a local clone:
 # cargo install --path . --locked --force
 ```
@@ -200,8 +223,8 @@ cargo install atomwrite --locked --version "^0.1.37"
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Install atomwrite v0.1.37 from crates.io
-cargo install atomwrite --locked --version "^0.1.37"
+# Install atomwrite v0.1.38 from crates.io
+cargo install atomwrite --locked --version "^0.1.38"
 # Or from a local clone:
 # cargo install --path . --locked --force
 
@@ -234,10 +257,10 @@ cargo install --path . --locked --force
 rustup default stable
 rustup target add x86_64-pc-windows-msvc
 
-# Install atomwrite v0.1.37 from crates.io
-cargo install atomwrite --locked --version "^0.1.37"
+# Install atomwrite v0.1.38 from crates.io
+cargo install atomwrite --locked --version "^0.1.38"
 
-# Verify (expect one text line: atomwrite 0.1.37 (no-git) x86_64-pc-windows-msvc)
+# Verify (expect one text line: atomwrite 0.1.38 (no-git) x86_64-pc-windows-msvc)
 atomwrite --version
 ```
 
@@ -289,8 +312,8 @@ the file in the locking application and retry.
 ## Installing Specific Versions
 
 ```bash
-# Recommended: crates.io pin for v0.1.37
-cargo install atomwrite --locked --version "^0.1.37"
+# Recommended: crates.io pin for v0.1.38
+cargo install atomwrite --locked --version "^0.1.38"
 
 # From a local clone / working tree
 cargo install --path . --locked --force
@@ -299,9 +322,9 @@ cargo install --path . --locked --force
 cargo install atomwrite --locked --version 0.1.28
 
 # Force reinstall of the crates.io pin
-cargo install atomwrite --locked --version "^0.1.37" --force
+cargo install atomwrite --locked --version "^0.1.38" --force
 
-# Roll back to an exact version (a ^0.1.36 requirement would resolve to 0.1.37 again)
+# Roll back to an exact version (a ^0.1.36 requirement would resolve to 0.1.38 again)
 cargo install atomwrite --locked --version 0.1.36 --force
 ```
 
@@ -313,7 +336,7 @@ build that matches what the maintainers tested.
 
 ```bash
 atomwrite --version
-# Expect one text line: atomwrite 0.1.37 (no-git) <target triple>
+# Expect one text line: atomwrite 0.1.38 (no-git) <target triple>
 # The source is no-git when no git repository tracks the crate, otherwise the short commit id
 ```
 
@@ -334,18 +357,18 @@ The release binary is at `target/release/atomwrite` (or `atomwrite.exe` on
 Windows).
 
 
-## Slim vs Full Feature Builds (v0.1.37)
+## Slim vs Full Feature Builds (v0.1.38)
 
-v0.1.37 exposes Cargo features so you can trade AST size for a slim agent binary.
+v0.1.38 exposes Cargo features so you can trade AST size for a slim agent binary.
 
 | Profile | Command | Approx size | Notes |
 |---|---|---|---|
-| slim (`core` only) | `cargo install atomwrite --locked --version "^0.1.37" --no-default-features --features core` | 10.40 MiB | local size-gate ≤15 MiB |
-| default (full AST subset) | `cargo install atomwrite --locked --version "^0.1.37"` | 54.45 MiB | `core` + `ast` + `lang-rust` + `lang-ts` + `lang-py` |
-| default plus `watch` | `cargo install atomwrite --locked --version "^0.1.37" --features watch` | not measured | adds the `watch` subcommand to the default build |
-| `full` | `cargo install atomwrite --locked --version "^0.1.37" --features full` | not measured (larger than default) | default + `lang-full` + `watch` |
+| slim (`core` only) | `cargo install atomwrite --locked --version "^0.1.38" --no-default-features --features core` | 25.33 MiB | above the local size-gate of 15 MiB |
+| default (full AST subset) | `cargo install atomwrite --locked --version "^0.1.38"` | 67.79 MiB | `core` + `ast` + `lang-rust` + `lang-ts` + `lang-py` |
+| default plus `watch` | `cargo install atomwrite --locked --version "^0.1.38" --features watch` | not measured | adds the `watch` subcommand to the default build |
+| `full` | `cargo install atomwrite --locked --version "^0.1.38" --features full` | not measured (larger than default) | default + `lang-full` + `watch` |
 
-Sizes were measured with `cargo build --release --locked` for v0.1.37 on 2026-10-31: slim 10,908,040 bytes (DERIVADO: 10908040 / 1048576 = 10.40 MiB) and default 57,096,064 bytes (DERIVADO: 57096064 / 1048576 = 54.45 MiB). The slim binary answers `atomwrite 0.1.37` and exits 78 on `outline`. The `watch` and `full` profiles were not measured.
+Sizes were measured with `cargo build --release --locked` for v0.1.38 on 2026-11-04: slim 26,560,352 bytes (DERIVADO: 26560352 / 1048576 = 25.33 MiB) and default 71,084,440 bytes (DERIVADO: 71084440 / 1048576 = 67.79 MiB), and the slim build is above the 15 MiB gate recorded in ADR-0051. The slim binary answers `atomwrite 0.1.38` and exits 78 on `outline`, and the `watch` and `full` profiles were not measured.
 
 ### Feature flags
 - `core` — atomic read/write/edit/search/replace and other non-AST commands
@@ -402,7 +425,7 @@ atomwrite --help
 ## Files and Directories (XDG)
 - atomwrite reads no environment variable of its own. Paths follow the platform conventions of the `directories` crate, and the `directories` and `sys-locale` crates read `HOME`, `XDG_*` and `LANG` themselves (a deliberate deviation recorded in `CHANGELOG.md`)
 - Precedence of settings: command-line flags, then the `.atomwrite.toml` at the workspace root, then the global `config.toml`, then the built-in defaults. The two files are merged key by key
-- Inspect and change settings only through the verb: `atomwrite --workspace "$WS" config list`, `config get KEY`, and `config set KEY VALUE --scope global|workspace` (37 keys; `--scope` is required on `path`, `set` and `unset`)
+- Inspect and change settings only through the verb: `atomwrite --workspace "$WS" config list`, `config get KEY`, and `config set KEY VALUE --scope global|workspace` (43 keys; `--scope` is required on `path`, `set` and `unset`)
 
 | What | Linux (measured) | macOS (read from `src/storage.rs`, not run) | Windows (read from `src/storage.rs`, not run) |
 |---|---|---|---|
@@ -414,15 +437,15 @@ atomwrite --help
 | Workspace settings | `.atomwrite.toml` at the workspace root | same | same |
 
 - `storage.home` relocates the directories: `atomwrite config set storage.home DIR --scope global` makes the global config `DIR/config/config.toml`, and data, cache and state go to `DIR/data`, `DIR/cache` and `DIR/state`. The bootstrap `config.toml` that holds `storage.home` stays at the default config path, the old file is not moved, and `config unset storage.home --scope global` undoes it
-- The global scope accepts all 37 keys; `log.file`, `log.rotation`, `storage.home` and `locale` are global-only, and the workspace scope rejects them with exit 65
+- The global scope accepts all 43 keys; `log.file`, `log.rotation`, `storage.home` and `locale` are global-only, and the workspace scope rejects them with exit 65
 - On macOS and Windows the paths above come from reading the source and the `directories` documentation, and they were not run on those systems
 
 
 ### Config Keys (37)
-- `atomwrite config list` prints the 37 keys with `value`, `origin` and `default`; `origin` is `default`, `global`, `workspace` or `explicit` (when `--config PATH` replaces both files)
+- `atomwrite config list` prints the 43 keys with `value`, `origin` and `default`; `origin` is `default`, `global`, `workspace` or `explicit` (when `--config PATH` replaces both files)
 - `config list` and `config get KEY` take no `--scope`; `config path`, `config set` and `config unset` require `--scope global|workspace` and exit 2 without it
 - A value outside the accepted range exits 65 `INVALID_INPUT` and writes nothing; an unknown key exits 65 and lists the valid ones
-- Defaults and ranges below were measured on 0.1.37 with `config list` and `config set`
+- Defaults and ranges below were measured on 0.1.37 with `config list` and `config set`, and the five keys added in 0.1.38 were measured the same way on 2026-11-04
 
 | Key | Default | Accepted values | Scopes |
 |---|---|---|---|
@@ -438,11 +461,17 @@ atomwrite --help
 | `log.rotation` | `daily` | `daily`, `hourly` | global |
 | `storage.home` | none | a directory | global |
 | `locale` | none | `en`, `pt-BR` | global |
-| `defaults.backup` | `true` | `true`, `false` | global, workspace |
+| `output.profile` | `full` | `full`, `lean` | global, workspace |
+| `defaults.backup` | none (true for rewrites, false for delete) | `true`, `false` | global, workspace |
+| `delete.backup` | none (falls back to `defaults.backup`) | `true`, `false` | global, workspace |
 | `defaults.line_ending` | `auto` | `auto`, `lf`, `cr-lf`, `cr` | global, workspace |
 | `defaults.max_filesize` | 1073741824 | integer | global, workspace |
+| `apply.max_ellipsis_lines` | 200 | 1 to 9223372036854775807 | global, workspace |
 | `defaults.retention` | 5 | integer | global, workspace |
+| `read.max_output_bytes` | 24000 | 1 to 9223372036854775807 | global, workspace |
+| `read.number` | `false` | `true`, `false` | global, workspace |
 | `search.context` | 0 | integer | global, workspace |
+| `search.format` | `ndjson` | `ndjson`, `text` | global, workspace |
 | `search.max_columns` | 500 | 1 or more | global, workspace |
 | `search.max_filesize` | 10485760 | 1 or more | global, workspace |
 | `search.smart_case` | `true` | `true`, `false` | global, workspace |
@@ -464,7 +493,7 @@ atomwrite --help
 | `extract.max_sheets` | 32 | 1 to 10000 | global, workspace |
 | `extract.max_slides` | 64 | 1 to 10000 | global, workspace |
 
-- The file may carry more fields than these keys (for example `defaults.line_ending` and `defaults.max_filesize`, which are read but do nothing, and `[watch]` fields); the `config` verb manages only the 37 keys above
+- The file may carry more fields than these keys (for example `defaults.line_ending` and `defaults.max_filesize`, which are read but do nothing, and `[watch]` fields); the `config` verb manages only the 43 keys above
 
 
 ## Shell Completions
@@ -494,10 +523,10 @@ After installing v0.1.15 or later, run the WAL health commands to confirm the ne
 atomwrite --workspace . wal-stats
 ```
 
-Expected NDJSON envelope on an empty workspace (measured on 0.1.37):
+Expected NDJSON envelope on an empty workspace (measured on 0.1.38):
 
 ```json
-{"type":"wal_stats","total_journals":0,"by_state":{"started":0,"committed":0,"aborted":0,"malformed":0},"oldest_journal_age_secs":0,"total_size_bytes":0,"by_directory":[],"auto_heal_recommended":false,"estimated_reclaim_bytes":0,"ok":true}
+{"type":"wal_stats","total_journals":0,"by_state":{"started":0,"committed":0,"aborted":0,"malformed":0},"oldest_journal_age_secs":0,"total_size_bytes":0,"by_directory":[],"auto_heal_recommended":false,"estimated_reclaim_bytes":0,"ok":true,"workspace_source":"argv"}
 ```
 
 The `auto_heal_recommended` and `estimated_reclaim_bytes` fields point to terminal journals (Committed or Aborted) that `wal-heal` can remove. A journal in the `started` state is never removed by `wal-heal`, because it may belong to a write that crashed: a `kill -9` still leaves one by design.
@@ -511,7 +540,7 @@ The G119 L3 layer adds `wal-heal` to remove terminal journals (Committed and Abo
 atomwrite --workspace . wal-heal . --threshold-secs 0
 ```
 
-Measured output on an empty workspace: `{"type":"wal_heal","removed":0,"preserved":0,"malformed":0,"bytes_reclaimed":0,"threshold_secs":0,"ok":true,...}` with `target_resolved` and `target_source` after it.
+Measured output on an empty workspace: `{"type":"wal_heal","removed":0,"preserved":0,"dead_owner_removed":0,"malformed":0,"bytes_reclaimed":0,"threshold_secs":0,"ok":true,"workspace_source":"argv","target_source":"argv","target_resolved":["<WS>"]}`
 
 Use this command in post-install smoke tests or after a crash recovery sweep.
 
@@ -542,7 +571,7 @@ per the GAP 14 fix in v0.1.4 (preserved for historical reference, but you should
 
 
 ## Verification Status
-- Validated: Linux x86_64 (`x86_64-unknown-linux-gnu`), with the final run of v0.1.37 recorded in `CHANGELOG.md`: 131 test targets, 1486 tests passed, 0 failed and 9 ignored
+- Validated: Linux x86_64 (`x86_64-unknown-linux-gnu`), with the final run of v0.1.38 measured on 2026-11-04: 131 test targets, 1486 tests passed, 0 failed and 9 ignored
 - Validated by compilation only: `cargo check --lib` passes for `x86_64-pc-windows-gnu`, so the `cfg(windows)` pair (SIGPIPE, `restrict_to_owner`, `persist_retry.rs`) compiles, and no Windows binary was ever run
 - Not validated: every Windows and macOS execution path, because no machine of either system was used, and the Apple targets stop at `cc-rs` for want of the C toolchain
 - Compiles: four `cross_compile_*` tests passed on 2026-10-31, and the other five need targets this host does not have (see Cross-Compile Validation)
@@ -624,7 +653,58 @@ cargo install atomwrite --locked --version "^0.1.22"
 atomwrite --version
 
 # Smoke test the new subcommands
-atomwrite --workspace . prune-backups --max-age-secs 86400 --dry-run .
+atomwrite --workspace . prune-backups --max-age-secs 86400 --dry-run --recursive .
 printf '%s\n' '{"old":"foo","new":"bar"}' \
   | atomwrite --workspace . edit-loop src/foo.rs
 ```
+
+
+## Every local flag, by command
+- This list names every local flag of each command, and the global flags stay in `atomwrite --help`.
+- `agent-surface`: `--format`
+- `apply`: `--ack-overwrite`, `--all`, `--allow-shrink`, `--backup`, `--dry-run`, `--format`, `--keep-backup`, `--no-backup`, `--no-syntax-check`, `--retention`, `--show`, `--strict-atomic`
+- `backup`: `--dry-run`, `--output-dir`, `--retention`
+- `batch`: `--backup`, `--batch-size`, `--dry-run`, `--file`, `--input-schema`, `--keep-backup`, `--no-backup`, `--retention`, `--strict-atomic`, `--transaction`
+- `calc`: `--stdin`
+- `case`: `--backup`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`, `--subvert`, `--to`
+- `codemod`: `--backup`, `--dry-run`, `--keep-backup`, `--no-backup`, `--retention`, `--rules`, `--strict-atomic`
+- `commands`: `--brief`, `--include-globals`
+- `completions`: `--install`
+- `config`: no local flag of its own, only the global set
+- `copy`: `--backup`, `--dry-run`, `--force`, `--keep-backup`, `--no-backup`, `--no-reflink`, `--preserve-xattr`, `--preserve`, `--recursive`, `--retention`, `--strict-atomic`
+- `count`: `--by-extension`, `--by-size`, `--exclude`, `--include`, `--top`
+- `del`: `--backup`, `--dry-run`, `--force-missing`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`
+- `delete`: `--backup`, `--confirm`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--no-backup`, `--older-than`, `--plan`, `--recursive`, `--retention`, `--yes`
+- `diff`: `--algorithm`, `--context`, `--stat`, `--unified`
+- `doctor`: `--strict`
+- `edit`: `--after-line`, `--after-match`, `--allow-sequential-drift`, `--backup`, `--before-line`, `--before-match`, `--between`, `--delete-range`, `--dry-run`, `--expect-checksum`, `--fuzzy-threshold`, `--fuzzy`, `--keep-backup`, `--line-ending`, `--multi`, `--new-file`, `--new`, `--no-backup`, `--old-file`, `--old`, `--partial`, `--preserve-timestamps`, `--range`, `--replace-all`, `--retention`, `--strict-atomic`, `--wal-policy`
+- `edit-loop`: `--allow-sequential-drift`, `--backup`, `--keep-backup`, `--line-ending`, `--no-backup`, `--partial`, `--retention`, `--strict-atomic`, `--syntax-check`
+- `extract`: `--delimiter`, `--field`, `--stdin`
+- `extract-artifact`: `--max-sample-rows`, `--max-text-chars`
+- `get`: no local flag of its own, only the global set
+- `hash`: `--exclude`, `--recursive`, `--stdin`, `--verify`
+- `list`: `--all`, `--count-by-ext`, `--depth`, `--exclude`, `--format`, `--include`, `--long`
+- `locale`: `--clear`, `--set`
+- `move`: `--backup`, `--dry-run`, `--force`, `--keep-backup`, `--no-backup`, `--preserve-hardlinks`, `--retention`
+- `outline`: `--format`, `--kind`, `--language`, `--positions`
+- `prune-backups`: `--dry-run`, `--max-age-secs`, `--max-count`, `--recursive`
+- `query`: `--kinds`, `--language`, `--positions`, `--query`, `--tree`
+- `read`: `--all`, `--bytes`, `--context`, `--crop`, `--dpi`, `--enclosing`, `--force`, `--format`, `--grep`, `--head`, `--high-res`, `--line`, `--lines`, `--max-tokens`, `--no-comments`, `--number`, `--ocr`, `--page`, `--pages`, `--stat`, `--symbol`, `--tail`, `--verify-checksum`
+- `recipe`: no local flag of its own, only the global set
+- `regex`: `--case-insensitive`, `--digits`, `--no-anchors`, `--repetitions`, `--spaces`, `--stdin`, `--words`
+- `replace`: `--backup`, `--dry-run`, `--exclude`, `--expect-checksum`, `--fuzzy-threshold`, `--fuzzy`, `--include`, `--keep-backup`, `--literal`, `--max-replacements`, `--no-backup`, `--preserve-case`, `--preserve-timestamps`, `--preview`, `--progress-every`, `--regex`, `--retention`, `--strict-atomic`, `--word`
+- `rollback`: `--backup`, `--dry-run`, `--keep-backup`, `--latest`, `--no-backup`, `--retention`, `--strict-atomic`, `--timestamp`, `--verify`
+- `scope`: `--action`, `--backup`, `--delete`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--language`, `--no-backup`, `--pattern`, `--query`, `--replace-with`, `--retention`, `--strict-atomic`
+- `scratch`: no local flag of its own, only the global set
+- `search`: `--binary`, `--case-insensitive`, `--context`, `--count`, `--exclude`, `--files`, `--fixed`, `--format`, `--include-fifo`, `--include`, `--invert`, `--limit`, `--max-columns`, `--max-count`, `--max-filesize`, `--multiline`, `--no-begin-end`, `--offset`, `--pcre2`, `--regex`, `--smart-case`, `--sort`, `--target`, `--word`
+- `semantic-merge`: `--backup`, `--base`, `--dry-run`, `--expect-checksum`, `--fail-on-conflict`, `--keep-backup`, `--no-backup`, `--no-conflict-markers`, `--ours`, `--output`, `--retention`, `--strict-atomic`, `--theirs`, `--write-conflict-markers`
+- `semantic-search`: `--include-backups`, `--index-dir`, `--k`, `--min-score`
+- `set`: `--backup`, `--dry-run`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`
+- `sparse`: no local flag of its own, only the global set
+- `stat`: `--all`, `--bytes`, `--context`, `--crop`, `--dpi`, `--enclosing`, `--force`, `--format`, `--grep`, `--head`, `--high-res`, `--line`, `--lines`, `--max-tokens`, `--no-comments`, `--number`, `--ocr`, `--page`, `--pages`, `--stat`, `--symbol`, `--tail`, `--verify-checksum`
+- `transform`: `--backup`, `--dry-run`, `--exclude`, `--include`, `--inline-rules`, `--keep-backup`, `--language`, `--no-backup`, `--pattern`, `--retention`, `--rewrite`, `--rules`, `--strict-atomic`, `--verify-parse`
+- `verify`: no local flag of its own, only the global set
+- `wal-heal`: `--dry-run`, `--max-duration-ms`, `--threshold-secs`
+- `wal-stats`: `--dry-run`
+- `watch`: `--checksum`, `--debounce-ms`, `--gitignore`, `--idle-exit-ms`, `--max-events`
+- `write`: `--ack-overwrite`, `--allow-empty-stdin`, `--allow-shrink`, `--append`, `--auto-rotate`, `--backup`, `--confirm`, `--dry-run`, `--durability`, `--expect-checksum`, `--keep-backup`, `--line-ending`, `--max-size`, `--no-backup`, `--no-checksum-when-empty`, `--prepend`, `--preserve-timestamps`, `--require-backup`, `--require-large-ack`, `--retention`, `--risk-threshold`, `--strict-atomic`, `--syntax-check`, `--wal-policy`

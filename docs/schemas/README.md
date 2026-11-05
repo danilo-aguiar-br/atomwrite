@@ -3,7 +3,12 @@
 
 ## English
 ### Update
-- Last updated: 2026-10-31 (v0.1.37)
+- Last updated: 2026-11-03 (v0.1.38)
+- New in v0.1.38: `write_strategy`, `backup_skipped` and `backup_path` declare a plain string wherever they appear, because an absent field is omitted from the event and never serialized as `null`; `apply-result.schema.json` became the union of `plan`, `applied` and `rollback`
+- New in v0.1.38, second pass: the `rollback` record of `batch-output.schema.json` declares `failed_paths` and `backups_preserved`, both arrays omitted when empty, so a reversal that stops halfway names the files it could not restore and the snapshots it left on disk
+- New in v0.1.38, third pass: `target_resolved` is one `array` of strings in every schema, including the error envelope, instead of the former string-or-array union, so a consumer reads one shape and never inspects the count first
+- New in v0.1.38, third pass: the `batch_op` record declares `backup_path` and `warnings`, the summary declares `backups_preserved`, and the `rollback` record of `apply` declares `backups_preserved`, all omitted when empty
+- New in v0.1.38, fourth pass: the description of `backups_preserved` in the `rollback` record now says that the last entry is the copy of the file whose write failed, and the 54 files were regenerated from the binary
 - 55 schema names served by `atomwrite --print-schema`, backed by 54 files in this directory: 54 files are the schema of one served name (two names, `read` and `stat`, share `read-output.schema.json`), and `write-risk` serves `write-risk-assessment.schema.json`, so the nested risk object has a door of its own and no file is an orphan
 - Each file is meant to be identical to what the binary serves; the refresh procedure and the name-to-file map are below
 - New in v0.1.37: `config.schema.json`; `extract-artifact.schema.json`; `count-by-ext-output` and `count-by-size-output`; one union per verb, where `recipe`, `codemod`, `batch`, `search`, `replace`, `list`, `backup`, `semantic-search`, `sparse`, `semantic-merge`, `case` and `watch` serve every record they write plus the error envelope in one document; success events list the optional `ok`, `code`, `exit`, `target_resolved` and `target_source`, plus the cut counters `records_suppressed`, `files_budget_dropped`, `files_planned`, `truncated` and `truncated_records`, where `records_suppressed` counts records and `files_budget_dropped` counts entries in the unit the verb produces
@@ -41,7 +46,7 @@
 - `rollback-result.schema.json` -- output of `atomwrite rollback`
 - `set-result.schema.json` -- output of `atomwrite set` (v0.1.12, v14 Tier 3: dotted-path key write; `action: set`)
 - `wal-recovery.schema.json` -- output of `recover_orphan_journals` consultive API and `atomwrite wal-heal` recovery reports (v0.1.12, G114: `JournalEntry::{Started, Committed, Aborted}` reports)
-- `apply-result.schema.json` -- output of `atomwrite apply`
+- `apply-result.schema.json` -- output of `atomwrite apply` (`--print-schema apply`; union of `plan` on a dry run, one `applied` record per file and the `rollback` record of a failed run, plus the error envelope)
 - `case-output.schema.json` -- output of `atomwrite case` (`--print-schema case`; union of `case` or `case_preview`, the terminal summary and the error envelope) (v0.1.12, v14 Tier 3: identifier case conversion; `files_modified`, `identifiers_renamed`)
 - `del-result.schema.json` -- output of `atomwrite del` (v0.1.12, v14 Tier 3: key deletion; `action: deleted|already_missing`)
 - `error-output.schema.json` -- error envelope emitted by all subcommands (v0.1.37: declares `target_resolved` and `target_source`, because the writer stamps the resolved subject on the failure path too; v0.1.15: adds `failed_pair_index`, `pairs_total`, `pair_results` -- G117; v0.1.4: adds `suggestion`; v0.1.29: adds `best_candidate`; v0.1.36: required `ok: false` + present `match_count`)
@@ -208,16 +213,20 @@
 - Every summary that publishes `files_failed` publishes `partial: true` beside it, and that covers `search`, `transform`, `replace`, `scope`, `count`, `list`, `sparse`, `semantic-search`, `case`, `backup` and `prune-backups`. Each `errors[]` entry has `path`, `code` and `message`, `path` is the marker `<walk>` when the walk failed without naming a file of its own, and the list stops at `summary.errors_max_entries` entries while `files_failed` keeps the full count
 - `count` serves `CountTotalOutput` (`count-summary`); `count --by-extension` serves `count-by-ext`; `count --by-size` serves `count-by-size`
 - Success events list `ok`, `code` and `exit` (the last two only when `ok` is false) and `target_resolved` and `target_source` as optional properties
-- Every file is produced with the Refresh Procedure below: a file is the output of `atomwrite --print-schema NAME`, so `apply-result`, `backup-output`, `prune-backups-output`, `rollback-result` and `scope-result` carry the fields of the structs the binary serializes. Only `write-risk-assessment.schema.json` has no served name
+- Every file is produced with the Refresh Procedure below: a file is the output of `atomwrite --print-schema NAME`, so `apply-result`, `backup-output`, `prune-backups-output`, `rollback-result` and `scope-result` carry the fields of the structs the binary serializes. Every file here has a served name, and `write-risk-assessment.schema.json` is served as `write-risk`
 - Contract suites: `cargo test --test cli_v0137_terminal_event --test cli_v0137_terminal_schema`
 
 
 ## Português
 ### Atualização
-- Última atualização: 2026-10-31 (v0.1.37)
+- Última atualização: 2026-11-03 (v0.1.38)
+- Novo na v0.1.38, terceira passada: `target_resolved` é um só `array` de strings em todo schema, inclusive no envelope de erro, em vez da antiga união de string com array, então o consumidor lê uma forma e nunca inspeciona a contagem antes
+- Novo na v0.1.38, terceira passada: o registro `batch_op` declara `backup_path` e `warnings`, o resumo declara `backups_preserved`, e o registro `rollback` do `apply` declara `backups_preserved`, todos omitidos quando vazios
+- Novo na v0.1.38, quarta passada: a descrição de `backups_preserved` no registro `rollback` passa a dizer que a última entrada é a cópia do arquivo cuja escrita falhou, e os 54 arquivos foram regerados pelo binário
 - 54 arquivos de schema neste diretório e 55 nomes servidos por `atomwrite --print-schema`: 54 arquivos são o schema de um nome servido (dois nomes, `read` e `stat`, dividem o `read-output.schema.json`), e `write-risk` serve o `write-risk-assessment.schema.json`, então o objeto aninhado de risco tem porta própria e nenhum arquivo fica órfão
 - Cada arquivo deve ser idêntico ao que o binário serve; o procedimento de atualização e o mapa nome-arquivo estão abaixo
 - Novo na v0.1.37: `config.schema.json`; `extract-artifact.schema.json`; `count-by-ext-output` e `count-by-size-output`; uma união por verbo, em que `recipe`, `codemod`, `batch`, `search`, `replace`, `list`, `backup`, `semantic-search`, `sparse`, `semantic-merge`, `case` e `watch` servem num só documento todo registro que escrevem mais o envelope de erro; eventos de sucesso listam os opcionais `ok`, `code`, `exit`, `target_resolved` e `target_source`, mais os contadores de corte `records_suppressed`, `files_budget_dropped`, `files_planned`, `truncated` e `truncated_records`, onde `records_suppressed` conta registros e `files_budget_dropped` conta entradas na unidade que o verbo produz
+- Novo na v0.1.38: o registro `rollback` do `batch-output.schema.json` declara `failed_paths` e `backups_preserved`, os dois arrays omitidos quando vazios, então uma reversão que para no meio nomeia os arquivos que não voltaram e os snapshots que ficaram no disco
 - Superfície SSOT: 47 tools via `agent-surface` / `CANONICAL_SUBCOMMAND_COUNT`
 
 ### Objetivo
@@ -252,7 +261,7 @@
 - `rollback-result.schema.json` -- saída do `atomwrite rollback`
 - `set-result.schema.json` -- saída do `atomwrite set` (v0.1.12, v14 Tier 3: escrita de chave via dotted-path; `action: set`)
 - `wal-recovery.schema.json` -- saída da API consultiva `recover_orphan_journals` e relatórios de recuperação do `atomwrite wal-heal` (v0.1.12, G114: `JournalEntry::{Started, Committed, Aborted}` reports)
-- `apply-result.schema.json` -- saída do `atomwrite apply`
+- `apply-result.schema.json` -- saída do `atomwrite apply` (`--print-schema apply`; união de `plan` no dry run, um registro `applied` por arquivo e o registro `rollback` de execução falha, mais o envelope de erro)
 - `case-output.schema.json` -- saída do `atomwrite case` (`--print-schema case`; união de `case` ou `case_preview`, o resumo terminal e o envelope de erro) (v0.1.12, v14 Tier 3: conversão de case de identificadores; `files_modified`, `identifiers_renamed`)
 - `del-result.schema.json` -- saída do `atomwrite del` (v0.1.12, v14 Tier 3: deleção de chave; `action: deleted|already_missing`)
 - `error-output.schema.json` -- envelope de erro emitido por todos os subcomandos (v0.1.37: declara `target_resolved` e `target_source`, porque o writer carimba o sujeito resolvido também no caminho de falha; v0.1.15: adiciona `failed_pair_index`, `pairs_total`, `pair_results` -- G117; v0.1.4: adiciona `suggestion`; v0.1.29: adiciona `best_candidate`; v0.1.36: `ok` obrigatório `false` + `match_count`)
@@ -419,5 +428,5 @@
 - Todo resumo que publica `files_failed` publica `partial: true` ao lado, e isso cobre `search`, `transform`, `replace`, `scope`, `count`, `list`, `sparse`, `semantic-search`, `case`, `backup` e `prune-backups`. Cada entrada de `errors[]` tem `path`, `code` e `message`, `path` é o marcador `<walk>` quando a varredura falhou sem nomear um arquivo próprio, e a lista para em `summary.errors_max_entries` entradas enquanto `files_failed` guarda a contagem total
 - `count` serve `CountTotalOutput` (`count-summary`); `count --by-extension` serve `count-by-ext`; `count --by-size` serve `count-by-size`
 - Eventos de sucesso listam `ok`, `code` e `exit` (os dois últimos só quando `ok` é false) e `target_resolved` e `target_source` como propriedades opcionais
-- Todo arquivo é produzido com o Procedimento de Atualização abaixo: um arquivo é a saída de `atomwrite --print-schema NOME`, então `apply-result`, `backup-output`, `prune-backups-output`, `rollback-result` e `scope-result` trazem os campos dos structs que o binário serializa. Só o `write-risk-assessment.schema.json` não tem nome servido
+- Todo arquivo é produzido com o Procedimento de Atualização abaixo: um arquivo é a saída de `atomwrite --print-schema NOME`, então `apply-result`, `backup-output`, `prune-backups-output`, `rollback-result` e `scope-result` trazem os campos dos structs que o binário serializa. Todo arquivo aqui tem nome servido, e o `write-risk-assessment.schema.json` é servido como `write-risk`
 - Suites de contrato: `cargo test --test cli_v0137_terminal_event --test cli_v0137_terminal_schema`

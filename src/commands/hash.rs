@@ -103,15 +103,15 @@ pub fn cmd_hash(
 
     // One multi-root WalkParallel (docs.rs: prefer `.add` over N walks).
     if !dir_roots.is_empty() && !crate::signal::is_global_shutdown() {
-        // Hashing a tree means every file in it, dotfiles included, so this verb
-        // takes the always-hidden flavor of the one shared walker.
+        // Hashing a tree follows the same hidden policy as the other walking
+        // verbs, so a dotfile needs `--hidden`; a path named directly is hashed.
         // An ignore file the walk half-reads is a hole too, and `ignore` never
         // reports it by itself.
         crate::concurrency::record_ignore_file_failures(&dir_roots, Some(&failures));
         let mut builder = crate::commands::build_scoped_walker_flavored(
             &dir_roots,
             global,
-            crate::commands::WalkerFlavor::AlwaysVisitHidden,
+            crate::commands::WalkerFlavor::RespectGlobalFlags,
             &[],
             &[],
         )?;

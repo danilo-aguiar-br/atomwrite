@@ -25,6 +25,8 @@ fn drain_transform_events(
                 checksum_after,
                 elapsed_ms,
                 risk_assessment,
+                write_strategy,
+                backup_skipped,
             } => {
                 writer.write_event(&TransformResult {
                     r#type: "transformed",
@@ -38,6 +40,8 @@ fn drain_transform_events(
                     checksum_after,
                     elapsed_ms,
                     risk_assessment,
+                    write_strategy,
+                    backup_skipped,
                 })?;
             }
             TransformEvent::Error { path, error } => failures.record(&path, error),
@@ -58,6 +62,8 @@ enum TransformEvent {
         checksum_after: String,
         elapsed_ms: u64,
         risk_assessment: Option<crate::ndjson_types::WriteRiskAssessment>,
+        write_strategy: &'static str,
+        backup_skipped: Option<String>,
     },
     /// A file that could not be read, checked or written; the error travels whole.
     Error { path: PathBuf, error: anyhow::Error },

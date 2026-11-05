@@ -37,6 +37,12 @@ pub struct SyntaxErrorLocation {
     pub message: String,
 }
 
+/// No language detection without tree-sitter, so a caller treats the file as
+/// non-source.
+pub fn detect_language_name(_path: &Path, _content: &[u8]) -> Option<String> {
+    None
+}
+
 /// No-op syntax check without tree-sitter.
 ///
 /// # Errors

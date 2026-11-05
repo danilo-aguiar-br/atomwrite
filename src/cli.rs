@@ -76,10 +76,27 @@ impl Cli {
     pub fn parser() -> clap::Command {
         use clap::CommandFactory;
         let keys = crate::commands::config_cmd::keys_help_block();
-        Cli::command().mut_subcommand("config", |sub| {
-            // The generated table plus the scopes block, in one blank line.
-            sub.after_long_help(format!("{keys}\n{}", EX_CONFIG_SCOPES))
-        })
+        // The 34 global flags carry `hide_short_help`, so `-h` lists the verb's
+        // own flags first. That trades one line of footer for the several
+        // hundred lines the shared block cost in every short help page: a
+        // caller that asks a command what it accepts no longer reads 34 flags
+        // it does not take there.
+        Cli::command()
+            // The root page keeps the same pointer, because the schema door is
+            // one of the flags the short help no longer prints.
+            // The root page keeps the status table and gains the pointer, so a
+            // caller that asks the product what it answers still reads every
+            // code, and still learns where the shared flags live.
+            .after_help(format!(
+                "{}\n{}",
+                crate::commands::agent_surface::exit_codes_help(),
+                GLOBALS_FOOTER
+            ))
+            .mut_subcommands(|sub| sub.after_help(GLOBALS_FOOTER))
+            .mut_subcommand("config", |sub| {
+                // The generated table plus the scopes block, in one blank line.
+                sub.after_long_help(format!("{keys}\n{}", EX_CONFIG_SCOPES))
+            })
     }
 }
 
@@ -189,7 +206,7 @@ impl GlobalArgs {
 /// Available subcommands for the CLI.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Read files with metadata, checksum, and optional content
+    /// Read files with metadata, checksum, and optional content; --symbol, --pages, --max-tokens and --crop pick the slice
     #[command(after_long_help = EX_READ)]
     Read(ReadArgs),
 
@@ -201,7 +218,7 @@ pub enum Commands {
     #[command(after_long_help = EX_EDIT)]
     Edit(EditArgs),
 
-    /// Search file contents in parallel (ripgrep engine)
+    /// Search file contents in parallel (ripgrep engine); --format text answers one line per match
     #[command(after_long_help = EX_SEARCH)]
     Search(SearchArgs),
 
@@ -213,7 +230,7 @@ pub enum Commands {
     #[command(after_long_help = EX_HASH)]
     Hash(HashArgs),
 
-    /// Delete files with optional backup
+    /// Delete files, copying one only when the call asks (`--backup` or `[defaults].backup = true`)
     #[command(after_long_help = EX_DELETE)]
     Delete(DeleteArgs),
 

@@ -35,6 +35,36 @@ enum Charge {
 /// carry their own verdict. Shaping (`--filter` / `--select` / `--limit`) is
 /// applied only when configured; the identity path serializes without an
 /// intermediate `serde_json::Value` (memory-friendly hot path).
+/// Text bytes already sent to stdout, and whether the budget was hit.
+///
+/// A one-shot process writes one text payload, so a module-level counter is the
+/// whole state this rule needs; it lives here because every text writer passes
+/// through [`NdjsonWriter::write_text_bytes`].
+static TEXT_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static TEXT_CAPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the shared text budget already stopped a payload.
+pub fn text_capped() -> bool {
+    TEXT_CAPPED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Report how many entries a capped text listing left out.
+///
+/// The writer sees one line at a time, so it cannot know the remainder: the
+/// verb that owns the listing supplies the count once its loop ends.
+pub fn note_text_omitted(verb: &str, omitted: u64) {
+    crate::best_effort::best_effort(
+        writeln!(
+            std::io::stderr().lock(),
+            "atomwrite: {verb} text output stopped at {} bytes of {}; {omitted} entries left out; use --format ndjson with --limit to page the rest",
+            TEXT_BYTES.load(std::sync::atomic::Ordering::Relaxed),
+            crate::constants::SEARCH_TEXT_MAX_BYTES
+        ),
+        "write text omission notice on stderr",
+    );
+}
+
+/// Buffered NDJSON writer shared by every subcommand.
 pub struct NdjsonWriter<W: Write> {
     writer: BufWriter<W>,
     shape: OutputShape,
@@ -59,7 +89,11 @@ pub struct NdjsonWriter<W: Write> {
     /// many the consumer did not receive.
     suppressed: u64,
     /// Absolute target the run resolved, stamped on terminal envelopes.
-    target_resolved: Option<String>,
+    ///
+    /// A string for a single subject and an array for several: a joined string
+    /// could not be split back, because a path may itself hold the separator,
+    /// and the caller has to read the target back before trusting it.
+    target_resolved: Option<serde_json::Value>,
     /// Origin of the target (`argv` or `workspace`), stamped with the target.
     target_source: Option<&'static str>,
     /// Origin of the workspace root (`argv` when `--workspace` was passed,
@@ -67,6 +101,8 @@ pub struct NdjsonWriter<W: Write> {
     workspace_source: Option<&'static str>,
     /// Tables read from stdin for `--join`; empty when the flag is not used.
     join_tables: Vec<JoinTable>,
+    /// Verb that owns the text payload, named by its cut notice.
+    text_verb: &'static str,
 }
 
 impl<W: Write> NdjsonWriter<W> {
@@ -89,7 +125,26 @@ impl<W: Write> NdjsonWriter<W> {
             target_source: None,
             workspace_source: None,
             join_tables: Vec::new(),
+            text_verb: "search",
         }
+    }
+
+    /// Apply the output profile resolved from configuration.
+    ///
+    /// The config is loaded after the writer exists (the `config` verb runs
+    /// before the load, so a broken file never blocks the verb that repairs it),
+    /// so the profile arrives here instead of in the constructor.
+    pub fn set_profile(&mut self, profile: crate::output::OutputProfile) {
+        self.shape.profile = profile;
+    }
+
+    /// Output profile this writer applies.
+    ///
+    /// A verb that answers with one record per file reads it here to fold those
+    /// records into a single line when the caller asked for `lean`.
+    #[must_use]
+    pub fn profile(&self) -> crate::output::OutputProfile {
+        self.shape.profile
     }
 
     /// Read the `--join` tables from `stdin`, once, before the command runs.
@@ -125,7 +180,21 @@ impl<W: Write> NdjsonWriter<W> {
     /// workspace root). Terminal success and failure envelopes carry both keys
     /// once this is set, and omit them while it is not.
     pub fn set_target(&mut self, resolved: String, source: &'static str) {
-        self.target_resolved = Some(resolved);
+        self.set_targets(vec![resolved], source);
+    }
+
+    /// Record several resolved targets in invocation order.
+    ///
+    /// The field is always an array, even when the run resolved a single
+    /// target: the caller reads one shape and never has to know the count
+    /// before choosing how to read it.
+    pub fn set_targets(&mut self, resolved: Vec<String>, source: &'static str) {
+        self.target_resolved = Some(serde_json::Value::Array(
+            resolved
+                .into_iter()
+                .map(serde_json::Value::String)
+                .collect(),
+        ));
         self.target_source = Some(source);
     }
 
@@ -346,6 +415,14 @@ impl<W: Write> NdjsonWriter<W> {
         Ok(())
     }
 
+    /// Name the verb that owns the text payload.
+    ///
+    /// The cut notice says which listing stopped, so a `list` page never
+    /// borrows the `search` wording and its remediation.
+    pub fn set_text_verb(&mut self, verb: &'static str) {
+        self.text_verb = verb;
+    }
+
     /// Write bytes to the same stream the NDJSON records go to.
     ///
     /// Used by the modes whose payload is not a record: `read --format raw`
@@ -357,6 +434,35 @@ impl<W: Write> NdjsonWriter<W> {
     ///
     /// Returns an I/O error when the flush or the write fails.
     pub fn write_text_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        // Text payloads follow the same rule as raw reads: stop at the budget
+        // on a line boundary and say so on stderr. The Bash tool cuts at 30k
+        // characters, so passing that point turns the answer into a file plus a
+        // second call, which costs far more than the bytes saved.
+        let cap = crate::constants::SEARCH_TEXT_MAX_BYTES as u64;
+        let used = TEXT_BYTES.load(std::sync::atomic::Ordering::Relaxed);
+        if TEXT_CAPPED.load(std::sync::atomic::Ordering::Relaxed)
+            || used.saturating_add(bytes.len() as u64) > cap
+        {
+            // `list` reports the omission once, with the exact count, after its
+            // loop ends; the per-line notice would only repeat the first cut.
+            if !TEXT_CAPPED.swap(true, std::sync::atomic::Ordering::Relaxed)
+                && self.text_verb != "list"
+            {
+                crate::best_effort::best_effort(
+                    writeln!(
+                        std::io::stderr().lock(),
+                        "atomwrite: {} text output stopped at {used} bytes of {cap}; narrow the pattern, or use --format ndjson with --limit",
+                        self.text_verb
+                    ),
+                    "write text truncation notice on stderr",
+                );
+            }
+            return Ok(());
+        }
+        TEXT_BYTES.store(
+            used.saturating_add(bytes.len() as u64),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         self.writer.flush()?;
         self.writer.get_mut().write_all(bytes)?;
         self.writer.get_mut().flush()
@@ -378,6 +484,14 @@ impl<W: Write> NdjsonWriter<W> {
         self.stamp_target(&mut value);
         self.stamp_cut_counters(&mut value);
         crate::output::scrub_envelope_keys(&mut value);
+        // `--select` and the lean profile apply to the terminal record too: it
+        // is the record the caller reads to decide the next step, and ignoring
+        // the projection there was the defect where `delete -r --select ok`
+        // still returned the whole summary. `--filter` and `--limit` stay out,
+        // so presentation can thin the record but never remove the verdict.
+        if !self.shape.is_identity() {
+            value = crate::output::shape_terminal_value(value, &self.shape);
+        }
         if self.shape.is_tail_flush() {
             self.buffered.push(PositionedValue {
                 terminal: true,
@@ -494,7 +608,7 @@ impl<W: Write> NdjsonWriter<W> {
         let (Some(resolved), Some(source)) = (&self.target_resolved, self.target_source) else {
             return;
         };
-        stamp_target_keys(value, resolved, source);
+        stamp_target_keys(value, resolved, source, false);
     }
 
     fn write_raw_line<T: Serialize>(&mut self, event: &T) -> anyhow::Result<()> {

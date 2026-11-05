@@ -3,10 +3,31 @@
 //! Workspace path jail validation and symlink safety checks.
 
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Result;
 
 use crate::error::AtomwriteError;
+
+/// The run's symlink policy, recorded once from `--follow-symlinks`.
+///
+/// Every verb reaches validation through [`validate_path`], and most of them
+/// call it from a rayon worker where a thread-local would not be visible. A
+/// process-wide value set from argv keeps one answer for the whole one-shot
+/// run, and the flag stays the only way to change it: nothing reads the
+/// environment and nothing infers the policy from the filesystem.
+static FOLLOW_SYMLINKS: AtomicBool = AtomicBool::new(false);
+
+/// Record the symlink policy declared on this invocation.
+pub fn set_follow_symlinks(follow: bool) {
+    FOLLOW_SYMLINKS.store(follow, Ordering::Relaxed);
+}
+
+/// The symlink policy declared on this invocation.
+#[must_use]
+pub fn follow_symlinks() -> bool {
+    FOLLOW_SYMLINKS.load(Ordering::Relaxed)
+}
 
 /// Validate that a path is inside the workspace and is not a symlink.
 ///
@@ -37,7 +58,7 @@ use crate::error::AtomwriteError;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn validate_path(path: &Path, workspace: &Path) -> Result<PathBuf> {
-    validate_path_with_symlink(path, workspace, false)
+    validate_path_with_symlink(path, workspace, follow_symlinks())
 }
 
 /// Validate a path with configurable symlink policy.
@@ -86,7 +107,38 @@ pub fn validate_path_with_symlink(
         .into());
     }
 
-    if !follow_symlinks {
+    if follow_symlinks {
+        // The link is resolved before the jail decides, so a link inside the
+        // workspace that points outside it is still refused. The resolved path
+        // is also what the caller gets back, because a rename over the link
+        // would replace the link and leave the file the caller named untouched.
+        if resolved.exists() {
+            let real = resolved.canonicalize().map_err(|e| {
+                anyhow::Error::new(e).context(format!(
+                    "cannot resolve symlink {} while --follow-symlinks is set",
+                    resolved.display()
+                ))
+            })?;
+            let real_workspace = workspace
+                .canonicalize()
+                .unwrap_or_else(|_| workspace_resolved.clone());
+            let real_workspace = normalize_path_nfc(&real_workspace);
+            if !normalize_path_nfc(&real).starts_with(&real_workspace) {
+                return Err(AtomwriteError::WorkspaceJail {
+                    path: real,
+                    workspace: real_workspace,
+                    content_source: false,
+                }
+                .into());
+            }
+            #[cfg(unix)]
+            check_special_file(&real)?;
+            return Ok(real);
+        }
+        return Ok(resolved);
+    }
+
+    {
         let real_resolved = canonicalize_existing_prefix(&resolved);
         let real_workspace = workspace
             .canonicalize()
@@ -112,6 +164,60 @@ pub fn validate_path_with_symlink(
     }
 
     Ok(resolved)
+}
+
+/// Validate a path that `delete` will remove.
+///
+/// The jail still decides, but the final name is never resolved: a delete
+/// removes the directory entry and never what a link points at, so a link that
+/// points outside the workspace stays removable while its target is untouched.
+///
+/// # Errors
+///
+/// Returns [`AtomwriteError::WorkspaceJail`] when the directory that holds a
+/// link is outside the workspace, and the same errors as
+/// [`validate_path_with_symlink`] with the symlink policy fixed to `false`.
+pub fn validate_delete_root(path: &Path, workspace: &Path) -> Result<PathBuf> {
+    let path_str = path.to_string_lossy();
+    if path_str.contains('\0') {
+        return Err(AtomwriteError::InvalidInput {
+            reason: format!("path contains null byte: {}", path.display()),
+        }
+        .into());
+    }
+
+    check_windows_path_rules(path)?;
+
+    let effective = if path.is_relative() {
+        workspace.join(path)
+    } else {
+        path.to_path_buf()
+    };
+
+    // A link is unlinked as an entry, so only the directory that holds it must
+    // sit inside the jail. Resolving the target here would refuse the removal
+    // of a link that points outside, which is exactly what this verb can do
+    // safely.
+    if let Ok(meta) = std::fs::symlink_metadata(&effective) {
+        if meta.file_type().is_symlink() {
+            let parent = effective.parent().unwrap_or_else(|| Path::new("."));
+            let parent_resolved = soft_canonicalize(parent);
+            let workspace_resolved = soft_canonicalize(workspace);
+            if !normalize_path_nfc(&parent_resolved)
+                .starts_with(normalize_path_nfc(&workspace_resolved))
+            {
+                return Err(AtomwriteError::WorkspaceJail {
+                    path: effective,
+                    workspace: workspace_resolved,
+                    content_source: false,
+                }
+                .into());
+            }
+            return Ok(effective);
+        }
+    }
+
+    validate_path_with_symlink(path, workspace, false)
 }
 
 /// Return an error if the path is a symbolic link.

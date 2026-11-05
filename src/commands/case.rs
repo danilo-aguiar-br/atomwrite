@@ -35,6 +35,14 @@ pub(crate) struct CaseResult {
     before: String,
     after: String,
     elapsed_ms: u64,
+    /// Write strategy the atomic layer used: `rename`, `inplace` or `copyback`.
+    ///
+    /// The preview event reports `none`, because a dry run takes no write path.
+    write_strategy: &'static str,
+    /// Why the requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    backup_skipped: Option<String>,
     /// Local diagnostic for a payload that looks destructive (B-013).
     #[serde(skip_serializing_if = "Option::is_none")]
     risk_assessment: Option<crate::ndjson_types::WriteRiskAssessment>,
@@ -408,6 +416,8 @@ fn process_one_case(
             before: from.to_string(),
             after: converted.to_string(),
             elapsed_ms: 0,
+            write_strategy: "none",
+            backup_skipped: None,
             risk_assessment,
         }));
     }
@@ -425,7 +435,13 @@ fn process_one_case(
     };
     // A1: refuse to overwrite a file that changed since it was read.
     let base = crate::checksum::hash_bytes(content.as_bytes());
-    crate::atomic::atomic_write_based(path, new_content.as_bytes(), &opts, workspace, Some(&base))?;
+    let result = crate::atomic::atomic_write_based(
+        path,
+        new_content.as_bytes(),
+        &opts,
+        workspace,
+        Some(&base),
+    )?;
     Ok(CaseItem::Done(CaseResult {
         r#type: "case",
         path: path_str,
@@ -435,6 +451,8 @@ fn process_one_case(
         before: from.to_string(),
         after: converted.to_string(),
         elapsed_ms: start.elapsed().as_millis() as u64,
+        write_strategy: result.write_strategy,
+        backup_skipped: result.backup_skipped,
         risk_assessment,
     }))
 }

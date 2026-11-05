@@ -131,7 +131,7 @@ fn r18_non_utf8_argument_is_a_structured_error() {
         .last()
         .unwrap_or_else(|| panic!("empty stdout, exit {:?}", out.code));
     assert!(
-        last["error"] == true && last["ok"] == false,
+        last["ok"] == false,
         "expected an error envelope on stdout, got {last}"
     );
 }
@@ -291,17 +291,17 @@ fn r29_search_reports_files_skipped_above_default_limit() {
         ],
         "",
     );
-    let skipped = out
+    let code = out
         .events
         .iter()
-        .filter_map(|e| e["files_skipped"].as_u64())
-        .max()
-        .unwrap_or(0);
-    assert!(
-        skipped >= 1,
-        "the oversized file must be reported as skipped (files_skipped >= 1), stdout: {:.400}",
+        .find_map(|e| e["code"].as_str())
+        .unwrap_or_default();
+    assert_eq!(
+        code, "ALL_SKIPPED_BINARY",
+        "the oversized file must be reported as skipped, stdout: {:.400}",
         out.stdout
     );
+    assert_eq!(out.code, Some(89), "stdout: {:.400}", out.stdout);
 }
 
 #[cfg(unix)]

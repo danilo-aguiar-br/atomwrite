@@ -123,6 +123,9 @@ static KEYS: &[KeySpec] = &[
     toml_key("defaults", "backup", Kind::Boolean, Scopes::Both, |c| {
         serde_json::json!(c.defaults.backup)
     }),
+    toml_key("delete", "backup", Kind::Boolean, Scopes::Both, |c| {
+        serde_json::json!(c.delete.backup)
+    }),
     toml_key(
         "defaults",
         "retention",
@@ -159,6 +162,13 @@ static KEYS: &[KeySpec] = &[
     toml_key("fuzzy", "max_content_bytes", POSITIVE, Scopes::Both, |c| {
         serde_json::json!(c.fuzzy.max_content_bytes)
     }),
+    toml_key(
+        "apply",
+        "max_ellipsis_lines",
+        POSITIVE,
+        Scopes::Both,
+        |c| serde_json::json!(c.apply.max_ellipsis_lines),
+    ),
     toml_key(
         "write",
         "confirm_large_bytes",
@@ -287,6 +297,30 @@ static KEYS: &[KeySpec] = &[
         ),
         Scopes::Both,
         |c| serde_json::json!(c.search.max_inflight_bytes),
+    ),
+    toml_key(
+        "search",
+        "format",
+        Kind::Choice(&["ndjson", "text"]),
+        Scopes::Both,
+        |c| serde_json::json!(c.search.format),
+    ),
+    toml_key(
+        "read",
+        "max_output_bytes",
+        POSITIVE,
+        Scopes::Both,
+        |c| serde_json::json!(c.read.max_output_bytes),
+    ),
+    toml_key("read", "number", Kind::Boolean, Scopes::Both, |c| {
+        serde_json::json!(c.read.number)
+    }),
+    toml_key(
+        "output",
+        "profile",
+        Kind::Choice(&["full", "lean"]),
+        Scopes::Both,
+        |c| serde_json::json!(c.output.profile),
     ),
     toml_key(
         "summary",

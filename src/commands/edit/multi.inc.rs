@@ -401,6 +401,8 @@ fn cmd_edit_multi(
         match_count: None,
         indent_adjusted: None,
         risk_assessment,
+        write_strategy: result.write_strategy,
+        backup_skipped: result.backup_skipped,
     };
 
     writer.write_event(&output)?;

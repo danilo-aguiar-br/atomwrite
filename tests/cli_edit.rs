@@ -555,7 +555,7 @@ fn edit_multi_error_reports_failed_pair_index() {
 
     assert_eq!(output.status.code(), Some(65));
     let events = common::parse_ndjson(&output.stdout);
-    assert_eq!(events[0]["error"], true);
+    assert_eq!(events[0]["ok"], false);
     assert_eq!(events[0]["code"], "MATCH_FAILED");
     assert_eq!(events[0]["failed_pair_index"], 2);
     assert_eq!(events[0]["pairs_total"], 2);
@@ -862,7 +862,7 @@ fn edit_nfc_vs_nfd_does_not_match() {
     // Byte-exact: must fail because the file has NFD, --old is NFC.
     assert_eq!(output.status.code(), Some(65));
     let events = common::parse_ndjson(&output.stdout);
-    assert_eq!(events[0]["error"], true);
+    assert_eq!(events[0]["ok"], false);
     // G-FZZ-002: dedicated MATCH_FAILED code (was INVALID_INPUT).
     assert_eq!(events[0]["code"], "MATCH_FAILED");
 

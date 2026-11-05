@@ -82,6 +82,12 @@ const ALLOWED: &[(&str, Rule, &str, &str)] = &[
         "Command::new(\"cargo\")",
         "the xtask runner shells out to cargo by design",
     ),
+    (
+        "src/media/image_uri.rs",
+        Rule::EnvRead,
+        "env::var(crate::constants::SESSION_ENV_VAR)",
+        "the agent session id is a contract of the caller, and the picture cache key depends on it",
+    ),
 ];
 
 fn src_root() -> PathBuf {

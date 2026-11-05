@@ -208,7 +208,7 @@ fn delete_no_backup_leaves_no_bak_file() {
 }
 
 #[test]
-fn delete_default_backup_true_leaves_bak_file() {
+fn delete_default_leaves_no_bak_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = common::create_test_file(dir.path(), "f.txt", "bye\n");
 
@@ -225,9 +225,11 @@ fn delete_default_backup_true_leaves_bak_file() {
         .expect("read dir")
         .filter_map(Result::ok)
         .any(|e| e.file_name().to_string_lossy().contains(".bak."));
+    // v0.1.38: a delete removes the file, and keeping a copy is a side effect
+    // the caller must ask for (`--backup`), so no `.bak.*` is left behind.
     assert!(
-        has_bak,
-        "delete without flags (default v0.1.28: backup=true) must leave a .bak.* file"
+        !has_bak,
+        "delete without flags must leave no .bak.* file; pass --backup to keep one"
     );
 }
 

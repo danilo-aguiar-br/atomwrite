@@ -3,15 +3,10 @@ source: tests/snapshot_write.rs
 expression: event
 ---
 {
-  "error": true,
   "ok": false,
   "code": "WORKSPACE_JAIL",
   "exit": 126,
-  "message": "[redacted]",
-  "path": "[redacted]",
-  "error_class": "precondition_failed",
-  "retryable": false,
-  "suggestion": "[redacted]",
   "workspace": "[redacted]",
-  "suggestion_lang": "pt-BR"
+  "path": "[redacted]",
+  "suggestion": "[redacted]"
 }

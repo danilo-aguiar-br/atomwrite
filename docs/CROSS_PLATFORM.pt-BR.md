@@ -6,7 +6,19 @@
 - Um só contrato de CLI em Linux, macOS e Windows; só o Linux x86_64 está validado (veja a Matriz de Verificação)
 
 
-## Matriz de Verificação (v0.1.37)
+## Objetivos
+- Gastar menos tokens: um objeto NDJSON por chamada substitui o encadeamento de shell, e o `commands --brief` responde em 5.020 bytes onde a árvore completa custa 67.492
+- Reduzir o custo financeiro, porque a conta acompanha os tokens e as idas e voltas, e uma chamada substitui as várias chamadas de shell que uma tarefa de arquivo pede
+- Reduzir os erros com escrita atômica e checksum BLAKE3 em toda resposta, então um resultado velho ou parcial aparece em vez de ser presumido
+- Reduzir as alucinações com discriminador `type`, schema fechado por verbo e código de saída que nomeia a falha
+- Reduzir o tempo gasto em cada tarefa, porque a leitura, a busca e a escrita rodam num processo só em vez de numa corrente de ferramentas de shell
+- Reduzir a latência com execução local e sem rede no caminho do arquivo, medida nas medianas de 5,6 ms no `read` e 6,7 ms no `write` de arquivo pequeno
+- Multiplicar a velocidade das operações com `batch`, `edit-loop`, `replace`, `case`, `transform` e `codemod` resolvendo muitos arquivos numa chamada
+- Reduzir o lead time entre a solicitação e o resultado verificado, porque a resposta já traz o checksum, o `target_resolved` e o próximo passo
+- Tornar o agente mais rápido, mais veloz, mais eficaz e mais assertivo, já que o código de saída, o `code` e o `suggestion` dizem o que fazer sem tentar às cegas
+
+
+## Matriz de Verificação (v0.1.38)
 
 | Target | Status |
 |--------|--------|
@@ -23,10 +35,12 @@
 | Automação remota | Não embarcada neste repositório (somente gates locais) |
 
 - Quatro dos nove testes `cross_compile_*` passaram em 2026-10-31 (linux musl x64, linux aarch64 gnu, linux aarch64 musl e windows gnu x64), os dois da Apple pararam na toolchain C, e os três MSVC ou i686 exigem alvos que este host não tem
-- Tamanho do binário, medido em builds release de `x86_64-unknown-linux-gnu` em 2026-10-31: slim 10,40 MiB e default 54,45 MiB (veja `docs/INSTALL.pt-BR.md`). Os outros targets não foram medidos
+- Tamanho do binário, medido em builds release de `x86_64-unknown-linux-gnu` em 2026-11-04: slim 25,33 MiB e default 67,79 MiB (veja `docs/INSTALL.pt-BR.md`). Os outros targets não foram medidos
 - O tempo de inicialização por target não foi medido
-- Também não validados: o lock advisory de escrita em filesystems sem `flock` (NFS) e no Windows, onde o código agora compila mas nunca rodou, o retry de rename do `persist_retry.rs` no Windows, e todo caminho de Windows e macOS deste guia
+- Também não validados: o lock advisory de escrita em filesystems sem `flock` (NFS) e no Windows, onde o lock agora mira o handle do arquivo e uma violação de compartilhamento pode bloquear o rename, o retry de rename do `persist_retry.rs` no Windows, e todo caminho de Windows e macOS deste guia
 - A feature `ast` baixa os parsers tree-sitter em tempo de execução no primeiro uso, em toda plataforma (23.031.807 bytes medidos em Linux x86_64, o que dá 21,97 MiB; veja `docs/INSTALL.pt-BR.md`)
+- O `read --ocr` baixa os dois modelos de reconhecimento no primeiro uso, 2,5 MiB para detecção e 9,7 MiB para reconhecimento medidos em Linux x86_64, e os guarda no diretório de cache da plataforma, então uma execução sem rede precisa de uma chamada quente antes
+- Os caminhos de OCR, renderização de PDF e imagem foram exercitados só em Linux x86_64, e nenhuma execução em Windows ou macOS os mediu
 
 Nota para todas as plataformas: o jail do workspace para caminhos de content-source (`--old-file`/`--new-file`) é agnóstico de SO. Faça staging em `$WS/.atomwrite/scratch/` via `scratch init`, e nunca confie no `/tmp` do SO fora do `--workspace`. O shape agent-native de stdout (`--select`/`--filter`/`--limit`) e os envelopes de erro (`ok:false`) são idênticos entre plataformas por projeto, e foram exercitados só em Linux.
 
@@ -67,13 +81,13 @@ Esta seção resume as mudanças relevantes para cross-platform em v0.1.12.
 - Sem mudanças de código necessárias para usuários de container; funciona out of the box
 
 ### NFS
-- `flock(2)` é silenciosamente ignorado em NFS, então o lock automático de escrita pode não proteger contra edições concorrentes
+- `flock(2)` é silenciosamente ignorado em NFS, então o lock automático de escrita pode não proteger contra edições concorrentes, e o lock é tomado no inode do alvo, não no nome do sidecar (ADR-0079)
 - Combine o lock automático com `--expect-checksum` para defesa em profundidade
 - `--expect-checksum` detecta desvio de estado após escrita (exit 82)
 
 ### Cobertura de Testes
-- Execução final da v0.1.37 registrada no `CHANGELOG.md`: 131 alvos de teste, 1486 testes passaram, 0 falharam, 9 ignorados (os testes `cross_compile_*`)
-- Gate de cross-compile: `cargo test --test cross_compile_check -- --ignored` roda nove checagens de target; nenhuma foi executada na v0.1.37 (veja a Matriz de Verificação)
+- Execução final da v0.1.38 registrada no `CHANGELOG.md`: 131 alvos de teste, 1486 testes passaram, 0 falharam, 9 ignorados (os testes `cross_compile_*`)
+- Gate de cross-compile: `cargo test --test cross_compile_check -- --ignored` roda nove checagens de target; nenhuma foi executada na v0.1.38 (veja a Matriz de Verificação)
 - 5 testes de sinal em `tests/signal_test.rs` cobrem SIGINT/SIGTERM/SIGPIPE/batch/shutdown
 - Veja [docs/decisions/README.md](decisions/README.md) para decisões arquiteturais
 - Para durabilidade e rename na v0.1.29, veja [v0.1.29 — Durabilidade e rename](#v0129--durabilidade-e-rename)
@@ -386,19 +400,26 @@ Notas (2026-07-19):
 - Veja o ADR-0055 (GAP-2026-019…033)
 
 
+## v0.1.38 — Notas de plataforma
+- Fixe agentes em `^0.1.38`; 47 subcomandos SSOT (`agent-surface` / `commands`), a mesma lista em Linux, macOS e Windows por projeto (exercitada só em Linux)
+- O `delete` toma o lock de inode do alvo antes de calcular o hash e antes do unlink, pelo mesmo `std::fs::File::try_lock` que todo escritor usa, então uma exclusão e uma gravação no mesmo alvo não se entrelaçam; um alvo ainda inexistente continua recebendo o sidecar
+- O `read --format raw` honra `--max-filesize` em toda plataforma, e o envelope de falha carrega `ok`, `code` e `exit` sem o campo `error`
+- O Windows compila a crate sem aviso, e a execução no Windows e no macOS não foi medida
+
+
 ## v0.1.37 — Notas de plataforma
-- Fixe agentes em `^0.1.37`; 47 subcomandos SSOT (`agent-surface` / `commands`), a mesma lista em Linux, macOS e Windows por projeto (exercitada só em Linux)
+- Fixe agentes em `^0.1.38`; 47 subcomandos SSOT (`agent-surface` / `commands`), a mesma lista em Linux, macOS e Windows por projeto (exercitada só em Linux)
 - Pipe quebrado: exit 141 em toda plataforma. O Unix instala um handler cooperativo de SIGPIPE (o sinal não mata o processo), a escrita que acerta o pipe fechado falha com `BrokenPipe`, todo `Drop` roda e o processo não deixa lock, journal nem tempfile. Um pai que ignora SIGPIPE, ou o Windows (`ERROR_BROKEN_PIPE` mapeado para `BrokenPipe`), recebe o mesmo exit 141. O SIGPIPE não volta a `SIG_DFL`: é um desvio consciente (ADR-0063)
 - `config set --scope global` grava o `config.toml` XDG com modo `0600` no Unix; o Windows não tem bits de modo e confia na ACL do perfil do usuário
 - O persist de tempfile no Windows repete `PermissionDenied` e `ERROR_SHARING_VIOLATION` (32) com full jitter (base 50 ms, teto 400 ms) e continua obedecendo `--timeout-secs`; não validado no Windows
-- O lock advisory (o `std::fs::File::try_lock`, que é `flock` no Unix e `LockFileEx` no Windows) espera até `lock.acquire_timeout_ms` (padrão 5000) com o mesmo backoff; exit 83 quando não é obtido. Não validado em NFS nem no Windows
+- O lock advisory (o `std::fs::File::try_lock`, que é `flock` no Unix e `LockFileEx` no Windows) é tomado no próprio inode do alvo e espera até `lock.acquire_timeout_ms` (padrão 5000) com o mesmo backoff; exit 83 quando não é obtido. O sidecar `.<alvo>.atomwrite.lock` é tomado ao lado para as versões antigas, e é o único lock que um alvo ainda inexistente consegue carregar. Não validado em NFS nem no Windows
 - Build slim (`--no-default-features --features core`): `outline`, `sparse outline`, `query`, `scope`, `transform` e `codemod` saem 78 (medido em Linux); `cargo xtask check-features` confere os conjuntos `core` e `core,watch`
 - O build padrão não tem `watch`: `atomwrite watch` sai 78 até o binário ser compilado com `--features watch`
 - Os parsers são baixados em tempo de execução por `outline`, `sparse outline`, `query` e `write --syntax-check` em toda plataforma
 
 
 ## Os 47 Subcomandos em Cada Plataforma
-- A lista é a mesma em Linux, macOS e Windows, e cada linha tem um resumo de uma linha e um exemplo que foi executado em Linux x86_64 (`atomwrite 0.1.37`); nenhum foi executado no macOS nem no Windows
+- A lista é a mesma em Linux, macOS e Windows, e cada linha tem um resumo de uma linha e um exemplo que foi executado em Linux x86_64 (`atomwrite 0.1.38` em 2026-11-04); nenhum foi executado no macOS nem no Windows
 - Preparação dos exemplos: `WS` é o caminho absoluto de um workspace vazio que contém `src/a.rs` (um `unwrap()` e um comentário), `src/b.rs` (a palavra `beta` uma vez), `src/c.rs` (com `user_id`), `src/tmp.rs`, `config.toml` (uma tabela `[package]` com `name` e uma tabela `[features]` com `x`), `notes.txt`, `tmp.txt`, `base.txt`, `ours.txt`, `theirs.txt`, `img.png` e `rules.yaml` (uma lista YAML com `id`, `language`, `pattern` e `rewrite`)
 - `HASH_A` é o `checksum` que `hash src/a.rs` imprime
 - Os exemplos usam `printf ... |` e um shell POSIX. No Windows rode os mesmos argumentos de `atomwrite` pelo PowerShell e alimente o stdin com here-string ou com um pipe de `Write-Output`; isso não foi validado
@@ -429,7 +450,7 @@ Notas (2026-07-19):
 - `rollback` — Restaura um arquivo a partir de um backup anterior. Exemplo: `atomwrite --workspace "$WS" rollback src/a.rs --latest --verify`
 - `batch` — Executa operações NDJSON do stdin, com opção de transação única. Exemplo: `printf '{"op":"write","target":"batch.txt","content":"x"}\n' | atomwrite --workspace "$WS" batch --transaction`
 - `edit-loop` — Aplica N pares antigo/novo numa escrita só, tudo ou nada. Exemplo: `printf '[{"old":"gamma","new":"delta"}]\n' | atomwrite --workspace "$WS" edit-loop src/b.rs`
-- `prune-backups` — Remove arquivos .bak antigos por idade ou quantidade. Exemplo: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run .`
+- `prune-backups` — Remove arquivos .bak antigos por idade ou quantidade. Exemplo: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run --recursive .`
 - `wal-stats` — Mostra o estado dos journals WAL (só leitura). Exemplo: `atomwrite --workspace "$WS" wal-stats`
 - `wal-heal` — Remove journals WAL terminais órfãos mais antigos que um limite. Exemplo: `atomwrite --workspace "$WS" wal-heal --threshold-secs 3600 .`
 - `verify` — Confere um arquivo contra um hash BLAKE3 esperado (exit 0 se igual, 81 se diferente). Exemplo: `atomwrite --workspace "$WS" verify src/a.rs HASH_A`
@@ -451,7 +472,7 @@ Notas (2026-07-19):
 - `scratch` — Cria o diretório de staging .atomwrite/scratch dentro do jail do workspace. Exemplo: `atomwrite --workspace "$WS" scratch init .atomwrite/scratch`
 - `locale` — Mostra, define ou limpa o idioma da interface. Exemplo: `atomwrite --workspace "$WS" locale`
 - `commands` — Imprime a árvore completa de comandos em JSON. Exemplo: `atomwrite --workspace "$WS" commands --include-globals`
-- `config` — Lê e grava chaves de ajuste persistentes (37 chaves, escopos global e workspace). Exemplo: `atomwrite --workspace "$WS" config get fuzzy.threshold`
+- `config` — Lê e grava chaves de ajuste persistentes (43 chaves, escopos global e workspace). Exemplo: `atomwrite --workspace "$WS" config get fuzzy.threshold`
 
 ### Diferenças de Plataforma por Comando
 - `write`, `edit`, `edit-loop`, `set`, `del`, `apply`, `config` e as ops `replace` e `edit` do `batch`: serializam no lock advisory, que funciona no Unix e no Windows (NFS: não validado)
@@ -463,3 +484,54 @@ Notas (2026-07-19):
 - `watch`: exige `--features watch` e usa o crate `notify`, cujo backend depende do sistema operacional; `cargo xtask check-features` só compila o conjunto `core,watch`, e uma execução do `watch` não foi feita nesta auditoria em nenhuma plataforma
 - `read`, `write`, `delete`: nomes reservados no Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM0` a `COM9`, `LPT0` a `LPT9`) são rejeitados em todos os hosts, para a árvore de um agente continuar portável
 - `locale` e `config`: a preferência de locale e a config global ficam no diretório de config da plataforma
+
+
+## Toda flag local, por comando
+- Esta lista nomeia toda flag local de cada comando, e as flags globais ficam em `atomwrite --help`.
+- `agent-surface`: `--format`
+- `apply`: `--ack-overwrite`, `--all`, `--allow-shrink`, `--backup`, `--dry-run`, `--format`, `--keep-backup`, `--no-backup`, `--no-syntax-check`, `--retention`, `--show`, `--strict-atomic`
+- `backup`: `--dry-run`, `--output-dir`, `--retention`
+- `batch`: `--backup`, `--batch-size`, `--dry-run`, `--file`, `--input-schema`, `--keep-backup`, `--no-backup`, `--retention`, `--strict-atomic`, `--transaction`
+- `calc`: `--stdin`
+- `case`: `--backup`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`, `--subvert`, `--to`
+- `codemod`: `--backup`, `--dry-run`, `--keep-backup`, `--no-backup`, `--retention`, `--rules`, `--strict-atomic`
+- `commands`: `--brief`, `--include-globals`
+- `completions`: `--install`
+- `config`: não tem flag local própria, só o conjunto global
+- `copy`: `--backup`, `--dry-run`, `--force`, `--keep-backup`, `--no-backup`, `--no-reflink`, `--preserve-xattr`, `--preserve`, `--recursive`, `--retention`, `--strict-atomic`
+- `count`: `--by-extension`, `--by-size`, `--exclude`, `--include`, `--top`
+- `del`: `--backup`, `--dry-run`, `--force-missing`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`
+- `delete`: `--backup`, `--confirm`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--no-backup`, `--older-than`, `--plan`, `--recursive`, `--retention`, `--yes`
+- `diff`: `--algorithm`, `--context`, `--stat`, `--unified`
+- `doctor`: `--strict`
+- `edit`: `--after-line`, `--after-match`, `--allow-sequential-drift`, `--backup`, `--before-line`, `--before-match`, `--between`, `--delete-range`, `--dry-run`, `--expect-checksum`, `--fuzzy-threshold`, `--fuzzy`, `--keep-backup`, `--line-ending`, `--multi`, `--new-file`, `--new`, `--no-backup`, `--old-file`, `--old`, `--partial`, `--preserve-timestamps`, `--range`, `--replace-all`, `--retention`, `--strict-atomic`, `--wal-policy`
+- `edit-loop`: `--allow-sequential-drift`, `--backup`, `--keep-backup`, `--line-ending`, `--no-backup`, `--partial`, `--retention`, `--strict-atomic`, `--syntax-check`
+- `extract`: `--delimiter`, `--field`, `--stdin`
+- `extract-artifact`: `--max-sample-rows`, `--max-text-chars`
+- `get`: não tem flag local própria, só o conjunto global
+- `hash`: `--exclude`, `--recursive`, `--stdin`, `--verify`
+- `list`: `--all`, `--count-by-ext`, `--depth`, `--exclude`, `--format`, `--include`, `--long`
+- `locale`: `--clear`, `--set`
+- `move`: `--backup`, `--dry-run`, `--force`, `--keep-backup`, `--no-backup`, `--preserve-hardlinks`, `--retention`
+- `outline`: `--format`, `--kind`, `--language`, `--positions`
+- `prune-backups`: `--dry-run`, `--max-age-secs`, `--max-count`, `--recursive`
+- `query`: `--kinds`, `--language`, `--positions`, `--query`, `--tree`
+- `read`: `--all`, `--bytes`, `--context`, `--crop`, `--dpi`, `--enclosing`, `--force`, `--format`, `--grep`, `--head`, `--high-res`, `--line`, `--lines`, `--max-tokens`, `--no-comments`, `--number`, `--ocr`, `--page`, `--pages`, `--stat`, `--symbol`, `--tail`, `--verify-checksum`
+- `recipe`: não tem flag local própria, só o conjunto global
+- `regex`: `--case-insensitive`, `--digits`, `--no-anchors`, `--repetitions`, `--spaces`, `--stdin`, `--words`
+- `replace`: `--backup`, `--dry-run`, `--exclude`, `--expect-checksum`, `--fuzzy-threshold`, `--fuzzy`, `--include`, `--keep-backup`, `--literal`, `--max-replacements`, `--no-backup`, `--preserve-case`, `--preserve-timestamps`, `--preview`, `--progress-every`, `--regex`, `--retention`, `--strict-atomic`, `--word`
+- `rollback`: `--backup`, `--dry-run`, `--keep-backup`, `--latest`, `--no-backup`, `--retention`, `--strict-atomic`, `--timestamp`, `--verify`
+- `scope`: `--action`, `--backup`, `--delete`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--language`, `--no-backup`, `--pattern`, `--query`, `--replace-with`, `--retention`, `--strict-atomic`
+- `scratch`: não tem flag local própria, só o conjunto global
+- `search`: `--binary`, `--case-insensitive`, `--context`, `--count`, `--exclude`, `--files`, `--fixed`, `--format`, `--include-fifo`, `--include`, `--invert`, `--limit`, `--max-columns`, `--max-count`, `--max-filesize`, `--multiline`, `--no-begin-end`, `--offset`, `--pcre2`, `--regex`, `--smart-case`, `--sort`, `--target`, `--word`
+- `semantic-merge`: `--backup`, `--base`, `--dry-run`, `--expect-checksum`, `--fail-on-conflict`, `--keep-backup`, `--no-backup`, `--no-conflict-markers`, `--ours`, `--output`, `--retention`, `--strict-atomic`, `--theirs`, `--write-conflict-markers`
+- `semantic-search`: `--include-backups`, `--index-dir`, `--k`, `--min-score`
+- `set`: `--backup`, `--dry-run`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`
+- `sparse`: não tem flag local própria, só o conjunto global
+- `stat`: `--all`, `--bytes`, `--context`, `--crop`, `--dpi`, `--enclosing`, `--force`, `--format`, `--grep`, `--head`, `--high-res`, `--line`, `--lines`, `--max-tokens`, `--no-comments`, `--number`, `--ocr`, `--page`, `--pages`, `--stat`, `--symbol`, `--tail`, `--verify-checksum`
+- `transform`: `--backup`, `--dry-run`, `--exclude`, `--include`, `--inline-rules`, `--keep-backup`, `--language`, `--no-backup`, `--pattern`, `--retention`, `--rewrite`, `--rules`, `--strict-atomic`, `--verify-parse`
+- `verify`: não tem flag local própria, só o conjunto global
+- `wal-heal`: `--dry-run`, `--max-duration-ms`, `--threshold-secs`
+- `wal-stats`: `--dry-run`
+- `watch`: `--checksum`, `--debounce-ms`, `--gitignore`, `--idle-exit-ms`, `--max-events`
+- `write`: `--ack-overwrite`, `--allow-empty-stdin`, `--allow-shrink`, `--append`, `--auto-rotate`, `--backup`, `--confirm`, `--dry-run`, `--durability`, `--expect-checksum`, `--keep-backup`, `--line-ending`, `--max-size`, `--no-backup`, `--no-checksum-when-empty`, `--prepend`, `--preserve-timestamps`, `--require-backup`, `--require-large-ack`, `--retention`, `--risk-threshold`, `--strict-atomic`, `--syntax-check`, `--wal-policy`

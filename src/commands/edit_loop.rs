@@ -314,9 +314,12 @@ pub fn cmd_edit_loop(
 
     // Nothing matched under `--partial`: there is nothing to write.
     let mut risk_assessment = None;
+    // No matched pair means no write, so the verdict starts at `none` and only
+    // the branch below replaces it with the path the writer really took.
+    let mut verdict: (&'static str, Option<String>) = ("none", None);
     if applied > 0 {
         let backup = resolve_backup(&args.backup_opts, defaults);
-        risk_assessment = write_result(
+        let (risk, written) = write_result(
             args,
             &target,
             &workspace,
@@ -325,6 +328,8 @@ pub fn cmd_edit_loop(
             &backup,
             write_cfg,
         )?;
+        risk_assessment = risk;
+        verdict = (written.write_strategy, written.backup_skipped);
     }
 
     let summary = EditLoopSummary {
@@ -336,6 +341,8 @@ pub fn cmd_edit_loop(
         pairs_unmatched: unmatched,
         elapsed_ms: start.elapsed().as_millis() as u64,
         pair_results: outcome.results,
+        write_strategy: verdict.0,
+        backup_skipped: verdict.1,
         risk_assessment,
     };
 
@@ -370,7 +377,10 @@ fn write_result(
     mut content: String,
     backup: &ResolvedBackup,
     write_cfg: &crate::config::WriteSection,
-) -> Result<Option<crate::ndjson_types::WriteRiskAssessment>> {
+) -> Result<(
+    Option<crate::ndjson_types::WriteRiskAssessment>,
+    crate::atomic::WriteResult,
+)> {
     use crate::line_endings::{self, LineEnding};
     let target_le = match args.line_ending {
         LineEnding::Auto => line_endings::detect(content.as_bytes()),
@@ -398,12 +408,12 @@ fn write_result(
         keep_backup: backup.keep,
         durability: crate::platform::Durability::Auto,
     };
-    atomic_write_based(
+    let written = atomic_write_based(
         target,
         content.as_bytes(),
         &opts,
         workspace,
         Some(checksum_before),
     )?;
-    Ok(risk_assessment)
+    Ok((risk_assessment, written))
 }

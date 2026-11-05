@@ -170,6 +170,7 @@ fn edit_multi_names_the_ndjson_format_when_handed_a_json_array() {
     let out = run_args(
         ws.path(),
         &[
+            "-v".to_string(),
             "edit".to_string(),
             "--multi".to_string(),
             target.display().to_string(),

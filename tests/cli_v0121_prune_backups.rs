@@ -10,6 +10,19 @@ fn touch_mtime(path: &std::path::Path, t: std::time::SystemTime) {
     filetime::set_file_mtime(path, ft).expect("set mtime");
 }
 
+/// Helper: the UTC stamp `prune-backups` reads from a backup name, for a day
+/// this many days before now. v0.1.38 made the name stamp authoritative, so a
+/// test that wants a backup to look old must say so in the name, and not only
+/// in the mtime that a clonefile copies around.
+fn stamp_days_ago(days: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .as_secs();
+    let (y, mo, d, h, mi, s) = atomwrite::atomic::epoch_to_utc(now.saturating_sub(days * 86_400));
+    format!("{y:04}{mo:02}{d:02}_{h:02}{mi:02}{s:02}")
+}
+
 fn count_backups(dir: &std::path::Path, prefix: &str) -> usize {
     std::fs::read_dir(dir)
         .expect("readdir")
@@ -76,11 +89,15 @@ fn prune_backups_max_age_removes_only_old() {
     let target = dir.path().join("file.txt");
     std::fs::write(&target, "now\n").expect("seed");
 
-    let recent = dir.path().join("file.txt.bak.20260617_120000");
+    let recent = dir
+        .path()
+        .join(format!("file.txt.bak.{}", stamp_days_ago(0)));
     std::fs::write(&recent, "recent\n").expect("recent");
     touch_mtime(&recent, std::time::SystemTime::now());
 
-    let old = dir.path().join("file.txt.bak.20260615_120000");
+    let old = dir
+        .path()
+        .join(format!("file.txt.bak.{}", stamp_days_ago(3)));
     std::fs::write(&old, "old\n").expect("old");
     touch_mtime(
         &old,

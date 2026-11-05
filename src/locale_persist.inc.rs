@@ -30,11 +30,16 @@ pub fn read_persisted_preference(path: &Path) -> Option<String> {
 
 /// Persist a UI locale preference (owner-only file when possible).
 ///
+/// The returned tuple carries the path and the verdict of the write, so a
+/// caller that publishes `write_strategy` never has to guess the mechanism.
+///
 /// # Errors
 ///
 /// Returns `std::io::ErrorKind::NotFound` when the XDG config directory cannot be resolved or the preference path has no parent directory.
 /// Returns the I/O error of `ensure_dir`, `atomic_write` or `restrict_to_owner` when creating the directory, persisting the file or tightening its permissions fails.
-pub fn write_persisted_preference(language: Language) -> std::io::Result<PathBuf> {
+pub fn write_persisted_preference(
+    language: Language,
+) -> std::io::Result<(PathBuf, crate::atomic::WriteResult)> {
     let path = preference_path().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -55,10 +60,10 @@ pub fn write_persisted_preference(language: Language) -> std::io::Result<PathBuf
         ..crate::atomic::AtomicWriteOptions::default()
     };
     let content = format!("{}\n", language.as_str());
-    crate::atomic::atomic_write(&path, content.as_bytes(), &opts, parent)
+    let result = crate::atomic::atomic_write(&path, content.as_bytes(), &opts, parent)
         .map_err(std::io::Error::other)?;
     crate::storage::restrict_to_owner(&path)?;
-    Ok(path)
+    Ok((path, result))
 }
 
 /// Remove the persisted preference file (no error if missing).

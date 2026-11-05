@@ -8,6 +8,7 @@ expression: event
   "path": "[redacted]",
   "bytes_written": 17,
   "checksum": "[redacted]",
+  "write_strategy": "rename",
   "elapsed_ms": "[redacted]",
   "stdin_bytes_read": 17,
   "wal_policy": "auto",
@@ -19,6 +20,8 @@ expression: event
   },
   "ok": true,
   "workspace_source": "argv",
-  "target_resolved": "[redacted]",
-  "target_source": "argv"
+  "target_source": "argv",
+  "target_resolved": [
+    "[redacted]"
+  ]
 }

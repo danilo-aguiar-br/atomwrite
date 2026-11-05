@@ -27,6 +27,28 @@ pub fn rfc3339_now() -> String {
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{sec:02}Z")
 }
 
+/// Convert a UTC civil date and time back to Unix epoch seconds.
+///
+/// The inverse of [`epoch_to_utc`], with the same Howard Hinnant civil
+/// algorithm: a backup name carries the moment it was created, and recovering
+/// that moment from the name is what makes pruning independent of the mtime a
+/// copy tool may have rewritten.
+pub fn utc_to_epoch(year: i64, month: i64, day: i64, hour: u64, min: u64, sec: u64) -> u64 {
+    // Days from 1970-01-01 to the civil date, valid for any proleptic Gregorian
+    // date. A month before March belongs to the previous civil year.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as u64;
+    let mp = ((month + 9) % 12) as u64;
+    let doy = (153 * mp + 2) / 5 + (day as u64) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe as i64 - 719_468;
+    days as u64 * crate::constants::SECS_PER_DAY
+        + hour * crate::constants::SECS_PER_HOUR
+        + min * crate::constants::SECS_PER_MINUTE
+        + sec
+}
+
 /// Convert Unix epoch seconds to `(year, month, day, hour, min, sec)` UTC.
 pub fn epoch_to_utc(epoch: u64) -> (u64, u64, u64, u64, u64, u64) {
     use crate::constants as C;

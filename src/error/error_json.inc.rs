@@ -1,16 +1,15 @@
 /// Serializable error envelope emitted as a single NDJSON line.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ErrorJson {
-    /// Always true, marks this line as an error event.
-    pub error: bool,
     /// Always false on error envelopes (GAP-2026-020 agent sentinel).
     ///
-    /// Success envelopes keep their own `status` field; agents MUST check
-    /// `error` / `ok` / process exit before reading success-only keys.
+    /// `ok: false` together with `code` is the whole verdict: the redundant
+    /// `error: true` duplicate left the envelope because every failure paid
+    /// for it and no caller branched on it alone.
     pub ok: bool,
     /// Machine-readable error code string.
     pub code: &'static str,
-    /// Suggested process exit code.
+    /// Process exit status this failure maps to.
     pub exit: u8,
     /// Human-readable error message.
     pub message: String,
@@ -24,6 +23,10 @@ pub struct ErrorJson {
     /// Optional actionable suggestion for the caller.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggestion: Option<String>,
+    /// Language of `suggestion` when it is not English, so a consumer knows
+    /// what it is reading.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion_lang: Option<&'static str>,
     /// Workspace root used for jail validation, if applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
@@ -74,16 +77,15 @@ pub struct ErrorJson {
     /// written) and `total - unmatched` for `edit-loop --partial`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pairs_applied: Option<u64>,
-    /// UI language the catalogue-derived `suggestion` was rendered in (B4).
+    /// 1-based line of the block that holds the syntax error (v0.1.38).
     ///
-    /// The two human strings on this envelope do not share a source: `message`
-    /// is built from the error variant, which is English by contract, while
-    /// `suggestion` comes from the i18n catalogue and follows the resolved UI
-    /// language. One envelope can therefore carry an English `message` and a
-    /// Portuguese `suggestion`. Without this field a consumer cannot tell which
-    /// language the suggestion is in, and cannot decide whether to re-render
-    /// it. `code` and every other field stay machine literals.
-    pub suggestion_lang: &'static str,
+    /// Present only for [`AtomwriteError::SyntaxError`]. Without it the caller
+    /// had to re-read the file to learn where the refusal points.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    /// 1-based last line of that block, when the block spans more than a line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_end: Option<usize>,
 }
 
 impl ErrorJson {
@@ -160,14 +162,34 @@ impl ErrorJson {
             AtomwriteError::MatchFailed { candidates, .. } => candidates.clone(),
             _ => None,
         };
+        let (line, line_end) = match err {
+            AtomwriteError::SyntaxError { line, line_end, .. } => (*line, *line_end),
+            _ => (None, None),
+        };
         let match_count = match err {
             AtomwriteError::MatchAmbiguous { count, .. } => Some(*count),
             // GAP-2026-020: stable sentinels so agents never see "all null" success fields.
             AtomwriteError::MatchFailed { .. } | AtomwriteError::NoMatches => Some(0),
             _ => None,
         };
+        // The near-miss list is the actionable part of a missing path: when it
+        // exists, the suggestion names it instead of telling the caller to
+        // check a spelling it cannot see. The walk runs once here, so the
+        // suggestion and the `similar_paths` field read the same answer.
+        let similar_paths = similar_paths_for(err, ctx);
+        let suggestion = match &similar_paths {
+            Some(paths) if !paths.is_empty() => Some(
+                t!("suggestion.similar-paths", paths = paths.join(", ")).to_string(),
+            ),
+            _ => suggestion_for(err, ctx),
+        };
+        // English is the language `message` is already written in, so the tag
+        // is published only when the text differs from it.
+        let suggestion_lang = suggestion.as_ref().and_then(|_| {
+            let language = crate::locale::resolved_language();
+            (language != crate::locale::Language::En).then(|| language.as_str())
+        });
         Self {
-            error: true,
             ok: false,
             code: err.error_code(),
             exit: err.exit_code(),
@@ -175,7 +197,8 @@ impl ErrorJson {
             path: err.path().map(|p| p.display().to_string()),
             error_class: err.error_class().as_str(),
             retryable: err.is_retryable(),
-            suggestion: suggestion_for(err, ctx),
+            suggestion,
+            suggestion_lang,
             workspace,
             failed_pair_index,
             pairs_total,
@@ -183,12 +206,13 @@ impl ErrorJson {
             best_candidate,
             candidates,
             match_count,
-            similar_paths: similar_paths_for(err, ctx),
+            similar_paths,
             conflict_count,
             missing_flag,
             pairs_unmatched,
             pairs_applied,
-            suggestion_lang: crate::locale::resolved_language().as_str(),
+            line,
+            line_end,
         }
     }
 }

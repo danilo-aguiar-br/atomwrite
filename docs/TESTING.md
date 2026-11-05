@@ -4,9 +4,31 @@
 [Leia em Português](TESTING.pt-BR.md)
 
 
-## What's New in v0.1.37 (Current)
+## Objectives
+- Spend fewer tokens: one NDJSON object per call replaces the shell pipeline, and `commands --brief` answers in 5 020 bytes where the full tree costs 67 492
+- Lower the financial cost, because the bill follows the tokens and the round trips, and one call replaces the several shell calls a file task needs
+- Reduce errors with an atomic write and a BLAKE3 checksum on every response, so a stale or partial result is caught instead of assumed
+- Reduce hallucinations with a `type` discriminator, a closed schema per verb and an exit code that names the failure
+- Reduce the time spent on each task, because the read, the search and the write run in one process instead of a chain of shell tools
+- Reduce latency with local execution and no network on the file path, measured at medians of 5.6 ms on `read` and 6.7 ms on `write` for small files
+- Multiply the speed of operations with `batch`, `edit-loop`, `replace`, `case`, `transform` and `codemod` settling many files in one call
+- Cut the lead time between the request and the verified result, because the response already carries the checksum, the `target_resolved` and the next step
+- Make the agent faster, more effective and more assertive, since the exit code, the `code` and the `suggestion` say what to do next without a retry guess
+
+
+## Current Release Line: v0.1.38
+- The full suite exited 0 on 2026-11-04 with `cargo test --no-fail-fast`, and the run printed 134 `test result: ok` blocks
+- The failure envelope schema requires `ok`, `code` and `exit`, so a suite that asserted `error: true` reads `.ok == false` plus `.code` instead
+- No test was added for the 0.1.38 fixes and the existing suites were updated in place, because a real run on the installed binary is the proof and a new mock is not
+- The 0.1.38 binary was executed on 2026-11-04 and answered `agent-surface` with 47 tools, 42 exit codes and 34 distinct numbers, and `config list` with 43 keys
+- The 47 examples of the smoke test below were run against the 0.1.38 binary on 2026-11-04, and 46 exited 0 while `watch` exited 78
+
+
+## What's New in v0.1.37
 - Full CLI surface under test policy: 47 subcommands (`CANONICAL_SUBCOMMAND_COUNT`): `agent-surface`, `apply`, `backup`, `batch`, `calc`, `case`, `codemod`, `commands`, `completions`, `config`, `copy`, `count`, `del`, `delete`, `diff`, `doctor`, `edit`, `edit-loop`, `extract`, `extract-artifact`, `get`, `hash`, `list`, `locale`, `move`, `outline`, `prune-backups`, `query`, `read`, `recipe`, `regex`, `replace`, `rollback`, `scope`, `scratch`, `search`, `semantic-merge`, `semantic-search`, `set`, `sparse`, `stat`, `transform`, `verify`, `wal-heal`, `wal-stats`, `watch`, `write`
-- Documentation suites: `cargo test --test docs_consistency --test docs_exit_codes`. `docs_consistency` reads the manifest from the real binary and checks every total subcommand count (plain or in bold, such as `47 subcommands`) in the README, `llms*`, the guides and the skills; it also proves that its own reader rejects a stale bold count
+- Documentation suites: `cargo test --test docs_coverage --test docs_consistency --test docs_exit_codes --test docs_schemas_sync`
+- `docs_coverage` demands every subcommand and every local flag in each primary doc, and `docs_consistency` checks every quoted total against the real binary and proves its own reader rejects a stale count
+- `docs_exit_codes` compares the README exit tables with `agent-surface`, and `docs_schemas_sync` keeps the schema files and the published names in step
 - `config` verb: `cargo test --test cli_v0137_config_verb` (set/get/unset round trip, scope required, invalid values write nothing, layering key by key, atomic 0600 write)
 - Terminal event and failure report: `cargo test --test cli_v0137_terminal_event --test cli_v0137_terminal_pipe --test cli_v0137_terminal_schema` (one terminal event, `MATCH_FAILED` for a missing pair, `files_failed` and `errors[]`, exit 141 with a closed reader, the six summary schemas)
 - Retry, cancel and limits: `cargo test --test cli_v0137_retry_deadline --test cli_v0137_retry_guards --test cli_v0137_cancel --test cli_v0137_search_rss --test cli_v0137_wal_startup_heal`
@@ -19,11 +41,11 @@
 - Version and slim build: `cargo test --test cli_v0137_version`; `cargo xtask check-features` checks the `core` and `core,watch` feature sets
 - The supported test run uses the default features: `cargo test --locked`. Do not use `cargo test --no-default-features --features core` as a gate (see Local test profiles)
 - Local DoD (local gates only, no remote automation): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`
-- Pin docs/agents to `^0.1.37`
+- Pin docs/agents to `^0.1.38`
 
 
 ## Smoke Test of the 47 Subcommands
-- One example per subcommand, each run against `atomwrite 0.1.37` (the command, its one-line summary and the example)
+- One example per subcommand, each run against `atomwrite 0.1.38` (the command, its one-line summary and the example)
 - Setup: `WS` is the absolute path of an empty workspace that holds `src/a.rs` (an `unwrap()` and a comment), `src/b.rs` (the word `beta` once), `src/c.rs` (with `user_id`), `src/tmp.rs`, `config.toml` (a `[package]` table with `name` and a `[features]` table with `x`), `notes.txt`, `tmp.txt`, `base.txt`, `ours.txt`, `theirs.txt`, `img.png` and `rules.yaml` (a YAML list with `id`, `language`, `pattern` and `rewrite`)
 - `HASH_A` is the `checksum` that `hash src/a.rs` prints
 - Run them with `HOME` and the `XDG_*` variables pointing inside the workspace, as `common::hermetic` does for the test suite, so that no real config, locale preference or completion file is touched
@@ -54,7 +76,7 @@
 - `rollback` — Restore a file from a previous backup. Example: `atomwrite --workspace "$WS" rollback src/a.rs --latest --verify`
 - `batch` — Run NDJSON operations from stdin, optionally as one transaction. Example: `printf '{"op":"write","target":"batch.txt","content":"x"}\n' | atomwrite --workspace "$WS" batch --transaction`
 - `edit-loop` — Apply N old/new pairs in one write, all or nothing. Example: `printf '[{"old":"gamma","new":"delta"}]\n' | atomwrite --workspace "$WS" edit-loop src/b.rs`
-- `prune-backups` — Remove old .bak files by age or count. Example: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run .`
+- `prune-backups` — Remove old .bak files by age or count. Example: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run --recursive .`
 - `wal-stats` — Show the state of WAL journals (read only). Example: `atomwrite --workspace "$WS" wal-stats`
 - `wal-heal` — Remove orphan terminal WAL journals older than a threshold. Example: `atomwrite --workspace "$WS" wal-heal --threshold-secs 3600 .`
 - `verify` — Check a file against an expected BLAKE3 hash (exit 0 match, 81 mismatch). Example: `atomwrite --workspace "$WS" verify src/a.rs HASH_A`
@@ -76,7 +98,7 @@
 - `scratch` — Create the staging dir .atomwrite/scratch inside the workspace jail. Example: `atomwrite --workspace "$WS" scratch init .atomwrite/scratch`
 - `locale` — Show, set or clear the UI locale. Example: `atomwrite --workspace "$WS" locale`
 - `commands` — Print the full command tree as JSON. Example: `atomwrite --workspace "$WS" commands --include-globals`
-- `config` — Read and write persistent tuning keys (37 keys, scopes global and workspace). Example: `atomwrite --workspace "$WS" config get fuzzy.threshold`
+- `config` — Read and write persistent tuning keys (43 keys, scopes global and workspace). Example: `atomwrite --workspace "$WS" config get fuzzy.threshold`
 
 
 ## What's New in v0.1.36
@@ -114,8 +136,8 @@
 - Write NDJSON reports `platform.rename_method` (`renameat2` or `rename`)
 - `write --durability full|fast|auto` trade-off for fsync cost
 - Historical (at v0.1.29): new subcommands: `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch` (feature), `codemod`, `semantic-search` — 41 subcommands total
-- Feature matrix: slim `core` (10,908,040 bytes = 10.40 MiB measured on 2026-10-31, local size-gate ≤15 MiB) vs default AST (57,096,064 bytes = 54.45 MiB measured on 2026-10-31)
-- Local gates (manual; no remote automation): size-gate slim ≤15 MiB; core-test; schema-diff on `docs/schemas`
+- Feature matrix: slim `core` (26,560,352 bytes = 25.33 MiB measured on 2026-11-04, above the local size-gate of 15 MiB) vs default AST (71,084,440 bytes = 67.79 MiB measured on 2026-11-04)
+- Local gates (manual; no remote automation): size-gate slim ≤15 MiB, whose measured slim build on 2026-11-04 is 25.33 MiB and above it; core-test; schema-diff on `docs/schemas`
 - Run the 0.1.30 contract suite: `cargo test --test cli_v0130_agent_contract`
 - Run the 0.1.29 suite: `cargo test --test cli_v0129_fuzzy_replace`
 
@@ -289,7 +311,7 @@ cargo test --test cross_compile_check -- --ignored
 
 
 ## Current Stats
-- Final run of v0.1.37 recorded in `CHANGELOG.md`: 131 test targets, 1486 tests passed, 0 failed and 9 ignored (the `cross_compile_*` tests)
+- Final run of v0.1.38 recorded in `CHANGELOG.md`: 131 test targets, 1486 tests passed, 0 failed and 9 ignored (the `cross_compile_*` tests)
 - Inventory measured with `fd` and `rg` on the source tree: 131 integration test files in `tests/` (plus `tests/common/mod.rs`, `doc_scan.rs` and `schema_check.rs`), 994 `#[test]` functions in `tests/` and 485 in `src/` (DERIVED: 994 + 485 = 1479), plus 9 snapshot files, 4 proptest files and 2 fuzz targets
 - Measure it again with `rg -c '#\[test\]' tests src` and `cargo test --lib --tests`. A macro-generated test (proptest) is not counted by that `rg`, so the number of tests that run can differ from the number of `#[test]` attributes
 - Suites by theme: unit + integration + snapshot + property-based + signal + tracing + NDJSON + regression + cross-compile + concurrency
@@ -648,3 +670,54 @@ fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 # Or via ruplacer (a dry run until you add --go)
 ruplacer -- '--lang' '--locale' .
 ```
+
+
+## Every local flag, by command
+- This list names every local flag of each command, and the global flags stay in `atomwrite --help`.
+- `agent-surface`: `--format`
+- `apply`: `--ack-overwrite`, `--all`, `--allow-shrink`, `--backup`, `--dry-run`, `--format`, `--keep-backup`, `--no-backup`, `--no-syntax-check`, `--retention`, `--show`, `--strict-atomic`
+- `backup`: `--dry-run`, `--output-dir`, `--retention`
+- `batch`: `--backup`, `--batch-size`, `--dry-run`, `--file`, `--input-schema`, `--keep-backup`, `--no-backup`, `--retention`, `--strict-atomic`, `--transaction`
+- `calc`: `--stdin`
+- `case`: `--backup`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`, `--subvert`, `--to`
+- `codemod`: `--backup`, `--dry-run`, `--keep-backup`, `--no-backup`, `--retention`, `--rules`, `--strict-atomic`
+- `commands`: `--brief`, `--include-globals`
+- `completions`: `--install`
+- `config`: no local flag of its own, only the global set
+- `copy`: `--backup`, `--dry-run`, `--force`, `--keep-backup`, `--no-backup`, `--no-reflink`, `--preserve-xattr`, `--preserve`, `--recursive`, `--retention`, `--strict-atomic`
+- `count`: `--by-extension`, `--by-size`, `--exclude`, `--include`, `--top`
+- `del`: `--backup`, `--dry-run`, `--force-missing`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`
+- `delete`: `--backup`, `--confirm`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--no-backup`, `--older-than`, `--plan`, `--recursive`, `--retention`, `--yes`
+- `diff`: `--algorithm`, `--context`, `--stat`, `--unified`
+- `doctor`: `--strict`
+- `edit`: `--after-line`, `--after-match`, `--allow-sequential-drift`, `--backup`, `--before-line`, `--before-match`, `--between`, `--delete-range`, `--dry-run`, `--expect-checksum`, `--fuzzy-threshold`, `--fuzzy`, `--keep-backup`, `--line-ending`, `--multi`, `--new-file`, `--new`, `--no-backup`, `--old-file`, `--old`, `--partial`, `--preserve-timestamps`, `--range`, `--replace-all`, `--retention`, `--strict-atomic`, `--wal-policy`
+- `edit-loop`: `--allow-sequential-drift`, `--backup`, `--keep-backup`, `--line-ending`, `--no-backup`, `--partial`, `--retention`, `--strict-atomic`, `--syntax-check`
+- `extract`: `--delimiter`, `--field`, `--stdin`
+- `extract-artifact`: `--max-sample-rows`, `--max-text-chars`
+- `get`: no local flag of its own, only the global set
+- `hash`: `--exclude`, `--recursive`, `--stdin`, `--verify`
+- `list`: `--all`, `--count-by-ext`, `--depth`, `--exclude`, `--format`, `--include`, `--long`
+- `locale`: `--clear`, `--set`
+- `move`: `--backup`, `--dry-run`, `--force`, `--keep-backup`, `--no-backup`, `--preserve-hardlinks`, `--retention`
+- `outline`: `--format`, `--kind`, `--language`, `--positions`
+- `prune-backups`: `--dry-run`, `--max-age-secs`, `--max-count`, `--recursive`
+- `query`: `--kinds`, `--language`, `--positions`, `--query`, `--tree`
+- `read`: `--all`, `--bytes`, `--context`, `--crop`, `--dpi`, `--enclosing`, `--force`, `--format`, `--grep`, `--head`, `--high-res`, `--line`, `--lines`, `--max-tokens`, `--no-comments`, `--number`, `--ocr`, `--page`, `--pages`, `--stat`, `--symbol`, `--tail`, `--verify-checksum`
+- `recipe`: no local flag of its own, only the global set
+- `regex`: `--case-insensitive`, `--digits`, `--no-anchors`, `--repetitions`, `--spaces`, `--stdin`, `--words`
+- `replace`: `--backup`, `--dry-run`, `--exclude`, `--expect-checksum`, `--fuzzy-threshold`, `--fuzzy`, `--include`, `--keep-backup`, `--literal`, `--max-replacements`, `--no-backup`, `--preserve-case`, `--preserve-timestamps`, `--preview`, `--progress-every`, `--regex`, `--retention`, `--strict-atomic`, `--word`
+- `rollback`: `--backup`, `--dry-run`, `--keep-backup`, `--latest`, `--no-backup`, `--retention`, `--strict-atomic`, `--timestamp`, `--verify`
+- `scope`: `--action`, `--backup`, `--delete`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--language`, `--no-backup`, `--pattern`, `--query`, `--replace-with`, `--retention`, `--strict-atomic`
+- `scratch`: no local flag of its own, only the global set
+- `search`: `--binary`, `--case-insensitive`, `--context`, `--count`, `--exclude`, `--files`, `--fixed`, `--format`, `--include-fifo`, `--include`, `--invert`, `--limit`, `--max-columns`, `--max-count`, `--max-filesize`, `--multiline`, `--no-begin-end`, `--offset`, `--pcre2`, `--regex`, `--smart-case`, `--sort`, `--target`, `--word`
+- `semantic-merge`: `--backup`, `--base`, `--dry-run`, `--expect-checksum`, `--fail-on-conflict`, `--keep-backup`, `--no-backup`, `--no-conflict-markers`, `--ours`, `--output`, `--retention`, `--strict-atomic`, `--theirs`, `--write-conflict-markers`
+- `semantic-search`: `--include-backups`, `--index-dir`, `--k`, `--min-score`
+- `set`: `--backup`, `--dry-run`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`
+- `sparse`: no local flag of its own, only the global set
+- `stat`: `--all`, `--bytes`, `--context`, `--crop`, `--dpi`, `--enclosing`, `--force`, `--format`, `--grep`, `--head`, `--high-res`, `--line`, `--lines`, `--max-tokens`, `--no-comments`, `--number`, `--ocr`, `--page`, `--pages`, `--stat`, `--symbol`, `--tail`, `--verify-checksum`
+- `transform`: `--backup`, `--dry-run`, `--exclude`, `--include`, `--inline-rules`, `--keep-backup`, `--language`, `--no-backup`, `--pattern`, `--retention`, `--rewrite`, `--rules`, `--strict-atomic`, `--verify-parse`
+- `verify`: no local flag of its own, only the global set
+- `wal-heal`: `--dry-run`, `--max-duration-ms`, `--threshold-secs`
+- `wal-stats`: `--dry-run`
+- `watch`: `--checksum`, `--debounce-ms`, `--gitignore`, `--idle-exit-ms`, `--max-events`
+- `write`: `--ack-overwrite`, `--allow-empty-stdin`, `--allow-shrink`, `--append`, `--auto-rotate`, `--backup`, `--confirm`, `--dry-run`, `--durability`, `--expect-checksum`, `--keep-backup`, `--line-ending`, `--max-size`, `--no-backup`, `--no-checksum-when-empty`, `--prepend`, `--preserve-timestamps`, `--require-backup`, `--require-large-ack`, `--retention`, `--risk-threshold`, `--strict-atomic`, `--syntax-check`, `--wal-policy`

@@ -23,8 +23,11 @@ pub struct SearchArgs {
     ///
     /// A pattern that starts with a hyphen must come after `--`, so that an
     /// unknown flag is reported as an argument error instead of being taken
-    /// as the pattern.
-    pub pattern: String,
+    /// as the pattern. Absent when the caller supplied every pattern through
+    /// `-e/--regex`; a run with neither is a clap usage error, exit 2, which
+    /// is what a malformed invocation has always reported here.
+    #[arg(required_unless_present = "regex", value_name = "PATTERN")]
+    pub pattern: Option<String>,
 
     /// Paths to search within.
     ///
@@ -34,15 +37,34 @@ pub struct SearchArgs {
     #[arg(value_hint = ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
 
-    /// Treat pattern as regex.
+    /// Add another regex pattern.
+    ///
+    /// Repeatable like `rg -e`: every value accumulates, and the run matches
+    /// the union of the positional pattern and each one supplied here. The
+    /// flag always takes a value, so a repeating `-e A -e B FILE` keeps FILE
+    /// as a positional path instead of consuming it as a third pattern.
     #[arg(
         short = 'e',
         long,
+        value_name = "PATTERN",
+        num_args = 1,
+        action = clap::ArgAction::Append,
         conflicts_with = "fixed",
-        help = "Treat pattern as regex (default)",
+        help = "Add another regex pattern (repeatable, like rg -e)"
+    )]
+    pub regex: Vec<String>,
+
+    /// Accepted for `rg -n` compatibility; the output already numbers lines.
+    ///
+    /// `--format text` prefixes every line with its number, so the flag never
+    /// changes the answer. It exists so an `rg`-shaped caller does not fail on
+    /// an unknown argument.
+    #[arg(
+        short = 'n',
+        help = "Accepted for rg compatibility; line numbers already appear in --format text",
         action = clap::ArgAction::SetTrue
     )]
-    pub regex: bool,
+    pub line_number: bool,
 
     /// Treat pattern as fixed string.
     #[arg(
@@ -197,9 +219,10 @@ pub struct SearchArgs {
 
     /// Output format: `ndjson` (default) or `text`.
     ///
-    /// `text` prints one line per match as `LINE:TEXT`, or `PATH:LINE:TEXT`
-    /// when more than one file can match, with `PATH` relative to
-    /// `--workspace` and `/` as the separator on every OS. `--context N`
+    /// `text` prints one line per match as `LINE:COL:TEXT`, or
+    /// `PATH:LINE:COL:TEXT` when more than one file can match, with `PATH`
+    /// relative to `--workspace` and `/` as the separator on every OS. `COL`
+    /// is the 1-based byte column of the first match on the line. `--context N`
     /// prints context lines with `-` instead of `:` and separates groups with
     /// `--`, the way `rg` does. Nothing else reaches stdout: no `begin`, `end`,
     /// `summary` or colour. `--count` prints `N`, or `PATH:N` for several
@@ -208,13 +231,12 @@ pub struct SearchArgs {
     /// because a match there is not a single line of a single file.
     /// `--max-columns` does not apply: `rg` returns the whole line, and a
     /// truncated line could not be compared against it byte for byte.
-    #[arg(
-        long,
-        value_enum,
-        default_value_t = SearchFormat::Ndjson,
-        help = "Output format: ndjson (default) or text"
-    )]
-    pub format: SearchFormat,
+    // No `default_value_t`: `None` is what tells the dispatch that the caller
+    // said nothing, so the `[search] format` config may answer. A parsed
+    // `Ndjson` here could be either the flag or the default, and the flag must
+    // win over the config.
+    #[arg(long, value_enum, help = "Output format: ndjson (default) or text")]
+    pub format: Option<SearchFormat>,
 }
 
 /// Arguments for the extract subcommand.
@@ -371,7 +393,7 @@ pub struct PruneBackupsArgs {
     pub paths: Vec<PathBuf>,
 
     /// Maximum age (in seconds) of backups that survive. Backups whose
-    /// mtime is strictly older than `now - max_age_secs` are pruned.
+    /// creation stamp is strictly older than `now - max_age_secs` are pruned.
     /// When both `--max-age-secs` and `--max-count` are passed, age is
     /// applied first and count is applied to the survivors.
     #[arg(
@@ -381,9 +403,22 @@ pub struct PruneBackupsArgs {
     )]
     pub max_age_secs: Option<u32>,
 
-    /// Maximum number of backups to keep (most recent by mtime).
+    /// Maximum number of backups to keep (most recent by creation stamp).
     #[arg(long, value_name = "N", help = "Keep at most N most-recent backups")]
     pub max_count: Option<u8>,
+
+    /// Treat a directory argument as a tree to search for backups.
+    ///
+    /// Without it a directory is refused, because a verb that deletes files
+    /// must not guess a subject from a tree. With it, every `*.bak.<stamp>`
+    /// under the root is a candidate, which is how an orphan copy left by
+    /// `delete` is reached: no `--backup` target names it anymore.
+    #[arg(
+        short = 'r',
+        long,
+        help = "Search directory arguments for backups instead of refusing them"
+    )]
+    pub recursive: bool,
 
     /// Preview without deleting anything.
     #[arg(long, help = "Show what would be pruned without writing", action = clap::ArgAction::SetTrue)]
@@ -399,7 +434,11 @@ pub struct ApplyArgs {
 
     #[arg(value_hint = ValueHint::FilePath)]
     /// Target file to apply the patch to.
-    pub file: PathBuf,
+    ///
+    /// Omit it when the patch names its own files: a path line above each
+    /// file's blocks, or a pair of header lines per file. Without it, the
+    /// path comes from the patch, never from ambient state.
+    pub file: Option<PathBuf>,
 
     /// Patch format (default: auto-detect).
     #[arg(long, value_enum, default_value_t = PatchFormat::Auto, help = "Patch format: auto (detect, refuse when no marker), unified, search-replace, full (whole-file replacement), markdown")]
@@ -420,6 +459,28 @@ pub struct ApplyArgs {
     /// Accept a result smaller than XDG `[write].shrink_block_percent`.
     #[arg(long, help = "Allow a result smaller than XDG [write].shrink_block_percent", action = clap::ArgAction::SetTrue)]
     pub allow_shrink: bool,
+
+    /// Return the changed lines with their numbers, instead of only counts.
+    ///
+    /// The patch already knows what it changed, so this is the answer that
+    /// removes the re-read a caller pays for just to confirm the swap.
+    #[arg(long, help = "Return the changed lines with their numbers", action = clap::ArgAction::SetTrue)]
+    pub show: bool,
+
+    /// Replace every whole-line occurrence of each SEARCH block, not just one.
+    ///
+    /// Without it, a SEARCH that matches more than once is refused with
+    /// `MATCH_AMBIGUOUS`, which is the safe answer for a blind rewrite.
+    #[arg(long, help = "Replace every whole-line occurrence of each block", action = clap::ArgAction::SetTrue)]
+    pub all: bool,
+
+    /// Accept a patch that leaves the file with more syntax errors than before.
+    #[arg(
+        long,
+        help = "Skip the syntax check that refuses a patch that breaks the parse",
+        action = clap::ArgAction::SetTrue
+    )]
+    pub no_syntax_check: bool,
 }
 
 /// Identifier case style for the `case` subcommand.

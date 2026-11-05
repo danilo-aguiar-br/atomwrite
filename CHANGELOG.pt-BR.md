@@ -8,6 +8,261 @@
 - O versionamento segue [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 
+## [0.1.38] - 2026-11-04
+
+### Alterado — o envelope de falha carrega só o que o consumidor ramifica
+- O envelope de falha padrão carrega `ok`, `code`, `exit`, `path` quando existe e `suggestion`, e `message`, `error_class`, `retryable` e `suggestion_lang` aparecem só com `-v`
+- O `error: true` saiu do envelope de falha: ele duplicava `ok: false` mais `code`, custava 13 bytes em toda falha (179 para 166 bytes no mesmo caminho) e nenhum consumidor decidia por ele sozinho; quem lia a chave passa a testar `.ok == false`
+- Os schemas de erro e de terminal declaram as chaves descartadas como opcionais e exigem só `code` e `exit` numa falha, então o schema publicado deixa de recusar a saída que a build realmente escreve
+- O `-v` sobrevive a `--join`, `--filter`, `--aggregate` ou `--truncate-content` malformado: o shape de reserva era montado com defaults, o que descartava a flag e a chave de redação em silêncio
+- O `--print-schema` responde nome desconhecido com o mesmo envelope moldado, e esse caminho antecipado lê o `-v` do argv porque o clap ainda não rodou
+
+### Alterado — a imagem é enviada uma vez por sessão
+- `read` de imagem já entregue nesta sessão responde com uma linha curta de token em vez do data URI de novo, e `--force` envia outra vez
+- A chave da sessão é o `CLAUDE_CODE_SESSION_ID` do chamador, e a marca fica no diretório de cache, então uma sessão nova envia a imagem uma vez
+- `extract-artifact` de imagem publica `visual_tokens` e a largura e a altura reduzidas
+
+### Alterado — decodificar e escalar imagem custa menos
+- Imagens HEIC e HEIF decodificam para RGBA e são servidas como qualquer outra imagem
+- O redimensionamento Lanczos3 roda em `fast_image_resize`, medido em 42 ms contra 625 ms no mesmo redimensionamento isolado
+- O `lopdf` 0.46 extrai texto sob um limite explícito em vez de juntar todas as páginas antes
+
+### Corrigido — as flags pedidas pelo chamador não se perdem no caminho
+- Um `LockTimeout` no sidecar é propagado quando o alvo existe, porque uma release antiga segura só esse arquivo, e as demais falhas do sidecar continuam best effort
+- A sugestão de caminho prefere `similar_paths` quando o resolvedor achou um vizinho, então a dica nomeia o caminho real em vez de repetir a mensagem
+- `read --no-comments` num arquivo sem sintaxe de comentário avisa em vez de fingir que filtrou
+- `search` sem `--format` segue o `search.format` da config, e um `--format` explícito sempre vence
+- `search -e/--regex` não consome mais os caminhos posicionais, então `search -e alpha -e beta src/main.rs` varre esse arquivo e não o diretório
+- `outline` marca `sig_truncated` só quando a assinatura foi realmente cortada, e o aviso do teto de texto nomeia a flag que sobe o teto
+- `apply --format unified` publica a última linha aplicada, o mesmo sinal que o `diff` já dava
+- O `delete --recursive` passa a remover toda entrada dentro do diretório nomeado, incluindo oculta, ignorada, link, fifo, socket e dispositivo, então o diretório some quando o run sai 0
+- O run sem filtro que deixa um diretório no disco passa a relatar a falha de I/O medida com o caminho sobrevivente, e o run estreitado por `--include`, `--exclude`, `--older-than` ou `--limit` sai 0 com `dirs_left` e `entries_left`
+- O veredito de `write` e `apply` passa a nomear a estratégia de escrita, e o `apply` relata a cópia que o diretório recusou em vez de descartá-la
+- O `search` deixa de abortar quando o offset de um match cai dentro de caractere multibyte, porque o texto do submatch é renderizado de forma lossy a partir dos bytes em vez de fatiar um `str` fora de limite, então `--format text` e NDJSON mantêm o código de saída
+
+### QUEBRA — o delete recursivo é dono da árvore nomeada
+- O `delete --recursive <dir>` sem filtro de estreitamento remove entrada oculta e ignorada sem flag nenhuma, e `--hidden`, `--no-gitignore` e `--follow-symlinks` viram no-op que emite uma linha de diagnóstico
+- O link é sempre desvinculado como entrada e nunca seguido, então `--follow-symlinks` deixa de fazer o `delete` remover o conteúdo para onde o link aponta
+- O run estreitado por `--include`, `--exclude`, `--older-than` ou `--limit` sai 0 em vez de 65 quando a sobra é o que o filtro pediu para manter
+- O run sem filtro que ainda deixa um diretório sai com o código de I/O medido e o caminho sobrevivente em `errors[]`, em vez do `INVALID_INPUT` sintético com exit 65
+- O `delete --backup` com raiz de diretório é recusado antes do primeiro unlink, porque a cópia nasceria dentro da árvore e sobreviveria à remoção, então use `copy -r` antes ou passe `--no-backup`
+- Fifo, socket e dispositivo são removidos sem serem abertos e não publicam `checksum_before`, porque não há conteúdo para somar
+- `--plan` e `--dry-run` deixam de publicar `dirs_left`, `entries_left` e `hint`, porque nunca removeram nada
+- O `copy -r` passa a copiar o caminho listado em `.ignore`, no gitignore global ou no `info/exclude`, que o contrato da cópia de árvore já prometia
+
+### Alterado — `[defaults].backup` alcança o delete
+- A chave `backup` de `[defaults]` agora distingue ausente de `false`, então `backup = true` escrita no `.atomwrite.toml` faz o `delete` e o `delete` do `batch` criarem a cópia sem `--backup`
+- A chave é ausente por padrão, e a chave ausente mantém o padrão de cada verbo: a reescrita copia e o `delete` não copia
+- `--no-backup` vence a chave, e `--backup` continua forçando a cópia
+- `--keep-backup` continua só preservando uma cópia que existe, e o aviso agora aparece só quando nenhuma cópia foi criada, inclusive quando o alvo já é um backup
+- `config get defaults.backup` informa `origin: default` e omite `value` enquanto a chave não está escrita, então nenhum consumidor recebe `null`
+- A chave `[delete].backup` agora vence `[defaults].backup` só para o `delete`, e as duas ficam abaixo de `--backup` e `--no-backup`
+- A chave é ausente por padrão, então `[delete].backup` não escrita herda `[defaults].backup`
+
+### Alterado — a leitura é limitada por padrão
+- O `read` padrão para em `read.max_output_bytes`, corta numa linha completa e no fim do último item do outline, e publica `truncated` mais uma faixa `next` pronta
+- `read --format raw` imprime a próxima faixa no stderr e separa faixas não contíguas com `--`, enquanto `--all` continua escrevendo todos os bytes
+- `read --no-comments` sem `--number` é recusado com exit 65, porque tirar linhas apontaria o `apply` seguinte para a linha errada
+- O `outline` de Markdown fecha cada seção na linha anterior ao próximo título de nível igual ou maior, e o tsv imprime `início-fim`
+- O perfil lean mantém `bytes_after`, e o `delete` responde uma vez com os totais em vez de um registro por arquivo
+- A dica de casamento do `apply` nomeia as flags do apply, a dica de jaula entrega o comando pronto com `--workspace`, e o `agent-surface` lista `--number` e `output.profile lean`
+- Imagem corrompida agora responde `INVALID_INPUT` com exit 65 em vez de `INTERNAL_ERROR`
+
+### Adicionado — o batch diz o que guardou e o que recusou
+- Uma operação `delete` dentro do `batch` passa a publicar a mesma lista `warnings` que o verbo isolado publica quando `--keep-backup` não muda nada, em vez de descartar o aviso
+- `delete`, `move` ou qualquer operação que rodou o escritor publicam `backup_path`, então o chamador acha o desfazer sem listar o diretório, e o `move` que recusa cópia de uma cópia nomeia a recusa em `backup_skipped`
+- O resumo de um `batch --transaction` publica `backups_preserved`, nomeando os snapshots que o commit guardou porque eram a única cópia de um arquivo excluído ou sobrescrito
+- O commit guarda o snapshot do destino que um `move` ou `copy` sobrescreveu, porque o conteúdo anterior daquele arquivo não vive em outro lugar; a origem do move fica fora, porque o conteúdo dela vive no destino
+- Um `apply` que falha publica `backups_preserved` com as cópias que o rollback deixou no disco
+
+### Mudado — a transação é dona da cópia que ela já fez
+- Um `delete` ou um `move` dentro de `batch --transaction` não escreve mais uma segunda cópia de um arquivo que a transação já fotografou, então a execução deixa uma cópia no disco em vez de duas, e o `--keep-backup` guarda uma
+- A operação publica o caminho do snapshot em `backup_path` e diz por que nenhuma segunda cópia foi feita, então o chamador continua sabendo o caminho de volta sem listar o diretório
+- Um `apply` que falha nomeia a cópia que a própria tentativa deixou no disco, tanto na mensagem de erro quanto em `backups_preserved` do registro `rollback`
+- O `completions --install` grava no armazenamento do produto, que o `[storage].home` relocaliza e o ambiente do processo não, e o manual passa a dizer isso
+
+### QUEBRA — `target_resolved` é sempre array
+- Todo envelope terminal publica `target_resolved` como array, inclusive a execução que resolveu um alvo só, então o consumidor lê uma forma e nunca inspeciona a contagem antes
+- O envelope de erro carrega a mesma forma de array, e o schema publicado declara só `array` de strings em vez da antiga união de string com array
+- Leia o sujeito com `.[0]` no `jq`, ou `event["target_resolved"][0]` num programa, e a seção de migração mostra as duas formas
+
+### Alterado — a exclusão guarda o próprio desfazer, e a reversão declara o que preservou
+- Uma transação do `batch` que exclui um arquivo passa a manter a cópia feita antes da mutação depois do commit, porque esse arquivo não vive em nenhum outro lugar; uma reescrita mantém exatamente uma cópia com `--keep-backup` e nenhuma sem ela, e `--no-backup` remove toda cópia como antes
+- Um `write`, `replace`, `edit` ou `copy` transacional passa a reutilizar o snapshot que a transação já fez em vez de escrever uma segunda cópia, então `--keep-backup` deixa um arquivo, não dois
+- O help do `delete` passa a dizer que o verbo só copia quando a chamada pede, e o `delete` do `batch` deixa de criar cópia só com `--keep-backup`
+- O commit da transação deixa de descartar o snapshot de um alvo que ela excluiu, o que tornava a exclusão irrecuperável na versão anterior
+- Uma reversão que não consegue restaurar um arquivo publica um registro `rollback` em vez de só o envelope de erro, com `failed_paths` nomeando o arquivo que não voltou e `backups_preserved` nomeando os snapshots que ficaram no disco
+- O registro `rollback` do `apply` e do `batch --transaction` publica `target_resolved` como array mesmo quando um arquivo só voltou, então quem lê encontra uma forma só nesse evento
+- O `apply` relata `target_source: "stdin"` quando o patch traz a própria linha de caminho, e mantém `argv` quando `--file` nomeia o alvo na linha de invocação
+
+### Alterado — o snapshot da transação segue a política de backup
+- Uma transação bem-sucedida do `batch --transaction` deixa de largar `f1.txt.bak.<carimbo>`: o snapshot tirado antes da mutação é removido quando toda operação confirma, a menos que `--keep-backup` peça para guardar
+- `--no-backup` vence `--keep-backup`, então a transação nunca deixa cópia quando a invocação proibiu
+- A transação que falha e é revertida também remove os snapshots, e só a restauração que falha os mantém, porque eles são o último estado conhecido daqueles arquivos
+- O registro `rollback` do `apply` e do `batch --transaction` passa a carregar `target_resolved` com todo caminho revertido, como array quando há mais de um, e `target_source` diz se o manifesto veio de `argv` ou de `stdin`
+
+### Adicionado — o `apply` diz o que desfez
+- Um `apply` que falha depois de já ter gravado um arquivo restaura o arquivo e publica um registro `rollback` com `operation` igual a `apply`, a quantidade de arquivos restaurados e o tempo da restauração
+- O registro carrega `ok: false` e o `code` e o `exit` da falha que forçou o rollback, e a restauração que falha nomeia o arquivo em `failed_paths` e sai `TRANSACTION_ROLLBACK_FAILED`
+- Um `apply` que falha antes de gravar qualquer coisa não publica registro de rollback, porque nada foi desfeito e o envelope de erro sozinho relata a falha
+- O `apply` publica `backup_path`, então o chamador acha o `.bak` de um patch sem listar o diretório
+- O schema do `apply` passa a ser a união de `plan`, `applied` e `rollback`, então um consumidor que valida dry run ou execução falha deixa de recusar registro que o verbo escreve
+
+### Alterado — campo que o binário omite não declara mais `null`
+- Quinze campos opcionais do veredito de escrita declaram `string` puro, então nenhum schema publicado promete `null` para `backup_path`, `backup_skipped` ou `write_strategy`
+- `failed_paths` do registro de rollback e `submatches` do casamento de busca saem de `required`, porque o binário omite os dois quando estão vazios e o contrato continuava exigindo
+- O rollback do `apply` roda sem backup, então o arquivo restaurado deixa de pagar uma cópia do conteúdo patcheado que era escrita e apagada na mesma chamada
+- O rollback do `apply` e do `batch --transaction` restaura os arquivos que gravou em vez de relatar deriva de estado, porque a execução segura o lock do inode que o próprio commit substituiu e a restauração passa a comparar conteúdo
+
+### Adicionado — o veredito nomeia o mecanismo
+- `write` publica `write_strategy` (`rename`, `inplace` ou `copyback`), que `platform.rename_method` não separava porque ele nomeia a chamada de sistema e não o caminho tomado
+- `apply` publica `write_strategy` e `backup_skipped`, então um patch gravado no lugar numa pasta sem escrita diz isso no JSON e não só no stderr
+
+### Corrigido — o erro nomeia o arquivo que o chamador pediu
+- Um lock que não pode ser tomado para arquivo novo relata o caminho do alvo em vez do sidecar `.atomwrite.lock` que a própria execução cria e apaga, e o sidecar fica no aviso de stderr
+
+### Incompatível — `--hidden` decide em todo verbo que caminha
+- `hash`, `copy -r` e `semantic-search` escondem dotfile no padrão e só o veem sob `--hidden`, então um script que hasheava ou copiava uma árvore sem a flag agora recebe o inventário menor
+- Um alvo nomeado na linha de comando continua vencendo: `hash .env` e `copy .env` agem no arquivo que o chamador nomeou, porque a invocação já disse o que quer
+
+### Adicionado — `sparse list` e `sparse outline` aceitam `--all`
+- A flag lista toda entrada, oculta incluída, então o inventário de dotfile tem caminho de volta dentro do próprio verbo e não só pela flag global `--hidden`
+- `--all` e `--hidden` pedem a mesma visita e nenhuma anula a outra, e o padrão continua escondendo dotfile
+
+### Adicionado — todo verbo que muta publica o veredito de escrita
+- `copy`, `move`, `delete`, `rollback`, `semantic-merge`, `config set`, `config unset` e cada operação do `batch` publicam `write_strategy` e `backup_skipped` no evento que os relata
+- `delete` publica `"none"` porque desfaz o vínculo em vez de escrever atomicamente, e `move` publica a estratégia da renomeação ou da escrita entre dispositivos que de fato tomou
+- `backup_skipped` fica ausente do evento quando nenhuma cópia foi recusada, então nenhum chamador lê um `null` que não distingue de cópia pulada
+- `edit`, `replace`, `transform`, `scope`, `case`, `set`, `del`, `edit-loop` e `locale` entram na lista, então a família que reescreve arquivo responde a pergunta que a família que copia já respondia
+- A prévia publica `"none"` porque não promete escrita, e o `del` de chave ausente omite `write_strategy` porque veredito para chave que nunca existiu seria falso
+- O `batch delete` recusa copiar uma cópia, pelo mesmo predicado `is_backup_path` que o `delete` avulso usa, e a sentença compartilhada mora em `backup_names` para os dois verbos não divergirem
+
+### Mudado — a família sparse caminha por uma política só
+- `sparse list` honra `--hidden` como `sparse outline` e `count`, então uma execução padrão esconde dotfile e a flag é o que pede todas as entradas
+- `sparse list` e `sparse outline` descartam a cópia `.bak.` com carimbo, pelo mesmo predicado que `semantic-search` e `recipe` já usam
+- `files_scanned` diz que dotfile só conta sob `--hidden` ou sob o `--all` do próprio verbo, então quem lê o schema prevê os dois números em vez de descobrir um medindo
+
+### O rascunho de 2026-11-03 desta versão
+- Esta versão gasta menos bytes por chamada nos três verbos que um agente mais chama, e transforma quatro falhas silenciosas em saídas que o chamador consegue separar
+
+### Mudado — o `read` para num teto e nomeia o próximo passo
+- `read --format raw` para em `READ_DEFAULT_MAX_BYTES` (24.000 bytes, abaixo do corte de 30.000 caracteres da ferramenta Bash) e imprime uma linha no `stderr` com as linhas mostradas e o `--lines` exato que lê o resto
+- `--all` desliga o teto para o arquivo inteiro, e o caminho raw passou a ler em streaming com `BufReader` em vez de carregar o arquivo na memória
+- `--number` imprime `N:texto`, então `awk`, `nl` e `printf` saem da linha de comando
+- `--lines` é repetível (`ArgAction::Append`, com `--range` como apelido visível), e faixas que se cruzam se unem, então várias janelas e vários arquivos chegam numa chamada só
+- `--symbol NOME` imprime uma função, classe ou seção pelo nome, e `--line N --enclosing` imprime o bloco que contém a linha
+- `--no-comments` remove comentário e linha vazia antes de contar a janela e antes de imprimir
+- Uma faixa de `--lines` que começa depois do fim do arquivo é erro `InvalidInput` com o total de linhas nos dois formatos, e nunca um sucesso vazio
+- O modo raw recusa alvo binário com dica em vez de despejar os bytes
+
+### Mudado — `search`, `list` e `outline` cabem numa tela
+- `search --format text` escreve um `caminho:linha:coluna:texto` por achado sob um teto de bytes, e o teto é configurável por `search.format`
+- Um arquivo pulado por ser binário emite aviso no `stderr`, e uma árvore em que tudo foi pulado sai `89 ALL_SKIPPED_BINARY` em vez de `NO_MATCHES`
+- O `search` dimensiona o pool pelo número de arquivos, então um arquivo só não paga mais por 16 threads
+- `list --format text` escreve um caminho por linha sob um teto, e `total_bytes` conta somente arquivo
+- `outline --format tsv` escreve `linha<TAB>tipo<TAB>nome` com o caminho uma vez, e arquivo Markdown lista títulos e seções setext em vez de sucesso vazio
+- O `outline` parseia bytes crus, então arquivo não UTF-8 não responde mais `ok: true` com zero itens
+- O `outline` publica `parse_errors` e `first_error_line` quando a árvore tem nó de erro
+
+### Mudado — o `apply` casa linha inteira e mostra a troca
+- O casamento do SEARCH/REPLACE passou a ser por linha, então pedaço de linha não é mais trocado no lugar errado
+- SEARCH repetido sem `--all` sai `65 MATCH_AMBIGUOUS` com a contagem de ocorrências e o melhor candidato, e `--all` troca todas as ocorrências de propósito
+- Bloco sem `=======` ou sem `>>>>>>> REPLACE`, e SEARCH vazio, são erros que nomeiam o índice do bloco; REPLACE vazio apaga as linhas casadas em vez de deixar uma linha em branco
+- A checagem de sintaxe roda antes e depois da troca e recusa só quando a contagem de erros de parse sobe, com `--no-syntax-check` como saída
+- `--show` devolve as linhas alteradas com o número delas a partir de 1, o que remove a releitura que confirmava a troca
+- `check_replacement_size` vale só para `format full`, então patch acima de 100 KiB não bate mais no guarda de tamanho
+- As dicas de `MATCH_FAILED` e `MATCH_AMBIGUOUS` nomeiam os verbos e flags que existem no `apply`
+
+### Adicionado — `apply` corrige vários arquivos numa chamada
+- O argumento de alvo é opcional, e patch que nomeia os próprios arquivos é aplicado numa invocação em vez de uma chamada por arquivo
+- Patch unified e Markdown se divide pelos pares de cabeçalho, e o SEARCH/REPLACE se divide por uma linha de caminho logo acima do primeiro `<<<<<<< SEARCH` de cada arquivo
+- Todo arquivo de toda seção é lido, corrigido e checado por sintaxe antes da primeira gravação, então bloco que não casa recusa a chamada inteira
+- A recusa nomeia o arquivo em `target_resolved`, e a mensagem continua dizendo qual bloco falhou
+- Gravação que falha depois de outro arquivo gravado restaura os arquivos já escritos, então a chamada não deixa patch pela metade
+- Cada arquivo aplicado publica o próprio registro com o próprio `path`, `target_resolved` e checksums
+- Os alvos são ordenados antes de os locks serem tomados, então duas chamadas sobre os mesmos arquivos travam na mesma ordem
+
+### Corrigido — `diff` e o envelope de terminal
+- O `diff` publica `line` a partir de 1 e separa `old_line` de `new_line`, então a coordenada antiga e a nova não se misturam
+- `write_terminal` passa pelo formato de saída, então `--select` vale também no registro de resumo
+- O `delete` publica `backups_kept`, `backup_bytes` e `dirs_left`
+- `output.profile = "lean"` remove os digests, as contagens de bytes e o tempo do registro de mutação bem-sucedida, e 454 bytes viraram 161 num `apply` de três linhas
+
+### Mudado — o lock é tomado no arquivo, e não no nome dele
+- O lock agora mira o inode do arquivo que está sendo gravado, tomado por `std::fs::File::try_lock`, então qualquer processo que abra o mesmo arquivo encontra a mesma exclusão
+- O sidecar `.atomwrite.lock` desceu para arquivo de compatibilidade de melhor esforço, e a falha dele não aborta mais a gravação
+- A troca revalida o inode travado contra o inode que o caminho resolve naquele instante, e a divergência vira `state_drift` com exit 82 em vez de gravação silenciosa no objeto errado
+- A escrita in-place não precisa de permissão de diretório, então o arquivo do próprio chamador em diretório sem escrita é gravado em vez de recusado com exit 13
+- O ADR-0079 registra a causa, o modelo por sistema operacional e a janela de migração do sidecar
+- O `delete` toma o mesmo lock exclusivo antes de calcular o hash e antes do unlink, então uma exclusão e uma gravação no mesmo alvo não se entrelaçam mais
+
+### Mudado — os verbos destrutivos dizem o que deixaram para trás
+- O `delete` publica `backup_path` no evento `deleted` e o `replace` publica o mesmo campo no resultado, então o chamador sabe onde a cópia ficou sem listar a pasta
+- O `delete` preenche `hint` no resumo quando uma pasta sobrevive, nomeando `--hidden` ou os filtros de inclusão e exclusão como o motivo
+- O `prune-backups` lê o carimbo de criação do nome do backup e só cai para o mtime quando o nome não tem carimbo, porque o clonefile do APFS copia o mtime do original
+- O `prune-backups -r` aceita diretório, varre com o mesmo walker com escopo que os outros verbos de árvore usam, e alcança a cópia órfã que um `delete` deixou
+- Só arquivo comum é candidato à poda, então a pasta que por acaso carrega nome de backup fica intocada
+
+### Mudado — o `set` edita o valor em vez de reescrever o documento
+- O `set` em JSON localiza o trecho de bytes do valor e encaixa o valor novo ali, então toda chave fora desse trecho fica byte a byte igual
+- O encaixe é descartado quando o resultado não volta a interpretar como o documento esperado, e a reescrita canônica continua como a queda
+- O `comments_preserved` é opcional e só aparece no TOML, porque documento JSON não tem comentário a preservar
+
+### Mudado — link simbólico, ajuda e envelope de erro
+- O `--follow-symlinks` chega a todo verbo de alvo único, e a jaula é checada sobre o alvo resolvido, então o arquivo de configuração que é link para outra pasta é lido e editado no lugar
+- O link recusado passa a sair com 79 em vez de 127, porque 127 é o que o shell relata para programa que não está instalado
+- As globais saíram da ajuda curta e foram para a linha de rodapé `Global flags: atomwrite --help`, e o `read -h` caiu de 113 linhas para 45
+- O `suggestion_lang` só aparece quando o catálogo resolveu para língua diferente do inglês, e isso tira 24 bytes de toda falha no padrão
+
+### Adicionado — a imagem chega ao canal de visão
+- O `read` de uma imagem emite uma linha `data:` no stdout, então o PNG deixa de chegar como bytes crus que o modelo não lê
+- O tipo vem dos bytes mágicos, e o PNG chamado `.txt` continua sendo tratado como imagem
+- O tamanho segue a regra de blocos de 28 pixels, com a faixa padrão em 1 568 pixels e 1 568 tokens visuais e o `--high-res` em 2 576 e 4 784
+- O `--max-tokens N` reduz até a contagem arredondada de blocos caber em N, e o `--crop X,Y,W,H` recorta a região antes de qualquer redução
+- A orientação do EXIF é aplicada, porque o decodificador lê pixel e não a etiqueta da câmera
+- O `--stat` informa largura, altura, formato, tokens visuais, quadros de GIF e a orientação, sem enviar pixel
+- A imagem acima de 100 megapixels é recusada antes da decodificação, e o `data:` acima do teto é recusado com a flag que o diminui
+
+### Adicionado — texto de PDF por página
+- O `read doc.pdf` devolve o texto de cada página, e o `--pages N` ou `--pages A:B` escolhe janelas, repetível numa chamada só
+- A página sem texto é nomeada em `needs_vision`, porque página digitalizada não é documento vazio
+- Cada página é descomprimida sob teto rígido de bytes, então fluxo de conteúdo forjado não infla o processo
+- O `extract-artifact` em PDF agora devolve `text_chars` e `text_excerpt`, e não responde mais `text: null` para documento que tem texto
+- As páginas são descomprimidas em paralelo e unidas na ordem em que o chamador pediu
+
+### Adicionado — página digitalizada vira texto
+- O `read doc.pdf --page N` renderiza a página e responde com o mesmo `data:` URI que a imagem usa, então digitalização deixa de chegar como cabeçalho que o modelo não lê
+- O `--dpi N` escolhe a resolução do render entre 36 e 600, e o `--stat` informa o tamanho da renderização sem enviar os pixels
+- A página é achatada sobre branco antes da codificação, então sai em JPEG em vez de PNG várias vezes maior
+- O `--ocr` reconhece os caracteres de uma imagem ou de uma página renderizada e responde com o texto em `content`, o mesmo campo que o arquivo de texto preenche
+- Os dois arquivos de modelo são baixados uma vez para o diretório de cache, então a primeira execução com `--ocr` precisa de rede e as seguintes não
+- O reconhecimento roda no processo em Rust puro, sem Tesseract e sem toolchain C, e cada arquivo de modelo tem teto de 64 MiB
+- A página renderizada vai para reconhecimento a 300 dpi por padrão, porque letra miúda a 150 dpi fica grossa demais para separar os caracteres
+
+### Mudado — o diário de escrita e o inventário barato
+- Toda recusa depois que o diário de escrita foi aberto descarta o diário, e não só o caminho de cancelamento, então a gravação recusada não deixa diário órfão
+- O `commands --brief` imprime uma linha por subcomando, 5 020 bytes contra 67 492 da árvore inteira
+
+### Corrigido — a rodada da auditoria: cada verbo agora responde o que foi pedido
+- O `apply --format unified` aceita `@@ ... @@` e um `@@` sozinho ao lado de `@@ -a,b +c,d @@`, e localiza o trecho por contexto quando os números faltam
+- Um bloco SEARCH com uma linha `...` casa o trecho entre as âncoras sob `apply.max_ellipsis_lines`, e um `...` sozinho no REPLACE é recusado
+- A recusa de sintaxe publica `line` e `line_end` do bloco que aumentou a contagem de erros, para quem chamou editar esse bloco sem reler o arquivo
+- O `read` compõe `--symbol`, `--enclosing`, `--no-comments`, todas as janelas de `--lines` e `--number` no formato padrão, que antes honrava só a primeira janela
+- O `read --format raw` com `--lines`, `--head` ou `--tail` faz streaming em vez de carregar o arquivo, e o pico caiu de 162 452 kB para menos de 32 768 kB num arquivo de 22,9 MB
+- O `read --grep` e o `--no-comments` sempre numeram as linhas, porque o número é o que o `apply` seguinte precisa
+- O `search` aceita `-e/--regex PADRÃO` repetido e une os casamentos, e o `-n` é aceito como no-op explícito
+- O `search --format text` diz quantos achados o `--limit` cortou, tanto no stderr quanto no resumo NDJSON
+- O `delete -r` numa pasta que mantém entradas sai com `65` e `ok:false`, com `dirs_left` e `entries_left`, em vez de dizer que deu certo
+- O `delete --backup` remove o alvo que foi nomeado, inclusive arquivo com carimbo `.bak.` no nome, e não cria cópia da cópia
+- O `sparse --outline` respeita `--hidden` como o `list` e o `outline`: um diário órfão do `atomwrite` é um dotfile, então fica fora da execução padrão e entra quando o `--hidden` pede todas as entradas
+- O `outline` lista o símbolo cuja subárvore tem erro de parsing e o marca com `has_error`, em vez de sumir com ele
+- O `list --limit` não gasta mais uma vaga com a pasta de partida, e o aviso de teto nomeia o `list` e a quantidade que ficou de fora
+- A cópia de segurança que a permissão da pasta proíbe vira aviso no stderr e a gravação segue, e o veredito publica `backup_skipped`
+- Uma execução sobre vários alvos publica `target_resolved` como lista na ordem de invocação, e não como texto unido por `,`, que não podia ser desmembrado porque um caminho pode conter esse caractere; um alvo só continua sendo texto
+- O `read --format raw` de alvo único honra `--max-filesize` e sai 65 `FILE_TOO_LARGE` em vez de transmitir um arquivo acima do teto
+- Execução final dos testes, medida em 2026-11-04: `cargo test --no-fail-fast` saiu 0 com 131 alvos de teste em 134 executáveis, 1486 testes passaram, 0 falharam e 9 ignorados (os testes `cross_compile_*`)
+
+
 ## [0.1.37] - 2026-10-31
 - Esta entrada funde o rascunho de 2026-10-15 da `0.1.37` com o trabalho de 2026-10-28 até 2026-10-31, porque a `0.1.37` nunca foi publicada: o crates.io carrega a `0.1.36`, e os números maiores que esta árvore declarou por um momento voltaram para dentro da `0.1.37`
 - O rascunho mantém as subseções próprias, rotuladas pela data em que foi escrito, para o leitor saber de qual metade veio cada linha
@@ -648,30 +903,40 @@
 ## [0.1.36] - 2026-07-31
 
 ### Adicionado
-- Sentinela `ok: false` em todos os envelopes `ErrorJson` (GAP-2026-020)
-- `match_count: 0` estável em falhas de match / NoMatches
-- `best_candidate` em `MatchAmbiguous` (GAP-2026-025)
-- XDG `[fuzzy].soft_floor_delta` no context-aware (GAP-2026-022)
-- Mapa de offsets escape_normalized (GAP-2026-024)
-- Constante `SCRATCH_DIR_REL` e sugestões de staging (GAP-2026-019)
-- Suggestion content-source em jail de `--old-file`/`--new-file`
-- Shaping global agent-native: `--select`/`--fields`, `--filter`, `--limit` (sem `-n` global)
-- Envelopes de erro always-emit sob shape (`--filter` não silencia falhas)
-- `extract --field` (seleção local de campos; não `--select` local — colide com shape global; o `--select` global ainda projeta a linha emitida). Agentes/skills NUNCA devem ensinar `extract --select`
-- Subcomando `scratch init` (staging sob workspace; sem `/tmp`)
-- `collect.inc.rs`; proptest FP; `scripts/check-gaps-ssot.sh`
-- ADR-0055 EN+pt-BR; skills com fórmulas staging/shape/anti-padrões
-- Suite `tests/cli_v0136_gaps.rs`
+- Sentinela `ok: false` em todas as linhas `ErrorJson` (GAP-2026-020)
+- `match_count: 0` estável em envelopes de erro `MatchFailed` / `NoMatches`
+- `best_candidate` preenchido em `MatchAmbiguous` para desambiguação por agente (GAP-2026-025)
+- XDG `[fuzzy].soft_floor_delta` ligado ao matching context-aware (GAP-2026-022)
+- Match com escape normalizado e mapa de offsets em bytes originais (`escape_map.inc.rs`, GAP-2026-024)
+- Constante canônica de caminho relativo do scratch `SCRATCH_DIR_REL = ".atomwrite/scratch"` (GAP-2026-019)
+- Sugestões de locale EN/pt-BR mencionam staging em `.atomwrite/scratch/` para escapes de jail
+- Sugestão de jail específica da fonte de conteúdo (`suggestion.workspace-jail-content-source`) quando `--old-file`/`--new-file` escapa do jail
+- Shaping global agent-native de stdout: `--select`/`--fields`, `--filter key=value` repetível, `--limit N` (caminho identidade de custo zero quando ausente; sem `-n` global)
+- Envelopes de erro sempre emitem sob as flags de shape (`--filter` não silencia falhas; `--limit` é só sucesso)
+- `extract --field` (seleção local de campo; não `--select` local, que colide com o shape global; o `--select` global ainda projeta a linha emitida). Agentes e skills nunca devem ensinar `extract --select`
+- Subcomando `scratch init` cria `{workspace}/.atomwrite/scratch` (idempotente; nunca abre o `/tmp` do SO)
+- Extração SRP de `collect.inc.rs` para varredura de ranges não sobrepostos no fuzzy
+- Oráculo proptest de falso positivo (strings não relacionadas + dual-gate no miolo radical)
+- Script de portão local `scripts/check-gaps-ssot.sh` (sem GHA de produto)
+- ADR-0055 contrato agent-first (EN + pt-BR); skills EN/PT com staging, anti-`--strategy`, `$` literal, shrink, multi-root e fórmulas de shape
+- Suíte de integração `tests/cli_v0136_gaps.rs`
 
 ### Alterado
 - Versão 0.1.36
-- Estratégias normalizadas: `similarity: null` (não 1.0 falso)
-- `collect_all` via `collect.inc.rs`; dual-gate no miolo de `block_anchor`
-- Threshold aggressive 0.50 reavaliado (FP=0 com dual-gate; override XDG)
-- Superfície 45 subcomandos (SSOT: enum `Commands` / `agent-surface`; inclui `scratch`, `doctor`, `locale`, `commands`, `stat`, `verify`, …). Constante `CANONICAL_SUBCOMMAND_COUNT` + teste
+- Estratégias fuzzy normalizadas emitem `similarity: null` em vez de `1.0` falso (GAP-2026-021)
+- `collect_all` com varredura robusta única via `collect.inc.rs` (GAP-2026-026)
+- `block_anchor` aplica dual-gate na razão do miolo quando o padrão tem miolo (GAP-2026-023)
+- `docs/schemas/error-output.schema.json` exige `ok`
+- Threshold default da aggressive em 0.50 reavaliado com corpus de falso positivo; o dual-gate mantém FP=0, então o default fica; override via XDG `[fuzzy].threshold_aggressive`
+- Superfície de subcomandos 45 (SSOT: enum `Commands` / `agent-surface`; inclui `scratch`, `doctor`, `locale`, `commands`, `stat`, `verify`, …). Constante `CANONICAL_SUBCOMMAND_COUNT` + teste unitário
 
 ### Corrigido
-- Inventário GAP-2026-019…033 fechado ou mitigado por classe
+- Inventário GAP-2026-019…033 fechado ou mitigado por classe (jail e shrink continuam política)
+- Sonda de agente "all-null" nos campos de sucesso de envelopes de erro
+
+### Segurança
+- Jail de workspace em `--old-file`/`--new-file` mantido (sem allowlist global de `/tmp`)
+
 
 ## [0.1.35] - 2026-07-19
 
@@ -683,7 +948,7 @@
 - XDG `[watch].debounce_ms` + CLI `--debounce-ms`; idle padrão `DEFAULT_WATCH_IDLE_EXIT_MS=500` (era ~3s)
 - `delete --plan` para listagem plan-only (seguro one-shot); `delete --confirm` e `delete --yes` / `-y` são rejeitados (fail-closed)
 - Notas no agent-surface para anti-padrões write/watch/merge (A-DISC-001)
-- Suite de contrato local `tests/cli_e2e_v0135` + closeout residual A-* (gaps.md §20)
+- Suite de contrato local `tests/cli_e2e_v0135` + closeout residual A-* (gaps.md daquela versão, §20)
 
 ### Alterado
 - Versão 0.1.35
@@ -698,13 +963,14 @@
 - A-WRITE-002: `--require-large-ack` era alias de `--confirm` (“used multiple times”); agora independente
 - A-MERGE-001: status conflict gravava prefer-ours sem markers; markers default ON
 - A-ONESHOT-001: idle default do watch reduzido para 500 ms
-- A-GAPS-DOC-001: banner no topo do gaps.md + §20 supersede cabeçalhos stale “suite 100% / FALHA XDG”
+- A-GAPS-DOC-001: banner no topo do gaps.md e §20 daquela versão supersede cabeçalhos stale “suite 100% / FALHA XDG”
 - Detecção de env do doctor em allowlist (A-ENV-001); zero knobs de produto via env
 
 ### Notas
 - Sem telemetria de produto; sem CI `.github` no repositório de produto
 - Configuração somente CLI + XDG / `.atomwrite.toml` (sem knobs `ATOMWRITE_*` em runtime)
 - Veja `docs/TESTING.pt-BR.md`, `docs/CROSS_PLATFORM.pt-BR.md`, `docs/MIGRATION.pt-BR.md` (0.1.34 → 0.1.35)
+
 
 ## [0.1.34] - 2026-07-19
 
@@ -718,16 +984,23 @@
 ### Notas
 - A correção de hang one-shot no runtime permanece como descrita em [0.1.33]; 0.1.34 é a release publicável com docs completas
 
+
 ## [0.1.33] - 2026-07-19
 
 ### Corrigido
 - CRÍTICO one-shot: `replace --fuzzy` não entra mais em loop infinito quando `replacement` contém `pattern` (footgun de agente “expandir seção”). Antes: re-scan com `max_replacements = usize::MAX` → dias a 100% CPU / multi-GB RSS.
 - Path fuzzy one-pass (`apply_fuzzy_one_pass`): nunca re-busca texto recém-inserido; default 1 apply; embeds força 1; teto 10_000.
-- Cancel cooperativo polled na cascade fuzzy; caps de pattern/levenshtein/janelas/crescimento.
+- Cancel cooperativo consultado dentro da cascade fuzzy (estratégias + janelas deslizantes) para o `--timeout-secs` funcionar no meio do arquivo.
+- Teto de tamanho do padrão (64 KiB), teto de caracteres da levenshtein (8 KiB), orçamento de janelas (4096) e teto de crescimento do buffer (4× / +16 MiB).
 
 ### Alterado
-- Default de `--timeout-secs` é 120 (era 0). Use `0` para desligar.
+- O default global de `--timeout-secs` é 120 (era 0). Use `0` para desligar (não recomendado para agentes).
 - Versão 0.1.33.
+
+### Testes
+- `tests/cli_v0133_oneshot_fuzzy.rs` — regressão de hang com tempo de parede < 2s.
+- Unitário: `one_pass_embeds_pattern_applies_once`.
+
 
 ## [0.1.32] - 2026-07-15
 
@@ -1064,11 +1337,7 @@
 ### GAP-2026-015 — `allow_hyphen_values` ausente em 15 campos CLI de texto livre em 8 structs
 - Bug — O Clap v4 trata qualquer token iniciando com `-` como flag CLI por padrão. 15 campos em 8 structs de argumentos (EditArgs, SearchArgs, ReplaceArgs, CalcArgs, RegexArgs, TransformArgs, ReadArgs, QueryArgs) aceitam conteúdo texto livre mas não tinham `allow_hyphen_values = true`. Passar `--old "- bullet point"` ou `search "-deprecated"` ou `calc "-5 + 3"` causava `ARGUMENT_PARSE_ERROR` (exit 2). Em pipelines de agentes LLM, isso disparava falhas em cascata: exit 2 mascarado por pipe jaq, workaround do agente via write truncante, perda catastrófica de dados.
 - Correção — Adicionado `allow_hyphen_values = true` a todos os 15 atributos `#[arg]` afetados em `src/cli_args.rs`. Tier 1 (EditArgs): `old`, `new`, `after_match`, `before_match`, `between`. Tier 2 (posicionais): `SearchArgs.pattern`, `ReplaceArgs.pattern`/`replacement`, `CalcArgs.expression`, `RegexArgs.examples`. Tier 3 (nomeados): `TransformArgs.pattern`/`rewrite`/`inline_rules`, `ReadArgs.grep`, `QueryArgs.query`. Excluído: `CaseArgs.subvert` (incompatível com `num_args = 2..` — parser guloso consome flags seguintes).
-
-### ADR
 - ADR-0041 — allow-hyphen-values-edit: 15 campos em 8 structs ganham `allow_hyphen_values = true` para aceitar conteúdo Markdown/YAML/diff e números negativos com hífens iniciais
-
-### Validação — GAP-2026-015
 - `cargo build --release` OK
 - `cargo clippy --all-targets -- -D warnings` OK
 - 12 novos testes de regressão em `tests/cli_v0123_hyphen_values.rs`
@@ -1122,6 +1391,7 @@
 - ADR-0039 (`docs/decisions/0039-edit-loop-helper.md`)
 - ADR-0040 (`docs/decisions/0040-prune-backups-subcommand.md`)
 - 2 schemas NDJSON (`prune-backups-output.schema.json`, `edit-loop-output.schema.json`)
+- 18 regras rust aplicadas (5 delas novas no graphrag)
 
 ### Testes
 - 16 novos testes de regressão (3+4+3+3+2+2)
@@ -1271,6 +1541,7 @@
 - 515 testes passando em 46 suítes (acima de 502 em 44 suítes na v0.1.18, +13 novos)
 - 3 novos ADRs: 0031 (helper de resolução de caminho), 0032 (S-expression de query), 0033 (consolidação de drift de exit code)
 
+
 ## [0.1.18] - 2026-06-14
 
 ### G118 — `replace` pré-valida caminhos raiz contra o jail do workspace
@@ -1344,6 +1615,32 @@
 
 ## [0.1.15] - 2026-06-11
 
+### G119 — Limpeza do sidecar WAL em 3 camadas (L2 guarda no Drop + L3 `wal-heal` + L5 `wal-stats`)
+- L2 — Guarda no Drop — o sidecar `.atomwrite.journal.<basename>.json` agora é envolvido por um `JournalGuard` (RAII, modelado em `tempfile::TempPath`). O append da entrada `Committed` chama `wal_guard.release()`; se o rename dá certo, o sidecar é removido na saída do escopo. Em panic ou retorno antecipado a guarda é `keep()`ada e o sidecar sobrevive para `recover_orphan_journals`. Os 60 e poucos sidecars pré-existentes observados na árvore deste repositório durante a auditoria do G119 são recolhidos pela invocação seguinte.
+- L3 — Subcomando `wal-heal` — a versão explícita, voltada ao operador, da passagem de auto-cura. Percorre o workspace com orçamento `--max-duration-ms` (default 100ms), recolhe todo sidecar `Committed`/`Aborted` mais antigo que `--threshold-secs` (default 3600s), e emite `{"removed":N,"preserved":N,"malformed":N,"bytes_reclaimed":N,"threshold_secs":N}`. Órfãos `Started` NUNCA são removidos automaticamente — são o único sinal que merece atenção do operador.
+- L5 — Subcomando `wal-stats` — retrato somente leitura: `total_journals`, `by_state{started,committed,aborted,malformed}`, `oldest_journal_age_secs`, `total_size_bytes`, `by_directory` (top 10), e `auto_heal_recommended` (true quando o total > 100 OU o mais antigo > 7d). Usado por portões de CI e checagens de saúde de agente para detectar lixo acumulando antes que polua o `git status --porcelain`.
+- Padrão de sidecar compartilhado — `JournalGuard`, `WalStats` e `AutoHealReport` são reexportados por `ndjson_types` para introspecção via `--json-schema`. Os schemas são regerados em `docs/schemas/`.
+
+### G120 — Guarda de stdin vazio em 3 camadas (L1 guarda de stdin + L2 guarda de append + L4 telemetria)
+- L1 — `read_stdin_content` rejeita `&[]` por padrão — o modo de falha do pipe a montante (`cat missing.txt`, heredoc que expande para nada, um `find` que falha) produzia um "sucesso" silencioso com 0 bytes escritos. O padrão agora é exit 65 `INVALID_INPUT` com mensagem acionável que nomeia a flag de opt-out. Quem realmente quer escrever zero bytes (`echo -n`, truncamento intencional) precisa passar `--allow-empty-stdin`.
+- L2 — `handle_append_prepend` rejeita stdin vazio com `--append`/`--prepend` — segunda linha de defesa para o caso de bypass do L1. A mensagem de erro nomeia a operação para o chamador saber qual flag recebeu o fluxo vazio.
+- L4 — Campo `stdin_bytes_read: u64` no envelope NDJSON do `write` — telemetria que deixa portões de CI e de agente validarem `if .stdin_bytes_read == 0 then fail` mesmo quando a operação deu certo. Sempre presente (não fica atrás de `Option`).
+- Schema regerado — `docs/schemas/write-output.schema.json` agora inclui `stdin_bytes_read`. O teste de snapshot foi atualizado.
+- Orientação anti-mascaramento — combinado com a receita `jaq -e '.edits'` do G117, os chamadores devem validar `.stdin_bytes_read > 0` para escritas que não são truncamento.
+- Nota de combinação de flags — `--append` + `--expect-checksum` é legítimo (locking otimista de append); a guarda do G120 NÃO interfere nessa combinação. A correção de resolução de caminho do G118 já existente significa que o checksum agora é comparado contra o arquivo real mesmo quando o CWD diverge do workspace.
+
+### Limpeza de testes legados (efeito colateral do G119 L2)
+- `recover_orphan_journals_with_committed_entry` e `wal_journal_created_on_set` mudaram de "o sidecar precisa existir" para "o sidecar NÃO pode existir" — o novo comportamento é o contrato do G119 L2.
+- `syntax_check_large_streaming_file` passou a enviar seu payload de 1 MiB via `write_stdin` em vez de contar com o default de stdin vazio agora rejeitado.
+- Todos os outros testes legados foram preservados palavra por palavra.
+
+### Validação — G119, G120 e a limpeza de testes legados
+- 8 novos testes de integração em `tests/cli_write.rs` (G120 L1+L2+L4) e `tests/cli_wal.rs` (G119 L2+L3+L5): rejeição de stdin vazio, opt-in de truncamento com stdin vazio, rejeição de append com stdin vazio, telemetria de bytes do stdin, guarda no Drop em sucesso, guarda no Drop em falha, `wal-stats` vazio e não vazio, `wal-heal` recolhe antigos e preserva `Started`, e contagens de estado do `wal-stats`
+- 1 novo teste unitário para a classificação de `parse_journal_state`
+- Suíte completa: 469 testes passando (461 na baseline v0.1.15 + 8 novos), 0 falhas
+- `cargo fmt --check` limpo, `cargo clippy --bin atomwrite --lib --all-features` limpo (0 warnings)
+- Teste de fumaça ponta a ponta: `wal-heal --threshold-secs 0` num workspace com 60 sidecars reporta `{"removed":60,"preserved":0,"malformed":0,"bytes_reclaimed":47624}` e deixa 0 sidecars
+
 ### G117 — `edit --old/--new` multi-par: paridade fuzzy, relato por par e `--partial` opt-in
 - Paridade fuzzy — o caminho multi-par usava apenas busca exata `find_str`, então um par com whitespace divergente que a cascata fuzzy do par único resgata derrubava o lote inteiro. A cascata foi extraída para `match_pair` e compartilhada pelos dois caminhos: cada par roda a cascata completa de 9 estratégias (`exact`, `line_trimmed`, `whitespace_normalized`, `punctuation_normalized`, `indent_flexible`, `escape_normalized`, `trimmed_boundary`, `block_anchor`, `context_aware`). `--fuzzy off` preserva o comportamento exato pré-G117.
 - Relato por par — envelopes de sucesso ganham `pairs_total` e `pair_results` (array de `{index (1-based), matched, strategy, similarity}`); `mode` vira `fuzzy-multi(N)` quando algum par casou via fuzzy e permanece `exact-multi(N)` caso contrário. Envelopes de erro ganham `failed_pair_index`, `pairs_total` e `pair_results` via a nova variante `AtomwriteError::EditPairFailed`, que reutiliza o code `INVALID_INPUT` e o exit 65 (nenhum code novo). Pares após o índice falho nunca foram tentados e ficam ausentes do array.
@@ -1402,7 +1699,26 @@
 
 ## [0.1.12] - 2026-06-07
 
-### Adicionado
+### Pipeline de escrita atômica (G55, G39)
+- Preservação de hardlink (G55, CRÍTICO) — `atomwrite edit/write/replace/copy` agora detecta quando o alvo tem `nlink > 1` (Unix) ou é symlink e troca `rename(2)` por `ftruncate(0) + write_all + fsync_data` in-place. O arquivo e todos os hardlinks apontam para o mesmo inode depois da escrita, então BorgBackup / restic / Nix store / git-annex ficam consistentes. O NDJSON ganha `write_strategy: "rename" | "inplace" | "copyback"` e `hardlink_nlink`.
+- Preservação de xattr (G39) — `com.apple.quarantine` no macOS (Gatekeeper), `security.selinux` no Linux (SELinux), `security.capability` (caps POSIX) e atributos `user.*` arbitrários são salvos antes da escrita e restaurados depois. Melhor esforço (FAT32 / tmpfs / overlayfs devolvem `EOPNOTSUPP` e registramos aviso, não erro). Novo módulo `src/xattr_restore.rs`. O NDJSON ganha `xattr_preserved` e `xattr_count`.
+
+### Detecção (G41, G56, G90)
+- Detecção binária ciente de UTF-16LE (G41) — `is_binary` agora usa a crate `content_inspector` (0.2.x, mais de 11M downloads). Arquivos UTF-16LE / UTF-16BE sem BOM (exports `.reg` do Windows, CSV do Excel) deixam de ser classificados como binários. Novo enum `ContentType` com variantes `Utf8 | Utf16Le | Utf16Be | Binary`.
+- Skip de FIFO no `search` (G56) — `atomwrite search` não trava mais em `/tmp/*.fifo` (CI, Docker). Novo opt-in `--include-fifo` restaura o comportamento legado. O `filter_entry` do walker rejeita arquivos FIFO por padrão.
+- Fallback de cópia em EXDEV (G90) — `rename(2)` entre filesystems (overlay2 do Docker + volumes nomeados, NFS) agora cai automaticamente para `ler tempfile → copiar stream → fsync no alvo → apagar tempfile`. Nova flag `--strict-atomic` aborta com exit 91 em vez de cair no fallback.
+
+### Locking (G54)
+- Lock de arquivo advisory (G54) — nova flag global `--lock` (com `--lock-timeout <ms>`, default 5000) toma um `flock(2)` exclusivo num sidecar `.<target>.atomwrite.lock` antes da escrita atômica. Dois processos atomwrite editando o mesmo arquivo agora serializam em vez de perder a primeira escrita em silêncio. Implementado via `nix::fcntl::flock` com polling `LockExclusiveNonblock`. Novo exit code 83 (`LOCK_TIMEOUT`).
+
+### Performance e limites (G64, G68, G77)
+- Reflink em backup/copy (G64) — `atomwrite backup` e `atomwrite copy` agora usam `reflink_copy::reflink_or_copy` para cópia copy-on-write O(1) em APFS / btrfs / XFS. Cai para `fs::copy` em filesystems sem suporte. Nova opt-out `--no-reflink`.
+- `search --max-filesize` e `--max-columns` (G68) — `search` agora pula arquivos maiores que 10 MiB por padrão (sobrescrevível com `--max-filesize N`) e trunca matches maiores que 500 colunas (sobrescrevível com `--max-columns N`). Elimina `node_modules/.cache`, `target/` e `bundle.js` minificado estourando a janela de contexto do LLM.
+- `batch --batch-size` (G77) — dica explícita para streaming NDJSON. Default 100. (atomwrite já fazia streaming linha a linha; esta flag documenta o comportamento.)
+
+### Refatoração (G116, G44)
+- Estratégia fuzzy 9: context-aware (G116) — `edit --old/--new` agora usa `strsim::normalized_levenshtein` (threshold 0.80) para achar uma janela deslizante do padrão no conteúdo. Pega edições em que o contexto à esquerda E à direita também está errado (por exemplo, quando um LLM adiciona comentários perto do match). Só ativa em `--fuzzy auto` ou `aggressive`.
+- YAML multi-regra para `transform` (G44) — as novas flags `--rules PATH` e `--inline-rules "YAML"` aplicam várias regras de refatoração AST numa chamada atomwrite. Formato YAML: `[{language, pattern, rewrite, id?}]`. Emite eventos `rule_begin` e `rule_error` para correlacionar matches com a regra que os produziu.
 
 ### Editores estruturados de configuração (v14 Tier 3)
 - Subcomandos `set` / `get` / `del` / `case` — Editores estruturados TOML/JSON com envelopes NDJSON bilíngues. Correção de bug: navegação dotted path TOML em `get`/`del` tratava a chave dotted inteira como nome literal; adicionados helpers `get_toml_path` e `remove_toml_path` que descendem por segmentos `Table` manualmente. Navegação JSON (que já usa semântica de pointer) não foi alterada. Verificação end-to-end: `{"type":"get","path":"...","key_path":"package.version","value":"\"0.1.12\"","found":true,"format":"toml","elapsed_ms":0}` agora retorna o valor correto.
@@ -1414,12 +1730,24 @@
 - Verificação de sintaxe G72 REAL via tree-sitter — Flag `--syntax-check` em `atomwrite write` invoca o parser tree-sitter real via crate `tree-sitter-language-pack` em vez da heurística de balanceamento de colchetes. Exit 88 com primeira linha/coluna de erro. 24 linguagens cobertas; extensões desconhecidas fazem fallback para heurística legada. Novo módulo `src/syntax_check.rs` (16 testes unitários).
 - Sidecar G114 WAL para recuperação de crash — `atomic_write` escreve `.atomwrite.journal.<target>.atomwrite.journal.json` com entrada `Started` (op_id, expected_new_checksum, pid, started_at_unix) e entrada `Committed` em sucesso. `recover_orphan_journals(dir)` é consultivo — lê sidecars e reporta órfãos sem tocar no filesystem. Novo módulo `src/wal.rs` (8 testes unitários). Schema: `docs/schemas/wal-recovery.schema.json`.
 
-### Corrigido
+### Modelo de erro
 - Navegação dotted path TOML em `get`/`del` — veja v14 Tier 3 acima.
-- 7 novas variantes de erro — `LockTimeout` (83), `SyntaxError` (88), `ExdevFallbackDisabled` (91), `CopyBackBlake3Failed` (92), `OrphanJournal` (93). Todas bilíngues com sugestões `ErrorContext` acionáveis.
+- 5 novas variantes: `LockTimeout` (83), `SyntaxError` (88), `ExdevFallbackDisabled` (91), `CopyBackBlake3Failed` (92), `OrphanJournal` (93). Todas com mensagens bilíngues (EN/PT-BR) e sugestões acionáveis via `ErrorContext`.
+
+### i18n
+- 5 novas chaves `error.*` e 5 novas chaves `suggestion.*` em `locales/en.toml` e `locales/pt-BR.toml`. O `AtomwriteError::suggestion` das novas variantes está totalmente traduzido.
 
 ### Dependências
 - `tree-sitter-language-pack = "1.8"` com features `download` + `dynamic-loading` (parsers sob demanda; footprint da instalação fica pequeno porque as 305 gramáticas NÃO são bundled — apenas a biblioteca loader é).
+- Removido das deps declaradas: `fd-lock = "4"` (incompatível com `#![deny(unsafe_code)]` por causa do padrão auto-referencial `RwLockWriteGuard`; o locking advisory foi reimplementado via `nix::fcntl::flock`, que é seguro de chamar).
+
+### Corrigido (Falhas de CI - GAP 23 Windows path backslash em manifestos JSON)
+- 11 testes `cli_batch` não falham mais no `windows-2025-vs2026` — Os testes montavam o manifesto NDJSON com `format!` + `Path::display()`. No Windows o caminho nativo usa barras invertidas (`C:\Users\...\Temp\.tmpXXXX\file.txt`), e `format!` não as escapa. O resultado é uma string JSON com escapes inválidos (`\U`, `\r`, `\A`, `\L`, `\T`), que `serde_path_to_error::deserialize` rejeita com `invalid escape`. O `cmd_batch` então retorna `bail!` e sai não zero, falhando o `assert!(output.status.success())`. O teste passava só em Linux/macOS porque os caminhos deles usam barras normais, válidas em JSON sem escape.
+  - Helper `common::manifest(&[serde_json::Value]) -> String` em `tests/common/mod.rs` que serializa cada op via `serde_json::to_string`, garantindo escape correto de barras invertidas, aspas, caracteres de controle e Unicode.
+  - Refatorados os 11 testes afetados em `tests/cli_batch.rs` para usar o helper via macro `serde_json::json!`.
+  - Refatorados 2 testes adicionais com o mesmo padrão de bug: `tests/snapshot_write.rs::batch_summary_ndjson_structure_snapshot` e `tests/ndjson_valid_test.rs::ndjson_batch_output_valid` (o último também ganhou o `mod common;` que faltava).
+  - Adicionado teste de regressão `batch_write_escapes_backslash_in_target_path` que constrói um caminho com barra invertida forçada em qualquer plataforma, para o bug ser pego em toda execução de CI, não só no Windows.
+- Total de testes ao fim desta release: 445/445 PASS em 43 suítes
 
 ### Cobertura de Testes
 - 445/445 testes passando (eram 320 baseline em v0.1.10, +125 novos): 9 set, 7 case, 5 query, 5 outline, 6 syntax_check E2E, 4 WAL E2E, 6 get/del integração, 4 xattr/reflink Linux-only, 27 auditoria de regressões (strsim 5, heck 6, toml_edit 9, content_inspector 4, serde_yaml 4, locale pt-BR 1, LANG=C 1, --max-filesize edge 1, shell-completion bash/zsh/fish 3, --threads 1 query+outline 2, G72 stream >1MiB 1, case --subvert boundary 4, recover_orphan_journals 3, --json-schema 6).
@@ -1697,7 +2025,6 @@
 - Dados de teste em português em `file_io.rs` substituídos por inglês
 
 ### Adicionado
-### Novos Subcomandos
 - Subcomando `scope` para escopo gramatical: selecionar categorias AST (comentários, funções, strings, etc.) e aplicar ações (delete, upper, lower, titlecase, squeeze, replace)
 - `scope` suporta Rust (30 queries preparadas), Python (13), JavaScript/TypeScript (11), Go (8) e padrões AST customizados via `--pattern`
 - Subcomando `backup` para criar backups de arquivos com timestamp, checksums BLAKE3 e retenção configurável
@@ -1799,7 +2126,8 @@
 - Perfil release com LTO, codegen unit único, stripping de símbolos e panic=abort
 
 
-[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.37...HEAD
+[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.38...HEAD
+[0.1.38]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.37...v0.1.38
 [0.1.37]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.36...v0.1.37
 [0.1.36]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.35...v0.1.36
 [0.1.35]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.34...v0.1.35

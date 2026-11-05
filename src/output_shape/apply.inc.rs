@@ -23,6 +23,7 @@ pub fn shape_value(v: Value, shape: &OutputShape) -> Option<Value> {
         }
     }
     let mut v = project_select(v, shape);
+    v = apply_lean(v, shape);
     // An event that `--select` left without a single key says nothing, so it is
     // not written (a bare `{}` per `begin` / `end` line costs tokens and carries
     // no data). Failure envelopes never pass through here: they always emit.
@@ -44,9 +45,15 @@ pub fn shape_value(v: Value, shape: &OutputShape) -> Option<Value> {
 /// - **Never** applies the byte window or NFC: the envelope needs no size
 ///   window, and a second transform here would only add a way to lose the
 ///   diagnostic the agent needs.
+/// - Drops the diagnostic keys unless `-v` asked for them: `message`,
+///   `error_class`, `retryable` and `suggestion_lang` restate what `code`,
+///   `exit` and `suggestion` already say, and every failure paid for them.
 /// - Callers must **not** count errors against `--limit` (success-only budget).
-pub fn shape_error_value(v: Value, shape: &OutputShape) -> Value {
+pub fn shape_error_value(mut v: Value, shape: &OutputShape) -> Value {
     let original = v.clone();
+    if !shape.verbose {
+        drop_diagnostic_keys(&mut v);
+    }
     let mut v = project_select(v, shape);
     // A verdict is read off `type` and `ok`. `--select path` on a failure used
     // to publish `{"path":"/tmp/..."}` and nothing else, so the record that
@@ -61,6 +68,20 @@ pub fn shape_error_value(v: Value, shape: &OutputShape) -> Value {
         redact_secrets(&mut v);
     }
     v
+}
+
+/// Remove the keys a caller only reads while debugging.
+///
+/// `code` names the failure, `exit` gives the status, `path` and `suggestion`
+/// say where and what to do. The four keys dropped here repeat those facts in
+/// prose, and `-v` brings them back for the run that is being investigated.
+fn drop_diagnostic_keys(v: &mut Value) {
+    let Some(obj) = v.as_object_mut() else {
+        return;
+    };
+    for key in ["message", "error_class", "retryable", "suggestion_lang"] {
+        obj.remove(key);
+    }
 }
 
 /// Restore the two keys a terminal record is read by, after `--select` thinned it.
@@ -112,6 +133,100 @@ fn apply_value_ops(v: &mut Value, shape: &OutputShape) {
     if shape.normalize_encoding {
         normalize_encoding(v);
     }
+}
+
+/// Project the terminal record without letting presentation flags drop it.
+///
+/// `--select` and the lean profile are allowed here, because both thin the
+/// record the caller asked for. `--filter` and `--limit` are not: the terminal
+/// record is the only place the run says it finished, and a filter that removes
+/// it hands the consumer a partial answer shaped like a complete one.
+pub fn shape_terminal_value(v: Value, shape: &OutputShape) -> Value {
+    let original = v.clone();
+    let mut v = project_select(v, shape);
+    v = apply_lean(v, shape);
+    keep_terminal_keys(v, &original)
+}
+
+/// Drop the fields the lean profile never needs.
+///
+/// A key whose value is `null` or an empty container carries no decision, so it
+/// costs tokens and nothing else. The explicit list removes records that only
+/// restate what the caller already has: the diff preview of a successful write
+/// is the text the caller just sent, and `suggestion_lang` only names the locale
+/// the hint was written in.
+fn apply_lean(v: Value, shape: &OutputShape) -> Value {
+    if shape.profile != OutputProfile::Lean {
+        return v;
+    }
+    let Value::Object(mut obj) = v else {
+        return v;
+    };
+    let ok = obj
+        .get(crate::output::RESULT_KEY)
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    obj.retain(|key, value| {
+        if value.is_null() {
+            return false;
+        }
+        let dead_container = match value {
+            Value::Array(items) => items.is_empty(),
+            Value::Object(map) => map.is_empty(),
+            Value::String(text) => text.is_empty(),
+            _ => false,
+        };
+        if dead_container {
+            return false;
+        }
+        if ok && matches!(key.as_str(), "diff_preview" | "suggestion_lang") {
+            return false;
+        }
+        // A successful mutation answers one question: did the swap land, and
+        // where. The digests, the byte counts and the timing are evidence the
+        // caller did not ask lean for, and `full` keeps all of them.
+        if ok
+            && matches!(
+                key.as_str(),
+                "checksum_before"
+                    | "checksum_after"
+                    | "bytes_before"
+                    | "elapsed_ms"
+                    | "format_detected"
+            )
+        {
+            return false;
+        }
+        if key == "risk_assessment" && risk_is_low(value) {
+            return false;
+        }
+        true
+    });
+    Value::Object(obj)
+}
+
+/// Whether a risk record says the write carries no elevated risk.
+fn risk_is_low(value: &Value) -> bool {
+    let Some(obj) = value.as_object() else {
+        return false;
+    };
+    for key in ["level", "risk_level", "risk"] {
+        match obj.get(key) {
+            Some(Value::String(level)) => {
+                if level.eq_ignore_ascii_case("low") || level.eq_ignore_ascii_case("none") {
+                    return true;
+                }
+            }
+            Some(Value::Number(n)) => {
+                if n.as_u64() == Some(0) {
+                    return true;
+                }
+            }
+            Some(Value::Bool(false)) => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn project_select(mut v: Value, shape: &OutputShape) -> Value {

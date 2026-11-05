@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "WriteOutput",
-  "description": "NDJSON output for write, delete, move, copy, and hash operations.",
+  "description": "NDJSON output for the `write` verb.",
   "type": "object",
   "properties": {
     "type": {
@@ -35,10 +35,15 @@
     },
     "backup_path": {
       "description": "Backup file path, if a backup was created.",
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": "string"
+    },
+    "backup_skipped": {
+      "description": "Why the requested backup was skipped, when the target directory\nrefused to accept a new entry. The write itself succeeded.",
+      "type": "string"
+    },
+    "write_strategy": {
+      "description": "Write strategy the layer actually used: `rename`, `inplace` or\n`copyback`.\n\n`platform.rename_method` names the syscall (`renameat2`), so it cannot\ntell an in-place write from a swap. This field is the only place the\nverdict says which one ran, and an in-place write keeps the inode.",
+      "type": "string"
     },
     "elapsed_ms": {
       "description": "Operation duration in milliseconds.",
@@ -92,8 +97,11 @@
       "minimum": 0
     },
     "target_resolved": {
-      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
-      "type": "string"
+      "description": "Absolute targets the run resolved, in invocation order, and never a joined string, so a path holding `,` stays readable; a run with one target publishes a one-item array, so the shape never depends on the count",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
     "target_source": {
       "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
@@ -143,6 +151,7 @@
     "path",
     "bytes_written",
     "checksum",
+    "write_strategy",
     "elapsed_ms",
     "stdin_bytes_read",
     "wal_policy",

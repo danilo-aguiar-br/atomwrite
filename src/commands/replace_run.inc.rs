@@ -565,6 +565,9 @@ fn deliver_replacement(
                     strategies_tried,
                     word_ignored: if word_ignored { Some(true) } else { None },
                     risk_assessment,
+                    backup_path: result.backup_path,
+                    write_strategy: result.write_strategy,
+                    backup_skipped: result.backup_skipped,
                 },
             );
         }

@@ -75,14 +75,37 @@ pub struct DeleteOutput {
     pub path: String,
     /// File size in bytes before deletion.
     pub bytes: u64,
-    /// BLAKE3 checksum before deletion.
-    pub checksum_before: String,
+    /// BLAKE3 checksum before deletion, absent when the entry has no content.
+    ///
+    /// A regular file and a symlink carry a checksum of what is removed. A
+    /// fifo, socket or device is unlinked without being opened, so there is no
+    /// content to hash and the field is omitted instead of reporting a hash
+    /// that was never computed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum_before: Option<String>,
+    /// Write strategy this verb used.
+    ///
+    /// `delete` removes the directory entry and never writes file content, so
+    /// the value is always `none`; the field exists so a caller that reads a
+    /// family of mutating verbs never has to special-case this one.
+    pub write_strategy: &'static str,
+    /// Why the requested backup was skipped, when the target is itself a copy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_skipped: Option<String>,
     /// Duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Backup file written before the unlink, when one was requested.
+    ///
+    /// The summary counts backups; this fields names the one for this file, so
+    /// the caller can restore it without listing the directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_path: Option<String>,
     /// Non-fatal warnings about backup flag combinations that had no
-    /// effect (v0.1.28 GAP-CLI-SURFACE-DRIFT), e.g. `--keep-backup` is
-    /// redundant for delete because deletion backups are always
-    /// preserved. Empty when there is nothing to warn about.
+    /// effect, e.g. `--keep-backup` on a `delete` that created no copy,
+    /// because the verb copies only when the call asks. Empty when there
+    /// is nothing to warn about.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warnings: Option<Vec<String>>,
 }
@@ -220,6 +243,15 @@ pub struct EditLoopSummary {
     pub elapsed_ms: u64,
     /// Per-pair result array, in input order.
     pub pair_results: Vec<EditLoopPairResult>,
+    /// Write strategy the atomic layer used: `rename`, `inplace` or `copyback`.
+    ///
+    /// The pairs rewrite one file in one write, so the field describes that
+    /// single write and not one write per pair.
+    pub write_strategy: &'static str,
+    /// Why the requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_skipped: Option<String>,
     /// Local diagnostic for a payload that looks destructive (B-013).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub risk_assessment: Option<WriteRiskAssessment>,

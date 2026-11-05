@@ -61,14 +61,14 @@ cargo build --release --features full
 - Perfil slim: `cargo test --no-default-features --features core` fica verde em 131 alvos de teste, porque todo teste que exercita `scope`, `transform`, `outline` ou `query` carrega `#[cfg(feature = "ast")]` e é pulado nesse build
 - Para provar que o build slim compila, rode `cargo xtask check-features` (roda `cargo check --locked --no-default-features` nos conjuntos `core` e `core,watch` e para na primeira falha), e rode a suíte de testes com as features padrão
 - Suites opcionais da v0.1.37 para o verbo `config` e os guardas de código-fonte: `cargo test --test cli_v0137_config_verb --test cli_v0137_hardcode_guard --test cli_v0137_retry_guards --test cli_v0137_let_underscore_guard --test cli_v0137_terminal_event`
-- Suites opcionais de documentação: `cargo test --test docs_consistency --test docs_exit_codes`
+- Portões de documentação: `cargo test --test docs_coverage --test docs_consistency --test docs_exit_codes --test docs_schemas_sync`, onde `docs_coverage` exige todo subcomando em cada documento principal e `docs_schemas_sync` mantém os arquivos de schema e o binário em passo
 - Checagem de formatação: `cargo fmt -- --check`
 - Lint de docs: `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`
 - Checagens de supply-chain, rode antes do bump de versão e não depois de escrever a documentação: `cargo audit` e `cargo deny check`
 
 ### Pin da release atual
-- A linha de release desta árvore é `0.1.37`, que ainda está em preparação, e o crates.io carrega a `0.1.36` até a `0.1.37` ser publicada
-- Fixe consumidores e agentes em `^0.1.36` hoje e em `^0.1.37` quando essa versão sair
+- A linha de release desta árvore é `0.1.38`, que ainda está em preparação, e o crates.io carrega a `0.1.37` até a `0.1.38` ser publicada
+- Fixe consumidores e agentes em `^0.1.37` hoje e em `^0.1.38` quando essa versão sair
 - Mantenha strings de versão consistentes em `Cargo.toml`, README, CHANGELOG e skills
 
 
@@ -179,8 +179,8 @@ cargo build --release --features full
   - `cargo audit` e `cargo deny check`
   - `cargo package --list` / dry-run de publish conforme necessário
   - `cargo install --path . --force`
-- Publique no crates.io somente após a DoD local estar verde, e o crates.io continua carregando a `0.1.36` até o publish da `0.1.37` acontecer
-- A linha de release atual é `0.1.37`; consumidores devem fixar `^0.1.36` hoje e `^0.1.37` quando ela for publicada
+- Publique no crates.io somente após a DoD local estar verde, e o crates.io continua carregando a `0.1.37` até o publish da `0.1.38` acontecer
+- A linha de release atual é `0.1.38`; consumidores devem fixar `^0.1.37` hoje e `^0.1.38` quando ela for publicada
 
 
 ## Código de Conduta

@@ -1,7 +1,7 @@
 
 
 
-/// NDJSON output for write, delete, move, copy, and hash operations.
+/// NDJSON output for the `write` verb.
 #[derive(Debug, PartialEq, Serialize, JsonSchema)]
 pub struct WriteOutput {
     /// Event type discriminator.
@@ -19,7 +19,20 @@ pub struct WriteOutput {
     pub checksum_before: Option<String>,
     /// Backup file path, if a backup was created.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
     pub backup_path: Option<String>,
+    /// Why the requested backup was skipped, when the target directory
+    /// refused to accept a new entry. The write itself succeeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_skipped: Option<String>,
+    /// Write strategy the layer actually used: `rename`, `inplace` or
+    /// `copyback`.
+    ///
+    /// `platform.rename_method` names the syscall (`renameat2`), so it cannot
+    /// tell an in-place write from a swap. This field is the only place the
+    /// verdict says which one ran, and an in-place write keeps the inode.
+    pub write_strategy: &'static str,
     /// Operation duration in milliseconds.
     pub elapsed_ms: u64,
     /// Number of bytes read from stdin (G120 L4 local diagnostics). 0 means the
@@ -137,6 +150,26 @@ pub struct Summary {
     /// paths, records for a verb that streams them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files_budget_dropped: Option<u64>,
+    /// Backups this run created and left on disk.
+    ///
+    /// A destructive verb that keeps a copy must say so: the caller decides
+    /// whether the bytes are still there, and silence read as "removed".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backups_kept: Option<u64>,
+    /// Bytes those backups occupy on disk.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_bytes: Option<u64>,
+    /// Directories the run could not remove because entries remained.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dirs_left: Option<u64>,
+    /// One sentence telling the caller what to change to finish the job.
+    ///
+    /// `dirs_left` counts the leftovers, and the count alone leaves the reader
+    /// to guess why. The hint appears only when the run itself asked to skip
+    /// entries, through `--include`, `--exclude`, `--older-than` or `--limit`,
+    /// so it names the filter that kept the directory in place.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
     /// Files the progress precount found eligible, published only when that
     /// precount ran (`--progress-every` on and quiet off); it is the total the
     /// run is working through, not the page it published.
@@ -295,6 +328,15 @@ pub struct ScopeResult {
     pub checksum_after: String,
     /// Operation duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Write strategy the atomic layer used: `rename`, `inplace` or `copyback`.
+    ///
+    /// A read-only run and a matched-but-unchanged file report `none`, because
+    /// neither takes a write path.
+    pub write_strategy: &'static str,
+    /// Why the requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_skipped: Option<String>,
     /// Risk diagnostics of the content the scoping wrote. Omitted on a
     /// read-only run and when nothing matched the configured patterns.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -312,6 +354,12 @@ pub struct ApplyResult {
     pub format_detected: String,
     /// Number of hunks or blocks applied.
     pub hunks_applied: u64,
+    /// 1-based line the first hunk landed on, when the format names one.
+    ///
+    /// `search-replace` and `full` report their own line, and `unified`
+    /// reports the first hunk header. Omitted when the format cannot say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
     /// File size in bytes before patching.
     pub bytes_before: u64,
     /// File size in bytes after patching.
@@ -320,8 +368,70 @@ pub struct ApplyResult {
     pub checksum_before: String,
     /// BLAKE3 checksum after patching.
     pub checksum_after: String,
+    /// Write strategy the layer actually used: `rename`, `inplace` or
+    /// `copyback`.
+    ///
+    /// `apply` rewrites a file that already exists, so a read-only directory
+    /// makes it write in place and keep the inode. The caller cannot tell the
+    /// two apart from the checksums, and this field is where it learns which
+    /// one ran.
+    pub write_strategy: &'static str,
+    /// Backup file path, if a backup was created for this patch.
+    ///
+    /// The patch rewrote the file through the atomic writer, which is where
+    /// the copy came from. A run without a backup omits the key, so a caller
+    /// never reads a `null` it cannot tell from a missing copy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_path: Option<String>,
+    /// Why the requested backup was skipped, when the target directory
+    /// refused to accept a new entry. The patch itself succeeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_skipped: Option<String>,
     /// Operation duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Changed lines with their 1-based numbers (`--show`).
+    ///
+    /// Present only when the caller asked: it is the evidence that removes the
+    /// re-read the caller would otherwise pay to confirm the swap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changed: Option<String>,
+}
+
+/// NDJSON event emitted when a failed `apply` put the files it had written back.
+///
+/// The record is the terminal line of the run, published through the writer's
+/// failure path, so it carries `ok: false` and the very `code` and `exit` of
+/// the failure it reports. It names no single target: the run restored more
+/// than one file, and `failed_paths` is where the caller reads the ones that
+/// did not come back.
+#[derive(Debug, PartialEq, Serialize, JsonSchema)]
+pub struct ApplyRollbackEvent {
+    /// Event type discriminator.
+    pub r#type: &'static str,
+    /// Verb that performed the rollback.
+    pub operation: &'static str,
+    /// Number of files whose content was restored to what it was before the run.
+    pub files_restored: u64,
+    /// Time the whole restoration took, in milliseconds.
+    pub elapsed_ms: u64,
+    /// Files the rollback could not restore, in reverse commit order.
+    ///
+    /// Omitted when every file came back, so an empty list never reads as a
+    /// success the run cannot vouch for.
+    // `default` keeps the field out of `required` in the published schema, so
+    // the omission the binary makes and the contract it advertises agree.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed_paths: Vec<String>,
+    /// Copies the rollback left on disk, in commit order, the failed file last.
+    ///
+    /// A restoration rewrites content and never deletes a backup, so a run
+    /// that committed with `--keep-backup` still has those copies, and the
+    /// file whose write failed keeps the copy its own attempt had created.
+    /// Omitted when the rollback left none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backups_preserved: Vec<String>,
 }
 
 /// NDJSON output for diff stat mode.
@@ -354,8 +464,15 @@ pub struct DiffChangeOutput<'a> {
     pub r#type: &'static str,
     /// Change tag: insert or delete.
     pub tag: &'static str,
-    /// Line number of the change.
+    /// 1-based line of the change: the old file for a delete, the new file for
+    /// an insert.
     pub line: usize,
+    /// 1-based line in the file before the change (`delete` only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_line: Option<usize>,
+    /// 1-based line in the file after the change (`insert` only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_line: Option<usize>,
     /// Changed text content.
     pub text: &'a str,
 }
@@ -390,6 +507,15 @@ pub struct CopyOutput {
     pub checksum: String,
     /// Whether checksum was verified.
     pub verified: bool,
+    /// Write strategy the atomic engine used: `rename`, `inplace` or `copyback`.
+    ///
+    /// The file landed through the atomic writer, so the caller learns which
+    /// mechanism carried it instead of inferring it from the inode.
+    pub write_strategy: &'static str,
+    /// Why a requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_skipped: Option<String>,
     /// Duration in milliseconds.
     pub elapsed_ms: u64,
 }

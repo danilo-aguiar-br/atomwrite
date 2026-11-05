@@ -7,12 +7,13 @@
 ## Versões Suportadas
 - A release mais recente recebe correções de segurança, e releases mais antigas recebem patches best-effort só para vulnerabilidades críticas
 - Atualize para a versão mais recente antes de reportar, porque a correção nasce na linha atual
-- A tabela lista a linha de release, e o crates.io carrega a 0.1.36 enquanto a 0.1.37 é a versão em preparação, então o pin deste documento diz qual está em teste
+- A tabela lista a linha de release, e o crates.io carrega a 0.1.37 enquanto a 0.1.38 é a versão em preparação, então o pin deste documento diz qual está em teste
 - As versões 0.1.15, 0.1.16, 0.1.17, 0.1.21 e 0.1.33 nunca foram publicadas, então não aparecem
 
 | Versão  | Suportada          |
 |---------|--------------------|
-| 0.1.37  | Sim (em preparação) |
+| 0.1.38  | Sim (em preparação) |
+| 0.1.37  | Best-effort        |
 | 0.1.36  | Best-effort        |
 | 0.1.35  | Best-effort        |
 | 0.1.34  | Best-effort        |
@@ -109,12 +110,25 @@
 - `crossbeam-epoch`, `rustls`, `anyhow` e `memmap2` foram atualizados para as versões corrigidas no mesmo passe
 - Lição registrada: rode `cargo audit` e `cargo deny check` ANTES do bump de versão, não depois de escrever a documentação
 
-### Estado atual da árvore da v0.1.37
-- `cargo audit` no `Cargo.lock` (434 dependências de crates, 1338 advisories no banco local, que não foi baixado de novo nessa execução): exit 0, nenhuma vulnerabilidade e nenhum aviso, medido em 2026-10-19
-- `cargo deny check`: advisories ok, bans ok, licenses ok, sources ok, medido em 2026-10-19
+### Estado atual da árvore da v0.1.38
+- `cargo audit` no `Cargo.lock` (566 dependências de crates, 1403 advisories no banco local, atualizado em 2026-11-03): exit 0, nenhuma vulnerabilidade e nenhum aviso, medido em 2026-11-04
+- `cargo deny check`: advisories ok, bans FALHOU, licenses FALHOU, sources ok, exit 6, medido em 2026-11-04 nesta árvore, e as falhas estão nomeadas na seção abaixo
 - Os avisos de crates sem manutenção das auditorias antigas, `instant` (`RUSTSEC-2024-0384`) e `unsafe-libyaml` (`RUSTSEC-2024-0449`), sumiram: nem esses dois nem `serde_yaml` ou `serde_yaml_ng` estão no `Cargo.lock`, e `cargo tree --locked --all-features -i <crate>` responde "did not match any packages" para cada um
 - As regras YAML do `transform` são lidas com `serde-saphyr` 1.3.0 e o `notify` está na 8.x (ADR-0057 seções 4 e 5)
 - Reexecute as duas ferramentas na árvore final antes de toda release, os números acima são a medição de um dia
+
+### Portão de dependências da v0.1.38 — FALHOU, não publicada
+- `cargo deny check` saiu 6 em 2026-11-04, e os checks reprovados são `bans` e `licenses`
+- `heic` 0.1.6 é dependência direta deste crate e declara `AGPL-3.0-only OR LicenseRef-Imazen-Commercial`, então as duas metades da expressão são rejeitadas pela allowlist do `deny.toml`
+- AGPL-3.0 é licença copyleft, então publicar esta árvore no crates.io colocaria uma dependência AGPL sob todo consumidor do binário
+- As outras duas falhas são entradas duplicadas que as 33 linhas de `skip` ainda não carregam: `fearless_simd` 0.7.0 ao lado de 1.2.0 (via `hayro` -> `vello_cpu`) e os pares duplicados de `syn` e `weezl`
+- O portão continua vermelho até o `heic` sair, ser trocado por um decodificador de licença permissiva, ou o dono registrar exceção escrita com o motivo, exceção que a regra da allowlist exige declarada
+
+### O download dos modelos de OCR não tem verificação de integridade (gap aberto)
+- O `read --ocr` baixa dois modelos de `huggingface.co/robertknight/ocrs` com teto de 64 MiB e prazo de 120 segundos, e nem checksum nem assinatura são verificados antes de o arquivo ser renomeado para o cache
+- O pacote do tree-sitter confere o `sha256` listado no manifesto dele; o caminho do OCR não tem equivalente, então um host comprometido ou um proxy no meio pode servir outro modelo e o produto carrega esse modelo em processo
+- Mitigação hoje: preencha `$XDG_CACHE_HOME/atomwrite/models/` a partir de uma máquina confiável, e mantenha esse diretório gravável só pelo seu usuário
+- A correção é fixar um `sha256` por modelo em `src/constants.rs` e recusar arquivo que não casar, trabalho aberto e fora da 0.1.38
 
 ### Paths de content-source e jail do workspace (política, não vulnerabilidade)
 - Paths de content-source de `--old-file` / `--new-file` permanecem sob o jail do workspace (sem allowlist de `/tmp` do SO)
@@ -122,7 +136,7 @@
 - Um `WORKSPACE_JAIL` (exit 126) em old/new sob `/tmp/...` é política intencional (v0.1.36 / ADR-0055), não um buraco de segurança a contornar
 
 
-## Postura de Segurança de Dependências (v0.1.37)
+## Postura de Segurança de Dependências (v0.1.38)
 - Segurança de memória: `unsafe` é negado em todo o crate (`#![deny(unsafe_code)]` em `src/lib.rs` e `src/main.rs`) e liberado só em `src/signal.rs` e `src/platform.rs` (`#![allow(unsafe_code)]` na linha 5 de cada um), onde 8 blocos `unsafe` envolvem o registro do `signal-hook` e chamadas libc (`_exit`, `poll`, `write` no stderr, `fcntl` no macOS, `renameat2` no Linux, setup do console no Windows)
 - Os 8 blocos estão em `src/signal.rs:260`, `src/signal_handlers.inc.rs:31,143,171,219` (incluído por `src/signal.rs`) e `src/platform.rs:97,203,275`, contados com `rg 'unsafe\s*\{' src`, que devolve 9 ocorrências porque `src/commands/scope/queries.inc.rs:77` guarda o texto literal de um padrão de consulta, e cada bloco tem um comentário `SAFETY:`
 - BLAKE3: usado apenas para checksums, não para segurança criptográfica
@@ -131,7 +145,7 @@
 - Os parsers baixados são bibliotecas nativas carregadas no processo (`dynamic-loading`), então rodam como código: mantenha o diretório de cache (`$XDG_CACHE_HOME/tree-sitter-language-pack/`) gravável só pelo seu usuário
 - Para rodar sem download, preencha esse cache antes ou compile sem `ast`, veja `PRIVACY.pt-BR.md`
 - deny.toml: inclui `MPL-2.0`, `CDLA-Permissive-2.0`, `CC0-1.0` no allowlist, e tem 33 entradas `skip`, cada uma com motivo, para a coexistência inevitável de versões duplicadas de crates (`getrandom` 0.2/0.3, `rustix` 0.x/1.x, `windows-sys` 0.52/0.59 e as crates Windows da feature opt-in `watch`)
-- MSRV: Rust 1.90 stable (`rust-version` no `Cargo.toml`, subido de 1.88 na v0.1.37, veja a ADR-0057)
+- MSRV: Rust 1.90 stable (`rust-version` no `Cargo.toml`, subido de 1.89 na v0.1.38, veja a ADR-0075)
 
 
 ## Hall da Fama
@@ -145,6 +159,8 @@
 - Evite executar atomwrite como root
 - Valide `--expect-checksum` em ambientes multi-agente
 - Revise a saída de erro NDJSON para `ok: false`, `retryable` e `suggestion` (parse exit-first)
+- Um `read` limitado responde `truncated: true` e uma faixa `next`, então nunca trate uma leitura truncada como o arquivo inteiro, porque o conteúdo além do teto fica invisível para a revisão
+- Em sistemas de arquivos de rede o `flock` pode ser ignorado em silêncio, então mantenha `--expect-checksum` como rede extra ali, e lembre que o sidecar é melhor esforço enquanto o lock do inode cobre um diretório só de leitura
 - Mantenha o atomwrite atualizado para a versão mais recente
 - Audite o manifesto `batch` antes da execução em produção
 - Inscreva-se em notificações do repositório para atualizações de segurança em tempo hábil

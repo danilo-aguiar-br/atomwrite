@@ -14,7 +14,7 @@ mod common;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -31,16 +31,6 @@ const DEADLINE_SECS: u64 = 1;
 /// Time the child is left waiting on the lock before the signal test fires.
 const WAIT_BEFORE_SIGNAL: Duration = Duration::from_millis(400);
 
-/// Sidecar path the product uses: `.<name>.atomwrite.lock` next to the target.
-fn sidecar(target: &Path) -> PathBuf {
-    let name = target
-        .file_name()
-        .expect("file name")
-        .to_string_lossy()
-        .into_owned();
-    target.with_file_name(format!(".{name}.atomwrite.lock"))
-}
-
 /// Take the advisory lock the way a concurrent writer would.
 fn hold_lock(target: &Path) -> File {
     let file = OpenOptions::new()
@@ -48,8 +38,8 @@ fn hold_lock(target: &Path) -> File {
         .truncate(false)
         .read(true)
         .write(true)
-        .open(sidecar(target))
-        .expect("open sidecar");
+        .open(target)
+        .expect("open target");
     let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     assert_eq!(rc, 0, "harness could not take the lock");
     file

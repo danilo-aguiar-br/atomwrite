@@ -185,7 +185,9 @@ mod tests {
             ),
             (
                 AtomwriteError::SymlinkBlocked { path: p.clone() },
-                127,
+                // v0.1.38 — 79, not 127: a refused symlink must not read as
+                // "program not found" to a shell caller. ADR-0079 is nearby.
+                79,
                 ErrorClass::PreconditionFailed,
                 "SYMLINK_BLOCKED",
                 true,
@@ -274,6 +276,8 @@ mod tests {
                 AtomwriteError::SyntaxError {
                     path: p.clone(),
                     count: 1,
+                    line: None,
+                    line_end: None,
                 },
                 88,
                 ErrorClass::PreconditionFailed,
@@ -320,8 +324,6 @@ mod tests {
             );
             assert_eq!(err.path().is_some(), *has_path, "path mismatch for {code}");
             let json = ErrorJson::from_error(err);
-            assert!(json.error);
-            assert_eq!(json.exit, *exit);
             assert_eq!(json.code, *code);
             assert_eq!(json.error_class, class.as_str());
             let _ = serde_json::to_string(&json).expect("ErrorJson must serialize");
@@ -353,9 +355,7 @@ mod tests {
             path: PathBuf::from("/missing"),
         };
         let json = ErrorJson::from_error(&err);
-        assert!(json.error);
         assert_eq!(json.code, "FILE_NOT_FOUND");
-        assert_eq!(json.exit, 4);
         assert!(!json.retryable);
     }
 
@@ -392,6 +392,7 @@ mod tests {
         let ctx = ErrorContext {
             workspace_provided: true,
             workspace: Some(PathBuf::from("/home/user/project")),
+            verb: None,
         };
         let json = ErrorJson::from_error_with_context(&err, &ctx);
         let s = json.suggestion.expect("must have suggestion");
@@ -416,6 +417,7 @@ mod tests {
         let ctx = ErrorContext {
             workspace_provided: true,
             workspace: Some(PathBuf::from("/home/user/project")),
+            verb: None,
         };
         let json = ErrorJson::from_error_with_context(&err, &ctx);
         let s = json.suggestion.expect("must have suggestion");
@@ -492,6 +494,8 @@ mod tests {
             AtomwriteError::SyntaxError {
                 path: PathBuf::from("/x"),
                 count: 1,
+                line: None,
+                line_end: None,
             },
             AtomwriteError::ExdevFallbackDisabled {
                 path: PathBuf::from("/x"),
@@ -685,7 +689,6 @@ mod tests {
         assert_eq!(err.exit_code(), 65);
         let json = ErrorJson::from_error(&err);
         assert_eq!(json.code, "MATCH_FAILED");
-        assert_eq!(json.exit, 65);
     }
 
     #[test]

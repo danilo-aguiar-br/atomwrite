@@ -44,6 +44,7 @@ fn write_expect_checksum_blocks_shrink() {
 
     let output = common::atomwrite()
         .args([
+            "-v",
             "--workspace",
             dir.path().to_str().unwrap(),
             "write",

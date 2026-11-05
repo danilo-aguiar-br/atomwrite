@@ -53,16 +53,14 @@ fn always_emitted(name: &str) -> &'static [&'static str] {
     }
 }
 
-/// Keys of a failed terminal event: the verdict and the failure detail that
-/// `NdjsonWriter::publish_failure` stamps.
-const FAILURE_REQUIRED: &[&str] = &[
-    "code",
-    "exit",
-    "error_class",
-    "retryable",
-    "suggestion_lang",
-    "message",
-];
+/// Keys a failed terminal event must carry.
+///
+/// Only the two verdict keys are required: `message`, `error_class` and
+/// `retryable` are dropped from the default envelope (`-v` restores them), so
+/// demanding them would reject every failed run the product actually writes.
+/// `suggestion_lang` is not listed either: it is written only when the message
+/// is not in English, so an English run would fail a schema that demanded it.
+const FAILURE_REQUIRED: &[&str] = &["code", "exit"];
 
 /// Whether the verb ends a failed run with its own summary (`publish_failure`).
 ///
@@ -110,7 +108,7 @@ fn failure_detail_schema() -> (
             .unwrap_or_default()
     };
     let mut properties = pick("properties");
-    for stamped in ["error", "ok", "code", "exit"] {
+    for stamped in ["ok", "code", "exit"] {
         properties.remove(stamped);
     }
     (properties, pick("$defs"))
@@ -311,8 +309,7 @@ fn closed_branch(name: &str, schema: schemars::Schema) -> serde_json::Value {
 
 /// The failure envelope, which any verb may publish in place of its stream.
 fn error_branch() -> serde_json::Value {
-    let mut value =
-        serde_json::Value::from(with_envelope_keys(schemars::schema_for!(crate::error::ErrorJson)));
+    let mut value = serde_json::Value::from(error_output_schema());
     if let Some(obj) = value.as_object_mut() {
         obj.remove("$schema");
     }
@@ -434,6 +431,28 @@ fn batch_output_schema() -> Option<schemars::Schema> {
                 schemars::schema_for!(ndjson_types::BatchSummary),
             ),
             manifest_schema_branch(),
+        ],
+    )
+}
+
+/// Everything `apply` writes: the plan of `--dry-run`, one `applied` record
+/// per patched file, and the rollback record of a run that put its files back.
+///
+/// The plan record was never described by a published schema, and the rollback
+/// record had no schema at all, so a consumer validating the stream against
+/// `apply-result.schema.json` rejected two of the three records the verb can
+/// write. The union is the contract, the same shape `batch` and `recipe` use.
+fn apply_output_schema() -> Option<schemars::Schema> {
+    union_of(
+        "ApplyOutput",
+        "Records of `atomwrite apply`: the plan of `--dry-run`, one `applied` record per patched file, and the rollback record when a failed run put the files it had already written back.",
+        vec![
+            serde_json::Value::from(schemars::schema_for!(ndjson_types::ApplyPlan)),
+            serde_json::Value::from(schemars::schema_for!(ndjson_types::ApplyResult)),
+            terminal_record(
+                schemars::schema_for!(ndjson_types::ApplyRollbackEvent),
+                &[],
+            ),
         ],
     )
 }

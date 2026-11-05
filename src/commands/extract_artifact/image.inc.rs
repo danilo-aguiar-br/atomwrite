@@ -36,6 +36,22 @@ fn extract_image(path: &std::path::Path, head: &[u8], output: &mut ArtifactOutpu
     output.width = Some(size.width as u64);
     output.height = Some(size.height as u64);
     output.megapixels = Some(megapixels(size.width as u64, size.height as u64));
+    // The header extent is not what a vision call receives: the standard tier
+    // resizes anything above its ceilings. Reporting both is what lets the
+    // caller cost the call before making it.
+    let (max_edge, max_tokens) = crate::media::token_rule::tier_limits(false);
+    let (final_width, final_height) = crate::media::token_rule::fit(
+        size.width as u32,
+        size.height as u32,
+        max_edge,
+        max_tokens,
+    );
+    output.width_final = Some(u64::from(final_width));
+    output.height_final = Some(u64::from(final_height));
+    output.visual_tokens = Some(crate::media::token_rule::visual_tokens(
+        final_width,
+        final_height,
+    ));
     Ok(())
 }
 

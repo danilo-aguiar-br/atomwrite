@@ -140,6 +140,8 @@ pub mod line_endings;
 pub mod locale;
 /// Advisory file locking for concurrent edit protection.
 pub mod lock;
+/// Media the text channel cannot carry: pictures and PDF text.
+pub mod media;
 /// NDJSON output type definitions.
 pub mod ndjson;
 #[allow(deprecated)]
@@ -241,6 +243,9 @@ pub fn run(
     // a bound on the WORK, not on the printing, so collection reads what is left
     // before it touches the disk.
     crate::output::arm_limit(cli.global.limit);
+    // The path jail answers for the whole run, including the rayon workers, so
+    // the policy is recorded here once instead of being passed to 70 call sites.
+    crate::path_safety::set_follow_symlinks(cli.global.follow_symlinks);
     let shape = crate::output::OutputShape::from_global_args(&cli.global)?;
     let mut writer = NdjsonWriter::with_shape(stdout, shape);
     let shutdown = signal::get_or_install_handlers()?;
@@ -271,6 +276,12 @@ pub fn run(
     }
     let config = crate::config::load_config(&workspace, cli.global.config.as_deref())?;
     crate::config::validate_all(&config)?;
+    // The profile is a stored choice, not a flag, so it is applied here: the
+    // writer is built before the config load because the `config` verb must
+    // run even when that file is broken.
+    writer.set_profile(crate::output::OutputProfile::from_name(
+        &config.output.profile,
+    ));
     crate::config::install_tuning(&config);
 
     // Parallelism: record the worker bound (shared with ignore WalkParallel via

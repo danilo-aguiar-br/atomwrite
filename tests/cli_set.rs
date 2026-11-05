@@ -216,6 +216,7 @@ fn set_unsupported_extension_fails() {
 
     let output = common::atomwrite()
         .args([
+            "-v",
             "--workspace",
             workspace,
             "set",
@@ -246,6 +247,7 @@ fn set_missing_file_fails() {
 
     let output = common::atomwrite()
         .args([
+            "-v",
             "--workspace",
             workspace,
             "set",

@@ -44,6 +44,7 @@ fn run_doctor(ws: &ReadOnlyWorkspace, strict: bool) -> (Option<i32>, Vec<Value>)
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
     let mut cmd = common::hermetic(Command::new(bin));
     cmd.args([
+        "-v",
         "--workspace",
         ws.dir.path().to_str().expect("utf8 workspace"),
         "--no-progress",

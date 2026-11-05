@@ -82,7 +82,7 @@ fn a_denied_data_directory_is_exit_13_and_not_an_internal_error() {
     std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o500))
         .expect("make the directory read-only");
 
-    let (events, code) = run_with_data(&data, &["completions", "bash", "--install"]);
+    let (events, code) = run_with_data(&data, &["-v", "completions", "bash", "--install"]);
 
     std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700))
         .expect("restore the directory, so the temporary tree can be removed");

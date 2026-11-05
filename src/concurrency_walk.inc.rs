@@ -449,10 +449,29 @@ pub fn command_uses_rayon(command: &crate::cli::Commands) -> bool {
 /// no worker threads are spawned for it. The bound is kept so a later
 /// [`ensure_global_pool`] builds the pool with the operator's `--threads`.
 pub fn plan_global_pool(command: &crate::cli::Commands, cli_threads: Option<usize>) {
-    POOL_REQUEST.set(cli_threads).ok();
+    // A scan over one file has nothing to spread: the automatic ceiling used to
+    // spawn one worker per CPU for a single `search`, and the wake-up cost was
+    // larger than the scan itself. An explicit `--threads` still wins.
+    let requested = cli_threads.or_else(|| single_target_threads(command));
+    POOL_REQUEST.set(requested).ok();
+    // The pool is built even for a single file, but with ONE thread: a scan
+    // that reaches rayon through a path this list does not know would make
+    // rayon build its default pool of one thread per CPU, which is the cost
+    // the single-target bound exists to avoid.
     if command_uses_rayon(command) {
         ensure_global_pool();
     }
+}
+
+/// Worker bound for a command whose only target is one existing file.
+fn single_target_threads(command: &crate::cli::Commands) -> Option<usize> {
+    if let crate::cli::Commands::Search(args) = command
+        && args.paths.len() == 1
+        && args.paths[0].is_file()
+    {
+        return Some(1);
+    }
+    None
 }
 
 /// Build the process-wide rayon pool from the recorded bound, at most once.

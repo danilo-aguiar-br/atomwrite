@@ -15,7 +15,7 @@ use std::path::Path;
 
 fn run(ws: &Path, stdin: &str) -> std::process::Output {
     common::atomwrite()
-        .args(["--workspace", ws.to_str().expect("utf8 workspace")])
+        .args(["-v", "--workspace", ws.to_str().expect("utf8 workspace")])
         .args(["batch", "--transaction"])
         .write_stdin(stdin)
         .output()
@@ -45,10 +45,12 @@ fn a_failed_reversal_reports_exit_80() {
     let events = common::parse_ndjson(&out.stdout);
     assert_eq!(out.status.code(), Some(80), "{events:?}");
 
+    // The terminal record of a failed reversal is the `rollback` event, which
+    // carries the same verdict keys the generic error envelope used to carry.
     let failure = events
         .iter()
         .rev()
-        .find(|e| e["ok"] == false && e.get("type").is_none())
+        .find(|e| e["ok"] == false)
         .unwrap_or_else(|| panic!("no failure envelope in {events:?}"));
     assert_eq!(failure["code"], "TRANSACTION_ROLLBACK_FAILED", "{failure}");
     assert_eq!(failure["exit"], 80, "{failure}");

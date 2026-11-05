@@ -61,14 +61,14 @@ cargo build --release --features full
 - Slim profile: `cargo test --no-default-features --features core` is green in 131 test targets, because every test that exercises `scope`, `transform`, `outline` or `query` carries `#[cfg(feature = "ast")]` and is skipped in that build
 - To prove the slim build compiles, run `cargo xtask check-features` (it runs `cargo check --locked --no-default-features` for the `core` and `core,watch` sets and stops at the first failure), and run the test suite with the default features
 - Optional v0.1.37 suites for the `config` verb and the source guards: `cargo test --test cli_v0137_config_verb --test cli_v0137_hardcode_guard --test cli_v0137_retry_guards --test cli_v0137_let_underscore_guard --test cli_v0137_terminal_event`
-- Optional documentation suites: `cargo test --test docs_consistency --test docs_exit_codes`
+- Documentation gates: `cargo test --test docs_coverage --test docs_consistency --test docs_exit_codes --test docs_schemas_sync`, where `docs_coverage` requires every subcommand in each primary doc and `docs_schemas_sync` keeps the schema files and the binary in step
 - Format check: `cargo fmt -- --check`
 - Docs lint: `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`
 - Supply-chain checks, run them before the version bump and not after the docs are written: `cargo audit` and `cargo deny check`
 
 ### Current release pin
-- The release line in this tree is `0.1.37`, which is still in preparation, and crates.io carries `0.1.36` until `0.1.37` is published
-- Pin consumers and agents to `^0.1.36` today and to `^0.1.37` when that version lands
+- The release line in this tree is `0.1.38`, which is still in preparation, and crates.io carries `0.1.37` until `0.1.38` is published
+- Pin consumers and agents to `^0.1.37` today and to `^0.1.38` when that version lands
 - Keep version strings consistent across `Cargo.toml`, README, CHANGELOG, and skills
 
 
@@ -179,8 +179,8 @@ cargo build --release --features full
   - `cargo audit` and `cargo deny check`
   - `cargo package --list` / dry-run publish as needed
   - `cargo install --path . --force`
-- Publish to crates.io only after local DoD is green, and crates.io still carries `0.1.36` until the `0.1.37` publish lands
-- Current release line is `0.1.37`; consumers should pin `^0.1.36` today and `^0.1.37` once it is published
+- Publish to crates.io only after local DoD is green, and crates.io still carries `0.1.37` until the `0.1.38` publish lands
+- Current release line is `0.1.38`; consumers should pin `^0.1.37` today and `^0.1.38` once it is published
 
 
 ## Code of Conduct

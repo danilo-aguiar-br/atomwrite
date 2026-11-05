@@ -167,6 +167,9 @@ fn mutating_cases(d: &Path) -> Vec<Case> {
             "--format".into(),
             "full".into(),
             "--allow-shrink".into(),
+            // v0.1.38 refuses a patch that grows the parse error count, and
+            // this case writes "x" into a .rs fixture on purpose.
+            "--no-syntax-check".into(),
         ],
         &["s.rs"],
     );
@@ -380,7 +383,11 @@ fn r14_mutating_verbs_report_target_source_and_target_resolved() {
             ));
             continue;
         }
-        let claimed = last["target_resolved"].as_str().map(PathBuf::from);
+        let claimed = last["target_resolved"]
+            .as_array()
+            .and_then(|subjects| subjects.first())
+            .and_then(serde_json::Value::as_str)
+            .map(PathBuf::from);
         match claimed {
             Some(c) if c.is_absolute() => {
                 let ok = case
@@ -422,7 +429,11 @@ fn locale_set_and_clear_stamp_the_preference_file() {
         assert_eq!(out.code, Some(0), "{args:?}: {:.300}", out.stdout);
         let last = out.last().expect("terminal event");
         assert_eq!(last["target_source"], "argv", "{args:?}: {last}");
-        let target = PathBuf::from(last["target_resolved"].as_str().expect("target_resolved"));
+        let target = PathBuf::from(
+            last["target_resolved"][0]
+                .as_str()
+                .expect("target_resolved"),
+        );
         assert!(target.is_absolute(), "{args:?}: {target:?}");
         assert_eq!(
             target.file_name().and_then(|n| n.to_str()),
@@ -716,7 +727,12 @@ fn r16_shifted_tokens_never_act_on_the_ambient_tree() {
         let acted_on_argv = out.code == Some(0)
             && out.events.iter().any(|e| e["target_source"] == "argv")
             && !out.events.iter().any(|e| e["target_source"] == "workspace");
-        if out.code != Some(2) && !acted_on_argv {
+        // v0.1.38 made the `apply` target optional, because the patch may name
+        // its own files. A call with no target and an empty patch is therefore
+        // a refused request, not a usage error, and the property this case
+        // protects is the ambient tree staying untouched, checked above.
+        let closed_refusal = *name == "apply (no file)" && out.code == Some(65);
+        if out.code != Some(2) && !acted_on_argv && !closed_refusal {
             failures.push(format!(
                 "{name}: neither exit 2 nor an argv-targeted success: exit {:?}, stdout {:.140}",
                 out.code, out.stdout

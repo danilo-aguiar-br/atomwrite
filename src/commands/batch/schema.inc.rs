@@ -42,6 +42,19 @@ pub(crate) struct RollbackEvent {
     files_restored: u64,
     files_removed: u64,
     total_reverted: u64,
+    /// Files the reversal could not put back, in reverse commit order.
+    ///
+    /// Omitted when every file came back, so an empty list never reads as a
+    /// success the run cannot vouch for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    failed_paths: Vec<String>,
+    /// Snapshots the failed reversal left on disk, as absolute paths.
+    ///
+    /// A reversal that stops halfway cannot vouch for the tree, so the copies
+    /// stay and this list names them. Omitted when nothing was preserved,
+    /// because a successful reversal removes every snapshot it no longer needs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    backups_preserved: Vec<String>,
 }
 
 /// Emit the JSON Schema for the batch input manifest format.

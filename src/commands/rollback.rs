@@ -125,7 +125,7 @@ pub fn cmd_rollback(
         keep_backup: resolved.keep,
         durability: crate::platform::Durability::Auto,
     };
-    atomic_write(&target, &content, &opts, &workspace)?;
+    let wr = atomic_write(&target, &content, &opts, &workspace)?;
 
     let checksum_after = checksum::hash_file(&target, max_size)?;
 
@@ -143,6 +143,8 @@ pub fn cmd_rollback(
         checksum_before,
         checksum_after,
         verified,
+        write_strategy: wr.write_strategy,
+        backup_skipped: wr.backup_skipped,
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 

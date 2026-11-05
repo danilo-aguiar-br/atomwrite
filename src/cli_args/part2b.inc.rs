@@ -267,6 +267,24 @@ pub struct OutlineArgs {
     /// Show byte offsets and start positions.
     #[arg(long, help = "Include byte offsets and start positions", action = clap::ArgAction::SetTrue)]
     pub positions: bool,
+    /// Output shape: `ndjson` (default) or `tsv`, one item per line.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = OutlineFormat::Ndjson,
+        help = "Output shape: ndjson or tsv"
+    )]
+    pub format: OutlineFormat,
+}
+
+/// How `outline` prints its items.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+pub enum OutlineFormat {
+    /// One NDJSON record per item (the default agent contract).
+    #[default]
+    Ndjson,
+    /// One tab-separated line per item, with the path printed once.
+    Tsv,
 }
 
 /// Arguments for the `wal-heal` subcommand.

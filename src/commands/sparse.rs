@@ -63,6 +63,9 @@ pub struct SparseListArgs {
     /// Exclude glob.
     #[arg(long, action = clap::ArgAction::Append)]
     pub exclude: Vec<String>,
+    /// List every entry, hidden included.
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub all: bool,
 }
 
 /// `sparse read` arguments.
@@ -94,6 +97,9 @@ pub struct SparseOutlineArgs {
     /// Exclude glob.
     #[arg(long, action = clap::ArgAction::Append)]
     pub exclude: Vec<String>,
+    /// Outline every entry, hidden included.
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub all: bool,
 }
 
 /// What `sparse list` measured before the page was written.
@@ -143,7 +149,10 @@ pub(crate) struct SparseSummary {
     /// Files the walk delivered before the page cut.
     ///
     /// The discovery budget stops the walk at `--max-files`, so this is what
-    /// the run measured, and never the size of the whole tree.
+    /// the run measured, and never the size of the whole tree. A dotfile counts
+    /// only when the caller passed `--hidden` or the verb's own `--all`, so the
+    /// same folder answers a smaller number by default and a larger one under
+    /// either flag.
     #[serde(skip_serializing_if = "Option::is_none")]
     files_scanned: Option<u64>,
     /// Total bytes of the path strings the run emitted.
@@ -247,12 +256,18 @@ fn sparse_list(
     let start = std::time::Instant::now();
     let workspace = global.resolve_workspace()?;
     let root = validate_path(&args.path, &workspace)?;
-    // The one shared walker, in the always-hidden flavor: a sparse listing that
-    // skipped `.env` would not describe the directory.
+    // The one shared walker, under the common hidden rule: a dotfile stays out
+    // of a default run, and `--hidden` or the verb's own `--all` is the caller
+    // asking for every entry. `--all` belongs to the verb so a caller can widen
+    // one listing without widening every other verb in the same shell.
     let builder = crate::commands::build_scoped_walker_flavored(
         std::slice::from_ref(&root),
         global,
-        crate::commands::WalkerFlavor::AlwaysVisitHidden,
+        if args.all {
+            crate::commands::WalkerFlavor::AlwaysVisitHidden
+        } else {
+            crate::commands::WalkerFlavor::RespectGlobalFlags
+        },
         &args.include,
         &args.exclude,
     )?;
@@ -270,6 +285,12 @@ fn sparse_list(
         args.max_files,
         move |entry| {
             if !entry.file_type().is_some_and(|t| t.is_file()) {
+                return None;
+            }
+            // A timestamped copy is the same content the caller already has,
+            // and its stamp makes the listing nondeterministic. `semantic-search`
+            // and `recipe` skip it by the same predicate.
+            if crate::commands::is_backup_path(entry.path()) {
                 return None;
             }
             let path = entry.path().display().to_string();

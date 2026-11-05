@@ -4,16 +4,35 @@
 [Read in English](AGENTS.md)
 
 
+## O Que Há de Novo na v0.1.38 (2026-11-04)
+- O envelope de falha carrega `ok`, `code` e `exit`, e o `error: true` saiu porque duplicava `ok: false` mais `code`, custava 13 bytes em toda falha e nenhum consumidor decidia por ele sozinho; quem o lia passa a ler `.ok == false`
+- O `read --format raw` para em 24.000 bytes e imprime uma linha no stderr com o `--lines` que lê o resto, e o `--all` desliga o teto
+- O `read --format raw` de alvo único honra `--max-filesize` e sai 65 `FILE_TOO_LARGE` em vez de transmitir um arquivo acima do teto
+- Uma imagem chega como uma linha `data:`, o `--high-res` sobe a faixa para 2.576 pixels e 4.784 tokens visuais, e uma imagem já enviada nesta sessão responde com uma linha curta de token, a menos que `--force` seja dado
+- `read doc.pdf` devolve o texto de cada página, `--pages` seleciona janelas, `needs_vision` nomeia a página sem texto, e `--ocr` reconhece caracteres numa imagem ou numa página renderizada em Rust puro
+- O `search --format text` escreve uma linha `caminho:linha:coluna:texto` por match, e uma árvore em que todo arquivo era binário sai 89 `ALL_SKIPPED_BINARY` em vez de `NO_MATCHES`
+- O `apply` casa linhas inteiras, aplica vários arquivos numa invocação, publica as linhas mudadas com `--show` e ordena os alvos antes de tomar os locks
+- O lock mira o inode com `std::fs::File::try_lock`, e o `delete` toma o mesmo lock antes de calcular o hash e antes do unlink, então uma exclusão e uma gravação no mesmo alvo não se entrelaçam mais
+- O `delete -r <dir>` domina a árvore nomeada inteira, incluindo entradas ocultas, ignoradas, links, fifo, socket e dispositivo, e um link nunca é seguido
+- O `target_resolved` é sempre uma lista na ordem de invocação, porque um caminho pode conter a vírgula que antes unia vários alvos
+- O `[defaults].backup = true` alcança o `delete` e o `batch delete`, e o `[delete].backup` vence sobre ele só no `delete`
+- O `output.profile = "lean"` tira os digests, as contagens de bytes e o tempo de um registro de mutação bem-sucedida, o que levou um `apply` de três linhas de 433 bytes para 196
+- Um arquivo cuja assinatura de imagem está corrompida falha no `read` com exit 65 `INVALID_INPUT` em vez de devolver os bytes como texto
+- O `outline` lê um título Markdown como uma `section` que vai até o fim da própria seção, e o `read --symbol Part` devolve essa seção inteira com as subseções
+- O `config` lista 43 chaves, e o `atomwrite commands --brief` imprime uma linha por subcomando em 5.020 bytes contra 67.492 da árvore completa
+- Fixe os agentes em `^0.1.38`. 47 subcomandos (SSOT)
+
+
 ## O Que Há de Novo na v0.1.37 (2026-10-31)
 - SSOT: 47 subcomandos (`CANONICAL_SUBCOMMAND_COUNT` / `atomwrite agent-surface`). O novo é `config`
-- `config`: `config path|list|get|set|unset|doctor`; `--scope global|workspace` é obrigatório em `path`, `set` e `unset` (não há padrão); `list` e `get` mostram o valor efetivo com a origem (`default`, `global`, `workspace` ou `explicit`); 37 chaves, todas na seção Configuração abaixo
+- `config`: `config path|list|get|set|unset|doctor`; `--scope global|workspace` é obrigatório em `path`, `set` e `unset` (não há padrão); `list` e `get` mostram o valor efetivo com a origem (`default`, `global`, `workspace` ou `explicit`); 43 chaves, todas na seção Configuração abaixo
 - Um evento terminal: o resumo que falha em `search`, `replace`, `transform`, `scope`, `edit-loop`, `semantic-merge` ou `recipe` carrega `ok:false`, `code`, `exit` e o detalhe do erro na mesma linha; nenhum segundo envelope de erro vem depois. Pipe quebrado e veredito `hash_verify` já publicado são as únicas exceções
 - `MATCH_FAILED`: um par do `edit-loop` ou do `edit` multi-par sem match sai 65 com o código `MATCH_FAILED` e lê `best_candidate` como o `edit`
 - `files_failed` / `errors[]`: `search`, `transform`, `replace`, `scope`, `count`, `list`, `sparse`, `semantic-search` e `case` listam os arquivos que não puderam ser lidos ou gravados (cada entrada tem `path`, `code` e `message`, `path` é o marcador `<walk>` quando a varredura falhou sem nomear um arquivo próprio; no máximo 50, `files_failed` guarda a contagem total, e `partial: true` acompanha as duas chaves sempre que um arquivo falhou); raiz nomeada na invocação que não existe reprova a execução com exit 4 mesmo tendo casado, `search`, `replace`, `transform`, `scope`, `case`, `sparse`, `semantic-search` e `backup` mantêm exit 0 quando responderam e algum arquivo falhou, enquanto `count`, `list`, `hash`, `copy`, `delete` e `prune-backups` reprovam a execução sobre uma árvore parcial, porque a resposta desses seis é um total sobre a árvore inteira, `--format text` escreve cada falha no stderr com o caminho e o motivo, e execução sem match e com falha sai com a primeira falha
 - Schemas: um nome por verbo passa a servir o stream inteiro: `recipe`, `codemod`, `batch`, `search`, `replace`, `list`, `backup`, `semantic-search`, `sparse`, `semantic-merge`, `case` e `watch` respondem cada um com a união de todo registro que escrevem, o evento terminal e o envelope de erro; `recipe` marca o registro de filho reemitido com `step` e `codemod` com `rule_id`; os quatro nomes `*-summary` deixaram de existir; `count` serve o schema de contagem total; `--print-schema` lista 55 nomes
 - Teto do fuzzy: arquivo acima de `[fuzzy].max_content_bytes` (256 MiB) falha no fuzzy com exit 65 (`INVALID_INPUT`); `--fuzzy off` segue só exato; a estratégia `escape_normalized` é pulada acima de 32 MiB
 - Cancelamento: todo verbo que varre encerra o canal de dado no envelope `cancelled`, cujo campo `deadline_exceeded` separa prazo de `--timeout-secs` estourado (exit 124) de sinal (exit 130, 143 ou 129 para SIGHUP) sem ler o `reason`; o registro sai sem moldagem, então `--filter`, `--select` e `--limit` não o descartam
-- Envelope de sucesso: todo evento de sucesso carrega `ok: true`; verbos com efeito colateral trazem também `target_resolved` e `target_source` (`argv`), e `search`, `read`, `count`, `list`, `hash` e `diff` trazem os dois também (`workspace` só no padrão `.` de `count` e `list`, que é a raiz ambiente); `suggestion_lang` nomeia o idioma da `suggestion`; valores `null` de topo saíram do stdout
+- Envelope de sucesso: todo evento de sucesso carrega `ok: true`; verbos com efeito colateral trazem também `target_resolved`, sempre array mesmo quando um caminho só foi resolvido, e `target_source` (`argv`, ou `stdin` quando o patch ou o manifesto o nomeia), e `search`, `read`, `count`, `list`, `hash` e `diff` trazem os dois também (`workspace` só no padrão `.` de `count` e `list`, que é a raiz ambiente); `suggestion_lang` nomeia o idioma da `suggestion`; valores `null` de topo saíram do stdout
 - Execução hospedada por agente: `--non-interactive` (nunca pergunta, nunca lê confirmação) e `--confirm-side-effect` entram nas flags globais, junto com as flags de formato de stream `--sort-by`, `--dedupe`, `--aggregate`, `--join`, `--truncate-content`, `--redact`, `--normalize-encoding`, `--diff-against` e `--max-output-bytes`
 - QUEBRA -- `--max-output-bytes`: exige `--allow-truncate` (cada flag é rejeitada sem a outra, exit 2) e corta todo valor string, `checksum` incluído
 - QUEBRA -- `apply`: um diff unificado é comparado com o arquivo (contexto e linhas removidas, deslocamento até 64 linhas); divergência sai 65 `MATCH_FAILED` com `best_candidate` e não grava nada, onde antes gravava errado com exit 0; hunk só de inserção insere DEPOIS da linha nomeada; lote SEARCH/REPLACE com bloco ausente falha inteiro, e bloco que casa em dois lugares é `MATCH_AMBIGUOUS`
@@ -21,6 +40,7 @@
 - QUEBRA -- `STATE_DRIFT`: verbos de leitura-modificação-escrita (`edit`, `edit-loop`, `set`, `del`, `config set`, `apply`, `write --append`) serializam no lock advisory automático; `case`, `transform`, `scope` e `codemod` falham um arquivo que mudou desde a leitura com `STATE_DRIFT` (82, retryable), então rode de novo e nunca assuma que a gravação aconteceu
 - QUEBRA -- entrada inválida é 65, não 255: regex ou glob inválido em qualquer verbo (`sparse` e `hash -r` inclusive), padrão AST, regra YAML, `query -Q`, `read --grep`, `locale --set` ou operação de `edit --multi` sai 65 `INVALID_INPUT`; 255 `INTERNAL_ERROR` é só falha interna de verdade
 - QUEBRA -- `sparse list`: `--include` e `--exclude` são aplicados como globs de verdade
+- QUEBRA -- `--hidden` em `hash`, `copy -r` e `semantic-search`: os três verbos escondem dotfile no padrão e só o visitam sob `--hidden`, então uma caminhada que nunca passou a flag devolve o inventário menor; um caminho nomeado na invocação continua sendo lido sem a flag, e `sparse list` e `sparse outline` aceitam o próprio `--all` para a mesma visita
 - QUEBRA -- empate do fuzzy: um bloco ausente que só lembra várias linhas é `MATCH_FAILED` com `best_candidate`; `MATCH_AMBIGUOUS` exige dois ou mais candidatos que passam o dual-gate
 - Outras mudanças de saída: `doctor --strict` com check reprovado ou com aviso sai 1 (`DOCTOR_CHECKS_FAILED`); `write` interrompido por sinal ou prazo sai 143, 130 ou 124, não 255; o handler de SIGPIPE é cooperativo e termina com exit 141 depois de limpar. Uma escrita que falha porque o leitor fechou sai 141 (`BROKEN_PIPE`) sem panic e sem relatório de falha: `completions`, `--print-schema`, `--help` e todo verbo. Saída muito curta que cabe no buffer do pipe (por exemplo `--version | head -1`) pode terminar antes de o leitor fechar e então sai 0
 - Build: `watch` não está no conjunto de features padrão; o binário padrão responde `watch` com exit 78 (`CONFIG_INVALID`), e um build com `--features watch` o executa. Os parsers tree-sitter são baixados em runtime na primeira vez que uma linguagem é necessária (por exemplo `outline`, `query` e `--syntax-check`); o download respeita as configurações de proxy do host e precisa de rede uma vez
@@ -38,7 +58,7 @@
 
 
 ## O Que Há de Novo na v0.1.35 (2026-07-19)
-- Gaps residuais A-* fechados (gaps.md §20): suite verde sem `delete --yes`; sobrescrita grande default-deny (`--ack-overwrite`); `watch` sempre emite `watch_summary`; markers de conflito do semantic-merge default ON; monólitos fatiados com `include!` (SRP)
+- Gaps residuais A-* fechados (gaps.md daquela versão, §20): suite verde sem `delete --yes`; sobrescrita grande default-deny (`--ack-overwrite`); `watch` sempre emite `watch_summary`; markers de conflito do semantic-merge default ON; monólitos fatiados com `include!` (SRP)
 - Write em arquivos grandes: alvos existentes acima de XDG `[write].confirm_large_bytes` (padrão 100 KiB) exigem `--ack-overwrite` (agente one-shot; sem Y/N interativo). `--confirm` é flag legada de awareness; `--require-large-ack` é independente (sem colisão de alias)
 - Delete: use `--plan` ou `--dry-run` para plan-only; `delete --confirm` e `delete --yes`/`-y` são rejeitados (fail-closed). Execute de novo sem essas flags para apagar
 - Watch: NDJSON final `type:watch_summary` em todo caminho de saída; idle padrão 500 ms (`--idle-exit-ms` / XDG `[watch].idle_exit_ms`); debounce via CLI ou XDG `[watch].debounce_ms`
@@ -247,6 +267,18 @@ G39 xattr, G41 binary detect (content_inspector), G54 advisory lock, G56 FIFO sk
 - O checksum na resposta elimina leituras de verificação
 
 
+## Objetivos
+- Gastar menos tokens: um objeto NDJSON por chamada substitui o encadeamento de shell, e o `commands --brief` responde em 5.020 bytes onde a árvore completa custa 67.492
+- Reduzir o custo financeiro, porque a conta acompanha os tokens e as idas e voltas, e uma chamada substitui as várias chamadas de shell que uma tarefa de arquivo pede
+- Reduzir os erros com escrita atômica e checksum BLAKE3 em toda resposta, então um resultado velho ou parcial aparece em vez de ser presumido
+- Reduzir as alucinações com discriminador `type`, schema fechado por verbo e código de saída que nomeia a falha
+- Reduzir o tempo gasto em cada tarefa, porque a leitura, a busca e a escrita rodam num processo só em vez de numa corrente de ferramentas de shell
+- Reduzir a latência com execução local e sem rede no caminho do arquivo, medida nas medianas de 5,6 ms no `read` e 6,7 ms no `write` de arquivo pequeno
+- Multiplicar a velocidade das operações com `batch`, `edit-loop`, `replace`, `case`, `transform` e `codemod` resolvendo muitos arquivos numa chamada
+- Reduzir o lead time entre a solicitação e o resultado verificado, porque a resposta já traz o checksum, o `target_resolved` e o próximo passo
+- Tornar o agente mais rápido, mais veloz, mais eficaz e mais assertivo, já que o código de saída, o `code` e o `suggestion` dizem o que fazer sem tentar às cegas
+
+
 ## Economia
 ### Economia de Tokens
 - Cada subcomando custa ~50-200 tokens de saída
@@ -291,21 +323,21 @@ atomwrite calc "2 hours + 30 minutes to seconds"
 
 
 ## 47 Subcomandos (SSOT)
-- A lista é o manifesto de `atomwrite agent-surface --format json`; cada entrada abaixo tem um resumo de uma linha e um exemplo que foi rodado contra o binário 0.1.37
+- A lista é o manifesto de `atomwrite agent-surface --format json`; cada entrada abaixo tem um resumo de uma linha e um exemplo que foi rodado contra o binário 0.1.38
 - Os exemplos assumem que `WS` é a raiz absoluta do workspace (`WS="$PWD"`) e as fixtures do projeto sob teste
-- `read` -- lê arquivos com metadados, checksum e conteúdo opcional; `--stat` pula o conteúdo, `--head N`, `--tail N`, `--lines START:END`, `--grep <REGEX>` filtra as linhas retornadas, `--verify-checksum HASH` sai 81 se não confere, `--format raw|ndjson` (`raw` emite os bytes)
+- `read` -- lê arquivos com metadados, checksum e conteúdo opcional; `--stat` pula o conteúdo, `--head N`, `--tail N`, `--lines START:END`, `--grep <REGEX>` filtra as linhas retornadas, `--verify-checksum HASH` sai 81 se não confere, `--format raw|ndjson` (`raw` emite os bytes), `--symbol NAME`, `--line N` com `--context N` e `--enclosing`, `--number`, `--no-comments`, `--bytes`, `--all`, `--crop WxH`, `--dpi N`, `--max-tokens N`, `--pages`, `--ocr`, `--high-res` e `--force`
   - Exemplo: `atomwrite --workspace "$WS" read --head 2 src/a.rs`
-- `write` -- cria ou sobrescreve arquivos atomicamente via stdin; `--expect-checksum` (exit 82 em drift), `--durability full|fast|auto`, `--syntax-check` valida com tree-sitter (exit 88), `--allow-shrink` para reescrita que encolhe mais de 50%, `--append`, `--prepend`; alvos existentes grandes exigem `--ack-overwrite` (default-deny acima de `write.confirm_large_bytes`, exit 65)
+- `write` -- cria ou sobrescreve arquivos atomicamente via stdin; `--expect-checksum` (exit 82 em drift), `--durability full|fast|auto`, `--syntax-check` valida com tree-sitter (exit 88), `--allow-shrink` para reescrita que encolhe mais de 50%, `--append`, `--prepend`; alvos existentes grandes exigem `--ack-overwrite` (default-deny acima de `write.confirm_large_bytes`, exit 65); `--max-size BYTES`, `--wal-policy auto|always|never`, `--no-checksum-when-empty`, `--auto-rotate`, `--risk-threshold PERCENT` e `--require-large-ack` completam a superfície local
   - Exemplo: `printf 'x\n' | atomwrite --workspace "$WS" write notes/new.txt`
 - `edit` -- edita cirurgicamente por número de linha (`--after-line`, `--before-line`, `--range`, `--delete-range`), marcador de texto (`--after-match`, `--before-match`, `--between`) ou match exato (`--old`/`--new`, pares repetíveis, ou `--old-file`/`--new-file`); `--fuzzy auto|aggressive|off` onde `off` = exact-only (padrão `auto`), `--fuzzy-threshold`, `--replace-all`, `--multi` para multi-edit NDJSON; o sucesso NDJSON traz `match_count`, `indent_adjusted` e `checksum_after`
   - Exemplo: `atomwrite --workspace "$WS" edit src/b.rs --old beta --new gamma`
-- `search` -- busca conteúdo de arquivos em paralelo (engine ripgrep); `-C`/`--context N`, `-m`/`--max-count N`, `--invert`, `--sort path`, `-F`/`--fixed`, `-w`/`--word`, `-i`/`--case-insensitive`, `-g`/`--include`, `--exclude`, `-P`/`--pcre2`, `-U`/`--multiline`, `--include-fifo` (abre FIFOs, que são pulados por padrão); zero matches sai 1 com `NO_MATCHES`
+- `search` -- busca conteúdo de arquivos em paralelo (engine ripgrep); `-C`/`--context N`, `-m`/`--max-count N`, `--invert`, `--sort path`, `-F`/`--fixed`, `-w`/`--word`, `-i`/`--case-insensitive`, `-g`/`--include`, `--exclude`, `-P`/`--pcre2`, `-U`/`--multiline`, `--include-fifo` (abre FIFOs, que são pulados por padrão); zero matches sai 1 com `NO_MATCHES`; `--regex`, `--smart-case`, `--binary`, `--files`, `--offset N`, `--limit N`, `--format text|ndjson` e `--no-begin-end` completam a superfície
   - Exemplo: `atomwrite --workspace "$WS" search alpha src/`
-- `replace` -- substitui texto em múltiplos arquivos com escritas atômicas; `--fuzzy auto|aggressive|off` onde `off` = exact-only (padrão `auto`), `--fuzzy-threshold`, `--progress-every`, `--dry-run`; multi-apply fuzzy é one-pass E→D (`apply_fuzzy_one_pass`, nunca reescaneia texto inserido); máximo de applies padrão 1 se `--max-replacements` (`-n`) omitido (teto rígido 10_000); se o replacement contém o pattern (string fixa), força apply único; falhas de match podem emitir `best_candidate`
+- `replace` -- substitui texto em múltiplos arquivos com escritas atômicas; `--fuzzy auto|aggressive|off` onde `off` = exact-only (padrão `auto`), `--fuzzy-threshold`, `--progress-every`, `--dry-run`; multi-apply fuzzy é one-pass E→D (`apply_fuzzy_one_pass`, nunca reescaneia texto inserido); máximo de applies padrão 1 se `--max-replacements` (`-n`) omitido (teto rígido 10_000); se o replacement contém o pattern (string fixa), força apply único; falhas de match podem emitir `best_candidate`, e o `--regex` local trata o padrão como expressão regular
   - Exemplo: `atomwrite --workspace "$WS" replace --dry-run alpha omega src/`
 - `hash` -- calcula checksums BLAKE3 (leia o campo `checksum`); `--verify HASH`, `--stdin`, `-r`/`--recursive`, `--exclude`
   - Exemplo: `atomwrite --workspace "$WS" hash src/a.rs`
-- `delete` -- deleta arquivos com backup (ligado por padrão); `--plan` para listagem plan-only, `-r` para diretórios, `--older-than`, `-g`/`--include`; `delete --confirm` / `--yes` / `-y` são rejeitados
+- `delete` -- deleta arquivos, copiando um só quando a chamada pede (`--backup` ou `[defaults].backup = true`); `--plan` para listagem plan-only, `-r` para diretórios, `--older-than`, `-g`/`--include`; `delete --confirm` / `--yes` / `-y` são rejeitados
   - Exemplo: `atomwrite --workspace "$WS" delete --plan tmp.txt`
 - `count` -- conta linhas e arquivos por extensão (`--by-extension`) ou por tamanho (`--by-size --top N`)
   - Exemplo: `atomwrite --workspace "$WS" count --by-extension src/`
@@ -319,13 +351,13 @@ atomwrite calc "2 hours + 30 minutes to seconds"
   - Exemplo: `atomwrite --workspace "$WS" list --long --depth 1 src/`
 - `extract` -- extrai campos de NDJSON no stdin ou colunas de texto; campos posicionais ou o `--field` local (repetível), `--delimiter`, `--stdin`; o `--select` global projeta a saída e nunca é flag local
   - Exemplo: `printf '{"a":1}\n' | atomwrite --workspace "$WS" extract --field a`
-- `extract-artifact` -- extrai sinal delimitado de cabeçalhos de PDF, OOXML e imagem (nunca os bytes brutos do artefato)
+- `extract-artifact` -- extrai sinal delimitado de cabeçalhos de PDF, OOXML e imagem (nunca os bytes brutos do artefato); `--max-sample-rows N` limita as linhas de dados devolvidas por planilha (0 = só o cabeçalho) e `--max-text-chars N` limita o texto do documento
   - Exemplo: `atomwrite --workspace "$WS" extract-artifact img.png`
 - `calc` -- avalia expressões matemáticas e conversões de unidades (engine fend); as expressões são em inglês (`2 hours to seconds`), um nome de unidade em português sai 65
   - Exemplo: `atomwrite --workspace "$WS" calc "2 hours to seconds"`
-- `regex` -- gera regex a partir de exemplos (engine grex); flags como `--digits` generalizam o padrão
+- `regex` -- gera regex a partir de exemplos (engine grex); flags como `--digits`, `--words`, `--spaces`, `--repetitions N`, `--case-insensitive` e `--no-anchors` generalizam o padrão
   - Exemplo: `atomwrite --workspace "$WS" regex abc-12 xyz-99 id-7 --digits`
-- `transform` -- busca e reescrita estrutural por AST (ast-grep, 29 linguagens embutidas medidas no binário publicado); `-p`/`--pattern` com `-r`/`--rewrite`, `-l`/`--language`, `--rules`, `--inline-rules`, `--dry-run`; zero matches sai 1
+- `transform` -- busca e reescrita estrutural por AST (ast-grep, 29 linguagens embutidas medidas no binário publicado); `-p`/`--pattern` com `-r`/`--rewrite`, `-l`/`--language`, `--rules`, `--inline-rules`, `--dry-run`, `--verify-parse`, `--include` e `--exclude`; zero matches sai 1
   - Exemplo: `atomwrite --workspace "$WS" transform --dry-run -p '$E.unwrap()' -r '$E?' -l rust src/`
 - `scope` -- escopo gramatical sobre categorias de código; `--delete` para remover matches; `--action upper|lower|titlecase|squeeze` para transformações de texto; `--replace-with "texto"` para substituição customizada; `--query` para consultas preparadas (comments, fn, strings, struct, etc); `--pattern` para padrões AST customizados; suporta Rust (30 queries), Python (13), JS/TS (11), Go (8)
   - Exemplo: `atomwrite --workspace "$WS" scope src/ --language rust --query comments --delete --dry-run`
@@ -333,13 +365,14 @@ atomwrite calc "2 hours + 30 minutes to seconds"
   - Exemplo: `atomwrite --workspace "$WS" backup src/a.rs --retention 3`
 - `rollback` -- restaura um arquivo a partir de backup; `--timestamp` ou `--latest` seleciona o backup, `--verify` valida o checksum, `--dry-run` faz preview
   - Exemplo: `atomwrite --workspace "$WS" rollback src/a.rs --latest --verify`
-- `apply` -- aplica patches do stdin com detecção automática de formato (unified diff, blocos SEARCH/REPLACE, markdown-fenced, arquivo completo); `--format` força o formato; um unified diff é comparado com o arquivo (deslocamento até 64 linhas) e a divergência sai 65 `MATCH_FAILED` sem gravar nada
+- `apply` -- aplica patches do stdin com detecção automática de formato (unified diff, blocos SEARCH/REPLACE, markdown-fenced, arquivo completo); `--format` força o formato; um unified diff é comparado com o arquivo (deslocamento até 64 linhas) e a divergência sai 65 `MATCH_FAILED` sem gravar nada; `--strict-atomic` sai 91 em vez da queda para cópia entre dispositivos, e `--no-syntax-check` pula a checagem de parse que recusa patch que quebra o arquivo
   - Exemplo: `printf 'new body\n' | atomwrite --workspace "$WS" apply --format full notes.txt`
-- `batch` -- executa múltiplas operações de um manifesto NDJSON no stdin (write, replace, delete, edit, hash, move, copy); `--transaction` para tudo-ou-nada, `--dry-run`, `--batch-size`
+- `batch` -- executa múltiplas operações de um manifesto NDJSON no stdin (write, replace, delete, edit, hash, move, copy); `--transaction` para tudo-ou-nada, `--dry-run`, `--batch-size`, `--file PATH` e `--input-schema`
   - Exemplo: `printf '{"op":"write","target":"batch.txt","content":"x"}\n' | atomwrite --workspace "$WS" batch --transaction`
-- `completions` -- gera completions de shell (bash, zsh, fish, elvish, powershell); o script vai para o stdout como texto puro; `--install` grava no diretório de dados XDG do shell (nunca num caminho do argv) e emite `{"type":"installed","path":"<arquivo de completion>","ok":true,"target_resolved":"<mesmo caminho>","target_source":"argv"}`, onde `target_source` é `argv` pelo contrato de evidência de alvo
+  - O `--transaction` copia todo alvo antes da primeira mutação, então um `write`, `replace`, `edit`, `copy`, `delete` ou `move` dentro dela publica essa cópia em `backup_path` e diz em `warnings` que nenhuma segunda cópia foi feita; fora da transação a operação escreve a própria cópia
+- `completions` -- gera completions de shell (bash, zsh, fish, elvish, powershell); o script vai para o stdout como texto puro; `--install` grava no diretório de dados da plataforma para o shell (nunca num caminho do argv, e o ajuste `[storage].home` o relocaliza enquanto o ambiente do processo não) e emite `{"type":"installed","path":"<arquivo de completion>","ok":true,"target_resolved":["<mesmo caminho>"],"target_source":"argv"}`, onde `target_source` é `argv` pelo contrato de evidência de alvo
   - Exemplo: `atomwrite --workspace "$WS" completions bash`
-- `config` -- (v0.1.37) chaves persistentes de ajuste: `path`, `list`, `get`, `set`, `unset` sobre 37 chaves do `config.toml` XDG e do `.atomwrite.toml` do workspace; `--scope global|workspace` obrigatório em `path`, `set` e `unset` (veja Configuração)
+- `config` -- chaves persistentes de ajuste desde a v0.1.37: `path`, `list`, `get`, `set`, `unset` sobre 43 chaves do `config.toml` XDG e do `.atomwrite.toml` do workspace; `--scope global|workspace` obrigatório em `path`, `set` e `unset` (veja Configuração)
   - Exemplo: `atomwrite --workspace "$WS" config get fuzzy.threshold`
 - `set` -- escreve um valor em um caminho dotted em um arquivo TOML ou JSON via `toml_edit`, preservando comentários; auto-coage int, bool, float e string
   - Exemplo: `atomwrite --workspace "$WS" set config.toml package.name demo2`
@@ -365,17 +398,17 @@ atomwrite calc "2 hours + 30 minutes to seconds"
   - Exemplo: `atomwrite --workspace "$WS" verify src/a.rs "$(atomwrite --workspace "$WS" hash src/a.rs | jaq -r .checksum)"`
 - `recipe` -- lista e roda pipelines multi-passo versionados (`search-replace-verify`, `edit-loop-syntax-check`); `recipe run` exige `--path` ou `--target`; hash recursivo pula `*.bak.*`
   - Exemplo: `atomwrite --workspace "$WS" recipe run --name search-replace-verify --pattern alpha --replacement omega --path src --dry-run`
-- `sparse` -- `list`, `read` e `outline` de monorepo sob orçamento; `sparse list` aceita `--max-files`, `--max-bytes`, `--include` e `--exclude` (globs de verdade, um inválido sai 65); o outline emite kinds AST reais
+- `sparse` -- `list`, `read` e `outline` de monorepo sob orçamento; `sparse list` aceita `--max-files`, `--max-bytes`, `--include`, `--exclude` (globs de verdade, um inválido sai 65) e `--all` (toda entrada, oculta incluída); o outline também aceita `--all` e emite kinds AST reais
   - Exemplo: `atomwrite --workspace "$WS" sparse list src/ --max-files 10 --max-bytes 1048576`
-- `semantic-merge` -- merge de três vias por linha para conflitos multi-agente (não AST); markers de conflito default ON, opt-out `--no-conflict-markers`; `--fail-on-conflict` sai 84
+- `semantic-merge` -- merge de três vias por linha para conflitos multi-agente (não AST); markers de conflito default ON, `--write-conflict-markers true|false` declara isso e `--no-conflict-markers` desliga; `--fail-on-conflict` sai 84
   - Exemplo: `atomwrite --workspace "$WS" semantic-merge --base base.txt --ours ours.txt --theirs theirs.txt --output merged.txt --fail-on-conflict`
 - `agent-surface` -- o manifesto de tools derivado do clap (só CLI; integração por subprocesso, CLI com saída NDJSON) e a fonte única dos 47 subcomandos e dos exit codes
   - Exemplo: `atomwrite --workspace "$WS" agent-surface --format json`
-- `watch` -- eventos de filesystem com debounce, checksum e gitignore; sempre termina com o NDJSON `type:watch_summary`; exige build com `--features watch` (o binário padrão sai 78 `CONFIG_INVALID`)
+- `watch` -- eventos de filesystem com `--debounce-ms N`, `--checksum` e `--gitignore`; sempre termina com o NDJSON `type:watch_summary`; exige build com `--features watch` (o binário padrão sai 78 `CONFIG_INVALID`)
   - Exemplo: `atomwrite --workspace "$WS" watch src/ --max-events 1 --idle-exit-ms 500`
 - `codemod` -- campanha AST multi-regra a partir de um arquivo YAML de regras, com resumo `by_rule_id`; rode `--dry-run` antes
   - Exemplo: `atomwrite --workspace "$WS" codemod --rules rules.yaml --dry-run src/`
-- `semantic-search` -- ranking offline de tokens por similaridade de Jaccard (sempre compilado); `--k`, `--min-score`, `--index-dir`
+- `semantic-search` -- ranking offline de tokens por similaridade de Jaccard (sempre compilado); `--k`, `--min-score`, `--index-dir` e `--include-backups`
   - Exemplo: `atomwrite --workspace "$WS" semantic-search "unwrap value" src/ --k 5 --min-score 0.01`
 - `stat` -- alias de `read --stat` (só metadados)
   - Exemplo: `atomwrite --workspace "$WS" stat src/a.rs`
@@ -412,7 +445,7 @@ NUNCA estagie `--old-file`/`--new-file` em `/tmp` do SO fora de `--workspace` (e
 ## OBRIGATÓRIO -- Contrato de Saída
 - stdout: SEMPRE NDJSON estruturado (um objeto JSON por linha)
 - stderr: apenas logs (formato tracing, somente com `--verbose`)
-- Todo evento de sucesso tem um campo discriminador `"type"` e `"ok":true`; um envelope de erro tem `"error":true` e `"ok":false` no lugar (veja Formato de Saída JSON para as poucas saídas que não são NDJSON)
+- Todo evento de sucesso tem um campo discriminador `"type"` e `"ok":true`; um envelope de erro tem `"ok":false` mais `"code"` no lugar, porque o antigo duplicado `"error":true` custava 13 bytes em toda falha e nenhum consumidor decidia por ele sozinho (veja Formato de Saída JSON para as poucas saídas que não são NDJSON)
 - Flush após cada linha
 - NUNCA interprete stderr como dados estruturados
 - SEMPRE interprete stdout linha por linha como JSON
@@ -450,14 +483,14 @@ NUNCA estagie `--old-file`/`--new-file` em `/tmp` do SO fora de `--workspace` (e
 
 
 ## OBRIGATÓRIO -- Formato de Saída JSON
-- Toda linha é um objeto JSON; eventos de sucesso carregam `type` e `ok: true`, envelopes de erro carregam `error: true` e `ok: false`
+- Toda linha é um objeto JSON; eventos de sucesso carregam `type` e `ok: true`, envelopes de erro carregam `ok: false` mais `code` e `exit`
 - Algumas saídas não são eventos NDJSON: `completions SHELL` imprime o script de shell cru, e `read --format raw` imprime bytes crus (`extract` imprime os campos escolhidos sem a chave `type`)
 - Os exemplos abaixo são saída real com `--workspace /ws`; os checksums estão abreviados para `abc...`
 
 ### Resposta de Write
 
 ```json
-{"type":"write","status":"success","path":"sample.txt","bytes_written":12,"checksum":"abc...","elapsed_ms":0,"stdin_bytes_read":12,"wal_policy":"auto","platform":{"fsync":"sync_data","dir_fsync":"sync_all","durability":"fast","rename_method":"renameat2"},"ok":true,"target_resolved":"/ws/sample.txt","target_source":"argv"}
+{"type":"write","status":"success","path":"sample.txt","bytes_written":12,"checksum":"abc...","elapsed_ms":0,"stdin_bytes_read":12,"wal_policy":"auto","platform":{"fsync":"sync_data","dir_fsync":"sync_all","durability":"fast","rename_method":"renameat2"},"ok":true,"target_resolved":["/ws/sample.txt"],"target_source":"argv"}
 ```
 
 ### Resposta de Read
@@ -469,7 +502,7 @@ NUNCA estagie `--old-file`/`--new-file` em `/tmp` do SO fora de `--workspace` (e
 ### Resposta de Edit
 
 ```json
-{"type":"edit","path":"/ws/sample.txt","edits":1,"mode":"exact","bytes_before":12,"bytes_after":9,"checksum_before":"abc...","checksum_after":"def...","lines_before":1,"lines_after":1,"elapsed_ms":0,"fuzzy":false,"strategy":"exact","strategies_tried":1,"diff_preview":" hello","mtime_preserved":false,"match_count":1,"indent_adjusted":false,"ok":true,"target_resolved":"/ws/sample.txt","target_source":"argv"}
+{"type":"edit","path":"/ws/sample.txt","edits":1,"mode":"exact","bytes_before":12,"bytes_after":9,"checksum_before":"abc...","checksum_after":"def...","lines_before":1,"lines_after":1,"elapsed_ms":0,"fuzzy":false,"strategy":"exact","strategies_tried":1,"diff_preview":" hello","mtime_preserved":false,"match_count":1,"indent_adjusted":false,"ok":true,"target_resolved":["/ws/sample.txt"],"target_source":"argv"}
 ```
 
 ### Match de Search
@@ -485,7 +518,7 @@ NUNCA estagie `--old-file`/`--new-file` em `/tmp` do SO fora de `--workspace` (e
 
 ```json
 {"type":"replaced","path":"/ws/sample.txt","replacements":1,"bytes_before":9,"bytes_after":10,"checksum_before":"abc...","checksum_after":"def...","elapsed_ms":0,"mtime_preserved":false,"fuzzy":false,"strategy":"exact","strategies_tried":1}
-{"type":"summary","files_visited":1,"files_matched":1,"files_modified":1,"files_skipped":0,"total_replacements":1,"elapsed_ms":4,"ok":true,"target_resolved":"/ws/sample.txt","target_source":"argv"}
+{"type":"summary","files_visited":1,"files_matched":1,"files_modified":1,"files_skipped":0,"total_replacements":1,"elapsed_ms":4,"ok":true,"target_resolved":["/ws/sample.txt"],"target_source":"argv"}
 ```
 
 ### Contadores de corte no evento terminal
@@ -505,16 +538,17 @@ NUNCA estagie `--old-file`/`--new-file` em `/tmp` do SO fora de `--workspace` (e
 Search/replace/transform/scope com zero matches (exit 1): o próprio resumo é o evento terminal, com `ok:false` e o detalhe do erro na mesma linha:
 
 ```json
-{"type":"summary","files_visited":1,"files_matched":0,"total_matches":0,"elapsed_ms":3,"ok":false,"code":"NO_MATCHES","exit":1,"message":"no matches found","error_class":"permanent","retryable":false,"suggestion":"broaden the search pattern; check --include / --exclude filters; verify the file content","match_count":0,"suggestion_lang":"en"}
+{"type":"summary","files_visited":1,"files_matched":0,"total_matches":0,"elapsed_ms":3,"ok":false,"code":"NO_MATCHES","exit":1,"target_resolved":["src"],"target_source":"argv","suggestion":"broaden the search pattern; check --include / --exclude filters; verify the file content","match_count":0}
 ```
 
 Miss de edit/fuzzy (exit 65): inspecione o `best_candidate` opcional e ajuste `--old`:
 
 ```json
-{"error":true,"ok":false,"code":"MATCH_FAILED","exit":65,"message":"match failed: old string not found after fuzzy cascade (strategies tried): \"fn compute_totl(items\"","error_class":"permanent","retryable":false,"suggestion":"inspect best_candidate in the error NDJSON and adjust --old, or lower --fuzzy-threshold","best_candidate":{"text":"fn compute_total(items: &[u32]) -> u32 {","line":1,"column":1,"similarity":0.905,"strategy":"context_aware_jw","diff_preview":"-fn compute_totl(items+fn compute_total(items: &[u32]) -> u32 {"},"match_count":0,"suggestion_lang":"en"}
+{"ok":false,"code":"MATCH_FAILED","exit":65,"target_resolved":["src/main.rs"],"target_source":"argv","match_count":0,"suggestion":"inspect best_candidate in the error NDJSON and adjust --old, or lower --fuzzy-threshold","best_candidate":{"text":"fn compute_total(items: &[u32]) -> u32 {","line":1,"column":1,"similarity":0.905,"strategy":"context_aware_jw","diff_preview":"-fn compute_totl(items+fn compute_total(items: &[u32]) -> u32 {"}}
 ```
 
-- Todo envelope de erro inclui `"ok":false`, `"suggestion_lang"` e `"match_count"` em falhas de match (0 num miss, a contagem real para `MATCH_AMBIGUOUS`)
+- Todo envelope de erro inclui `"ok":false`, e a falha de match acrescenta `"match_count"` (0 num miss, a contagem real para `MATCH_AMBIGUOUS`)
+- `"suggestion_lang"` aparece só com `-v`, a mesma flag que devolve `"message"`, `"error_class"` e `"retryable"`
 - As estratégias fuzzy normalizadas (`line_trimmed`, `whitespace_normalized`, `punctuation_normalized`, `indent_flexible`, `trimmed_boundary`, `escape_normalized`) omitem `similarity`; não leia a ausência como 1.0
 - O campo `workspace` aparece apenas em erros `WORKSPACE_JAIL` e reporta a raiz do workspace resolvida
 - `suggestion` é context-aware: a sugestão de `WORKSPACE_JAIL` muda com base em se `--workspace` foi fornecido; se `--old-file`/`--new-file` estiver fora do jail, estagie com `scratch init` sob o workspace (não diga só "ajuste `--workspace`")
@@ -525,7 +559,7 @@ Miss de edit/fuzzy (exit 65): inspecione o `best_candidate` opcional e ajuste `-
 - Envelopes de erro no stdout são sempre NDJSON com `ok: false`; leia `exit` e `code` antes de tratar uma linha como sucesso
 - A tabela abaixo tem 41 linhas sobre 33 números de saída distintos: 35 entradas de variante de erro mais `SUCCESS`, `ARGUMENT_PARSE_ERROR`, `TIMEOUT`, `SIGHUP`, `SIGINT` e `SIGTERM`; ela é gerada de `atomwrite agent-surface --format json | jaq '.exit_codes'` e confere com `atomwrite --help`
 - As 35 variantes de `src/error/variants.inc.rs` viram 33 entradas porque `EditPairFailed` reusa `MATCH_FAILED` no 65 e `MissingFlag` reusa `INVALID_INPUT` no 65
-- Cada linha termina com o `error_class` e a flag `retryable` que o envelope carrega
+- Cada linha termina com o `error_class` e a flag `retryable`, que o `-v` põe no envelope
 - Ramifique primeiro por `exit` e depois por `code`, porque vários códigos dividem um número (1, 65 e 130)
 <!-- exit-codes:begin -->
 - `0` SUCCESS: sucesso (classe `none`, retryable `false`)
@@ -573,15 +607,17 @@ Miss de edit/fuzzy (exit 65): inspecione o `best_candidate` opcional e ajuste `-
 - `IO_ERROR` (74) é `transient` e retentável, exceto os casos de diretório usado como arquivo, não-diretório usado como diretório e argumento inválido, que são `precondition_failed` e não retentáveis
 - `edit-loop` e `edit` multi-par reportam par sem match como `MATCH_FAILED` (65) com `best_candidate`; `edit-loop --partial` grava os pares que casam e sai 87
 - `semantic-merge --fail-on-conflict` sai 84; sem a flag um merge com conflitos grava os markers e sai 0 com `status` `conflict`
-- Uma execução com falha termina em EXATAMENTE UM evento terminal com `ok: false`; os campos `error_class`, `retryable` e `suggestion` ficam dentro dele, então não espere uma segunda linha de erro
+- Uma execução com falha termina em EXATAMENTE UM evento terminal com `ok: false`; os campos `code`, `exit` e `suggestion` ficam dentro dele, então não espere uma segunda linha de erro
 
 
 ## OBRIGATÓRIO -- Tratamento de Erros
-- Erros emitem JSON no stdout com `error: true`, `ok: false`, `code`, `exit`, `message`, `error_class`, `retryable` e `suggestion_lang`
+- Erros emitem JSON no stdout com `ok: false`, `code`, `exit`, `message`, `error_class`, `retryable` e `suggestion`
+- Acrescente `-v` para receber `message`, `error_class`, `retryable` e `suggestion_lang`, que o envelope padrão descarta para manter toda falha pequena
 - Campos opcionais aparecem só quando se aplicam: `path`, `suggestion`, `workspace`, `match_count`, `best_candidate`, `candidates`, `similar_paths`, `failed_pair_index`, `pairs_total`, `pairs_applied`, `pairs_unmatched`, `pair_results`, `conflict_count` (regiões em conflito de um merge de três vias) e `missing_flag` (a flag que o comando exigia)
 - O resumo de sucesso de `search`, `replace`, `transform`, `case`, `scope`, `sparse`, `semantic-search` e `backup` que não conseguiu ler ou gravar alguns arquivos traz `files_failed` e `errors[]` (no máximo `summary.errors_max_entries` entradas (50 por padrão) de `path`, `code` e `message`); leia `files_failed` antes de confiar num resultado, e o contrato de família é o ADR-0077 (`docs/decisions/0077-answer-family-and-walk-honesty.md`)
 - Valores `null` de topo não são mais emitidos no stdout (11 campos): uma chave ou está presente com valor ou está ausente
-- Todo evento de sucesso de um verbo com efeito colateral traz `ok: true`, `target_resolved` (o caminho absoluto que rodou) e `target_source` (sempre `argv`); `read`, `count`, `list`, `hash` e `diff` trazem as mesmas chaves, com `workspace` no padrão `.` de `count` e `list`; confira o caminho antes de confiar no efeito
+- Todo evento de sucesso de um verbo com efeito colateral traz `ok: true`, `target_resolved` (o caminho absoluto que rodou) e `target_source`, que é `argv` quando a linha de invocação nomeia o arquivo, `stdin` quando o patch ou o manifesto o nomeia, e `workspace` no padrão `.` de `count` e `list`; confira o caminho antes de confiar no efeito
+- O registro `rollback` do `apply` e do `batch --transaction` publica sempre `target_resolved` como array, mesmo quando um arquivo só voltou, porque quem lê não sabe a contagem antes de ler o campo
 - Valores de `error_class`: `permanent`, `transient`, `conflict`, `precondition_failed` (o manifesto usa também `none` para `SUCCESS` e para os sinais)
 - `retryable` é true só para as classes `transient` e `conflict`
 - `suggestion` segue o locale da UI e `suggestion_lang` nomeia o idioma em que foi gerada; `message` e `code` ficam em inglês
@@ -601,7 +637,7 @@ Miss de edit/fuzzy (exit 65): inspecione o `best_candidate` opcional e ajuste `-
 
 
 ## OBRIGATÓRIO -- Estratégia de Retry
-- Leia `retryable` e `error_class` do envelope; os grupos abaixo são as linhas da tabela acima
+- Leia `retryable` e `error_class` do envelope sob `-v`; os grupos abaixo são as linhas da tabela acima
 - NUNCA tente novamente erros `permanent` ou `precondition_failed` sem corrigir a causa
 
 ### Erros Transientes (retryable: true)
@@ -689,7 +725,7 @@ Miss de edit/fuzzy (exit 65): inspecione o `best_candidate` opcional e ajuste `-
 
 
 ## OBRIGATÓRIO -- Configuração
-- O ajuste persistente vive em 37 chaves de dois arquivos TOML: o `config.toml` XDG global (modo 0600; imprima o caminho com `config path --scope global`) e o `.atomwrite.toml` do workspace na raiz do workspace
+- O ajuste persistente vive em 43 chaves de dois arquivos TOML: o `config.toml` XDG global (modo 0600; imprima o caminho com `config path --scope global`) e o `.atomwrite.toml` do workspace na raiz do workspace
 - Precedência: flags, depois o `.atomwrite.toml` do workspace, depois o `config.toml` global (os dois arquivos são mesclados chave a chave), depois o padrão embutido. Não há variáveis de ambiente de produto
 - Mude uma chave só com o verbo `config`: `config path|list|get|set|unset|doctor`; o `set` preserva comentários, valida o arquivo inteiro e grava por tempfile-fsync-rename sem backup
 - `--scope global|workspace` é obrigatório em `path`, `set` e `unset` (sem padrão, exit 2 sem ele); `list` e `get` não aceitam `--scope`
@@ -697,7 +733,7 @@ Miss de edit/fuzzy (exit 65): inspecione o `best_candidate` opcional e ajuste `-
 - O evento terminal traz `target_resolved` e `target_source` (`argv`): confira que o caminho é o arquivo do escopo pretendido
 - Chave desconhecida ou valor fora da faixa sai 65 e não grava nada; um `config.toml` que não é TOML válido sai 78 e nunca é reescrito
 - `log.file`, `log.rotation`, `storage.home` e `locale` são só globais (escopo `workspace` sai 65)
-- `defaults.line_ending`, `defaults.backup`, `defaults.retention` e `defaults.max_filesize` são chaves comuns do `config`, lidas e gravadas como qualquer outra
+- `defaults.line_ending`, `defaults.backup`, `defaults.retention` e `defaults.max_filesize` são chaves comuns do `config`, lidas e gravadas como qualquer outra; `backup` distingue ausente de `false`, então a chave ausente mantém o padrão de cada verbo
 
 | Chave | Tipo | Padrão | Faixa ou valores | Escopos |
 |---|---|---|---|---|
@@ -713,7 +749,8 @@ Miss de edit/fuzzy (exit 65): inspecione o `best_candidate` opcional e ajuste `-
 | `log.rotation` | string | `daily` | `daily`, `hourly` | global |
 | `storage.home` | string | nenhum | um diretório | global |
 | `locale` | string | nenhum | `en`, `pt-BR` | global |
-| `defaults.backup` | boolean | `true` | `true`, `false` | global, workspace |
+| `defaults.backup` | boolean | none (true para reescritas, false para delete) | `true`, `false` | global, workspace |
+| `delete.backup` | boolean | nenhum (cai para `defaults.backup`) | `true`, `false` | global, workspace |
 | `defaults.line_ending` | string | `auto` | `auto`, `lf`, `cr-lf`, `cr` | global, workspace |
 | `defaults.max_filesize` | integer | `1073741824` | inteiro | global, workspace |
 | `defaults.retention` | integer | `5` | inteiro | global, workspace |
@@ -721,7 +758,12 @@ Miss de edit/fuzzy (exit 65): inspecione o `best_candidate` opcional e ajuste `-
 | `search.max_columns` | integer | `500` | 1 ou mais | global, workspace |
 | `search.max_filesize` | integer | `10485760` | 1 ou mais | global, workspace |
 | `search.smart_case` | boolean | `true` | `true`, `false` | global, workspace |
-| `watch.debounce_ms` | integer | `200` | inteiro | global, workspace |
+| `search.format` | string | `ndjson` | `ndjson`, `text` | global, workspace |
+| `read.max_output_bytes` | integer | `24000` | 1 ou mais | global, workspace |
+| `read.number` | boolean | `false` | `true`, `false` | global, workspace |
+| `output.profile` | string | `full` | `full`, `lean` | global, workspace |
+| `apply.max_ellipsis_lines` | integer | `200` | 1 ou mais | global, workspace |
+| `watch.debounce_ms` | integer | `200` | integer | global, workspace |
 | `watch.idle_exit_ms` | integer | `500` | inteiro | global, workspace |
 | `write.auto_rotate_max_age_secs` | integer | `86400` | 1 ou mais | global, workspace |
 | `write.content_risk_patterns` | list | os 14 padrões embutidos | lista de strings | global, workspace |
@@ -758,7 +800,7 @@ atomwrite --workspace "$WS" config unset fuzzy.threshold --scope workspace
 - NUNCA passe `delete --confirm` / `--yes` / `-y` (rejeitados fail-closed; use `--plan` ou omita as flags)
 - NUNCA escreva alvos existentes grandes sem `--ack-overwrite` (default-deny acima de XDG `[write].confirm_large_bytes`)
 - NUNCA assuma stdout vazio em `watch` idle — sempre termina com `type:watch_summary`
-- NUNCA invente knobs de produto `ATOMWRITE_*` em runtime (somente CLI + XDG / `.atomwrite.toml` em `^0.1.37`)
+- NUNCA invente knobs de produto `ATOMWRITE_*` em runtime (somente CLI + XDG / `.atomwrite.toml` em `^0.1.38`)
 - NUNCA estagie `--old-file`/`--new-file` em `/tmp` do SO fora de `--workspace` (use `scratch`)
 - NUNCA invente `edit --strategy` (use apenas `--fuzzy auto|aggressive|off`)
 - NUNCA passe `$VAR` de shell sem aspas em corpos quando o `$` literal deve sobreviver (use `<<'EOF'` ou staging em arquivo)
@@ -803,7 +845,7 @@ atomwrite --workspace "$WS" config unset fuzzy.threshold --scope workspace
 
 ## Subcomandos v0.1.22
 
-Dois novos sub-comandos fecham as frentes rejeitadas em planos anteriores (`gaps.md` linhas 82-83, 201):
+Dois novos sub-comandos fecham as frentes rejeitadas em planos anteriores (`gaps.md` daquela versão, linhas 82-83 e 201):
 
 ### `edit-loop` — N Pares em 1 Invocação
 - Quando usar: aplicar lote de transformações textuais em um arquivo onde hoje você invocaria `edit` N vezes em loop shell
@@ -861,10 +903,10 @@ atomwrite --workspace "$WS" prune-backups --max-age-secs 0 src/a.rs \
 - Nota operacional: limpeza retroativa automática foi explicitamente rejeitada (ver ADR-0038 Addendum); operadores devem rodar `prune-backups` sob demanda
 
 
-## Limitações Conhecidas (v0.1.37)
+## Limitações Conhecidas (v0.1.38)
 - `--expect-checksum` é checado antes de o lock de escrita ser tomado, então uma janela de TOCTOU permanece entre a checagem e a escrita
 - Um nome de alvo acima de 255 bytes faz o radical do sidecar de lock virar um digest de 16 caracteres desse nome, então o sidecar fica dentro do limite do sistema de arquivos em vez de falhar com `ENAMETOOLONG`
-- Uma escrita in-place num diretório sem permissão para criar o sidecar de lock não consegue tomar o lock
+- Uma escrita in-place num diretório que proíbe criar o sidecar segue pelo lock do inode, e a execução só é recusada quando o alvo não abre para o lock e o sidecar também não pode ser criado
 - O lock de escrita é automático no Unix e no Windows, e o lock do Windows não foi executado nesta versão
 - O teto de RAM da contagem automática de threads existe só no Linux e não lê limites de cgroup
 - O `--limit` global faz a varredura sair no registro que atinge o teto, e o resumo terminal traz `walker_stopped_early: true` só quando o próprio caminhante saiu, então total menor que a árvore nunca é lido como o tamanho da árvore

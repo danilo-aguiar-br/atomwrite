@@ -62,6 +62,7 @@ fuzz/corpus/
 !skills/atomwrite-en/
 !skills/atomwrite-pt/
 
+
 # BEGIN GH_SKILL_HYGIENE
 # Managed by the crates-io-gh skill (pre-commit-hygiene.sh) — do not hand-edit inside markers
 # Ensures agent residual, secrets, DBs, media dumps and temp dirs never enter git

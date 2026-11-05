@@ -19,7 +19,7 @@ Aceito (2026-10-31), substitui a lista de nomes da ADR-0067
 
 ### 2. O envelope de erro é ramo de toda união
 - O `union_of` anexa o ramo `ErrorJson` a toda união que monta, inclusive às que já existiam.
-- O `diff` mantém a `oneOf` e ganha o envelope como quinto ramo, exclusivo porque nenhum registro do verbo carrega `error`.
+- O `diff` mantém a `oneOf` e ganha o envelope como quinto ramo, exclusivo porque nenhum registro do verbo carrega `ok: false` com `code`.
 
 ### 3. O ramo terminal continua fechado
 - O `close_terminal_schema` devolve cedo quando a raiz tem `anyOf` ou `oneOf`, porque a raiz de união não declara chave própria.

@@ -107,8 +107,8 @@ pub fn cmd_copy(
         copied_bytes = out.bytes as u64;
         emit_copied(writer, &out, start)?;
     } else if source.is_dir() && args.recursive {
-        // A copy that skipped dotfiles would not be a copy, so the shared walker
-        // runs in the always-hidden flavor.
+        // A tree copy ignores no ignore file, and dotfiles still follow
+        // `--hidden`, so the shared walker runs in the copy flavor.
         // An ignore file the walk half-reads is a hole too, and `ignore` never
         // reports it by itself.
         crate::concurrency::record_ignore_file_failures(
@@ -118,7 +118,7 @@ pub fn cmd_copy(
         let walker = crate::commands::build_scoped_walker_flavored(
             std::slice::from_ref(&source),
             global,
-            crate::commands::WalkerFlavor::WholeTree,
+            crate::commands::WalkerFlavor::CopyTree,
             &[],
             &[],
         )?;
@@ -250,6 +250,8 @@ struct CopiedMeta {
     target: String,
     bytes: usize,
     checksum: String,
+    write_strategy: &'static str,
+    backup_skipped: Option<String>,
 }
 
 fn emit_copied(
@@ -264,6 +266,8 @@ fn emit_copied(
         bytes: meta.bytes,
         checksum: meta.checksum.clone(),
         verified: true,
+        write_strategy: meta.write_strategy,
+        backup_skipped: meta.backup_skipped.clone(),
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
     Ok(())
@@ -331,5 +335,7 @@ fn copy_file_atomic(
         target: target.display().to_string(),
         bytes: content.len(),
         checksum: source_hash,
+        write_strategy: result.write_strategy,
+        backup_skipped: result.backup_skipped,
     })
 }

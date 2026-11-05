@@ -41,7 +41,7 @@ fn emit_search_event(
     // `--format text` has its own writer: the payload is lines of text, not
     // records, and the answer tallies still have to rise so `--limit`,
     // `--offset` and the exit code keep meaning what they mean.
-    if args.format == crate::cli::SearchFormat::Text {
+    if args.format == Some(crate::cli::SearchFormat::Text) {
         return emit_text_event(event, writer, args, has_matches, tally, text);
     }
     match event {
@@ -205,23 +205,22 @@ pub(crate) fn stamp_search_target<W: std::io::Write>(
     } else {
         crate::commands::path_resolution::TargetSource::Argv
     };
-    let joined = if args.paths.is_empty() {
-        workspace.display().to_string()
+    let parts = if args.paths.is_empty() {
+        vec![workspace.display().to_string()]
     } else {
         resolved
             .iter()
             .map(|p| p.display().to_string())
             .collect::<Vec<_>>()
-            .join(",")
     };
-    writer.set_target(joined, source.as_str());
+    writer.set_targets(parts, source.as_str());
 }
 
 impl TextLayout {
     /// Build the layout for one run.
     ///
     /// `rg` decides the path prefix from the command line, not from what the
-    /// walk found: a single file prints `LINE:TEXT`, and anything else prints
+    /// walk found: a single file prints `LINE:COL:TEXT`, and anything else prints
     /// the target as typed followed by the file below it (`.` yields `./a.rs`,
     /// `src` yields `src/a.rs`).
     fn new(args: &SearchArgs, workspace: &std::path::Path) -> Self {
@@ -298,6 +297,7 @@ fn emit_text_event(
             path,
             line_number,
             raw,
+            submatches,
             ..
         } => {
             *has_matches = true;
@@ -308,7 +308,12 @@ fn emit_text_event(
                 tally.offset_skipped = tally.offset_skipped.saturating_add(1);
                 return Ok(0);
             }
-            text.write_line(writer, args, &path, line_number, &raw, b':')?;
+            // `rg --column` prints the 1-based byte column of the first match
+            // on the line. `extract_submatches` already produced it, so text
+            // mode reads it here instead of adding a field to the NDJSON record
+            // and paying bytes on the expensive format.
+            let column = submatches.first().map(|sub| sub.start as u64 + 1);
+            text.write_line(writer, args, &path, (line_number, column), &raw, b':')?;
             tally.total_matches = tally.total_matches.saturating_add(1);
             Ok(1)
         }
@@ -331,7 +336,7 @@ fn emit_text_event(
                     // The trailing element of a `\n`-terminated block.
                     continue;
                 }
-                text.write_line(writer, args, &path, number, line, b'-')?;
+                text.write_line(writer, args, &path, (number, None), line, b'-')?;
                 number = number.saturating_add(1);
             }
             Ok(0)
@@ -370,10 +375,11 @@ impl TextLayout {
         writer: &mut NdjsonWriter<impl Write>,
         args: &SearchArgs,
         path: &std::path::Path,
-        line_number: u64,
+        position: (u64, Option<u64>),
         bytes: &[u8],
         separator: u8,
     ) -> Result<()> {
+        let (line_number, column) = position;
         let new_path = self.current_path.as_deref() != Some(path);
         let skipped = self
             .last_line
@@ -390,6 +396,12 @@ impl TextLayout {
         }
         line.extend_from_slice(line_number.to_string().as_bytes());
         line.push(separator);
+        // A match carries the column of its first submatch; a context line has
+        // no match of its own, so it stays `LINE:TEXT`, exactly as `rg` prints.
+        if let Some(column) = column {
+            line.extend_from_slice(column.to_string().as_bytes());
+            line.push(separator);
+        }
         line.extend_from_slice(bytes);
         line.push(b'\n');
         writer.write_text_bytes(&line)?;
@@ -402,7 +414,7 @@ impl TextLayout {
 
 /// Whether every printed line carries the file name, the way `rg` decides it.
 ///
-/// A single file named on the command line prints `LINE:TEXT`; a directory or
+/// A single file named on the command line prints `LINE:COL:TEXT`; a directory or
 /// several files print the path too. Only the targets on the command line
 /// decide this: `--include` narrows which files are read and never turns a
 /// named file into a set, which is why `rg -F pat a.rs -g '*.rs'` still prints
@@ -420,7 +432,39 @@ fn text_needs_path(args: &SearchArgs, workspace: &std::path::Path) -> bool {
     !resolved.is_file()
 }
 
+/// Every pattern this run matches, positional first, then each `-e/--regex`.
+///
+/// An empty positional (the caller supplied only `-e` values) and a bare
+/// `--regex` that stored an empty value contribute nothing, so the list is
+/// exactly what the invocation asked to match.
+fn search_patterns(args: &SearchArgs) -> Vec<String> {
+    let mut patterns = Vec::with_capacity(args.regex.len() + 1);
+    if let Some(positional) = args.pattern.as_deref().filter(|p| !p.is_empty()) {
+        patterns.push(positional.to_string());
+    }
+    patterns.extend(args.regex.iter().filter(|p| !p.is_empty()).cloned());
+    patterns
+}
+
+/// Refuse a run that names no pattern at all.
+///
+/// The positional is optional only so `-e/--regex` can carry every pattern;
+/// a command line with neither is a usage mistake, and the error names the
+/// flag that would fix it instead of searching for nothing.
+fn validate_patterns(args: &SearchArgs) -> Result<()> {
+    if search_patterns(args).is_empty() {
+        return Err(crate::error::AtomwriteError::MissingFlag {
+            flag: "-e/--regex".to_string(),
+            reason: "search needs at least one pattern: pass it positionally or with -e/--regex PATTERN"
+                .to_string(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
 fn build_matcher(args: &SearchArgs) -> Result<grep_regex::RegexMatcher> {
+    let patterns = search_patterns(args);
     let mut builder = RegexMatcherBuilder::new();
 
     if args.case_insensitive {
@@ -443,9 +487,11 @@ fn build_matcher(args: &SearchArgs) -> Result<grep_regex::RegexMatcher> {
         builder.fixed_strings(true);
     }
 
-    builder.build(&args.pattern).map_err(|e| {
+    // `build_many` compiles the alternation of every pattern in one matcher,
+    // so repeated `-e` and the positional pattern all match at once.
+    builder.build_many(&patterns).map_err(|e| {
         crate::error::AtomwriteError::invalid(
-            &format!("invalid search pattern '{}'", args.pattern),
+            &format!("invalid search pattern '{}'", patterns.join("', '")),
             e,
         )
         .into()
@@ -473,9 +519,9 @@ fn extract_submatches(matcher: &grep_regex::RegexMatcher, line: &str) -> Vec<Sub
     // per-match offsets, so the line is still reported without them.
     crate::best_effort::best_effort(
         matcher.find_iter(line.as_bytes(), |m| {
-            let matched_text = &line[m.start()..m.end()];
+            let matched_text = matched_fragment(line, m.start(), m.end());
             subs.push(Submatch {
-                r#match: matched_text.to_owned(),
+                r#match: matched_text,
                 start: m.start(),
                 end: m.end(),
             });
@@ -484,6 +530,20 @@ fn extract_submatches(matcher: &grep_regex::RegexMatcher, line: &str) -> Vec<Sub
         "collect submatch offsets",
     );
     subs
+}
+
+/// The text a byte-oriented matcher matched, rendered without slicing a `str`
+/// at an offset that is not a character boundary.
+///
+/// `grep_regex` compiles with UTF-8 syntax translation and empty-match UTF-8
+/// checking both disabled (`utf8(false)` and `utf8_empty(false)`), because the
+/// searcher runs over raw file bytes. Its offsets are therefore byte offsets: a
+/// zero-width match can land between the code units of a multi-byte character,
+/// and a byte-oriented pattern can match one of its bytes. Slicing `&str` with
+/// either panics, and the release profile aborts on panic, so the fragment is
+/// rendered lossily instead.
+fn matched_fragment(line: &str, start: usize, end: usize) -> String {
+    String::from_utf8_lossy(line.as_bytes().get(start..end).unwrap_or(&[])).into_owned()
 }
 
 /// One `NotFound` per root named in the invocation that does not exist.
@@ -534,6 +594,15 @@ fn finish_search_run(
                     "report search failure on stderr",
                 );
             }
+        }
+        // Text mode has no terminal record, so the `--limit` cut reaches the
+        // caller here. NDJSON carries the same sentence in `hint`, which keeps
+        // the two formats telling the same story about a partial page.
+        if let Some(hint) = &summary.base.hint {
+            crate::best_effort::best_effort(
+                writeln!(std::io::stderr().lock(), "atomwrite: {hint}"),
+                "report the --limit cut on stderr",
+            );
         }
         if roots_missing > 0
             && let Some(err) = first_failure

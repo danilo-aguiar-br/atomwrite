@@ -190,9 +190,17 @@ pub fn apply_walk_threads(builder: &mut WalkBuilder, cli_threads: Option<usize>)
 /// Walk threads for a `--threads` value (see [`apply_walk_threads`]).
 #[must_use]
 pub fn walk_thread_count(cli_threads: Option<usize>) -> usize {
+    const CEILING: usize = crate::constants::CONCURRENCY_MAX_THREADS_CEILING as usize;
     match cli_threads {
-        Some(n) if n > 0 => n.min(crate::constants::CONCURRENCY_MAX_THREADS_CEILING as usize),
-        _ => effective_threads(None).min(crate::constants::WALK_AUTO_MAX_THREADS),
+        Some(n) if n > 0 => n.min(CEILING),
+        // The automatic bound was already resolved when the run started: a
+        // single-file target resolves to one thread there, and reading the raw
+        // `--threads` again here would discard it and spawn one worker per CPU
+        // for a walk that has one file to visit.
+        _ => match POOL_REQUEST.get().copied().flatten() {
+            Some(n) if n > 0 => n.min(crate::constants::WALK_AUTO_MAX_THREADS),
+            _ => effective_threads(None).min(crate::constants::WALK_AUTO_MAX_THREADS),
+        },
     }
 }
 

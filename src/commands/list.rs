@@ -124,6 +124,12 @@ pub fn cmd_list(
         &builder,
         move |entry| {
             let path = entry.path();
+            // The roots are where the walk starts, not entries of the listing.
+            // Emitting them spent a `--limit` slot on a name the caller
+            // already typed, and pushed the first real entry out of the page.
+            if roots_cap.iter().any(|root| root.as_path() == path) {
+                return None;
+            }
             let rel_path = rel_path_for(path, &ws, &roots_cap);
             if rel_path.is_empty() {
                 return None;
@@ -203,6 +209,12 @@ pub fn cmd_list(
         return Ok(());
     }
 
+    let text_mode = args.format == crate::cli::SearchFormat::Text;
+    if text_mode {
+        writer.set_text_verb("list");
+    }
+    let records_total = records.len() as u64;
+    let mut text_written: u64 = 0;
     let mut files: u64 = 0;
     let mut dirs: u64 = 0;
     let mut symlinks: u64 = 0;
@@ -218,9 +230,23 @@ pub fn cmd_list(
             "symlink" => symlinks += 1,
             _ => files += 1,
         }
-        total_bytes += rec.bytes;
+        // A directory has no bytes of its own. Counting it summed the whole
+        // `--long` size column into a number the caller reads as file weight.
+        if rec.kind == "file" {
+            total_bytes += rec.bytes;
+        }
         if let Some(ext) = rec.ext {
             *by_ext.entry(ext).or_default() += 1;
+        }
+        if text_mode {
+            if crate::output::text_capped() {
+                continue;
+            }
+            writer.write_text_bytes(format!("{}\n", rec.path).as_bytes())?;
+            if !crate::output::text_capped() {
+                text_written = text_written.saturating_add(1);
+            }
+            continue;
         }
         writer.write_event(&ListEntry {
             r#type: "entry",
@@ -266,6 +292,15 @@ pub fn cmd_list(
     };
     if let Some(err) = first_failure {
         return Err(writer.publish_failure(&summary, err));
+    }
+    if text_mode {
+        // A page that stopped short must say how much of the listing the
+        // caller did not receive; the entries are the unit `--limit` pages in.
+        if crate::output::text_capped() {
+            let omitted = records_total.saturating_sub(text_written);
+            crate::output::note_text_omitted("list", omitted);
+        }
+        return Ok(());
     }
     writer.write_terminal(&summary)?;
 

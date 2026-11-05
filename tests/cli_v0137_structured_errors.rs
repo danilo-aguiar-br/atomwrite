@@ -16,7 +16,7 @@ fn run(name: &str, body: &str, verb: &[&str]) -> (Option<i32>, String, String) {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(dir.path().join(name), body).expect("seed");
     let output = common::atomwrite()
-        .args(["--workspace", dir.path().to_str().unwrap()])
+        .args(["-v", "--workspace", dir.path().to_str().unwrap()])
         .args(verb)
         .output()
         .expect("run");

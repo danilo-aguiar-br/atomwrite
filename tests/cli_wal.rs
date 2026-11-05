@@ -51,16 +51,19 @@ fn g119_l2_write_with_wal_leaves_no_sidecar_on_success() {
     );
 }
 
-/// G119 L2: a write followed by a write failure (e.g. read-only target)
-/// preserves the sidecar (the guard keeps it on drop for crash recovery).
+/// G119 L2 (v0.1.38): a directory that denies new entries no longer fails the
+/// write. The rename path needs a tempfile beside the target, so the write
+/// switches to in-place and succeeds on the file's own permission, while the
+/// backup that could not be created is reported instead of answering exit 13.
 #[test]
-fn g119_l2_write_failure_keeps_sidecar_for_recovery() {
+fn g119_l2_write_in_readonly_dir_succeeds_in_place() {
     let _guard = WAL_ENV_LOCK.lock().expect("lock");
     let dir = tempfile::tempdir().expect("tempdir");
     let target = dir.path().join("target.txt");
     std::fs::write(&target, "seed").expect("seed");
 
-    // Make the directory read-only so atomic_write fails on rename.
+    // A directory that denies new entries: no tempfile and no backup can be
+    // created beside the target, so the write has to take the in-place path.
     let mut perms = std::fs::metadata(dir.path()).expect("meta").permissions();
     #[cfg(unix)]
     {
@@ -87,18 +90,35 @@ fn g119_l2_write_failure_keeps_sidecar_for_recovery() {
     }
 
     assert!(
-        !output.status.success(),
-        "write must fail when dir is read-only, got: {:?}",
-        output.status
+        output.status.success(),
+        "write must succeed in a 0555 dir through the in-place path, got: {:?}; stderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("read back"),
+        "new content",
+        "the write must reach the file even when the rename path is unavailable"
     );
 
-    // The sidecar may or may not exist depending on whether journaling
-    // itself failed; this test only asserts that the *guard* did not
-    // delete a sidecar that did get created. The journal_started step
-    // is best-effort and may not create a sidecar under restrictive
-    // permissions, so we tolerate either outcome.
-    // The important invariant is: if a sidecar exists, the failure path
-    // did NOT silently remove it.
+    // The backup could not be created beside a target in a directory that
+    // denies new entries, so the run has to say so on stderr instead of
+    // replacing the file's content with a refusal.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("backup skipped"),
+        "the skipped backup must be reported on stderr, got: {stderr}"
+    );
+
+    // Journaling may not have created a sidecar at all under these
+    // permissions; what this asserts is that a successful write leaves none
+    // behind, which is the L2 Drop guard's contract.
+    let sidecar = journal_path_for(&target);
+    assert!(
+        !sidecar.exists(),
+        "a successful write must leave no sidecar, found: {}",
+        sidecar.display()
+    );
 }
 
 /// G119 L5: `wal-stats` returns a NDJSON snapshot with the documented

@@ -15,8 +15,9 @@
 //! Note: `write`/`edit`/`replace`/`copy` route through `atomic_write`, whose
 //! backup auto-removes on success unless `--keep-backup` is also passed
 //! (same rule as every other subcommand, see `cli_v0128_backup_matrix.rs`).
-//! `delete` and the transaction's pre-backup snapshot call `create_backup`
-//! directly and always persist their `.bak.*` on success.
+//! `delete` calls `create_backup` directly and persists its `.bak.*` on
+//! success; the transaction's pre-backup snapshot is removed when the run
+//! commits, unless `--keep-backup` keeps it.
 
 mod common;
 

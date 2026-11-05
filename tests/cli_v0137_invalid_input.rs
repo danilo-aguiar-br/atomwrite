@@ -33,7 +33,13 @@ fn run(ws: &Path, case: &Case) -> (Option<i32>, Vec<Value>) {
     // Same empty HOME / XDG as the rest of the suite: no parser cache, no config.
     let mut command = common::hermetic(Command::new(bin));
     command
-        .args(["--workspace", ws_text, "--no-progress", "--no-auto-heal"])
+        .args([
+            "-v",
+            "--workspace",
+            ws_text,
+            "--no-progress",
+            "--no-auto-heal",
+        ])
         .args(case.args.iter().map(|a| a.replace("{ws}", ws_text)))
         .current_dir(ws)
         .stdin(Stdio::piped())

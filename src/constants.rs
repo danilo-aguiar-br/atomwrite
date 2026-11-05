@@ -64,8 +64,15 @@ pub const EXIT_TRANSACTION_ROLLBACK_FAILED: i32 = 80;
 /// Exit code when checksum verification fails after write.
 pub const EXIT_CHECKSUM_VERIFY_FAILED: i32 = 81;
 
-/// Exit code when `edit-loop --partial` wrote the matching pairs but others missed.
+/// Exit code for `edit-loop --partial` wrote the matching pairs but others missed.
 pub const EXIT_EDIT_LOOP_PARTIAL: i32 = 87;
+
+/// Exit code when every visited file was skipped by the binary gate.
+///
+/// Distinct from `NO_MATCHES` (1) on purpose: "nothing was searched" and "the
+/// text is not there" are opposite conclusions, and the old shared status let
+/// a binary-only tree read as proof of absence.
+pub const EXIT_ALL_SKIPPED_BINARY: i32 = 89;
 
 /// Exit code for a failure no other status describes (also the `NO_MATCHES` status).
 pub const EXIT_FAILURE: i32 = 1;
@@ -141,7 +148,11 @@ pub const EXIT_TIMEOUT: i32 = 124;
 pub const EXIT_WORKSPACE_JAIL: i32 = 126;
 
 /// Exit code when a symlink target is blocked.
-pub const EXIT_SYMLINK_BLOCKED: i32 = 127;
+///
+/// It used to be 127, which the shell reserves for "program not found": a
+/// caller that reads only the status concluded the binary was missing and went
+/// looking for an installation that was already there. 79 is free in this table.
+pub const EXIT_SYMLINK_BLOCKED: i32 = 79;
 
 /// Exit code when the target file is immutable.
 pub const EXIT_IMMUTABLE_FILE: i32 = 128;
@@ -288,6 +299,84 @@ const _: () = assert!(DEFAULT_RISK_THRESHOLD_ON > 0 && DEFAULT_RISK_THRESHOLD_ON
 pub const DEFAULT_SEARCH_MAX_FILESIZE_BYTES: u64 = 10 * 1024 * 1024;
 /// Default `search --max-columns` truncation.
 pub const DEFAULT_SEARCH_MAX_COLUMNS: usize = 500;
+
+// --- Read cap and compact output budgets (v0.1.38, token economy) ---
+/// Default byte ceiling of `read` before it stops at a line boundary.
+///
+/// Kept below the Bash tool's 30k-character cut, so a capped read never
+/// triggers the "output written to file" path and the extra round trip.
+pub const READ_DEFAULT_MAX_BYTES: usize = 24_000;
+/// Byte ceiling of `search --format text` before it stops with a notice.
+pub const SEARCH_TEXT_MAX_BYTES: usize = 20_000;
+/// Byte ceiling of a compact `outline` answer before items are omitted.
+pub const OUTLINE_MAX_BYTES: usize = 6_000;
+/// Byte ceiling of `list --format text` before it stops with a notice.
+pub const LIST_TEXT_MAX_BYTES: usize = 20_000;
+
+// --- Image delivery limits (v0.1.38, official resize rule) ---
+/// Side of one visual-token patch in pixels.
+pub const IMAGE_PATCH_PX: u32 = 28;
+/// Standard resolution tier: maximum long edge in pixels.
+pub const IMAGE_TIER_STANDARD_MAX_EDGE: u32 = 1_568;
+/// Standard resolution tier: maximum visual tokens.
+pub const IMAGE_TIER_STANDARD_MAX_TOKENS: u32 = 1_568;
+/// High-resolution tier: maximum long edge in pixels.
+pub const IMAGE_TIER_HIGH_MAX_EDGE: u32 = 2_576;
+/// High-resolution tier: maximum visual tokens.
+pub const IMAGE_TIER_HIGH_MAX_TOKENS: u32 = 4_784;
+/// Refuse to decode an image above this many megapixels (decompression bomb guard).
+pub const IMAGE_MAX_MEGAPIXELS: u64 = 100;
+/// Send the original bytes up to this size when they already fit the tier.
+pub const IMAGE_ORIGINAL_MAX_BYTES: u64 = 3_750_000;
+/// JPEG quality for the re-encoded image.
+pub const IMAGE_JPEG_QUALITY: u8 = 80;
+/// Ceiling of a `data:` URI before the reader refuses it and asks for less.
+pub const IMAGE_MAX_DATA_URI_BYTES: usize = 5_000_000;
+/// Cache subdirectory that remembers the pictures an agent session received.
+pub const MEDIA_SESSION_DIR_NAME: &str = "media-sessions";
+/// Environment variable that names the agent session, when one is running.
+pub const SESSION_ENV_VAR: &str = "CLAUDE_CODE_SESSION_ID";
+/// Decompressed ceiling of one PDF page, so a crafted stream cannot inflate.
+pub const PDF_MAX_DECOMPRESSED_BYTES: usize = 32 * 1024 * 1024;
+/// Pages `extract-artifact` decodes text from, before the excerpt ceiling cuts.
+pub const PDF_TEXT_MAX_PAGES: usize = 50;
+/// Resolution a PDF page is rendered at, in dots per inch.
+///
+/// The PDF unit is 1/72 inch, so this is also the scale factor. 150 dpi makes
+/// an A4 page about 1240 x 1754 pixels, which is under the standard image tier
+/// and still legible for a scan.
+pub const PDF_RENDER_DPI: f32 = 150.0;
+/// Resolution a page is rendered at when the characters are being recognized.
+///
+/// Recognition reads glyphs one at a time, and 150 dpi leaves small print too
+/// coarse to separate letters. 300 dpi is the resolution a scanner uses for
+/// the same reason, and it costs only the time of one page.
+pub const PDF_OCR_RENDER_DPI: f32 = 300.0;
+/// Range `--dpi` accepts on a rendered page.
+///
+/// Below 36 the page is a thumbnail no print survives, and above 600 the
+/// pixels grow four times per doubling while the eye gains nothing.
+pub const PDF_RENDER_DPI_RANGE: std::ops::RangeInclusive<f32> = 36.0..=600.0;
+/// Directory, under the cache directory, that keeps the OCR model files.
+pub const OCR_MODEL_DIR_NAME: &str = "models";
+/// Base URL the two OCR model files are fetched from.
+///
+/// The files are versioned by name, so the base never moves on its own. The
+/// models are the ones the engine was trained with, published by their author.
+pub const OCR_MODEL_BASE_URL: &str = "https://huggingface.co/robertknight/ocrs/resolve/main";
+/// Text detection model file, which draws a box around every word.
+pub const OCR_DETECTION_MODEL_FILE: &str = "text-detection-ssfbcj81.rten";
+/// Text recognition model file, which turns each box into characters.
+pub const OCR_RECOGNITION_MODEL_FILE: &str = "text-rec-checkpoint-s52qdbqt.rten";
+/// Largest model file the fetch accepts, so a wrong URL cannot fill the disk.
+pub const OCR_MODEL_MAX_BYTES: u64 = 64 * 1024 * 1024;
+/// Time the model fetch may take before it gives up.
+pub const OCR_MODEL_DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+/// Times a lock acquisition restarts when a rename swapped the inode under it.
+pub const LOCK_STALE_INODE_MAX_RESTARTS: u32 = 8;
+
+const _: () = assert!(READ_DEFAULT_MAX_BYTES < 30_000);
+const _: () = assert!(IMAGE_TIER_STANDARD_MAX_EDGE > IMAGE_PATCH_PX);
 /// Fragment of the error `grep-searcher` raises when a single line exceeds
 /// the searcher's heap limit.
 ///
@@ -387,6 +476,10 @@ pub const WAL_STATS_TOP_DIRS: usize = 10;
 pub const PATCH_MAX_HUNK_SHIFT: usize = 64;
 /// Characters of a file or patch line quoted in an `apply` error message.
 pub const PATCH_ERROR_SNIPPET_CHARS: usize = 120;
+/// Marker that stands for an unanchored run of lines in a SEARCH block.
+pub const PATCH_ELLIPSIS_MARKER: &str = "...";
+/// Most lines a `...` wildcard may skip between its two anchors.
+pub const PATCH_ELLIPSIS_MAX_LINES: usize = 200;
 // --- T3a: startup WAL heal scope and H3 window (v0.1.37) ---
 /// Length of the H3 creation rate-limit window, in seconds.
 pub const WAL_RATE_WINDOW_SECS: u64 = 60;

@@ -82,19 +82,73 @@ pub fn atomic_write_based(
     workspace: &Path,
     expected_base: Option<&str>,
 ) -> Result<WriteResult> {
+    // The copy is created deep inside the write, so the path is collected here
+    // and attached to any failure: a run that failed after copying would
+    // otherwise leave a file on disk that no record names.
+    let mut backup_made: Option<std::path::PathBuf> = None;
+    match atomic_write_based_inner(
+        target,
+        content,
+        opts,
+        workspace,
+        expected_base,
+        &mut backup_made,
+    ) {
+        Ok(result) => Ok(result),
+        // The path rides as an anyhow context, not as a new error root, so the
+        // typed error underneath stays reachable by `downcast_ref` and the
+        // exit code keeps naming what actually failed.
+        Err(error) => match backup_made {
+            Some(backup_path) => Err(error.context(WriteFailure { backup_path })),
+            None => Err(error),
+        },
+    }
+}
+
+/// A failed write naming the copy it had already created.
+///
+/// The copy exists so the caller can undo a write, and a failure after it is
+/// the moment it matters most. Carrying the path on the error keeps the caller
+/// from guessing at a timestamped filename it cannot reconstruct.
+#[derive(Debug)]
+pub struct WriteFailure {
+    /// Copy this call created before failing.
+    pub backup_path: std::path::PathBuf,
+}
+
+impl std::fmt::Display for WriteFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "a copy of the file stayed on disk at {}",
+            self.backup_path.display()
+        )
+    }
+}
+
+/// Body of [`atomic_write_based`], reporting the copy it made through `out`.
+fn atomic_write_based_inner(
+    target: &Path,
+    content: &[u8],
+    opts: &AtomicWriteOptions,
+    workspace: &Path,
+    expected_base: Option<&str>,
+    backup_out: &mut Option<std::path::PathBuf>,
+) -> Result<WriteResult> {
     let start = Instant::now();
 
     // Step 1: validate path
     let target = crate::path_safety::validate_path(target, workspace)?;
     let resolved_durability = opts.durability.resolve(&target);
     let mut backup_method_used: Option<&'static str> = None;
+    let mut backup_skipped: Option<String> = None;
 
     // Step 1-lock: R23 — create the parent first (the lock sidecar lives in
     // it), then take the advisory lock BEFORE anything reads the target.
     // `_lock` lives to the end of the function: it covers the rename, the
     // directory fsync and the commit, and releases on every error path.
     ensure_parent_dir(&target)?;
-    let _lock =
+    let lock =
         crate::lock::acquire_exclusive(&target, crate::config::tuning().lock_acquire_timeout_ms)?;
 
     // Step 1-base: the caller computed the new content from the file as it read
@@ -202,7 +256,12 @@ pub fn atomic_write_based(
     let strategy = match opts.strategy {
         Some(s) => s,
         None => {
-            if hardlink_nlink.is_some_and(|n| n > 1) || is_symlink {
+            // A rename needs a tempfile beside the target, so a directory this
+            // process cannot write to left the write with no atomic path at all
+            // and answered exit 13 for a file the caller owns. The in-place
+            // path needs the file's own permission and nothing else, which is
+            // exactly what the lock already proved this run has.
+            if hardlink_nlink.is_some_and(|n| n > 1) || is_symlink || !parent_is_writable(&target) {
                 WriteStrategy::InPlace
             } else {
                 WriteStrategy::Rename
@@ -257,9 +316,49 @@ pub fn atomic_write_based(
         // v0.1.30: create_backup_in ALWAYS uses reflink_or_copy (never hardlink).
         // Do not probe nlink — a hardlink target can make nlink>1 on the copy
         // path only if create failed into hardlink, which we forbid.
-        let bp = create_backup_in(&target, opts.retention, opts.backup_output_dir.as_deref())?;
-        backup_method_used = Some("reflink_or_copy");
-        Some(bp)
+        match create_backup_in(&target, opts.retention, opts.backup_output_dir.as_deref()) {
+            Ok(bp) => {
+                backup_method_used = Some("reflink_or_copy");
+                *backup_out = Some(bp.clone());
+                Some(bp)
+            }
+            // A backup that cannot be created because the directory denies the
+            // entry does not mean the file cannot be written: an in-place write
+            // needs permission on the inode, not on the directory. Refusing here
+            // blamed the file for a directory the caller cannot change, so the
+            // write proceeds and the missing copy is stated on stderr.
+            Err(e)
+                if crate::runtime::find_io_error(&e)
+                    == Some(std::io::ErrorKind::PermissionDenied) =>
+            {
+                use std::io::Write as _;
+                crate::best_effort::best_effort(
+                    writeln!(
+                        std::io::stderr().lock(),
+                        "atomwrite: backup skipped for {}: {}; writing without a backup",
+                        target.display(),
+                        e
+                    ),
+                    "report skipped backup on stderr",
+                );
+                tracing::warn!(
+                    path = %target.display(),
+                    error = %e,
+                    "backup skipped by directory permission; continuing without a copy"
+                );
+                backup_skipped = Some(format!(
+                    "the directory refused the backup file: {e}; the write proceeds without a copy"
+                ));
+                None
+            }
+            Err(e) => {
+                // Nothing was swapped, so the journal has nothing to recover:
+                // leaving it behind would make `wal-heal` report an orphan for
+                // a run that never touched the target.
+                wal_guard.discard();
+                return Err(e);
+            }
+        }
     } else {
         None
     };
@@ -285,9 +384,15 @@ pub fn atomic_write_based(
                         reason = %reason,
                         "G72 syntax heuristic (no tree-sitter parser) failed"
                     );
+                    // The journal stays: this is a failure, not a cancel, and
+                    // `wal-heal` is the reader that decides what a journal with
+                    // no rename behind it means. `tests/cli_v0137_wal_cancel.rs`
+                    // pins that contract.
                     return Err(crate::error::AtomwriteError::SyntaxError {
                         path: target.to_path_buf(),
                         count: 1,
+                        line: None,
+                        line_end: None,
                     }
                     .into());
                 }
@@ -305,6 +410,11 @@ pub fn atomic_write_based(
                 return Err(crate::error::AtomwriteError::SyntaxError {
                     path: target.to_path_buf(),
                     count: count as u32,
+                    line: Some(first.line),
+                    // The check reports the first error node only, so the
+                    // refusal states the one line it can prove. A guessed end
+                    // would claim a block the tree never showed.
+                    line_end: Some(first.line),
                 }
                 .into());
             }
@@ -318,11 +428,34 @@ pub fn atomic_write_based(
                     return Err(crate::error::AtomwriteError::SyntaxError {
                         path: target.to_path_buf(),
                         count: 1,
+                        line: None,
+                        line_end: None,
                     }
                     .into());
                 }
             }
         }
+    }
+
+    // Revalidate immediately before the swap. The lock was taken on an inode,
+    // and between that moment and this one the path may have been pointed at
+    // another file; swapping then would overwrite content this run never read.
+    // Nothing was written yet, so the journal goes with the refusal.
+    //
+    // A read-modify-write caller already proved, under this same lock, that the
+    // bytes on disk are the bytes it read: `expected_base` is checked before
+    // any journal exists. When that check passed, a different inode carrying
+    // the same content is the normal outcome of a concurrent writer that
+    // renamed its result into place, and refusing it would turn a healthy
+    // pipeline into a drift error.
+    if expected_base.is_none() && !lock.target_unchanged() {
+        wal_guard.discard();
+        return Err(crate::error::AtomwriteError::StateDrift {
+            path: target,
+            expected: "the inode the lock was taken on".to_string(),
+            actual: "another inode now answers to the same path".to_string(),
+        }
+        .into());
     }
 
     // Step 6–9: dispatch by strategy
@@ -335,16 +468,12 @@ pub fn atomic_write_based(
         ) {
             Ok(done) => done,
             Err(e) => {
-                // A cooperative cancel raised on the rename path happens before
-                // the rename: the target is intact and the tempfile is removed
-                // on drop, so the journal has nothing to recover. Every other
-                // failure keeps it for `wal-heal`.
-                if matches!(
-                    e.downcast_ref::<crate::error::AtomwriteError>(),
-                    Some(crate::error::AtomwriteError::Cancelled { .. })
-                ) {
-                    wal_guard.discard();
-                }
+                // The rename failed, so the target was never swapped: it still
+                // holds the old content and the tempfile is removed on drop.
+                // The journal therefore has nothing to recover, and keeping it
+                // made `wal-heal` offer to recover a write that never happened.
+                // The cancellations and the plain failures land here alike.
+                wal_guard.discard();
                 return Err(e);
             }
         },
@@ -444,10 +573,28 @@ pub fn atomic_write_based(
         durability: resolved_durability.as_str(),
         rename_method: rename_method_used,
         backup_method: backup_method_used,
+        backup_skipped,
     })
 }
 
 /// Step 5: create missing parent directories (mode `DIR_PERMISSIONS` on Unix).
+/// True when the target's directory accepts a new entry from this process.
+///
+/// Only the directory's own permission is asked: creating the tempfile is the
+/// operation that decides the strategy. Platforms with no `access(2)` answer
+/// `true`, which keeps the rename path and its atomicity as the default.
+#[cfg(unix)]
+fn parent_is_writable(target: &Path) -> bool {
+    use nix::unistd::{AccessFlags, access};
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    access(parent, AccessFlags::W_OK).is_ok()
+}
+
+#[cfg(not(unix))]
+fn parent_is_writable(_target: &Path) -> bool {
+    true
+}
+
 fn ensure_parent_dir(target: &Path) -> Result<()> {
     if let Some(parent) = target.parent() {
         if !parent.exists() {

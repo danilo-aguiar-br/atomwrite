@@ -318,7 +318,7 @@ pub const SUGGEST_WALK_MAX_DEPTH: usize = 6;
 /// Jaro-Winkler score a file name needs to be suggested for a missing path.
 pub const SUGGEST_MIN_SIMILARITY: f64 = 0.75;
 /// Most paths a missing-file suggestion lists.
-pub const SUGGEST_MAX_PATHS: usize = 5;
+pub const SUGGEST_MAX_PATHS: usize = 2;
 /// Hex characters of the digest that names a WAL journal.
 pub const WAL_JOURNAL_ID_HEX_LEN: usize = 16;
 /// Parent directories the git-tracked probe climbs before it gives up.
@@ -373,6 +373,8 @@ pub const READ_MULTI_TARGET_REASON_MARKER: &str = "expects a single target";
 /// flag must not be told to drop a flag it never passed. The two markers must
 /// not overlap as substrings, or the first branch wins and the hint lies again.
 pub const SINGLE_TARGET_REASON_MARKER: &str = "one target per invocation";
+/// Marker placed in the reason when `--no-comments` came without `--number`.
+pub const NO_COMMENTS_NEEDS_NUMBER_REASON_MARKER: &str = "needs --number";
 
 /// Marker placed in the `prune-backups` reason when the subject is a directory.
 pub const PRUNE_DIRECTORY_REASON_MARKER: &str = "prune-backups takes files";

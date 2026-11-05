@@ -3,17 +3,44 @@
 
 # Integrações
 
+
 - atomwrite é uma CLI que fala NDJSON no stdout: qualquer agente que consegue rodar um comando shell pode chamá-la como subprocesso
 
 
-## Agentes Compatíveis (v0.1.37)
+## Objetivos
+- Gastar menos tokens: um objeto NDJSON por chamada substitui o encadeamento de shell, e o `commands --brief` responde em 5.020 bytes onde a árvore completa custa 67.492
+- Reduzir o custo financeiro, porque a conta acompanha os tokens e as idas e voltas, e uma chamada substitui as várias chamadas de shell que uma tarefa de arquivo pede
+- Reduzir os erros com escrita atômica e checksum BLAKE3 em toda resposta, então um resultado velho ou parcial aparece em vez de ser presumido
+- Reduzir as alucinações com discriminador `type`, schema fechado por verbo e código de saída que nomeia a falha
+- Reduzir o tempo gasto em cada tarefa, porque a leitura, a busca e a escrita rodam num processo só em vez de numa corrente de ferramentas de shell
+- Reduzir a latência com execução local e sem rede no caminho do arquivo, medida nas medianas de 5,6 ms no `read` e 6,7 ms no `write` de arquivo pequeno
+- Multiplicar a velocidade das operações com `batch`, `edit-loop`, `replace`, `case`, `transform` e `codemod` resolvendo muitos arquivos numa chamada
+- Reduzir o lead time entre a solicitação e o resultado verificado, porque a resposta já traz o checksum, o `target_resolved` e o próximo passo
+- Tornar o agente mais rápido, mais veloz, mais eficaz e mais assertivo, já que o código de saída, o `code` e o `suggestion` dizem o que fazer sem tentar às cegas
+
+
+## Agentes Compatíveis (v0.1.38)
 - Superfície atual: 47 subcomandos (SSOT via `atomwrite agent-surface` / `CANONICAL_SUBCOMMAND_COUNT`), todos listados com exemplo testado em [Os 47 Comandos](#os-47-comandos)
-- Histórico (na v0.1.35): 41 subcomandos após residuais A-* (write grande `--ack-overwrite`, `watch_summary`, markers de merge, delete `--plan` e não `--confirm`/`--yes`)
-- Integração de agente (pin `^0.1.37`): descubra tools com `agent-surface` / `commands`, estagie patches grandes ou frágeis via `scratch init` + `--old-file`/`--new-file` sob `.atomwrite/scratch/`, parseie o exit code primeiro, depois trate toda linha de erro como `ok: false` (always-emit mesmo sob `--filter`)
+- Histórico: 41 subcomandos na v0.1.29, e 46 antes do verbo `config` chegar na v0.1.37 (o write grande `--ack-overwrite`, o `watch_summary`, os markers de merge e o delete `--plan` vieram nessa janela)
+- Integração de agente (pin `^0.1.37` até a 0.1.38 ser publicada, e `^0.1.38` a partir dessa release): descubra tools com `agent-surface` / `commands`, estagie patches grandes ou frágeis via `scratch init` + `--old-file`/`--new-file` sob `.atomwrite/scratch/`, parseie o exit code primeiro, depois trate toda linha de erro como `ok: false` (always-emit mesmo sob `--filter`)
+- `read` limitado (v0.1.38): o teto é `read.max_output_bytes` (24.000 bytes), o evento carrega `truncated` e `next`, que escreve a faixa seguinte, e `--all` levanta o teto
+- Os seletores do `read` compõem numa passada só: `--lines` repetível com `--range` como alias, `--number`, `--symbol NOME`, `--line N --enclosing` e `--no-comments` (`--no-comments` exige `--number` e sai 65 sem ele)
+- Formas de texto para pipeline de shell (v0.1.38): `search --format text` com `search.format`, `list --format text` e `outline --format tsv`, e a saída padrão continua NDJSON
+- `search` sai 89 com `ALL_SKIPPED_BINARY` quando todo candidato era binário, e essa é uma resposta diferente de `NO_MATCHES` (exit 1)
+- `apply` casa linha inteira, então cada linha do SEARCH precisa casar com a linha do arquivo do primeiro ao último byte; `--show` mostra as linhas alteradas com o número, e `--all` troca toda ocorrência de linha inteira
+- O `apply --format unified` aceita `@@ ... @@` e um `@@` sozinho, casa um trecho sem números por contexto e recusa mais de um casamento nomeando a linha de cada um
+- `apply` recusa um patch que quebra o parse do arquivo editado, `--no-syntax-check` pula esse portão, e um patch pode carregar vários arquivos quando cada bloco nomeia a própria linha de caminho
+- `MATCH_AMBIGUOUS` (exit 65) significa que o SEARCH casou mais linhas do que a chamada permitiu, então estreite o bloco ou passe `--all`, e `apply.max_ellipsis_lines` limita a lacuna `...`
+- `diff` informa `line`, `old_line` e `new_line` com base 1, então os números batem com `read --number`
+- `delete --recursive` assume a árvore inteira e publica `backups_kept`, `backup_bytes` e `dirs_left` quando existe backup ou sobra
+- `output.profile` é `full` ou `lean`: `lean` tira os campos de prosa, e `--select`/`--fields` compõem com os dois
+- `commands --brief` imprime a árvore sem as descrições longas, e `-h` num subcomando lista só as flags daquele verbo
+- O envelope de falha é `{"ok":false,"code":"...","exit":N,"path":"...","suggestion":"..."}`, e `message`, `error_class`, `retryable` e `suggestion_lang` aparecem só com `-v`
+- `target_resolved` é sempre uma lista, mesmo quando a chamada nomeia um caminho só
 - Prefira os globais `--select`/`--fields`, `--filter`, `--limit` a jq para projeção de campos
 - atomwrite requer apenas acesso a shell para funcionar
 - Saída NDJSON (um objeto JSON por linha) é parseável por qualquer parser JSON sem adaptador customizado
-- Sem plugins, extensões ou SDKs necessários
+- Sem plugins, extensões ou SDKs necessários ou oferecidos: a integração é por subprocesso, por decisão
 - Status de validação: só os agentes marcados como validados na [Tabela Resumida](#tabela-resumida) foram executados, todo outro agente está marcado como não validado
 - Ajuste sem editar TOML à mão: `config list` mostra cada chave com o valor efetivo e a origem, `config set CHAVE VALOR --scope global|workspace` grava uma chave de forma atômica (`--scope` é obrigatório, não há padrão), `config unset` a remove
 - Um evento terminal por execução: quando um resumo falha ele carrega `ok: false`, `code` e `exit` nele mesmo
@@ -28,14 +55,21 @@
 - Use `agent-surface` para o manifesto de tools, a integração é por subprocesso, CLI com saída NDJSON
 - Prefira `recipe list|run` para pipelines search-replace-verify de vários passos (exclui `*.bak.*`, inclusive no passo hash)
 - O método de backup é `reflink_or_copy`, nunca hardlink do arquivo vivo
-- Exit codes: leia a tabela com `atomwrite agent-surface --format json | jaq '.exit_codes'` (41 entradas, 33 números distintos) e ramifique por `exit` e `error_class`
+- Exit codes: leia a tabela com `atomwrite agent-surface --format json | jaq '.exit_codes'` (42 entradas, 34 números distintos) e ramifique por `exit` e `error_class`
 - Install slim: `cargo install --path . --locked --force --no-default-features --features core`
 - No build slim os verbos AST `outline`, `query`, `scope`, `transform` e `sparse outline` falham fechados com exit 78 e uma dica de rebuild (lido de `src/commands/*_stub.rs`, o build slim não foi executado para este documento)
 - O build padrão não tem `watch`: o verbo `watch` sai 78 até você compilar com `--features watch`
-- Pin de agentes em `^0.1.37`
+- Pin de agentes em `^0.1.37` até a `0.1.38` chegar ao crates.io, e depois em `^0.1.38`
 - Status das plataformas: Linux é exercitado de ponta a ponta, Windows é checado com `cargo check --target x86_64-pc-windows-gnu` a partir de um host Linux, macOS não é exercitado em um Mac real (veja `CHANGELOG.pt-BR.md`, 0.1.36)
 - Histórico: a v0.1.15 corrigiu o G117 (`edit` multi-par com paridade fuzzy, `pair_results`, `failed_pair_index`, `--partial` opt-in) e o G118 (`write` resolve o alvo contra o workspace, então append e checksum são seguros com CWD divergente)
 - Histórico: a v0.1.16 adicionou o G119 L1 WalPolicy e L4 HeuristicsEngine, a v0.1.17 ligou o heal de startup G119 L3, a v0.1.18 adicionou a propagação resolve-first universal do G118, testes cross-flag do G120 L3 e casos de borda do G117
+
+
+## Visão E Documentos
+- `read foto.png` responde uma linha `data:` para o canal de visão, e `--max-tokens`, `--crop` e `--high-res` escolhem o custo antes da codificação
+- `read doc.pdf` responde o texto de cada página, `--pages 1-3` escolhe uma faixa, `--page N` renderiza essa página como `data:` URI, `--dpi N` escolhe a resolução e `--ocr` devolve o texto reconhecido em `content`
+- `extract-artifact` dá um sinal limitado do cabeçalho de PDF, OOXML e imagem, nunca os bytes brutos
+- Os dois modelos de OCR e os pacotes de parser são os únicos downloads, e o `PRIVACY.pt-BR.md` descreve os dois caches
 
 
 ## Tabela Resumida
@@ -58,21 +92,22 @@
 ## Os 47 Comandos
 - Defina `WS` uma vez como o caminho absoluto da raiz do workspace antes de rodar um exemplo: `WS="$PWD"`
 - Todo exemplo rodou com exit 0 em 2026-10-19 contra `atomwrite 0.1.37` num workspace descartável, na ordem abaixo, exceto `watch` (veja a entrada dele)
+- As flags da v0.1.38 citadas nos bullets acima rodaram em 2026-11-04 contra `atomwrite 0.1.38`, e os 47 exemplos abaixo não foram rodados de novo por inteiro nesta versão
 - Os exemplos assumem os arquivos `src/a.rs` (com uma chamada `unwrap()`), `src/b.rs` (com a palavra `beta`), `src/c.rs` (com `user_id`), `src/tmp.rs`, `config.toml` (com `package.name` e `features.x`), `notes.txt`, `tmp.txt`, `base.txt`, `ours.txt`, `theirs.txt`, `img.png` e `rules.yaml`
-- `read` — lê um arquivo com checksum, tamanho e linhas, com opção de só início, fim ou faixa. Exemplo: `atomwrite --workspace "$WS" read --head 2 src/a.rs`
+- `read` — lê um arquivo com checksum, tamanho e linhas, com opção de só início, fim, faixa de linhas, símbolo nomeado ou o bloco em volta de uma linha, sob um teto de bytes que `--all` levanta. Exemplo: `atomwrite --workspace "$WS" read --lines 1:3 --number src/a.rs`
 - `write` — cria ou sobrescreve um arquivo de forma atômica a partir do stdin. Exemplo: `printf 'x\n' | atomwrite --workspace "$WS" write notes/new.txt`
 - `edit` — edita um arquivo por texto exato ou aproximado, número de linha ou marcador. Exemplo: `atomwrite --workspace "$WS" edit src/b.rs --old beta --new gamma`
-- `delete` — apaga arquivos ou árvores com backup, ou só mostra o plano com `--plan`. Exemplo: `atomwrite --workspace "$WS" delete --plan tmp.txt`
+- `delete` — apaga arquivos ou a árvore inteira com `--recursive`, ou só mostra o plano com `--plan`; o delete de árvore informa `backups_kept`, `backup_bytes` e `dirs_left`. Exemplo: `atomwrite --workspace "$WS" delete --plan tmp.txt`
 - `copy` — copia um arquivo ou árvore com verificação de checksum. Exemplo: `atomwrite --workspace "$WS" copy src/a.rs src/a_copy.rs`
 - `move` — move ou renomeia um arquivo de forma atômica. Exemplo: `atomwrite --workspace "$WS" move src/tmp.rs src/tmp2.rs`
-- `apply` — aplica um patch (diff unificado, SEARCH/REPLACE, arquivo inteiro) lido do stdin. Exemplo: `printf 'new body\n' | atomwrite --workspace "$WS" apply --format full notes.txt`
-- `search` — busca conteúdo de arquivos em paralelo com o motor do ripgrep. Exemplo: `atomwrite --workspace "$WS" search alpha src/`
+- `apply` — aplica um patch (diff unificado, SEARCH/REPLACE, arquivo inteiro) lido do stdin, casando linha inteira, com `--all`, `--show` e `--no-syntax-check`. Exemplo: `printf 'new body\n' | atomwrite --workspace "$WS" apply --format full notes.txt`
+- `search` — busca conteúdo de arquivos em paralelo com o motor do ripgrep, com `--format text` para pipeline de shell e exit 89 quando todo candidato era binário. Exemplo: `atomwrite --workspace "$WS" search alpha src/`
 - `replace` — troca texto em vários arquivos com escrita atômica e casamento aproximado. Exemplo: `atomwrite --workspace "$WS" replace --dry-run alpha omega src/`
 - `transform` — reescreve código por padrão de AST (ast-grep). Exemplo: `atomwrite --workspace "$WS" transform --dry-run -p '$E.unwrap()' -r '$E?' -l rust src/`
 - `hash` — mostra o checksum BLAKE3 de arquivos. Exemplo: `atomwrite --workspace "$WS" hash src/a.rs`
 - `count` — conta linhas e arquivos por extensão ou por tamanho. Exemplo: `atomwrite --workspace "$WS" count --by-extension src/`
-- `diff` — compara dois arquivos (unificado, estatística ou mudanças). Exemplo: `atomwrite --workspace "$WS" diff src/a.rs src/b.rs --unified`
-- `list` — lista uma árvore de diretórios com metadados. Exemplo: `atomwrite --workspace "$WS" list --long --depth 1 src/`
+- `diff` — compara dois arquivos (unificado, estatística ou mudanças), com `line`, `old_line` e `new_line` de base 1. Exemplo: `atomwrite --workspace "$WS" diff src/a.rs src/b.rs --unified`
+- `list` — lista uma árvore de diretórios com metadados, em NDJSON ou `--format text`. Exemplo: `atomwrite --workspace "$WS" list --long --depth 1 src/`
 - `extract` — extrai campos de NDJSON lido do stdin. Exemplo: `printf '{"a":1}\n' | atomwrite extract --field a`
 - `extract-artifact` — sinal limitado dos cabeçalhos de PDF, OOXML e imagem, nunca os bytes brutos. Exemplo: `atomwrite --workspace "$WS" extract-artifact img.png`
 - `scope` — escopo gramatical: age sobre comentários, strings, funções e outras categorias de código. Exemplo: `atomwrite --workspace "$WS" scope src/ --language rust --query comments --delete --dry-run`
@@ -83,7 +118,7 @@
 - `rollback` — restaura um arquivo a partir de um backup anterior (rode `backup` antes). Exemplo: `atomwrite --workspace "$WS" rollback src/a.rs --latest --verify`
 - `batch` — executa operações NDJSON do stdin, com opção de transação única. Exemplo: `printf '{"op":"write","target":"batch.txt","content":"x"}\n' | atomwrite --workspace "$WS" batch --transaction`
 - `edit-loop` — aplica N pares antigo/novo numa escrita só, tudo ou nada (rode antes o exemplo do `edit`). Exemplo: `printf '[{"old":"gamma","new":"delta"}]\n' | atomwrite --workspace "$WS" edit-loop src/b.rs`
-- `prune-backups` — remove arquivos `.bak` antigos por idade ou quantidade. Exemplo: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run .`
+- `prune-backups` — remove arquivos `.bak` antigos por idade ou quantidade. Exemplo: `atomwrite --workspace "$WS" prune-backups -r --max-age-secs 86400 --dry-run .`
 - `wal-stats` — mostra o estado dos journals WAL (só leitura). Exemplo: `atomwrite --workspace "$WS" wal-stats`
 - `wal-heal` — remove journals WAL terminais órfãos mais antigos que um limite, e também remove um journal `Started` cujo PID dono sumiu, publicado como `dead_owner_removed`. Exemplo: `atomwrite --workspace "$WS" wal-heal --threshold-secs 3600 .`
 - `verify` — confere um arquivo contra um hash BLAKE3 esperado (exit 0 se igual, 81 se diferente). Exemplo: `atomwrite --workspace "$WS" verify src/a.rs "$(atomwrite --workspace "$WS" hash src/a.rs | jaq -r .checksum)"`
@@ -92,7 +127,7 @@
 - `del` — remove uma chave de um arquivo TOML ou JSON. Exemplo: `atomwrite --workspace "$WS" del config.toml features.x`
 - `case` — renomeia identificadores entre estilos de caixa em arquivos e diretórios, e o diretório é expandido pelo walker. Exemplo: `atomwrite --workspace "$WS" case --subvert user_id UserId --to pascal --dry-run src/c.rs`
 - `query` — percorre a AST do tree-sitter e emite os nós. Exemplo: `atomwrite --workspace "$WS" query --kinds src/a.rs`
-- `outline` — emite a estrutura de alto nível de um arquivo de código (um arquivo, nunca um diretório). Exemplo: `atomwrite --workspace "$WS" outline src/a.rs`
+- `outline` — emite a estrutura de alto nível de um arquivo de código (um arquivo, nunca um diretório), em NDJSON ou `--format tsv`. Exemplo: `atomwrite --workspace "$WS" outline src/a.rs`
 - `semantic-merge` — merge de três vias por linha com marcadores de conflito, não é AST. Exemplo: `atomwrite --workspace "$WS" semantic-merge --base base.txt --ours ours.txt --theirs theirs.txt --output merged.txt --fail-on-conflict`
 - `sparse` — lista, leitura e outline com orçamento para árvores grandes. Exemplo: `atomwrite --workspace "$WS" sparse list src/ --max-files 10 --max-bytes 1048576`
 - `recipe` — lista e roda receitas embutidas de vários passos. Exemplo: `atomwrite --workspace "$WS" recipe run --name search-replace-verify --pattern alpha --replacement omega --path src --dry-run`
@@ -104,8 +139,8 @@
 - `doctor` — diagnóstico de prontidão do host. Exemplo: `atomwrite doctor`
 - `scratch` — cria o diretório de staging `.atomwrite/scratch` dentro do jail do workspace (o caminho é obrigatório). Exemplo: `atomwrite --workspace "$WS" scratch init .atomwrite/scratch`
 - `locale` — mostra, define ou limpa o idioma da interface. Exemplo: `atomwrite locale`
-- `commands` — imprime a árvore completa de comandos em JSON. Exemplo: `atomwrite commands --include-globals`
-- `config` — lê e grava chaves de ajuste persistentes (37 chaves, escopos global e workspace). Exemplo: `atomwrite --workspace "$WS" config get fuzzy.threshold`
+- `commands` — imprime a árvore completa de comandos em JSON, ou curta com `--brief`. Exemplo: `atomwrite commands --include-globals`
+- `config` — lê e grava chaves de ajuste persistentes (43 chaves, escopos global e workspace). Exemplo: `atomwrite --workspace "$WS" config get fuzzy.threshold`
 
 
 ## Claude Code

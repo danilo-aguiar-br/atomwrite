@@ -19,12 +19,16 @@ pub struct AtomwriteConfig {
     pub version: u32,
     /// Default settings for write operations.
     pub defaults: DefaultsSection,
+    /// Deletion defaults.
+    pub delete: DeleteSection,
     /// Write guard policy (confirm / shrink / auto-rotate) — G-028.
     pub write: WriteSection,
     /// Watch one-shot bounds (B-007 / R-XDG-007).
     pub watch: WatchSection,
     /// Fuzzy matching defaults for edit operations.
     pub fuzzy: FuzzySection,
+    /// `apply` patch tuning.
+    pub apply: ApplySection,
     /// Search defaults.
     pub search: SearchSection,
     /// Storage paths (XDG home override).
@@ -41,6 +45,10 @@ pub struct AtomwriteConfig {
     pub extract: ExtractSection,
     /// Terminal summary bounds.
     pub summary: SummarySection,
+    /// Bounds of the `read` byte ceiling.
+    pub read: ReadSection,
+    /// Output profile shared by every verb.
+    pub output: OutputSection,
 }
 
 /// Diagnostics file sink loaded from the global XDG config `[log]` (R26).
@@ -223,8 +231,13 @@ pub fn validate_write(cfg: &WriteSection) -> Result<(), AtomwriteError> {
 #[derive(Debug, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DefaultsSection {
-    /// Enable backup by default.
-    pub backup: bool,
+    /// Whether a backup is requested when the call says nothing.
+    ///
+    /// `None` means the key is not written, so each verb applies its own
+    /// default: rewrites copy and `delete` does not. `Some(true)` is an
+    /// explicit request that reaches every verb, and `Some(false)` turns the
+    /// copy off for the rewrites.
+    pub backup: Option<bool>,
     /// Number of backups to retain.
     pub retention: u8,
     /// Line ending mode: auto, lf, crlf, cr.
@@ -236,7 +249,7 @@ pub struct DefaultsSection {
 impl Default for DefaultsSection {
     fn default() -> Self {
         Self {
-            backup: true,
+            backup: None,
             retention: crate::constants::DEFAULT_BACKUP_RETENTION,
             line_ending: "auto".into(),
             max_filesize: crate::constants::DEFAULT_MAX_FILESIZE,
@@ -299,6 +312,39 @@ impl Default for FuzzySection {
     }
 }
 
+/// Tuning of the `apply` verb.
+#[derive(Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ApplySection {
+    /// Most lines a `...` wildcard may skip between its two anchors.
+    pub max_ellipsis_lines: usize,
+}
+
+impl Default for ApplySection {
+    fn default() -> Self {
+        Self {
+            max_ellipsis_lines: crate::constants::PATCH_ELLIPSIS_MAX_LINES,
+        }
+    }
+}
+
+/// Cap resolved by the last [`load_config`] run.
+///
+/// `cmd_apply` receives the tuning sections the dispatcher already holds, so
+/// this accessor hands it the same value without a second config load. Zero
+/// means no run loaded a config yet, and the built-in default applies.
+static APPLY_MAX_ELLIPSIS_LINES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Most lines a `...` wildcard may skip in an `apply` SEARCH block.
+#[must_use]
+pub fn apply_max_ellipsis_lines() -> usize {
+    match APPLY_MAX_ELLIPSIS_LINES.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => crate::constants::PATCH_ELLIPSIS_MAX_LINES,
+        configured => configured,
+    }
+}
+
 /// Storage configuration (XDG; no process env knobs).
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -322,6 +368,8 @@ pub struct SearchSection {
     pub max_columns: usize,
     /// Total bytes of search events in flight between walker workers and stdout.
     pub max_inflight_bytes: u64,
+    /// Default `search --format` value: `ndjson` or `text`.
+    pub format: String,
 }
 
 impl Default for SearchSection {
@@ -332,6 +380,7 @@ impl Default for SearchSection {
             max_filesize: crate::constants::DEFAULT_SEARCH_MAX_FILESIZE_BYTES,
             max_columns: crate::constants::DEFAULT_SEARCH_MAX_COLUMNS,
             max_inflight_bytes: crate::constants::SEARCH_MAX_INFLIGHT_BYTES,
+            format: "ndjson".into(),
         }
     }
 }
@@ -352,6 +401,78 @@ impl Default for SummarySection {
         Self {
             errors_max_entries: crate::constants::SUMMARY_ERRORS_MAX_ENTRIES,
         }
+    }
+}
+
+/// Default settings applied to `delete` operations.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DeleteSection {
+    /// Whether `delete` keeps a backup when the call says nothing.
+    ///
+    /// When set, this wins over `defaults.backup` for `delete` only. The
+    /// `--backup` and `--no-backup` flags still win over both.
+    pub backup: Option<bool>,
+}
+
+/// Bounds of the `read` byte ceiling (v0.1.38 token economy).
+#[derive(Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReadSection {
+    /// Bytes a whole-file `read` emits before it stops at a line boundary.
+    pub max_output_bytes: usize,
+    /// Prefix every raw line with its 1-based number by default.
+    pub number: bool,
+}
+
+impl Default for ReadSection {
+    fn default() -> Self {
+        Self {
+            max_output_bytes: crate::constants::READ_DEFAULT_MAX_BYTES,
+            number: false,
+        }
+    }
+}
+
+/// Output profile shared by every verb (v0.1.38).
+#[derive(Debug, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OutputSection {
+    /// `full` keeps the current envelope; `lean` drops the fields an agent
+    /// never reads. The CLI flag and `--select` still win over this value.
+    pub profile: String,
+}
+
+impl Default for OutputSection {
+    fn default() -> Self {
+        Self {
+            profile: "full".into(),
+        }
+    }
+}
+
+/// Validate the `[read]` and `[output]` sections.
+///
+/// # Errors
+///
+/// Returns `AtomwriteError::InvalidInput` when `max_output_bytes` is 0 or when
+/// `profile` is neither `full` nor `lean`.
+pub fn validate_read_output(
+    read: &ReadSection,
+    output: &OutputSection,
+) -> Result<(), AtomwriteError> {
+    if read.max_output_bytes == 0 {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "config [read] max_output_bytes must be >= 1".into(),
+        });
+    }
+    match output.profile.as_str() {
+        "full" | "lean" => Ok(()),
+        other => Err(AtomwriteError::InvalidInput {
+            reason: format!(
+                "config [output] profile = \"{other}\" is invalid; use \"full\" or \"lean\""
+            ),
+        }),
     }
 }
 
@@ -417,6 +538,19 @@ pub fn validate_summary_section(cfg: &SummarySection) -> Result<(), AtomwriteErr
 ///
 /// Returns `AtomwriteError::ConfigInvalid` when the explicit path, the global XDG file or the workspace `.atomwrite.toml` cannot be read, is not valid TOML, carries an unknown key, declares a version above `CONFIG_SCHEMA_VERSION`, or yields a merged table that no longer type-checks.
 pub fn load_config(
+    workspace: &Path,
+    explicit_path: Option<&Path>,
+) -> Result<AtomwriteConfig, AtomwriteError> {
+    let config = load_config_layers(workspace, explicit_path)?;
+    APPLY_MAX_ELLIPSIS_LINES.store(
+        config.apply.max_ellipsis_lines.max(1),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    Ok(config)
+}
+
+/// Load and merge the config hierarchy; [`load_config`] remembers its tuning.
+fn load_config_layers(
     workspace: &Path,
     explicit_path: Option<&Path>,
 ) -> Result<AtomwriteConfig, AtomwriteError> {

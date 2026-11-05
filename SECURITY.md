@@ -7,12 +7,13 @@
 ## Supported Versions
 - The latest release receives security fixes, and older releases receive best-effort patches for critical vulnerabilities only
 - Upgrade to the latest version before reporting, because a fix lands on the current line first
-- The table lists the release line, and crates.io carries 0.1.36 while 0.1.37 is the version in preparation, so the pin in this document says which one is under test
+- The table lists the release line, and crates.io carries 0.1.37 while 0.1.38 is the version in preparation, so the pin in this document says which one is under test
 - The versions 0.1.15, 0.1.16, 0.1.17, 0.1.21 and 0.1.33 were never published, so they are not listed
 
 | Version | Supported          |
 |---------|--------------------|
-| 0.1.37  | Yes (in preparation) |
+| 0.1.38  | Yes (in preparation) |
+| 0.1.37  | Best-effort        |
 | 0.1.36  | Best-effort        |
 | 0.1.35  | Best-effort        |
 | 0.1.34  | Best-effort        |
@@ -109,12 +110,25 @@
 - `crossbeam-epoch`, `rustls`, `anyhow` and `memmap2` were updated to their patched versions in the same pass
 - Lesson recorded: run `cargo audit` and `cargo deny check` BEFORE the version bump, not after the docs are written
 
-### Current state of the v0.1.37 tree
-- `cargo audit` on `Cargo.lock` (434 crate dependencies, 1338 advisories in the local database, which was not re-fetched in that run): exit 0, no vulnerability and no warning, measured on 2026-10-19
-- `cargo deny check`: advisories ok, bans ok, licenses ok, sources ok, measured on 2026-10-19
+### Current state of the v0.1.38 tree
+- `cargo audit` on `Cargo.lock` (566 crate dependencies, 1403 advisories in the local database, last updated 2026-11-03): exit 0, no vulnerability and no warning, measured on 2026-11-04
+- `cargo deny check`: advisories ok, bans FAILED, licenses FAILED, sources ok, exit 6, measured on 2026-11-04 on this tree, and the failures are named in the section below
 - The unmaintained-crate notices of the earlier audits, `instant` (`RUSTSEC-2024-0384`) and `unsafe-libyaml` (`RUSTSEC-2024-0449`), are gone: neither those two nor `serde_yaml` or `serde_yaml_ng` is in `Cargo.lock`, and `cargo tree --locked --all-features -i <crate>` answers "did not match any packages" for each
 - The YAML rules of `transform` are read with `serde-saphyr` 1.3.0 and `notify` is on 8.x (ADR-0057 sections 4 and 5)
 - Re-run both tools on the final tree before every release, the numbers above are a measurement of one day
+
+### v0.1.38 dependency gate — FAILED, not published
+- `cargo deny check` exited 6 on 2026-11-04, and the failing checks are `bans` and `licenses`
+- `heic` 0.1.6 is a direct dependency of this crate and declares `AGPL-3.0-only OR LicenseRef-Imazen-Commercial`, so both halves of the expression are rejected by the `deny.toml` allowlist
+- AGPL-3.0 is a copyleft licence, so publishing this tree to crates.io would put an AGPL dependency under every consumer of the binary
+- The remaining two failures are duplicate entries the 33 `skip` rows do not carry: `fearless_simd` 0.7.0 next to 1.2.0 (through `hayro` -> `vello_cpu`) and the duplicate pairs of `syn` and `weezl`
+- The gate stays red until `heic` is removed, replaced by a permissively licensed decoder, or the owner records a written exception with the reason, which the allowlist rule requires to be explicit
+
+### OCR model download has no integrity check (open gap)
+- `read --ocr` fetches two models from `huggingface.co/robertknight/ocrs` with a 64 MiB cap and a 120 second timeout, and neither a checksum nor a signature is verified before the file is renamed into the cache
+- The tree-sitter bundle checks the `sha256` listed in its manifest; the OCR path has no equivalent, so a compromised host or a proxy in the middle can serve a different model and the product loads it in-process
+- Mitigation today: pre-populate `$XDG_CACHE_HOME/atomwrite/models/` from a trusted machine, and keep that directory writable by your user only
+- The fix is to pin one `sha256` per model in `src/constants.rs` and refuse a file that does not match, which is open work and is not part of 0.1.38
 
 ### Content-source paths and workspace jail (policy, not a vulnerability)
 - `--old-file` / `--new-file` content-source paths remain under the workspace jail (no OS `/tmp` allowlist)
@@ -122,7 +136,7 @@
 - A `WORKSPACE_JAIL` (exit 126) on `/tmp/...` old/new files is intended policy (v0.1.36 / ADR-0055), not a security hole to bypass
 
 
-## Dependency Security Posture (v0.1.37)
+## Dependency Security Posture (v0.1.38)
 - Memory safety: `unsafe` is denied crate-wide (`#![deny(unsafe_code)]` in `src/lib.rs` and `src/main.rs`) and allowed only in `src/signal.rs` and `src/platform.rs` (`#![allow(unsafe_code)]` at line 5 of each), where 8 `unsafe` blocks wrap `signal-hook` registration and libc calls (`_exit`, `poll`, `write` to stderr, `fcntl` on macOS, `renameat2` on Linux, console setup on Windows)
 - The 8 blocks are at `src/signal.rs:260`, `src/signal_handlers.inc.rs:31,143,171,219` (included from `src/signal.rs`) and `src/platform.rs:97,203,275`, counted with `rg 'unsafe\s*\{' src`, which returns 9 matches because `src/commands/scope/queries.inc.rs:77` holds the literal text of a query pattern, and each block carries a `SAFETY:` comment
 - BLAKE3: used for checksums only, not for cryptographic security
@@ -131,7 +145,7 @@
 - The downloaded parsers are native libraries loaded into the process (`dynamic-loading`), so they run as code: keep the cache directory (`$XDG_CACHE_HOME/tree-sitter-language-pack/`) writable only by your user
 - To run with no download, pre-populate that cache or build without `ast`, see `PRIVACY.md`
 - deny.toml: includes `MPL-2.0`, `CDLA-Permissive-2.0`, `CC0-1.0` in the allowlist, and has 33 `skip` entries, each with a reason, for the unavoidable coexistence of duplicate crate versions (`getrandom` 0.2/0.3, `rustix` 0.x/1.x, `windows-sys` 0.52/0.59 and the Windows crates of the opt-in `watch` feature)
-- MSRV: Rust 1.90 stable (`rust-version` in `Cargo.toml`, raised from 1.88 in v0.1.37, see ADR-0057)
+- MSRV: Rust 1.90 stable (`rust-version` in `Cargo.toml`, raised from 1.89 in v0.1.38, see ADR-0075)
 
 
 ## Hall of Fame
@@ -145,6 +159,8 @@
 - Avoid running atomwrite as root
 - Validate `--expect-checksum` in multi-agent environments
 - Review NDJSON error output for `ok: false`, `retryable`, and `suggestion` fields (exit-first parse)
+- A bounded `read` answers `truncated: true` and a `next` range, so never treat a truncated read as the whole file, because content past the cap stays invisible to the review
+- On network filesystems `flock` can be silently ignored, so keep `--expect-checksum` as the extra net there, and remember the sidecar is best effort while the inode lock carries a read-only directory
 - Keep atomwrite updated to the latest version
 - Audit the `batch` manifest before execution in production
 - Subscribe to repository notifications for timely security updates

@@ -191,6 +191,18 @@ pub struct ConfigOutput {
     /// Problems that did not stop the run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Write strategy the atomic engine used, present only when `set` or
+    /// `unset` wrote the file.
+    ///
+    /// `path`, `list`, `get` and `doctor` read and write nothing, so they omit
+    /// the field instead of claiming a mechanism they never used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub write_strategy: Option<&'static str>,
+    /// Why a requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_skipped: Option<String>,
     /// Wall-clock time in milliseconds.
     pub elapsed_ms: u64,
 }
@@ -215,6 +227,8 @@ impl ConfigOutput {
             status: None,
             config_files: None,
             warnings: Vec::new(),
+            write_strategy: None,
+            backup_skipped: None,
             elapsed_ms: 0,
         }
     }

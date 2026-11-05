@@ -30,6 +30,7 @@ fn run(ws: &Path, args: &[&str], stdin: &str) -> Out {
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
     let mut child = common::hermetic(Command::new(bin))
         .args([
+            "-v",
             "--workspace",
             ws.to_str().expect("utf8 workspace"),
             "--no-progress",
@@ -74,7 +75,7 @@ fn search_without_match_emits_one_terminal_event() {
     assert_eq!(terminal["match_count"], 0);
     assert_eq!(terminal["files_matched"], 0);
     assert!(
-        out.events.iter().all(|e| e.get("error").is_none()),
+        out.events.iter().all(|e| e.get("type").is_some()),
         "no standalone error envelope after the summary: {:?}",
         out.events
     );

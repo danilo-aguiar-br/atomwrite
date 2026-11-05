@@ -788,7 +788,7 @@ fn error_envelope_keeps_its_false_verdict() {
     let events = common::parse_ndjson(&output.stdout);
     let err = events
         .iter()
-        .find(|e| e["error"] == true)
+        .find(|e| e["ok"] == false)
         .expect("an error envelope must be emitted");
     assert_eq!(err["ok"], false);
     assert_eq!(err["code"], "FILE_NOT_FOUND");
@@ -841,7 +841,12 @@ fn error_envelope_declares_the_suggestion_language() {
         .output()
         .expect("run en");
     let en_events = common::parse_ndjson(&en.stdout);
-    assert_eq!(en_events[0]["suggestion_lang"], "en");
+    // v0.1.38 — English is the language `message` is already written in, so the
+    // field is absent there and present only when the text differs.
+    assert!(
+        en_events[0].get("suggestion_lang").is_none(),
+        "an English suggestion must not declare a language: {en_events:?}"
+    );
     let en_suggestion = en_events[0]["suggestion"].as_str().unwrap_or("");
     assert!(
         en_suggestion.contains("verify the file path exists"),
@@ -850,6 +855,7 @@ fn error_envelope_declares_the_suggestion_language() {
 
     let pt = atomwrite()
         .args([
+            "-v",
             "--locale",
             "pt-BR",
             "--workspace",
@@ -932,10 +938,10 @@ fn error_envelope_keeps_declared_key_order() {
     let text = String::from_utf8_lossy(&out.stdout);
     let line = text.lines().next().expect("one error line");
 
-    // `ErrorJson` declares `error` first, then `ok`; alphabetical order would
-    // put `code` or `error_class` at the front instead.
+    // `ErrorJson` declares `ok` first; alphabetical order would put `code`
+    // or `error_class` at the front instead.
     assert!(
-        line.starts_with("{\"error\":true,\"ok\":false,\"code\":"),
+        line.starts_with("{\"ok\":false,\"code\":"),
         "error envelope must keep its declared key order, got: {line}"
     );
 }

@@ -550,7 +550,7 @@ fn consume_sorted(
     // order is "target as typed, then path inside it"; the map alone sorts by
     // absolute path, which puts `sub/b.rs` before a named `a.rs`.
     let mut blocks: Vec<(std::path::PathBuf, Vec<SearchEvent>)> = buffer.into_iter().collect();
-    if args.format == crate::cli::SearchFormat::Text {
+    if args.format == Some(crate::cli::SearchFormat::Text) {
         blocks.sort_by_cached_key(|(path, _)| text.order_key(path));
     }
     for (_, block) in blocks {

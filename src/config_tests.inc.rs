@@ -6,7 +6,7 @@ mod tests {
     #[test]
     fn missing_file_returns_defaults() {
         let config = merge_layers(None, None).unwrap();
-        assert!(config.defaults.backup);
+        assert_eq!(config.defaults.backup, None);
         assert_eq!(config.defaults.retention, 5);
         assert_eq!(config.fuzzy.mode, "auto");
     }
@@ -14,7 +14,7 @@ mod tests {
     #[test]
     fn local_config_overrides_defaults() {
         let config = load_local("[defaults]\nbackup = false\nretention = 3\n").unwrap();
-        assert!(!config.defaults.backup);
+        assert_eq!(config.defaults.backup, Some(false));
         assert_eq!(config.defaults.retention, 3);
     }
 

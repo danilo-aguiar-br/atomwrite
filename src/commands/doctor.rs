@@ -317,7 +317,12 @@ fn workspace_checks(global: &GlobalArgs) -> Vec<DoctorCheck> {
                                 "pass",
                                 format!(
                                     "defaults.backup={}, retention={}",
-                                    cfg.defaults.backup, cfg.defaults.retention
+                                    cfg.defaults.backup.map_or("unset", |on| if on {
+                                        "true"
+                                    } else {
+                                        "false"
+                                    }),
+                                    cfg.defaults.retention
                                 ),
                             ),
                             Err(e) => check("config_load", "fail", format!("config error: {e}")),

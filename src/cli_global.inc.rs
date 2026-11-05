@@ -6,17 +6,17 @@
 /// Global flags shared across all subcommands.
 pub struct GlobalArgs {
     /// Verbosity level (repeat for more: -v, -vv, -vvv).
-    #[arg(short, long, action = clap::ArgAction::Count, global = true, help = "Increase verbosity (-v info, -vv debug, -vvv trace)")]
+    #[arg(short, long, action = clap::ArgAction::Count, global = true, hide_short_help = true, help = "Increase verbosity (-v info, -vv debug, -vvv trace)")]
     pub verbose: u8,
 
     /// Quiet level (repeat for less: -q, -qq).
-    #[arg(short, long, action = clap::ArgAction::Count, global = true, help = "Decrease verbosity (-q error, -qq off)")]
+    #[arg(short, long, action = clap::ArgAction::Count, global = true, hide_short_help = true, help = "Decrease verbosity (-q error, -qq off)")]
     pub quiet: u8,
 
     /// Workspace root for path jail validation.
     #[arg(
         long,
-        global = true,
+        global = true, hide_short_help = true,
         value_hint = ValueHint::DirPath,
         help = "Workspace root for path jail validation"
     )]
@@ -25,18 +25,18 @@ pub struct GlobalArgs {
     /// Explicit config file path (overrides workspace `.atomwrite.toml` and XDG config).
     #[arg(
         long,
-        global = true,
+        global = true, hide_short_help = true,
         value_hint = ValueHint::FilePath,
         help = "Path to .atomwrite.toml (explicit override; fails if missing/malformed)"
     )]
     pub config: Option<PathBuf>,
 
     /// Color output mode.
-    #[arg(long, global = true, value_enum, default_value_t = ColorChoice::Auto, help = "Control colored output")]
+    #[arg(long, global = true, hide_short_help = true, value_enum, default_value_t = ColorChoice::Auto, help = "Control colored output")]
     pub color: ColorChoice,
 
     /// Disable colored output (equivalent to --color never).
-    #[arg(long, global = true, help = "Disable colored output", action = clap::ArgAction::SetTrue)]
+    #[arg(long, global = true, hide_short_help = true, help = "Disable colored output", action = clap::ArgAction::SetTrue)]
     pub no_color: bool,
 
     /// Write the process ID to this path once the signal handlers are installed.
@@ -45,22 +45,22 @@ pub struct GlobalArgs {
     /// receive signals. One-shot agents normally omit it.
     #[arg(
         long = "ready-file",
-        global = true,
+        global = true, hide_short_help = true,
         value_hint = ValueHint::FilePath,
         help = "Write the PID after signal handlers are ready (test harness use)"
     )]
     pub ready_file: Option<PathBuf>,
 
     /// Disable .gitignore filtering.
-    #[arg(long, global = true, help = "Do not respect .gitignore files", action = clap::ArgAction::SetTrue)]
+    #[arg(long, global = true, hide_short_help = true, help = "Do not respect .gitignore files", action = clap::ArgAction::SetTrue)]
     pub no_gitignore: bool,
 
     /// Include hidden files and directories.
-    #[arg(long, global = true, help = "Include hidden files and directories", action = clap::ArgAction::SetTrue)]
+    #[arg(long, global = true, hide_short_help = true, help = "Include hidden files and directories", action = clap::ArgAction::SetTrue)]
     pub hidden: bool,
 
     /// Follow symbolic links during traversal.
-    #[arg(long, global = true, help = "Follow symbolic links", action = clap::ArgAction::SetTrue)]
+    #[arg(long, global = true, hide_short_help = true, help = "Follow symbolic links", action = clap::ArgAction::SetTrue)]
     pub follow_symlinks: bool,
 
     /// Maximum number of parallel workers for multi-file commands.
@@ -77,7 +77,7 @@ pub struct GlobalArgs {
         short = 'j',
         long = "threads",
         visible_alias = "max-concurrency",
-        global = true,
+        global = true, hide_short_help = true,
         value_name = "N",
         help = "Maximum parallel workers (0 or omitted = automatic: all cores up to 16, capped by RAM; N = exactly N)"
     )]
@@ -86,7 +86,7 @@ pub struct GlobalArgs {
     /// Maximum allowed file size in bytes.
     #[arg(
         long,
-        global = true,
+        global = true, hide_short_help = true,
         help = "Maximum file size in bytes (default: 1 GiB, larger files are rejected)"
     )]
     pub max_filesize: Option<u64>,
@@ -99,7 +99,7 @@ pub struct GlobalArgs {
     #[arg(
         long = "timeout-secs",
         visible_alias = "timeout",
-        global = true,
+        global = true, hide_short_help = true,
         default_value_t = crate::constants::DEFAULT_TIMEOUT_SECS,
         help = "Global operation timeout in seconds (0 disables, exit 124 on deadline)"
     )]
@@ -108,7 +108,7 @@ pub struct GlobalArgs {
     /// Suppress NDJSON `progress` heartbeats (batch/replace).
     #[arg(
         long,
-        global = true,
+        global = true, hide_short_help = true,
         help = "Disable NDJSON progress events on long operations",
         action = clap::ArgAction::SetTrue
     )]
@@ -117,7 +117,7 @@ pub struct GlobalArgs {
     /// Emit JSON Schema for subcommand output and exit.
     #[arg(
         long,
-        global = true,
+        global = true, hide_short_help = true,
         help = "Emit JSON Schema for the subcommand output and exit",
         action = clap::ArgAction::SetTrue
     )]
@@ -131,7 +131,7 @@ pub struct GlobalArgs {
     /// typed error instead of emitting an empty document.
     #[arg(
         long = "print-schema",
-        global = true,
+        global = true, hide_short_help = true,
         value_name = "NAME",
         num_args = 0..=1,
         default_missing_value = "",
@@ -148,7 +148,7 @@ pub struct GlobalArgs {
     #[arg(
         long = "non-interactive",
         visible_alias = "no-input",
-        global = true,
+        global = true, hide_short_help = true,
         help = "Declare non-interactive execution: never prompt, never read confirmation from stdin",
         action = clap::ArgAction::SetTrue
     )]
@@ -161,7 +161,7 @@ pub struct GlobalArgs {
     /// flag with a typed error rather than treating it as a no-op.
     #[arg(
         long = "confirm-side-effect",
-        global = true,
+        global = true, hide_short_help = true,
         help = "Acknowledge the command side effect (required by contract-gated commands)",
         action = clap::ArgAction::SetTrue
     )]
@@ -174,7 +174,7 @@ pub struct GlobalArgs {
     /// default.
     #[arg(
         long = "allow-truncate",
-        global = true,
+        global = true, hide_short_help = true,
         requires = "max_output_bytes",
         help = "Opt in to value truncation; required by --max-output-bytes",
         action = clap::ArgAction::SetTrue
@@ -182,7 +182,7 @@ pub struct GlobalArgs {
     pub allow_truncate: bool,
 
     /// Accepted for compatibility but ignored — output is always NDJSON.
-    #[arg(long, global = true, hide = true, action = clap::ArgAction::SetTrue)]
+    #[arg(long, global = true, hide_short_help = true, hide = true, action = clap::ArgAction::SetTrue)]
     pub json: bool,
 
     /// Override the UI locale for translated suggestions and human stderr (`en`, `pt-BR`).
@@ -192,7 +192,7 @@ pub struct GlobalArgs {
     /// messages always stay in English, only the suggestions follow the locale.
     #[arg(
         long = "locale",
-        global = true,
+        global = true, hide_short_help = true,
         value_parser = crate::locale::parse_cli_locale,
         help = "Override locale (en, pt-BR)"
     )]
@@ -207,7 +207,7 @@ pub struct GlobalArgs {
     /// cost of one command in isolation.
     #[arg(
         long,
-        global = true,
+        global = true, hide_short_help = true,
         help = "Skip the startup wal-heal pass (default: remove journals older than 3600 s within a 100 ms budget)",
         action = clap::ArgAction::SetTrue
     )]
@@ -220,7 +220,7 @@ pub struct GlobalArgs {
     #[arg(
         long = "select",
         visible_alias = "fields",
-        global = true,
+        global = true, hide_short_help = true,
         value_name = "KEYS",
         help = "Project NDJSON to top-level keys (CSV); alias --fields"
     )]
@@ -232,7 +232,7 @@ pub struct GlobalArgs {
     /// `true`/`false`/`null`/number/string. Applies to all events including errors.
     #[arg(
         long = "filter",
-        global = true,
+        global = true, hide_short_help = true,
         value_name = "EXPR",
         action = clap::ArgAction::Append,
         help = "Filter NDJSON events by top-level key=value (repeatable AND)"
@@ -244,7 +244,7 @@ pub struct GlobalArgs {
     /// Long-only: the short `-n` belongs to `replace --max-replacements`.
     #[arg(
         long = "limit",
-        global = true,
+        global = true, hide_short_help = true,
         value_name = "N",
         help = "Max NDJSON events after --filter (long-only, -n belongs to replace)"
     )]
@@ -263,7 +263,7 @@ pub struct GlobalArgs {
     // sharing `sort` with `SearchArgs` would collide.
     #[arg(
         long = "sort-by",
-        global = true,
+        global = true, hide_short_help = true,
         value_name = "KEY",
         help = "Sort NDJSON events by key, path-line, or line-path (buffers until flush)"
     )]
@@ -276,7 +276,7 @@ pub struct GlobalArgs {
     /// a sort flag is also set.
     #[arg(
         long = "dedupe",
-        global = true,
+        global = true, hide_short_help = true,
         value_name = "KEYS",
         action = clap::ArgAction::Append,
         help = "Drop events whose CSV key tuple was already seen (repeatable)"
@@ -290,7 +290,7 @@ pub struct GlobalArgs {
     /// Use with `--sort-by` to also order the surviving groups.
     #[arg(
         long = "aggregate",
-        global = true,
+        global = true, hide_short_help = true,
         value_name = "KEY:OP[:FIELD]",
         action = clap::ArgAction::Append,
         conflicts_with = "diff_against",
@@ -306,7 +306,7 @@ pub struct GlobalArgs {
     /// unchanged. Contract: stdin carries the table, stdout carries results.
     #[arg(
         long = "join",
-        global = true,
+        global = true, hide_short_help = true,
         value_name = "KEY:SUFFIX",
         action = clap::ArgAction::Append,
         help = "Join the NDJSON table on stdin into each event (repeatable): key:suffix"
@@ -319,7 +319,7 @@ pub struct GlobalArgs {
     /// on a boundary. Non-string keys and shorter values pass through.
     #[arg(
         long = "truncate-content",
-        global = true,
+        global = true, hide_short_help = true,
         value_name = "KEY:LEN",
         action = clap::ArgAction::Append,
         help = "Truncate a string key to N characters (repeatable): key:len"
@@ -333,7 +333,7 @@ pub struct GlobalArgs {
     /// prefix is replaced whole. Keeps the agent from echoing tokens onward.
     #[arg(
         long = "redact",
-        global = true,
+        global = true, hide_short_help = true,
         help = "Replace secret-shaped values with [redacted] before emitting",
         action = clap::ArgAction::SetTrue
     )]
@@ -345,7 +345,7 @@ pub struct GlobalArgs {
     /// (composed vs decomposed accents) and the agent needs one form.
     #[arg(
         long = "normalize-encoding",
-        global = true,
+        global = true, hide_short_help = true,
         help = "Normalize all string values to Unicode NFC",
         action = clap::ArgAction::SetTrue
     )]
@@ -359,7 +359,7 @@ pub struct GlobalArgs {
     /// workspace jail.
     #[arg(
         long = "diff-against",
-        global = true,
+        global = true, hide_short_help = true,
         value_name = "PATH",
         value_hint = ValueHint::FilePath,
         conflicts_with = "truncate_content",
@@ -374,7 +374,7 @@ pub struct GlobalArgs {
     /// reads the counts. Opt-in by contract — see `--allow-truncate`.
     #[arg(
         long = "max-output-bytes",
-        global = true,
+        global = true, hide_short_help = true,
         value_name = "BYTES",
         requires = "allow_truncate",
         help = "Cap the byte length of every string value (needs --allow-truncate)"

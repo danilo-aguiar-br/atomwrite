@@ -90,7 +90,6 @@ pub fn parse_join_stdin(
 /// verdict. An event without the key, or whose key has no row, keeps its shape.
 pub fn apply_join(v: &mut Value, table: &JoinTable) -> bool {
     let is_verdict = v.get("ok") == Some(&Value::Bool(false))
-        || v.get("error") == Some(&Value::Bool(true))
         || v.get("type").and_then(Value::as_str) == Some("summary");
     if is_verdict {
         return false;

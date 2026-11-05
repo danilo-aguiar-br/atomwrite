@@ -51,12 +51,15 @@ pub fn cmd_search(
         }
         .into());
     }
+    // The positional is optional so `-e/--regex` can carry every pattern; a
+    // command line with neither is refused here, before any walk starts.
+    validate_patterns(args)?;
 
     let workspace = global.resolve_workspace()?;
     // The text format reproduces `rg -n`, so the combinations it cannot
     // express are refused up front instead of printed as something else.
     validate_text_format(args)?;
-    let text_mode = args.format == crate::cli::SearchFormat::Text;
+    let text_mode = args.format == Some(crate::cli::SearchFormat::Text);
     let canonical_paths = crate::commands::path_resolution::resolve_paths_against_workspace(
         &search_roots(args),
         &workspace,
@@ -148,6 +151,29 @@ pub fn cmd_search(
         return Ok(());
     }
 
+    // Nothing searched is not the same as nothing found. When every file the
+    // walk recognised as text was absent and only binary files were skipped,
+    // `NO_MATCHES` would book a proof of absence the run never earned.
+    let skipped = run.files_skipped.load(Ordering::Relaxed);
+    if !has_matches && skipped > 0 && run.files_visited.load(Ordering::Relaxed) == 0 {
+        return Err(crate::error::AtomwriteError::AllSkippedBinary { files: skipped }.into());
+    }
+
+    // `--limit` is a page, not the end of the answer. When the budget filled,
+    // both formats say so with the same sentence: NDJSON carries it in `hint`,
+    // and text prints it on stderr because it has no terminal record. Without
+    // it, `--format text --limit 1` printed one line and zero bytes of stderr,
+    // hiding that the tree held more.
+    let limit_hint = crate::output::limit_reached().then(|| match args.limit {
+        Some(cap) => format!(
+            "the search stopped after {} of the --limit of {cap} matches; more matches were not shown",
+            tally.total_matches
+        ),
+        None => format!(
+            "the search stopped after {} matches; more matches were not shown",
+            tally.total_matches
+        ),
+    });
     let files_skipped = run.files_skipped.load(Ordering::Relaxed);
     // The matched counts come from the CONSUMER, not the walker. The producer
     // tallies every file it scanned, including files whose blocks the consumer
@@ -168,6 +194,7 @@ pub fn cmd_search(
         files_budget_dropped: Some(crate::output::budget_dropped()).filter(|n| *n > 0),
         elapsed_ms: start.elapsed().as_millis() as u64,
         walker_stopped_early: run.walk_stopped_early().then_some(true),
+        hint: limit_hint,
         ..Summary::default()
     };
     // Files that could not be read are reported, never folded into "no match".
@@ -193,7 +220,7 @@ pub fn cmd_search(
 /// Returns `AtomwriteError::InvalidValue` when the combination is unsupported.
 fn validate_text_format(args: &SearchArgs) -> Result<()> {
     use crate::cli_args::SearchTarget;
-    if args.format != crate::cli::SearchFormat::Text {
+    if args.format != Some(crate::cli::SearchFormat::Text) {
         return Ok(());
     }
     let refusal = if args.multiline {
@@ -464,6 +491,18 @@ fn passes_file_gates(run: &SearchRun, entry: &ignore::DirEntry) -> bool {
                 "skipping oversized file (G68)"
             );
             run.files_skipped.fetch_add(1, Ordering::Relaxed);
+            // Same rule as the binary skip: a caller reading only stdout must
+            // not conclude the text is absent from a file that was never read.
+            crate::best_effort::best_effort(
+                writeln!(
+                    std::io::stderr().lock(),
+                    "atomwrite: skipped oversized {} ({} bytes > --max-filesize {}; raise it to search)",
+                    entry.path().display(),
+                    meta.len(),
+                    run.max_filesize
+                ),
+                "report oversized skip on stderr",
+            );
             return false;
         }
     }
@@ -482,6 +521,17 @@ fn passes_file_gates(run: &SearchRun, entry: &ignore::DirEntry) -> bool {
                 // read, and an agent that asks "why wasn't my file searched"
                 // reads exactly this field. A silent skip left it saying zero.
                 run.files_skipped.fetch_add(1, Ordering::Relaxed);
+                // The skip also goes to stderr, because a caller reading only
+                // stdout must not conclude the text is absent from a file that
+                // was never opened.
+                crate::best_effort::best_effort(
+                    writeln!(
+                        std::io::stderr().lock(),
+                        "atomwrite: skipped binary {} (--binary to search it)",
+                        entry.path().display()
+                    ),
+                    "report binary skip on stderr",
+                );
                 return false;
             }
             // The probe could not read the file: report it once here, because

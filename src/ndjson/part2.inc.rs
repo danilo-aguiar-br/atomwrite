@@ -51,7 +51,10 @@ pub struct SearchMatch {
     /// Byte offset of the match from the start of the file.
     pub byte_offset: u64,
     /// Individual capture groups within the matched line.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    ///
+    /// `default` keeps the field out of `required` in the published schema,
+    /// because the event omits it when the match captured nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub submatches: Vec<Submatch>,
 }
 
@@ -234,6 +237,15 @@ pub struct TransformResult {
     pub checksum_after: String,
     /// Operation duration in milliseconds.
     pub elapsed_ms: u64,
+    /// Write strategy the atomic layer used: `rename`, `inplace` or `copyback`.
+    ///
+    /// A dry run reports `none`, because the event describes the rewrite the
+    /// run would make and no write path was taken.
+    pub write_strategy: &'static str,
+    /// Why the requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_skipped: Option<String>,
     /// Local diagnostic for a payload that looks destructive (B-013).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub risk_assessment: Option<WriteRiskAssessment>,
@@ -273,6 +285,24 @@ pub struct BatchOpResult<'a> {
     /// Error message if the operation failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Write strategy the operation used, absent when it wrote no content.
+    ///
+    /// The value is `'static` so the parallel fan-out can carry it across
+    /// threads without borrowing the manifest entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub write_strategy: Option<&'static str>,
+    /// Why a requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_skipped: Option<String>,
+    /// Copy this operation created, or the snapshot the transaction already held.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    pub backup_path: Option<String>,
+    /// Advice the operation publishes because a flag changed nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     /// Operation duration in milliseconds.
     pub elapsed_ms: u64,
 }

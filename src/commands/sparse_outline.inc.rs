@@ -20,10 +20,18 @@ fn sparse_outline(
     // Excludes prune the walk; includes are matched by name below, but are
     // compiled here so an invalid glob is refused instead of silently ignored.
     crate::walk_globs::validate(&args.include, &[])?;
+    // The walk honors `--hidden` like every other scanning verb. The tool's own
+    // journal is a dotfile, so the hidden rule already keeps it out of a default
+    // run; `--hidden` or the verb's own `--all` asks for every entry and gets
+    // it, which is what `count --hidden` and `sparse list` already answer.
     let walker = crate::commands::build_scoped_walker_flavored(
         std::slice::from_ref(&root),
         global,
-        crate::commands::WalkerFlavor::AlwaysVisitHidden,
+        if args.all {
+            crate::commands::WalkerFlavor::AlwaysVisitHidden
+        } else {
+            crate::commands::WalkerFlavor::RespectGlobalFlags
+        },
         &[],
         &args.exclude,
     )?;
@@ -53,9 +61,14 @@ fn sparse_outline(
             if !entry.file_type().is_some_and(|ft| ft.is_file()) {
                 return None;
             }
+            // An outline of a timestamped copy describes content the caller
+            // already has under another name, so the copy is not an item.
+            if crate::commands::is_backup_path(entry.path()) {
+                return None;
+            }
             let path = entry.path().to_path_buf();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !include.is_empty() {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 let ok = include.iter().any(|pat| {
                     if let Some(suf) = pat.strip_prefix("*.") {
                         name.ends_with(suf)

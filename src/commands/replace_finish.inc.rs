@@ -187,6 +187,9 @@ enum ReplaceEvent {
         strategies_tried: Option<u64>,
         word_ignored: Option<bool>,
         risk_assessment: Option<crate::ndjson_types::WriteRiskAssessment>,
+        backup_path: Option<String>,
+        write_strategy: &'static str,
+        backup_skipped: Option<String>,
     },
     Progress {
         done: u64,
@@ -254,6 +257,9 @@ fn drain_replace_events(
                 strategies_tried,
                 word_ignored,
                 risk_assessment,
+                backup_path,
+                write_strategy,
+                backup_skipped,
             } => {
                 let path_str = path.display().to_string();
                 writer.write_event(&ReplaceResult {
@@ -272,6 +278,9 @@ fn drain_replace_events(
                     strategies_tried,
                     word_ignored,
                     risk_assessment,
+                    backup_path,
+                    write_strategy,
+                    backup_skipped,
                 })?;
             }
             ReplaceEvent::Progress { done, total } => {

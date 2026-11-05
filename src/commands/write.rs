@@ -325,6 +325,8 @@ pub fn cmd_write(
         checksum: result.checksum,
         checksum_before: result.checksum_before,
         backup_path: result.backup_path,
+        backup_skipped: result.backup_skipped,
+        write_strategy: result.write_strategy,
         elapsed_ms: start.elapsed().as_millis() as u64,
         stdin_bytes_read,
         wal_policy: args.wal_policy.as_str(),

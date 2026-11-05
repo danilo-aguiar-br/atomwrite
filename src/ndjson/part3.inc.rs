@@ -96,6 +96,20 @@ impl FailureTally {
         self.count
     }
 
+    /// Whether a recorded failure names `path`, an ancestor or a descendant.
+    ///
+    /// A directory that survives because something inside it failed is already
+    /// explained by that failure, so the caller does not add a second verdict
+    /// saying the removal left an unexplained entry. The list is capped at
+    /// `summary.errors_max_entries`, so this answers from the published set.
+    #[must_use]
+    pub fn explains(&self, path: &std::path::Path) -> bool {
+        self.items.iter().any(|item| {
+            let failed = std::path::Path::new(&item.path);
+            path.starts_with(failed) || failed.starts_with(path)
+        })
+    }
+
     /// Split the tally into the count, the capped entries and the first error.
     ///
     /// For a terminal event whose shape is its own (not [`Summary`]), which

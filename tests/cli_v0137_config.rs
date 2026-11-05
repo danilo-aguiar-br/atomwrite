@@ -33,6 +33,7 @@ fn read_with_local_config(ws: &TempDir, body: &str) -> assert_cmd::assert::Asser
     std::fs::write(ws.path().join(".atomwrite.toml"), body).expect("write config");
     atomwrite()
         .args([
+            "-v",
             "--workspace",
             ws.path().to_str().unwrap(),
             "read",

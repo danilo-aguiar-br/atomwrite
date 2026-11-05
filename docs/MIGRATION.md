@@ -4,19 +4,116 @@
 [Leia em Português](MIGRATION.pt-BR.md)
 
 
+## Objectives
+- Spend fewer tokens: one NDJSON object per call replaces the shell pipeline, and `commands --brief` answers in 5 020 bytes where the full tree costs 67 492
+- Lower the financial cost, because the bill follows the tokens and the round trips, and one call replaces the several shell calls a file task needs
+- Reduce errors with an atomic write and a BLAKE3 checksum on every response, so a stale or partial result is caught instead of assumed
+- Reduce hallucinations with a `type` discriminator, a closed schema per verb and an exit code that names the failure
+- Reduce the time spent on each task, because the read, the search and the write run in one process instead of a chain of shell tools
+- Reduce latency with local execution and no network on the file path, measured at medians of 5.6 ms on `read` and 6.7 ms on `write` for small files
+- Multiply the speed of operations with `batch`, `edit-loop`, `replace`, `case`, `transform` and `codemod` settling many files in one call
+- Cut the lead time between the request and the verified result, because the response already carries the checksum, the `target_resolved` and the next step
+- Make the agent faster, more effective and more assertive, since the exit code, the `code` and the `suggestion` say what to do next without a retry guess
+
+
 ## Current Version
-- atomwrite is at v0.1.37
-- This document covers migration from v0.1.0 through v0.1.37
+- atomwrite is at v0.1.38
+- This document covers migration from v0.1.0 through v0.1.38
 - See the sections below for additive changes and breaking changes in each version
 
 
-## Work folded into v0.1.37: read expansion and search ceiling (Current)
+## Work folded into v0.1.38: the lean failure envelope
+### What Changes
+- The default failure envelope carries `ok`, `code`, `exit`, `path` when there is one, `suggestion`, `target_resolved` and `target_source`, and it no longer carries `error`, `message`, `error_class`, `retryable` or `suggestion_lang`
+- Pass `-v` to get those four keys back, on the error envelope and on a failed summary alike, and the failed summary keeps `code` and `exit` and nothing else of the failure detail
+- The published error and terminal schemas require `ok`, `code` and `exit` on a failure and keep the four diagnostic keys optional, so a validator regenerated from the new files accepts both shapes
+- A caller that branches on `retryable` must pass `-v` or map the code through the retry table, and the exit code stays the primary signal
+- Pin: `cargo install atomwrite --locked --version "^0.1.38"`
+
+
+## Work folded into v0.1.38: the lean record, the refused picture and the Markdown section
+### What Changes
+- `output.profile = "lean"` drops the digests, the byte counts and the timing from a successful mutation record, which took one `apply` on a three-line file from 433 bytes to 196, and `full` stays the default
+- A file whose image signature is damaged fails `read` with exit 65 `INVALID_INPUT` instead of returning its bytes as text, so a caller that treated every readable file as text must handle the refusal
+- `outline` reads a Markdown heading as a `section` that runs to the end of its own section, and `read --symbol NAME` returns that whole section with its sub-sections
+- Pin: `cargo install atomwrite --locked --version "^0.1.38"`
+
+
+## Work folded into v0.1.38: the recursive delete owns the tree
+### What Changes
+- `delete --recursive <dir>` without `--include`, `--exclude`, `--older-than` or `--limit` now removes the whole named tree, including hidden, ignored, linked, fifo, socket and device entries, so exit 0 means the directory is gone
+- A caller that received exit 65 from a filtered delete in the previous release now receives exit 0 with `dirs_left` and `entries_left`, because the leftover is what the filter asked to keep
+- A caller that received exit 65 from an unfiltered delete now receives the measured I/O code with the surviving path in `errors[]`, or exit 0 when nothing survives
+- A caller that reads the `hint` to learn that `--hidden` would help must stop sending the flag, which is a no-op on `delete` and emits one diagnostic line
+- A caller that relied on `--follow-symlinks` to delete the target of a link must name the target on the invocation line, because the link is always removed as an entry and never followed
+- A caller that passes `--backup` with a directory root now receives exit 65 before any change, because the copy would be created inside the tree and outlive the removal, so run `copy -r` first or pass `--no-backup`
+- A caller that parses `checksum_before` as required must accept its absence on a fifo, socket or device event, because there is no content to hash
+- A caller that reads `dirs_left`, `entries_left` or `hint` from `--plan` or `--dry-run` must stop requiring them, because a plan removes nothing and publishes no leftover
+- A `copy -r` now includes a path listed in `.ignore`, the global gitignore or `info/exclude`, which the tree-copy contract already promised
+- Pin: `cargo install atomwrite --locked --version "^0.1.38"`
+
+
+## Work folded into v0.1.38: the batch undo and the array target
+### What Changes
+- `target_resolved` is always an array, including a run that resolved a single target, so the field no longer changes type with the count
+- Read the subject with `jaq -r '.target_resolved[0]'` or `jq -r '.target_resolved[0]'`; a program reads `event["target_resolved"][0]`
+- The published schema declares `target_resolved` as `array` of strings, so a validator generated from the previous union of string and array must be regenerated
+- `batch` publishes `warnings` on the operation record, so the redundant `--keep-backup` on a `delete` answers there exactly as it answers in the standalone verb
+- `batch` publishes `backup_path` on the operation record when the operation made a copy, and a `move` that refuses a copy of a backup names the refusal in `backup_skipped`
+- The summary of a `batch --transaction` publishes `backups_preserved`, naming the snapshot the commit kept for a deleted or overwritten file
+- A `move` or a `copy` inside `--transaction` keeps the snapshot of the destination it overwrote, because that content lives nowhere else; the source of a `move` stays out, since its content lives on at the destination
+- `write`, `replace`, `edit` and `copy` inside `--transaction` reuse the snapshot the run already made, so `--keep-backup` leaves one copy instead of two, and `backup_path` names the path that survives in `backups_preserved`
+- A `delete` creates a copy only when the call asks, through `--backup` or `[defaults].backup = true`; `--keep-backup` only preserves one that exists, the warning appears only when no copy exists, and the `batch` delete follows the same rule
+- `[defaults].backup` reaches `delete` and the `batch` operations when it is written, because the key now distinguishes absent from `false`; an absent key keeps the rewrite default on and the delete default off, and `retention` still applies to all 15
+- A failed `apply` publishes `backups_preserved` with the copies the rollback left on disk
+- Pin: `cargo install atomwrite --locked --version "^0.1.38"`
+
+
+## Work folded into v0.1.38: `--hidden` and the write verdict
+### What Changes
+- `hash`, `copy -r` and `semantic-search` now hide dotfiles by default, the same way `count`, `list`, `search` and the `sparse` family already did; the flag that restores the previous inventory is `--hidden`
+- Recover the old walk with `atomwrite --workspace "$WS" hash -r . --hidden`, `atomwrite --workspace "$WS" copy -r . dst --hidden` or `atomwrite --workspace "$WS" semantic-search "QUERY" . --hidden`
+- A path named in the invocation is still read without the flag, so `atomwrite --workspace "$WS" hash .env` works as before and the change only affects a walk that never named the dotfile
+- `sparse list` and `sparse outline` take `--all`, which adds the hidden entries to the visit inside the verb; `--all` and `--hidden` ask for the same visit, and the default still hides
+- `copy`, `move`, `delete`, `rollback`, `semantic-merge`, `config set`, `config unset` and every operation of `batch` publish `write_strategy` and `backup_skipped`, so a consumer reads the mechanism from the event instead of inferring it from the syscall
+- `edit`, `replace`, `transform`, `scope`, `case`, `set`, `del`, `edit-loop` and `locale` publish the same two names, a preview publishes `"none"`, and the `del` of an absent key omits `write_strategy`
+- `batch delete` refuses to copy a copy, so a target named as `x.bak.<stamp>` is removed without a second backup and the event carries `backup_skipped`
+- `apply` publishes `backup_path` when the write made a copy, and omits the key when it did not
+- An `apply` that fails after writing a file restores it and publishes one `rollback` record with `ok: false`, and a restoration that fails exits `TRANSACTION_ROLLBACK_FAILED`
+- The rollback of `apply` and of `batch --transaction` compares content instead of inodes, so a file the run itself rewrote comes back; the previous build refused every restoration as state drift and left the tree partially reverted
+- A `batch --transaction` that succeeds removes the pre-mutation snapshot instead of leaving `x.bak.<stamp>` behind, and `--keep-backup` is the only flag that keeps it; `--no-backup` wins over it
+- The `rollback` record of `apply` and of `batch --transaction` names every reverted path in `target_resolved`, always as an array even when a single file came back, and `target_source` says whether the manifest came from `argv` or `stdin`
+- A `batch --transaction` that deletes a file keeps the pre-mutation copy after the commit, because the deleted file lives nowhere else, and `--no-backup` is the only way to forbid that copy
+- A reversal that cannot restore a file publishes a `rollback` record with `failed_paths` and `backups_preserved`, and the snapshots stay on disk for the caller to recover
+- `apply` reports `target_source: "stdin"` when the patch carries its own path line, and `argv` when `--file` names the target on the invocation line
+- `backup_path`, `backup_skipped` and `write_strategy` are plain strings in every published schema, so a validator generated from the previous files still accepts the events
+- A caller that fails on an unknown field must allow the two names; `backup_skipped` is absent when no backup was refused, so the event carries no `null`
+- Pin: `cargo install atomwrite --locked --version "^0.1.38"`
+- Surface: 47 subcommands, unchanged from v0.1.37, and the single source of truth is still `atomwrite agent-surface`
+
+
+## Work folded into v0.1.38: cheaper reads, honest exits (Current)
+### What Changes
+- `read --format raw` now stops at `READ_DEFAULT_MAX_BYTES` (24,000 bytes) and prints one stderr line naming the next `--lines`, so a caller that relied on the whole file must pass `--all` or follow the hint
+- `read --lines` is repeatable and accepts several targets in one call, which the previous refusal turned into exit 65; the merged ranges print in argv order with `==> path <==` headers
+- `read` gained `--number`, `--no-comments`, `--symbol NAME` and `--line N --enclosing`, and `--range` is now an alias of `--lines`
+- A `--lines` window that starts after the last line is an error naming the total, where the previous release answered an empty success
+- `search --format text` is capped and prints one `path:line:col:text` per match, and `search` exits `89 ALL_SKIPPED_BINARY` when every candidate was binary, where the previous release answered `NO_MATCHES`
+- `list --format text` and `outline --format tsv` are new, and `outline` publishes `parse_errors` and `first_error_line`
+- `apply` matches whole lines, so a SEARCH that is a fragment of a line no longer matches; a repeated SEARCH exits 65 unless `--all` is passed
+- `apply` runs the syntax check before and after the swap and refuses when the parse-error count rises; `--no-syntax-check` restores the old unconditional accept
+- `apply --show` returns the changed lines, `diff` reports 1-based `old_line` and `new_line`, and `delete` publishes `backups_kept`, `backup_bytes` and `dirs_left` when a backup or a leftover exists
+- Pin: `cargo install atomwrite --locked --version "^0.1.38"`
+- Surface: 47 subcommands, unchanged from v0.1.37, and the single source of truth is still `atomwrite agent-surface`
+
+
+## Work folded into v0.1.37: read expansion and search ceiling
 ### What Changes
 - `read` expands a pattern whose directory prefix runs several levels deep, and only a wildcard inside a directory name exits 65, because the old check counted every component of the path instead of asking which one is a pattern
 - An operand with `*`, `?` or `[` that exists on disk is read literally instead of being expanded, so `read` and `cat` agree on a file such as `report[1].txt`
 - `search` derives the line buffer ceiling from `search.max_filesize` instead of a fixed cap, so a file the caller already allowed to be read is no longer refused for having one line above that cap, and the error names the key to raise
 - Pin: `cargo install atomwrite --locked --version "^0.1.37"`
-- Surface: 47 subcommands, unchanged from v0.1.36, and the single source of truth is still `atomwrite agent-surface`
+- Surface: 47 subcommands, up from 46 in v0.1.36, and the single source of truth is still `atomwrite agent-surface`
 
 
 ## Work folded into v0.1.37: read batching and the workspace jail
@@ -36,7 +133,7 @@
 ### What Changes
 - Risk assessment: `edit`, `edit-loop`, `replace`, `case`, `transform` and `codemod` now publish `risk_assessment` when the payload they would write matches a content-risk pattern, exactly as `write` already did. The field is absent when no pattern matches, and the size barriers stay out of these verbs on purpose, because they rewrite a region and a shorter result is the operation working
 - New exit status: `69` `GRAMMAR_UNAVAILABLE` with class `precondition_failed`. A tree-sitter grammar that is missing and cannot be downloaded used to arrive as 255 `INTERNAL_ERROR` with a suggestion telling the user to file a bug; it now names the language and says to run the verb once with the network up
-- Config surface: `write.content_risk_patterns` is now reachable with `config get` and `config set` as a list value, so the risk patterns are XDG configuration instead of a compiled literal. The table holds 37 keys
+- Config surface: `write.content_risk_patterns` is now reachable with `config get` and `config set` as a list value, so the risk patterns are XDG configuration instead of a compiled literal. The table holds 43 keys
 - `log.file` and `log.rotation` are accepted in the workspace scope too: the `[log]` section of `.atomwrite.toml` now starts the log sink, where before it was validated and discarded
 - `--version` no longer appends `-dirty`: the identifier is the short commit id of the tracked tree, so an untracked file no longer changes the string
 - `batch --transaction` publishes one verdict: the `rollback` event carries `ok: false` with the `code` and `exit` of the failure that caused it, instead of `ok: true` before the failure
@@ -58,15 +155,16 @@
 - `edit-loop` contract: all-or-nothing by default. A pair with no match exits 65 and nothing is written. `edit-loop --partial` writes the pairs that match and exits 87 (`EDIT_LOOP_PARTIAL`)
 - Mandatory paths: `replace`, `scope`, `codemod`, `case`, `delete`, `backup` and `prune-backups` require their paths. `wal-heal` and `scratch init` take the path as a positional, and `recipe run` needs `--path` or `--target`. Without a target the exit is 2, and `replace foo src/` no longer reads `src/` as the new text
 - Target evidence: the terminal event of every verb with side effects carries `target_resolved` and `target_source` (always `argv`)
+- Correction note added later: that line describes v0.1.13, and the current contract lives in `docs/AGENTS.md`, where `target_source` is `argv` or `stdin` and `target_resolved` is always an array
 - `doctor`: it reads no environment variable. The `ci`, `github_actions` and `sudo` fields are gone from its environment block, and the policy check about a tool-protocol server is gone from its report
 - `agent-surface`: the tool-protocol key is gone from the manifest
 - Strict config: an unknown key or an invalid file in `config.toml` or `.atomwrite.toml` exits 78 (`CONFIG_INVALID`). A `version` key (current value 1) is accepted, and a newer one is rejected
 - Log file: off by default. Set `[log] file = true` in the global XDG `config.toml` to turn it on (daily or hourly rotation, 7 files, mode 0600)
-- Write lock: automatic and cross-platform. `std::fs::File::try_lock` wraps `flock` on Unix and `LockFileEx` on Windows, so a write waits up to 5 s for the sidecar `.<target>.atomwrite.lock` and exits 83 (`LOCK_TIMEOUT`) on timeout, and Windows was not validated
+- Write lock: automatic and cross-platform. `std::fs::File::try_lock` wraps `flock` on Unix and `LockFileEx` on Windows, and the lock is taken on the target's own inode, so a write waits up to 5 s on the file it will mutate and exits 83 (`LOCK_TIMEOUT`) on timeout. The sidecar `.<target>.atomwrite.lock` is still taken best-effort beside it, which keeps older releases excluded, and it carries the lock alone when the target does not exist yet. Windows was not validated
 - Lock sidecar name: it keeps the literal `.<target>.atomwrite.lock` up to 255 bytes, and past that the stem becomes a 16 character digest of the target name in the same directory, so a long target name no longer fails with `ENAMETOOLONG`
 - `search`: it honours `--timeout-secs` at about 1x, and every `match` sits inside the `begin` / `end` pair of its own file. `files_skipped` on the summary counts files skipped for size
 - Stdin: write, edit, edit-loop, apply, hash `--stdin`, extract, diff, calc and regex obey SIGTERM (143), SIGHUP (129) and the deadline (124) with stdin open
-- `config` verb (the 47th subcommand): `config path|list|get|set|unset|doctor` reads and writes 37 persistent keys. `--scope global|workspace` is required on `path`, `set` and `unset`; `list` and `get` show the effective value and its origin. A write keeps the comments of the file, validates the whole file and lands atomically (mode 0600 for the global file on Unix)
+- `config` verb (the 47th subcommand): `config path|list|get|set|unset|doctor` reads and writes 43 persistent keys. `--scope global|workspace` is required on `path`, `set` and `unset`; `list` and `get` show the effective value and its origin. A write keeps the comments of the file, validates the whole file and lands atomically (mode 0600 for the global file on Unix)
 - Config layering: the workspace `.atomwrite.toml` and the global `config.toml` are now merged key by key (flag, then workspace, then global, then built-in). Before, a workspace file replaced the global one as a whole
 - One terminal event: a failing summary (`search`, `replace`, `transform`, `edit-loop`, `semantic-merge`, `recipe`, `scope`) carries `ok: false`, `code`, `exit` and the error detail itself, and no second error envelope follows. A consumer that waited for a trailing error line after the summary must read the summary instead
 - `MATCH_FAILED` for a missing pair: a pair with no match in `edit-loop` or in a multi-pair `edit` now reports code `MATCH_FAILED` (exit 65, with `best_candidate`); before, the same failure reported `INVALID_INPUT`
@@ -124,7 +222,7 @@
 
 ### Rollback
 - Return to the previous release with an exact version: `cargo install atomwrite --locked --version 0.1.36 --force`
-- A requirement such as `^0.1.36` is not a rollback, because Cargo resolves it to the newest 0.1.x, which is 0.1.37
+- A requirement such as `^0.1.36` is not a rollback, because Cargo resolves it to the newest 0.1.x, which is 0.1.38
 - Rolling back brings back the old behaviours listed above, among them the unchecked `apply` of a unified diff, which can destroy content with exit 0
 
 ### Validation (v0.1.37)
@@ -140,6 +238,7 @@
 - `semantic-search "unwrap value" src/ --index-dir /tmp/OUTSIDE`: exit 126 `WORKSPACE_JAIL`
 - `case --subvert foo foo`: exit 65, and `read FILE --verify-checksum deadbeef`: exit 81 `CHECKSUM_VERIFY_FAILED`
 - `--print-schema` lists 55 names and `--print-schema nope` exits 65
+- The failure envelope no longer carries `error`: `read MISSING` publishes `{"ok":false,"code":"FILE_NOT_FOUND","exit":4,...}`, and a consumer that branched on `has("error")` switches to `.ok == false and .code`
 - Not reproduced here: `STATE_DRIFT` under a real race, `doctor --strict` with a failing check (this host has none), interrupted `write` by SIGTERM and SIGINT, NFS, macOS and Windows
 
 ### The 47 Subcommands in 0.1.37
@@ -172,7 +271,7 @@
 - `rollback` — Restore a file from a previous backup. Example: `atomwrite --workspace "$WS" rollback src/a.rs --latest --verify`
 - `batch` — Run NDJSON operations from stdin, optionally as one transaction. Example: `printf '{"op":"write","target":"batch.txt","content":"x"}\n' | atomwrite --workspace "$WS" batch --transaction`
 - `edit-loop` — Apply N old/new pairs in one write, all or nothing. Example: `printf '[{"old":"gamma","new":"delta"}]\n' | atomwrite --workspace "$WS" edit-loop src/b.rs`
-- `prune-backups` — Remove old .bak files by age or count. Example: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run .`
+- `prune-backups` — Remove old .bak files by age or count. Example: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run --recursive .`
 - `wal-stats` — Show the state of WAL journals (read only). Example: `atomwrite --workspace "$WS" wal-stats`
 - `wal-heal` — Remove orphan terminal WAL journals older than a threshold. Example: `atomwrite --workspace "$WS" wal-heal --threshold-secs 3600 .`
 - `verify` — Check a file against an expected BLAKE3 hash (exit 0 match, 81 mismatch). Example: `atomwrite --workspace "$WS" verify src/a.rs HASH_A`
@@ -194,7 +293,7 @@
 - `scratch` — Create the staging dir .atomwrite/scratch inside the workspace jail. Example: `atomwrite --workspace "$WS" scratch init .atomwrite/scratch`
 - `locale` — Show, set or clear the UI locale. Example: `atomwrite --workspace "$WS" locale`
 - `commands` — Print the full command tree as JSON. Example: `atomwrite --workspace "$WS" commands --include-globals`
-- `config` — Read and write persistent tuning keys (37 keys, scopes global and workspace). Example: `atomwrite --workspace "$WS" config get fuzzy.threshold`
+- `config` — Read and write persistent tuning keys (43 keys, scopes global and workspace). Example: `atomwrite --workspace "$WS" config get fuzzy.threshold`
 
 ### Step-by-Step Migration
 
@@ -225,7 +324,7 @@
 
 ### See Also
 - `CHANGELOG.md`, section 0.1.37, for the complete list of changes, measurements and notes
-- `docs/INSTALL.md` for the install profiles, the sizes, the XDG paths and the 37 config keys
+- `docs/INSTALL.md` for the install profiles, the sizes, the XDG paths and the 43 config keys
 - `docs/schemas/README.md` for the 54 schema files and the name-to-file map
 - `docs/decisions/README.md` for ADR-0058 onward (the v0.1.37 decisions, among them the SIGPIPE handler in ADR-0063)
 - `docs/CROSS_PLATFORM.md` for what was and was not validated on each platform
@@ -246,7 +345,7 @@
 
 1. Pin `^0.1.37`
 2. Replace `/tmp` old/new files with workspace scratch (`scratch init`)
-3. Parsers: check exit and `ok`/`error` before success fields (stdout may still show an error line when exit ≠ 0 even under aggressive `--filter`)
+3. Parsers: check exit and `ok` before success fields (stdout may still show an error line when exit ≠ 0 even under aggressive `--filter`)
 4. Prefer `--select ok,error,code,match_count,suggestion` and `--limit N` instead of jq/`-n` for agent loops
 5. Local gate: `cargo test --tests`
 
@@ -266,7 +365,7 @@
 
 ### Step-by-Step Migration
 
-1. Historical (0.1.34 → 0.1.35 pin at that release): `cargo install atomwrite --locked --version "^0.1.35"` (or `cargo install --path . --force` from source). Current line is `^0.1.37`.
+1. Historical (0.1.34 → 0.1.35 pin at that release): `cargo install atomwrite --locked --version "^0.1.35"` (or `cargo install --path . --force` from source). Current line is `^0.1.38`.
 2. Agents that overwrite large files: add `--ack-overwrite` (and optionally `--require-large-ack` for explicitness).
 3. Agents that used `delete --confirm` as “preview”: switch to `delete --plan`.
 4. Agents that used `delete --yes` / `-y`: remove those flags; they now fail with exit 65.
@@ -276,7 +375,7 @@
 
 ### Compatibility Notes
 - Non-large writes and the fuzzy one-shot contract from 0.1.33/0.1.34 remain.
-- Historical (at v0.1.35): the documented surface was 41 subcommands. Current (v0.1.37): SSOT is 47 (`doctor`, `locale`, `commands`, `scratch`, `extract-artifact` and `config` complete the surface) — do not treat “41 remain” as current.
+- Historical (at v0.1.35): the documented surface was 41 subcommands. Current (v0.1.38): SSOT is 47 (`doctor`, `locale`, `commands`, `scratch`, `extract-artifact` and `config` complete the surface) — do not treat “41 remain” as current.
 - See [ADR-0055](decisions/0055-v0-1-36-agent-contract-gaps.md) for the A-* closeout matrix; see [v0.1.35 to v0.1.36](#v0135-to-v0136-superseded-by-v0137) for extract `--field`, global shape, and scratch staging.
 
 ### Rollback
@@ -500,7 +599,7 @@ Logging: `init_tracing` + CLI; optional file tee under XDG state — no product 
 ### Test Coverage
 - 631+ tests passing
 - 13 gaps resolved (9 CODE + 4 BY-DESIGN) across 5 audit rounds
-- See `gaps.md` for the full audit
+- See `gaps.md` of that release for the full audit
 
 
 ## v0.1.24 to v0.1.25 (2026-06-22)
@@ -544,7 +643,7 @@ Logging: `init_tracing` + CLI; optional file tee under XDG state — no product 
 ### Test Coverage
 - 631 tests passing (621 in v0.1.24 + 10 new for v0.1.25)
 - ~505 e2e scenarios across 6 audit rounds
-- See `gaps.md` for the full audit of 64 gaps
+- See `gaps.md` of that release for the full audit of 64 gaps
 
 
 ## v0.1.23 to v0.1.24 (2026-06-21)
@@ -607,7 +706,7 @@ Logging: `init_tracing` + CLI; optional file tee under XDG state — no product 
 ### Test Coverage
 - 621 tests passing (609 in v0.1.23 + 12 new for v0.1.24)
 - 3 ADRs added (0045-0047)
-- See `gaps.md` for the full audit of 52 resolved issues
+- See `gaps.md` of that release for the full audit of 52 resolved issues
 
 
 ## v0.1.22 to v0.1.23
@@ -817,7 +916,7 @@ All additive. No existing dependency removed.
 ### Migration Action
 - Update version pin: `cargo install atomwrite --locked --version "^0.1.12"`
 - New subcommands and flags are opt-in. No code changes required for existing callers.
-- See the [work folded into v0.1.37](#work-folded-into-v0137-read-expansion-and-search-ceiling-current) section for the latest migration steps.
+- See the [work folded into v0.1.38](#work-folded-into-v0138-cheaper-reads-honest-exits-current) section for the latest migration steps.
 
 ### Test Coverage
 - 542 tests passing (445 in v0.1.12 + 2 in v0.1.14 + 8 G117 + 6 G118 in v0.1.15 + 40 v0.1.16-v0.1.18 cross-platform + 21 v0.1.19 + 20 v0.1.20)
@@ -829,7 +928,7 @@ All additive. No existing dependency removed.
 ## v0.1.11 to v0.1.12
 ### v0.1.12
 
-The v0.1.12 release closes 13 of the Top 20 gaps from the PRD v5-v16 audit (`gaps.md`). It is additive: all v0.1.11 behavior is preserved.
+The v0.1.12 release closes 13 of the Top 20 gaps from the PRD v5-v16 audit (`gaps.md` of that release). It is additive: all v0.1.11 behavior is preserved.
 
 ### Added (New Subcommands -- v14 Tier 3)
 - `set <PATH> <KEY_PATH> <VALUE>` -- write a value at a dotted path in a TOML or JSON file, preserving comments and key order via `toml_edit`.
@@ -915,7 +1014,7 @@ Migration impact:
 
 ### Reference
 
-See `gaps.md` sections "GAP 13" and "GAP 14" for the full root-cause analysis and design rationale.
+See `gaps.md` of that release, sections "GAP 13" and "GAP 14" for the full root-cause analysis and design rationale.
 
 
 ## v0.1.2 to v0.1.3
@@ -953,7 +1052,7 @@ Diagnostic field:
 
 ### Reference
 
-See `gaps.md` section "Atomic Edit Preserva mtime E Quebra Detecção De Mudança Pelo Cargo" (GAP 12) for the full root-cause analysis and design rationale.
+See `gaps.md` of that release, section "Atomic Edit Preserva mtime E Quebra Detecção De Mudança Pelo Cargo" (GAP 12) for the full root-cause analysis and design rationale.
 
 
 ## v0.1.1 to v0.1.2

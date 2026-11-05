@@ -14,5 +14,6 @@ expression: event
   "mtime_preserved": false,
   "fuzzy": false,
   "strategy": "exact",
-  "strategies_tried": 1
+  "strategies_tried": 1,
+  "write_strategy": "rename"
 }

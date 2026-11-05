@@ -40,7 +40,7 @@
 - `src/signal.rs` (+ `signal_handlers.inc.rs`, `signal_cancel.inc.rs`) — SIGINT/SIGTERM/SIGHUP and the SIGPIPE handler via signal-hook with graceful shutdown coordination, and `CancelCheck` for the cooperative cancel
 - `src/stdin_cancel.rs` — cancellable stdin: a reader thread that gives up when the run is cancelled or the deadline passes
 - `src/error/` — domain error enum with exit codes, error classification and the retryable flag, split in `variants.inc.rs`, `class.inc.rs`, `impl_methods.inc.rs`, `error_json.inc.rs` and `suggest.inc.rs`
-- `src/lock.rs` — advisory file locking via `std::fs::File::try_lock`, which is `flock` on Unix and `LockFileEx` on Windows, on the `.<target>.atomwrite.lock` sidecar, and the sidecar name becomes a short BLAKE3 digest when the literal name would pass 255 bytes
+- `src/lock.rs` — advisory file locking via `std::fs::File::try_lock`, which is `flock` on Unix and `LockFileEx` on Windows, on the target's own inode; the `.<target>.atomwrite.lock` sidecar is taken after it, best effort, so older releases stay mutually excluded; `LockGuard::target_unchanged` revalidates the inode with `same_file` immediately before the swap, `delete` takes the same lock before it hashes and unlinks, and the sidecar name becomes a short BLAKE3 digest when the literal name would pass 255 bytes (ADR-0079)
 - `src/walk_globs.rs` — the one place that compiles the `--include` / `--exclude` globs of every verb, a glob that does not compile is `INVALID_INPUT` (exit 65)
 
 ### Crash Recovery (v0.1.12, G114 + v0.1.15-v0.1.18, G119)
@@ -77,7 +77,7 @@
 - `src/retry.rs` — retry with exponential backoff, full jitter and a hard deadline (`RetryPolicy`, `Backoff`, `retry()`), used by the advisory lock and the Windows tempfile persist, sleeping in short slices and obeying the global `--timeout-secs` deadline and the shutdown flag
 - `src/best_effort.rs` — the sanctioned way to ignore a failure on purpose: `best_effort` logs at `debug` and continues, while a failure that changes the result is propagated with `?`
 - `src/config_tuning.inc.rs` — tuning sections (`concurrency`, `search`, `lock`, `retry`, `extract`), their validation and the process-wide `tuning()` accessor
-- `src/commands/config_cmd.rs` (+ `config_cmd_keys.inc.rs`, `config_cmd_write.inc.rs`) — the `config` verb: one typed table of 37 keys, layered read (flag, workspace, global, built-in), validated atomic write that keeps comments
+- `src/commands/config_cmd.rs` (+ `config_cmd_keys.inc.rs`, `config_cmd_write.inc.rs`) — the `config` verb: one typed table of 43 keys, layered read (flag, workspace, global, built-in), validated atomic write that keeps comments
 - `src/constants.rs` — includes `constants_concurrency.inc.rs` (retry, thread ceiling, search budget), `constants_config.inc.rs` (config file names, key minimums) and `constants_literals.inc.rs` (named literals: sidecar names, time units, sizes)
 - `src/commands/search_budget.inc.rs` — one global byte budget for the search events in flight (default 8 MiB, key `search.max_inflight_bytes`), and the stream being drained never waits, so it cannot deadlock
 - `src/ndjson/part3.inc.rs` — `FileFailure`, `FailureSummary`, `FailureTally` and `partial_of`: `files_failed`, `partial` and `errors[]` (at most 50) on the terminal summary of every verb that walks a tree, with `partial` derived from the same count
@@ -106,7 +106,7 @@
 - Historical note: 41 was the documented surface through v0.1.35, and the current SSOT is 47
 
 ### Cargo Features (v0.1.29+)
-- `core` — slim binary without AST/watch (PRD 5–8 MiB target, 10,908,040 bytes measured on 2026-10-31, DERIVADO 10908040 / 1048576 = 10.40 MiB, and ~7.7 MiB at v0.1.29)
+- `core` — slim binary without AST/watch (PRD 5–8 MiB target, 26,560,352 bytes measured on 2026-11-04, DERIVADO 26560352 / 1048576 = 25.33 MiB, and ~7.7 MiB at v0.1.29)
 - `ast` — ast-grep + tree-sitter + language-pack + serde-saphyr (default with lang-rust/ts/py)
 - `lang-rust` / `lang-ts` / `lang-py` / `lang-go` / `lang-full` — language surface for scope/transform
 - `watch` — filesystem watch via notify (`watch` subcommand), opt-in, and the default build answers `watch` with exit 78 and a rebuild hint
@@ -176,7 +176,7 @@ v0.1.18 additions (G118 universal resolve-first):
 - Streaming: each result is emitted as soon as computed
 - No need to buffer entire output before writing
 - Pipe-friendly: downstream tools process line by line
-- Errors emit in the same format with `error: true` discriminator
+- Errors emit in the same format with `ok: false` plus `code` and `exit`, and the `error` discriminator of 0.1.37 and earlier is gone
 
 ### tempfile + rename over In-Place Write
 - Atomic: the target file is never left half-written by a rename-based write
@@ -305,14 +305,14 @@ v0.1.18 additions (G118 universal resolve-first):
 - `ErrorJson::from_error_with_context(err, &ErrorContext)` produces context-aware suggestions
 - The `WorkspaceJail` suggestion adapts based on whether the user supplied `--workspace` (CLI/XDG only in v0.1.35+)
 - Legacy `ErrorJson::from_error(err)` delegates to `from_error_with_context` with `ErrorContext::default()` (backward compatible)
-- 37 error variants in total (`rg -c '#\[error' src/error/variants.inc.rs`), and the agent manifest lists 41 exit-code entries with 33 distinct numbers (`atomwrite agent-surface --format json | jaq '.exit_codes'`)
+- 38 error variants in total (`rg -c '#\[error' src/error/variants.inc.rs`), and the agent manifest lists 42 exit-code entries with 34 distinct numbers (`atomwrite agent-surface --format json | jaq '.exit_codes'`)
 - v0.1.24 typed error audit: ALL user-facing `anyhow::bail!()` converted to `AtomwriteError` variants, and no error path returns a generic exit 1 without a JSON envelope
 - A failed run ends with exactly one terminal event with `ok: false` (ADR-0061)
 
 
 ## Architectural Decision Records (ADRs)
 - See `docs/decisions/README.md` for the full ADR index, which is the authority for this list
-- ADRs 0019 to 0078 live in `docs/decisions/`, each with a pt-BR translation, all following the Michael Nygard format (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
+- ADRs 0019 to 0095 live in `docs/decisions/`, each with a pt-BR translation, all following the Michael Nygard format (Status, Context, Decision, Consequences, Alternatives, Trigger to revisit)
 - 0019 — tree-sitter-language-pack over direct tree-sitter dependency
 - 0020 — WAL sidecar file path and shape
 - 0021 — v14 query/outline accept only kind names, not S-expressions
@@ -368,6 +368,28 @@ v0.1.18 additions (G118 universal resolve-first):
 - 0071 — `extract-artifact`: bounded signal, never raw bytes
 - 0072 — agent-native surface: stream shaping, `--print-schema` before clap, side-effect guards
 - 0073 — one terminal cancel point and `deadline_exceeded`
+- 0074 — strict apply runs every read-modify-write under one lock
+- 0075 — grammar pack 1.22, ast-grep 0.51 and MSRV 1.90
+- 0076 — `read` accepts several files in the raw format
+- 0077 — answer family and walk honesty
+- 0078 — one schema per verb, served as a union
+- 0079 — the lock is taken on the target inode
+- 0080 — `sparse outline` counts the journal under `--hidden`
+- 0081 — the verdict fields name the mechanism and the subject
+- 0082 — the sparse family walks one policy
+- 0083 — `--hidden` follows the flag in every walking verb
+- 0084 — every mutating verb publishes the write verdict
+- 0085 — the edit family publishes the write verdict
+- 0086 — `apply` publishes the backup path and the rollback
+- 0087 — the transaction snapshot follows the backup policy
+- 0088 — the deletion keeps its undo and the reversal declares what it kept
+- 0089 — the target is always an array and the batch names its copies
+- 0090 — the transaction owns the copy and a failed write names what it left
+- 0091 — the transaction lends its copy to a rewrite
+- 0092 — the delete copies only when asked
+- 0093 — the backup key distinguishes unset from false
+- 0094 — the recursive delete owns the whole named tree
+- 0095 — search submatch offsets are bytes
 
 
 ## Test Architecture
@@ -401,6 +423,33 @@ v0.1.18 additions (G118 universal resolve-first):
 - Fuzzy honesty: normalized strategies → `similarity: null`, dual-gate `block_anchor`, soft floor via XDG `[fuzzy].soft_floor_delta` (default 0.05) on `context_aware`
 - Content-source paths (`--old-file`/`--new-file`) remain under the workspace jail, and agents stage via `scratch init` → `.atomwrite/scratch/` (policy, not a vulnerability)
 - Global shape flags (`--select`/`--fields`, `--filter`, `--limit`) reshape stdout at runtime, they are not NDJSON schema fields, and errors always-emit under `--filter`
+
+
+## v0.1.37 and v0.1.38 contracts — bounded read, honest patch, inode lock
+
+### Bounded read
+- `read` composes the cap (`read.max_output_bytes`, 24,000 bytes), the range windows, `--number`, `--symbol`, `--line N --enclosing` and `--no-comments` in one pass over the same line visitor
+- The raw path streams a single target through the same `stream_raw_targets` the multi-target path already used, so the peak memory no longer grows with the file size, and BLAKE3 runs only under `--verify-checksum`
+- The cap cuts on a complete line and at the end of the last outline item, the NDJSON event carries `truncated: true` with the `next` hint, and the stderr notice carries the exact `--lines` that reads the rest
+- `--no-comments` without `--number` is refused, because a dropped line would point the follow-up `apply` at the wrong one
+
+### Compact shapes
+- `search --format text`, `list --format text` and `outline --format tsv` answer in the shape the native agent tools already parse
+- `search.format`, `read.number` and `output.profile` are XDG keys, so the cheap shape does not depend on a flag repeated on every call
+- `outline` parses raw bytes, publishes `parse_errors` with `first_error_line`, and closes a Markdown section at the line before the next heading of the same or higher level
+- `search` closes with `ALL_SKIPPED_BINARY` (exit 89) when every candidate was binary, so "nothing was searched" stops looking like "nothing matched"
+
+### Patch contract
+- `apply` reads every file of a multi-file patch, matches whole lines, and refuses an ambiguous or malformed block before the first write
+- A write that fails after another file was written restores the files already written, so the call leaves no half-applied patch
+- The syntax check compares the parse-error count before and after the swap and refuses only on a rise, so a file that already had an error keeps being editable (ADR-0086)
+- `apply --show` and `diff` publish 1-based lines, and `diff` separates `old_line` from `new_line`
+
+### Lock and verdict
+- The lock is `std::fs::File::try_lock` on the target inode, and the `.<target>.atomwrite.lock` sidecar is a compatibility file whose failure no longer aborts the write (ADR-0079)
+- The failure envelope carries `ok`, `code`, `exit`, `path` and `suggestion`; `message`, `error_class`, `retryable` and `suggestion_lang` appear only under `-v`, and `target_resolved` is always an array (ADR-0089)
+- Every mutating verb publishes `write_strategy` and, when a copy was refused, `backup_skipped` (ADR-0084, ADR-0085)
+- `delete --recursive` owns the whole tree in one call and publishes `backups_kept`, `backup_bytes` and `dirs_left` when a backup or a leftover exists, so the caller learns what remains without walking again
 
 
 ## Maintenance

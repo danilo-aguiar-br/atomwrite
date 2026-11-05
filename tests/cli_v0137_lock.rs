@@ -46,14 +46,18 @@ fn sidecar(target: &Path) -> PathBuf {
 
 /// Take the advisory lock the way a concurrent writer would; dropping the
 /// returned file releases it.
+///
+/// v0.1.38 and ADR-0079 — the lock lives on the target's own inode, so the
+/// harness locks the target file. The sidecar is best-effort compatibility and
+/// no longer gates a write.
 fn hold_lock(target: &Path) -> File {
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(sidecar(target))
-        .expect("open sidecar");
+        .open(target)
+        .expect("open target");
     let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     assert_eq!(rc, 0, "harness could not take the lock");
     file

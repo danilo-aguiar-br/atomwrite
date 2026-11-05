@@ -22,7 +22,7 @@ fn write_ndjson_structure_snapshot() {
     event["elapsed_ms"] = serde_json::json!("[redacted]");
     event["path"] = serde_json::json!("[redacted]");
     event["checksum"] = serde_json::json!("[redacted]");
-    event["target_resolved"] = serde_json::json!("[redacted]");
+    event["target_resolved"] = serde_json::json!(["[redacted]"]);
     event["platform"]["fsync"] = serde_json::json!("[platform_fsync]");
     // GAP 18: Windows reports `best_effort` for directory fsync while Unix
     // reports `sync_all`; redact so the snapshot is platform-agnostic.
@@ -50,7 +50,7 @@ fn read_ndjson_structure_snapshot() {
     event["checksum"] = serde_json::json!("[redacted]");
     event["modified"] = serde_json::json!("[redacted]");
     event["permissions"] = serde_json::json!("[redacted]");
-    event["target_resolved"] = serde_json::json!("[redacted]");
+    event["target_resolved"] = serde_json::json!(["[redacted]"]);
 
     insta::assert_json_snapshot!("read_output_structure", event);
 }
@@ -70,10 +70,9 @@ fn error_json_structure_snapshot() {
     let events = common::parse_ndjson(&output.stdout);
 
     let mut event = events[0].clone();
-    event["message"] = serde_json::json!("[redacted]");
     event["path"] = serde_json::json!("[redacted]");
     event["suggestion"] = serde_json::json!("[redacted]");
-    event["target_resolved"] = serde_json::json!("[redacted]");
+    event["target_resolved"] = serde_json::json!(["[redacted]"]);
 
     insta::assert_json_snapshot!("error_not_found_structure", event);
 }
@@ -197,7 +196,7 @@ fn edit_output_ndjson_structure_snapshot() {
     event["path"] = serde_json::json!("[redacted]");
     event["checksum_before"] = serde_json::json!("[redacted]");
     event["checksum_after"] = serde_json::json!("[redacted]");
-    event["target_resolved"] = serde_json::json!("[redacted]");
+    event["target_resolved"] = serde_json::json!(["[redacted]"]);
     event["elapsed_ms"] = serde_json::json!("[redacted]");
 
     insta::assert_json_snapshot!("edit_output_structure", event);
@@ -219,11 +218,10 @@ fn error_invalid_input_structure_snapshot() {
 
     let error_event = events
         .iter()
-        .find(|e| e.get("error") == Some(&serde_json::json!(true)));
+        .find(|e| e.get("ok") == Some(&serde_json::json!(false)));
     assert!(error_event.is_some(), "expected an error event");
 
     let mut event = error_event.expect("error").clone();
-    event["message"] = serde_json::json!("[redacted]");
     event["suggestion"] = serde_json::json!("[redacted]");
 
     insta::assert_json_snapshot!("error_invalid_input_structure", event);
@@ -250,11 +248,10 @@ fn error_workspace_jail_structure_snapshot() {
 
     let error_event = events
         .iter()
-        .find(|e| e.get("error") == Some(&serde_json::json!(true)));
+        .find(|e| e.get("ok") == Some(&serde_json::json!(false)));
     assert!(error_event.is_some(), "expected an error event");
 
     let mut event = error_event.expect("error").clone();
-    event["message"] = serde_json::json!("[redacted]");
     event["path"] = serde_json::json!("[redacted]");
     event["suggestion"] = serde_json::json!("[redacted]");
     event["workspace"] = serde_json::json!("[redacted]");

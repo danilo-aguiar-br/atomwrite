@@ -71,7 +71,7 @@ fn clap_error_envelope_structure_complete() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let json: Value = serde_json::from_str(stdout.trim()).expect("valid JSON");
 
-    assert_eq!(json["error"], true);
+    assert_eq!(json["ok"], false);
     assert_eq!(json["code"], "ARGUMENT_PARSE_ERROR");
     assert_eq!(json["exit"], 2);
     assert!(json["message"].is_string());

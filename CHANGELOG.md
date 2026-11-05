@@ -1,4 +1,4 @@
-[Leia em Portugues](CHANGELOG.pt-BR.md)
+[Leia em Português](CHANGELOG.pt-BR.md)
 
 
 # Changelog
@@ -7,6 +7,260 @@
 - Format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/)
 - Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
+
+## [0.1.38] - 2026-11-04
+
+### Changed — the failure envelope carries only what a caller branches on
+- The default failure envelope carries `ok`, `code`, `exit`, `path` when there is one and `suggestion`, and `message`, `error_class`, `retryable` and `suggestion_lang` appear only under `-v`
+- `error: true` left the failure envelope: it duplicated `ok: false` plus `code`, cost 13 bytes on every failure (179 to 166 bytes on the same path), and no caller branched on it alone; a consumer that read it switches to `.ok == false`
+- The error and terminal schemas declare the dropped keys as optional and require only `code` and `exit` on a failure, so a published schema no longer rejects the output the build really writes
+- `-v` survives a malformed `--join`, `--filter`, `--aggregate` or `--truncate-content`: the fallback shape was built with defaults, which silently dropped the flag and the redaction switch
+- `--print-schema` answers an unknown name with the same shaped envelope, and that early path reads `-v` from argv because clap has not run yet
+
+### Changed — a picture is sent once per session
+- `read` on a picture already delivered in this session answers with a short token line instead of the data URI again, and `--force` sends it again
+- The session key is the caller's `CLAUDE_CODE_SESSION_ID`, and the mark lives under the cache directory, so a new session sends the picture once
+- `extract-artifact` on a picture publishes `visual_tokens` and the resized width and height
+
+### Changed — picture decoding and scaling cost less
+- HEIC and HEIF pictures decode to RGBA and are served like any other picture
+- The Lanczos3 resize runs on `fast_image_resize`, measured at 42 ms against 625 ms for the same resize alone
+- `lopdf` 0.46 extracts text under an explicit limit instead of collecting every page first
+
+### Fixed — the flags the caller asked for are not lost on the way
+- A `LockTimeout` on the sidecar is propagated when the target exists, because an older release holds only that file, while other sidecar failures stay best effort
+- A path suggestion prefers `similar_paths` when the resolver found a neighbour, so the hint names the real path instead of repeating the message
+- `read --no-comments` on a file with no comment syntax warns instead of pretending it filtered
+- `search` without `--format` follows `search.format` from the config, and an explicit `--format` always wins
+- `search -e/--regex` no longer consumes the positional paths, so `search -e alpha -e beta src/main.rs` scans that file and not the directory
+- `outline` marks `sig_truncated` only when the signature was really cut, and the text cap notice names the flag that raised the ceiling
+- `apply --format unified` publishes the last applied line, the same signal `diff` already gave
+- `delete --recursive` now removes every entry inside the named directory, including hidden, ignored, linked, fifo, socket and device entries, so the directory is gone when the run exits 0
+- An unfiltered run that leaves a directory on disk now reports the measured I/O failure with the surviving path, and a run narrowed by `--include`, `--exclude`, `--older-than` or `--limit` exits 0 with `dirs_left` and `entries_left`
+- The verdict of `write` and `apply` now names the write strategy, and `apply` reports a backup the directory refused instead of dropping it
+- `search` no longer aborts when a match offset falls inside a multi-byte character, because the submatch text is rendered lossily from the bytes instead of slicing a `str` at a non-boundary, so both `--format text` and NDJSON keep their exit code
+
+### BREAKING — the recursive delete owns the named tree
+- `delete --recursive <dir>` without a narrowing filter removes hidden and ignored entries without any flag, and `--hidden`, `--no-gitignore` and `--follow-symlinks` become no-ops that emit one diagnostic line
+- A link is always unlinked as an entry and never followed, so `--follow-symlinks` no longer makes `delete` remove the content a link points at
+- A run narrowed by `--include`, `--exclude`, `--older-than` or `--limit` exits 0 instead of 65 when the leftover is what the filter asked to keep
+- An unfiltered run that still leaves a directory exits with the measured I/O code and the surviving path in `errors[]`, instead of the synthetic `INVALID_INPUT` with exit 65
+- `delete --backup` with a directory root is refused before the first unlink, because the copy would be created inside the tree and outlive the removal, so run `copy -r` first or pass `--no-backup`
+- A fifo, socket or device is removed without being opened and publishes no `checksum_before`, because there is no content to hash
+- `--plan` and `--dry-run` no longer publish `dirs_left`, `entries_left` or `hint`, because they never removed anything
+- `copy -r` now copies a path listed in `.ignore`, the global gitignore or `info/exclude`, which the tree-copy contract had already promised
+
+### Changed — `[defaults].backup` reaches the delete
+- The `backup` key of `[defaults]` now distinguishes absent from `false`, so `backup = true` written in `.atomwrite.toml` makes a `delete` and a `batch` delete create the copy without `--backup`
+- The key is absent by default, and an absent key keeps each verb's own default: rewrites copy, and `delete` does not
+- `--no-backup` wins over the key, and `--backup` keeps forcing the copy
+- `--keep-backup` still only preserves a copy that exists, and the warning now appears only when no copy was created, including when the target is itself a backup
+- `config get defaults.backup` reports `origin: default` and omits `value` while the key is not written, so no consumer receives `null`
+- A `[delete].backup` key now wins over `[defaults].backup` for `delete` only, and both stay below `--backup` and `--no-backup`
+- The key is absent by default, so an unset `[delete].backup` inherits `[defaults].backup`
+
+### Changed — reading is bounded by default
+- The default `read` stops at `read.max_output_bytes`, cuts on a complete line and at the end of the last outline item, and publishes `truncated` plus a ready `next` range
+- `read --format raw` prints the next range on stderr and separates non-adjacent ranges with `--`, while `--all` still writes every byte
+- `read --no-comments` without `--number` is refused with exit 65, because dropping lines would point the next `apply` at the wrong one
+- `outline` on Markdown closes each section at the line before the next heading of the same or higher level, and the tsv prints `start-end`
+- The lean profile keeps `bytes_after`, and `delete` answers once with the totals instead of one record per file
+- The `apply` match suggestion names the apply flags, the jail hint hands over a ready `--workspace` command, and `agent-surface` lists `--number` and `output.profile lean`
+- A corrupt picture now answers `INVALID_INPUT` with exit 65 instead of `INTERNAL_ERROR`
+
+### Added — the batch says what it kept and what it skipped
+- A `delete` operation inside `batch` now publishes the same `warnings` list the standalone verb publishes when `--keep-backup` changes nothing, instead of dropping the advice
+- A `delete`, a `move` or any operation that ran the writer publishes `backup_path`, so the caller finds the undo without listing the directory, and a `move` that refuses a copy of a backup names the refusal in `backup_skipped`
+- The summary of a `batch --transaction` publishes `backups_preserved`, naming the snapshots the commit kept because they were the only copy of a deleted or overwritten file
+- The commit keeps the snapshot of the destination a `move` or `copy` overwrote, because that file's previous content lives nowhere else; the source of a move stays out, since its content lives on at the destination
+- A failed `apply` publishes `backups_preserved` with the copies the rollback left on disk
+
+### Changed — the transaction owns the copy it already made
+- A `delete` or a `move` inside `batch --transaction` no longer writes a second copy of a file the transaction already snapshotted, so the run leaves one copy on disk instead of two, and `--keep-backup` keeps one
+- The operation publishes the snapshot path in `backup_path` and states why no second copy was made, so the caller still learns the way back without listing the directory
+- A failed `apply` names the copy its own attempt left on disk, both in the error message and in `backups_preserved` of the `rollback` record
+- `completions --install` writes under the product storage, which `[storage].home` relocates and the process environment does not, and the manual now says so
+
+### BREAKING — `target_resolved` is always an array
+- Every terminal envelope publishes `target_resolved` as an array, including a run that resolved one target, so a consumer reads one shape and never inspects the count first
+- The error envelope carries the same array shape, and the published schema declares a single `array` of strings instead of the former string-or-array union
+- Read the subject with `.[0]` in `jq`, or `event["target_resolved"][0]` in a program, and the migration section shows both
+
+### Changed — the deletion keeps its undo, and the reversal declares what it kept
+- A `batch --transaction` that deletes a file now keeps the pre-mutation copy after a successful commit, because that file lives nowhere else; a rewrite keeps exactly one copy with `--keep-backup` and no copy without it, and `--no-backup` removes every copy as before
+- A transactional `write`, `replace`, `edit` or `copy` now reuses the snapshot the transaction already made instead of writing a second copy, so `--keep-backup` leaves one file, not two
+- The `delete` help now says the verb copies only when the call asks, and a `batch` delete no longer creates a copy from `--keep-backup` alone
+- The commit of a transaction no longer discards the snapshot of a target it deleted, which made the deletion unrecoverable in the previous build
+- A reversal that cannot restore a file publishes a `rollback` record instead of only the error envelope, with `failed_paths` naming the file it could not put back and `backups_preserved` naming the snapshots it left on disk
+- The `rollback` record of `apply` and of `batch --transaction` publishes `target_resolved` as an array even when a single file came back, so the caller reads one shape for that event
+- `apply` reports `target_source: "stdin"` when the patch carries its own path line, and keeps `argv` when `--file` names the target on the invocation line
+
+### Changed — the transaction snapshot follows the backup policy
+- A successful `batch --transaction` no longer leaves `f1.txt.bak.<stamp>` behind: the pre-mutation snapshot is removed once every operation commits, unless `--keep-backup` asks to keep it
+- `--no-backup` wins over `--keep-backup`, so a transaction never leaves a copy when the invocation forbade one
+- A transaction that fails and is reverted removes its snapshots too, and only a restoration that itself fails keeps them, because they are the last known state of those files
+- The `rollback` record of `apply` and of `batch --transaction` now carries `target_resolved` with every path it reverted, as an array when there is more than one, and `target_source` says whether the manifest came from `argv` or `stdin`
+
+### Added — the `apply` says what it undid
+- A failed `apply` that had already written a file restores it and publishes one `rollback` record with `operation` equal to `apply`, the number of files restored and the time the restoration took
+- The record carries `ok: false` and the `code` and `exit` of the failure that forced the rollback, and a restoration that fails names the file in `failed_paths` and exits `TRANSACTION_ROLLBACK_FAILED`
+- An `apply` that fails before writing anything publishes no rollback record, because nothing was undone and the error envelope alone reports the failure
+- `apply` publishes `backup_path`, so a caller finds the `.bak` of a patch without listing the directory
+- The schema of `apply` becomes the union of `plan`, `applied` and `rollback`, so a consumer validating a dry run or a failed run stops rejecting a record the verb writes
+
+### Changed — a field the binary omits no longer declares `null`
+- Fifteen optional fields of the write verdict declare a plain `string`, so no published schema promises `null` for `backup_path`, `backup_skipped` or `write_strategy`
+- `failed_paths` of the rollback record and `submatches` of the search match leave `required`, because the binary omits both when they are empty and the contract went on demanding them
+- The rollback of `apply` runs without a backup, so a restored file no longer pays a copy of the patched content that was written and deleted in the same call
+- The rollback of `apply` and of `batch --transaction` restores the files it wrote instead of reporting state drift, because the run holds the lock of the inode its own commit replaced and the restoration now compares content
+
+### Added — the verdict names the mechanism
+- `write` publishes `write_strategy` (`rename`, `inplace` or `copyback`), which `platform.rename_method` could not tell apart because it names the syscall and not the path taken
+- `apply` publishes `write_strategy` and `backup_skipped`, so a patch written in place on a read-only directory says so in the JSON and not only on stderr
+
+### Fixed — the error names the file the caller named
+- A lock that cannot be taken for a new file reports the target path instead of the `.atomwrite.lock` sidecar this run creates and unlinks, and the sidecar stays on a stderr warning
+
+### Breaking — `--hidden` decides in every walking verb
+- `hash`, `copy -r` and `semantic-search` hide dotfiles by default and only see them under `--hidden`, so a script that hashed or copied a tree without the flag now gets the smaller inventory
+- A target named on the command line still wins: `hash .env` and `copy .env` act on the file the caller named, because the invocation already said what it wants
+
+### Added — `sparse list` and `sparse outline` take `--all`
+- The flag lists every entry, hidden included, so the dotfile inventory has a way back inside the verb itself instead of only through the global `--hidden`
+- `--all` and `--hidden` ask for the same visit and neither cancels the other, and the default still hides dotfiles
+
+### Added — every mutating verb publishes the write verdict
+- `copy`, `move`, `delete`, `rollback`, `semantic-merge`, `config set`, `config unset` and each operation of `batch` publish `write_strategy` and `backup_skipped` in the event that reports them
+- `delete` publishes `"none"` because it unlinks instead of writing atomically, and `move` publishes the strategy of the rename or of the cross-device write it actually took
+- `backup_skipped` is absent from the event when no backup was refused, so no caller reads a `null` it cannot tell from a skipped copy
+- `edit`, `replace`, `transform`, `scope`, `case`, `set`, `del`, `edit-loop` and `locale` join the list, so the family that rewrites a file answers the question the family that copies one already answered
+- A preview publishes `"none"` because it promises no write, and `del` on an absent key omits `write_strategy` because a verdict for a key that was never there would be false
+- `batch delete` refuses to copy a copy, by the same `is_backup_path` predicate the standalone `delete` uses, and the shared sentence lives in `backup_names` so the two verbs cannot drift
+
+### Changed — the sparse family walks one policy
+- `sparse list` honors `--hidden` like `sparse outline` and `count`, so a default run hides dotfiles and the flag is what asks for every entry
+- `sparse list` and `sparse outline` skip a timestamped `.bak.` copy, by the same predicate `semantic-search` and `recipe` already use
+- `files_scanned` says a dotfile counts only under `--hidden` or the verb's own `--all`, so a reader of the schema predicts both numbers instead of learning one by measuring
+
+### The 2026-11-03 draft of this release
+- This release spends fewer bytes per call on the three verbs an agent calls most, and it turns four silent failures into exits a caller can branch on
+
+### Changed — `read` stops at a cap and names the next step
+- `read --format raw` stops at `READ_DEFAULT_MAX_BYTES` (24,000 bytes, below the 30,000-character cut of the Bash tool) and prints one `stderr` line with the lines shown and the exact `--lines` that reads the rest
+- `--all` turns the cap off for the whole file, and the raw path streams with `BufReader` instead of reading the file into memory
+- `--number` prints `N:text`, so `awk`, `nl` and `printf` leave the command line
+- `--lines` is repeatable (`ArgAction::Append`, `--range` as visible alias), and unmatched ranges merge, so several windows and several files arrive in one call
+- `--symbol NAME` prints a function, class or section by name, and `--line N --enclosing` prints the block that holds a line
+- `--no-comments` drops comment and blank lines before the window is counted and printed
+- A `--lines` range that starts after the end of the file is an `InvalidInput` error naming the total line count on both formats, never an empty success
+- Raw mode refuses a binary target with a hint instead of dumping the bytes
+
+### Changed — `search`, `list` and `outline` fit in one screen
+- `search --format text` writes one `path:line:col:text` per match under a byte cap, and the cap is configurable through `search.format`
+- A file skipped as binary emits a `stderr` notice, and a tree where every file was skipped exits `89 ALL_SKIPPED_BINARY` instead of `NO_MATCHES`
+- `search` sizes its pool to the number of files, so one file no longer pays for 16 threads
+- `list --format text` writes one path per line under a cap, and `total_bytes` counts files only
+- `outline --format tsv` writes `line<TAB>kind<TAB>name` with the path once, and Markdown files list headings and setext sections instead of an empty success
+- `outline` parses raw bytes, so a non-UTF-8 file no longer answers `ok: true` with zero items
+- `outline` publishes `parse_errors` and `first_error_line` when the tree contains error nodes
+
+### Changed — `apply` matches whole lines and shows the swap
+- The SEARCH/REPLACE match is line based, so a fragment of a line can no longer be swapped in the wrong place
+- A repeated SEARCH without `--all` exits `65 MATCH_AMBIGUOUS` with the occurrence count and the best candidate, and `--all` replaces every occurrence on purpose
+- A block without `=======` or without `>>>>>>> REPLACE`, and an empty SEARCH, are errors naming the block index; an empty REPLACE deletes the matched lines instead of leaving a blank line
+- The syntax check runs before and after the swap and refuses only when the parse-error count rises, with `--no-syntax-check` as the opt-out
+- `--show` returns the changed lines with their 1-based numbers, which removes the re-read that confirmed the swap
+- `check_replacement_size` applies to `format full` only, so a patch over 100 KiB no longer hits the size guard
+- The `MATCH_FAILED` and `MATCH_AMBIGUOUS` suggestions name the verbs and flags that exist in `apply`
+
+### Added — `apply` patches several files in one call
+- The target argument is optional, and a patch that names its own files is applied in one invocation instead of one call per file
+- Unified and Markdown patches split on their header pairs, and a SEARCH/REPLACE patch splits on a bare path line just above each file's first `<<<<<<< SEARCH`
+- Every file of every section is read, patched and syntax-checked before the first write, so a block that does not match refuses the whole call
+- The refusal names the file it was about in `target_resolved`, and the message still says which block failed
+- A write that fails after another file was written restores the files already written, so the call leaves no half-applied patch
+- Each applied file publishes its own record with its own `path`, `target_resolved` and checksums
+- Targets are sorted before the locks are taken, so two runs that touch the same files acquire in the same order
+
+### Fixed — `diff` and the terminal envelope
+- `diff` reports 1-based `line` plus `old_line` and `new_line`, so the old coordinate and the new one are no longer mixed
+- `write_terminal` passes through the output shape, so `--select` is honored on the summary record too
+- `delete` publishes `backups_kept`, `backup_bytes` and `dirs_left`
+- `output.profile = "lean"` drops the digests, the byte counts and the timing from a successful mutation record, and 454 bytes became 161 on a three-line `apply`
+
+### Changed — the lock is taken on the file, not on its name
+- The lock now targets the inode of the file being written, taken with `std::fs::File::try_lock`, so any process that opens the same file also meets the same exclusive lock
+- The `.atomwrite.lock` sidecar is demoted to a best-effort compatibility file, and its failure no longer aborts the write
+- The swap revalidates the locked inode against the inode the path resolves to, and a divergence is `state_drift` with exit 82 instead of a silent write to the wrong object
+- An in-place write needs no directory permission, so a file the caller owns in a read-only directory is written instead of refused with exit 13
+- ADR-0079 records the cause, the model per operating system and the migration window of the sidecar
+- `delete` takes the same exclusive lock before it hashes and unlinks, so a deletion and a write to the same target no longer interleave
+
+### Changed — the destructive verbs state what they left behind
+- `delete` publishes `backup_path` in the `deleted` event and `replace` publishes the same field in its result, so the caller knows where the copy lives without listing the directory
+- `delete` fills `hint` on the summary when a directory survives, naming `--hidden` or the include and exclude filters as the reason
+- `prune-backups` reads the creation stamp from the backup name and falls back to mtime only when the name carries no stamp, because the APFS clonefile copies the mtime of the original
+- `prune-backups -r` accepts a directory, walks it with the same scoped walker the other tree verbs use, and reaches the orphan copy a `delete` left behind
+- Only a regular file is a prune candidate, so a directory that happens to carry a backup name is left untouched
+
+### Changed — `set` edits the value instead of rewriting the document
+- `set` on JSON locates the byte span of the value and splices the new value in, so every key outside that span stays byte for byte the same
+- The splice is dropped when the result does not parse back to the expected document, and the canonical rewrite still runs as the fallback
+- `comments_preserved` is optional and appears only for TOML, because a JSON document has no comment to preserve
+
+### Changed — symlinks, the help page and the error envelope
+- `--follow-symlinks` reaches every single-target verb, and the jail is checked over the resolved target, so a config file that is a link to another folder is read and edited in place
+- A refused symlink exits 79 instead of 127, because 127 is what a shell reports for a program that is not installed
+- The global flags left the short help and moved to the footer line `Global flags: atomwrite --help`, and `read -h` went from 113 lines to 45
+- `suggestion_lang` appears only when the catalogue resolved to a language other than English, which removes 24 bytes from every failure by default
+
+### Added — pictures reach the vision channel
+- `read` on a picture emits one `data:` URI line on stdout, so a PNG no longer arrives as raw bytes the model cannot read
+- The type comes from the magic bytes, and a PNG named `.txt` is still handled as a picture
+- The size follows the 28-pixel patch rule, with the standard tier at 1 568 pixels and 1 568 visual tokens and `--high-res` at 2 576 and 4 784
+- `--max-tokens N` shrinks until the rounded patch count fits N, and `--crop X,Y,W,H` cuts the region before any resize
+- The EXIF orientation is applied, because the decoder reads pixels and not the camera tag
+- `--stat` reports width, height, format, visual tokens, GIF frame count and the orientation, without sending pixels
+- A picture above 100 megapixels is refused before the decode, and a `data:` URI above the ceiling is refused with the flag that shrinks it
+
+### Added — PDF text by page
+- `read doc.pdf` returns the text of every page, and `--pages N` or `--pages A:B` selects windows, repeatable in one call
+- A page that carries no text is named in `needs_vision`, because a scanned page is not an empty document
+- Each page is decompressed under a hard byte ceiling, so a crafted content stream cannot inflate the process
+- `extract-artifact` on a PDF now returns `text_chars` and `text_excerpt`, and no longer answers `text: null` for a document that has text
+- Pages are decompressed in parallel and joined in the order the caller asked for
+
+### Added — a scanned page becomes text
+- `read doc.pdf --page N` renders the page and answers with the same `data:` URI a picture uses, so a scan stops arriving as a header the model cannot read
+- `--dpi N` chooses the render resolution between 36 and 600, and `--stat` reports the rendering size without sending the pixels
+- The page is flattened onto white before the encode, so it leaves as JPEG instead of a PNG several times larger
+- `--ocr` recognizes the characters on a picture or on a rendered page and answers with the text in `content`, the same field a text file fills
+- The two model files are fetched once into the cache directory, so the first `--ocr` run needs a network and every later run does not
+- Recognition runs in process on pure Rust, with no Tesseract and no C toolchain, and the models are capped at 64 MiB per file
+- A rendered page goes to recognition at 300 dpi by default, because small print at 150 dpi is too coarse to separate letters
+
+### Changed — the write journal and the cheap inventory
+- Every refusal after the write-ahead journal is opened discards the journal, and not only the cancel path, so a refused write leaves no orphan journal behind
+- `commands --brief` prints one line per subcommand, 5 020 bytes against 67 492 for the full tree
+
+### Fixed — the audit round: each verb now answers what it was asked
+- `apply --format unified` accepts `@@ ... @@` and a bare `@@` beside `@@ -a,b +c,d @@`, and locates the hunk by context when the numbers are absent
+- A SEARCH block with a `...` line matches the span between its anchors under `apply.max_ellipsis_lines`, and a `...` alone in the REPLACE is refused
+- A syntax refusal publishes `line` and `line_end` of the block that grew the error count, so the caller edits that block instead of re-reading the file
+- `read` composes `--symbol`, `--enclosing`, `--no-comments`, every `--lines` window and `--number` on the default format, which used to honor only the first window
+- `read --format raw` with `--lines`, `--head` or `--tail` streams the file instead of loading it, and the peak fell from 162 452 kB to under 32 768 kB on a 22,9 MB file
+- `read --grep` and `--no-comments` always number the lines, because the number is what the follow-up `apply` needs
+- `search` accepts `-e/--regex PATTERN` repeated and unions the matches, and `-n` is accepted as an explicit no-op
+- `search --format text` names how many matches `--limit` cut, on stderr and in the NDJSON summary alike
+- `delete -r` on a directory that keeps entries exits `65` with `ok:false`, `dirs_left` and `entries_left`, instead of claiming success
+- `delete --backup` removes the target it was named, including a file whose name carries a `.bak.` stamp, and creates no copy of the copy
+- `sparse --outline` honors `--hidden` like `list` and `outline`: a stale `atomwrite` journal is a dotfile, so it stays out of a default run and is counted when `--hidden` asks for every entry
+- `outline` lists a symbol whose subtree holds a parse error and marks it with `has_error`, instead of dropping it
+- `list --limit` no longer spends a slot on the starting directory, and its cap notice names `list` and the number of entries left out
+- A backup the directory permission forbids is a warning on stderr and the write proceeds, and the verdict publishes `backup_skipped`
+- A run over several targets publishes `target_resolved` as an array in invocation order instead of a string joined with `,`, which could not be split back because a path may hold that character; a single target stays a string
+- `read --format raw` on a single target honors `--max-filesize` and exits 65 `FILE_TOO_LARGE` instead of streaming a file above the ceiling
+- Final test run, measured on 2026-11-04: `cargo test --no-fail-fast` exited 0 with 131 test targets in 134 executables, 1486 tests passed, 0 failed and 9 ignored (the `cross_compile_*` tests)
 
 ## [0.1.37] - 2026-10-31
 - This entry merges the 2026-10-15 draft of `0.1.37` and the work of 2026-10-28 through 2026-10-31, because `0.1.37` was never published: crates.io carries `0.1.36`, and the higher numbers this tree briefly declared were folded back into `0.1.37`
@@ -62,7 +316,7 @@
 - `outline` publishes `items_omitted` for the `--limit` cut, and `items_truncated` now says it counts a cut signature, never a missing item
 - `--print-schema` declares `records_suppressed`, `files_budget_dropped`, `files_planned`, `truncated` and `truncated_records`, so a validator stops seeing undeclared keys
 - `docs/schemas/README.md` states 54 files with no orphans
-- `config` reads 37 keys in every document, and `config doctor` appears in every subcommand list
+- `config` reads 43 keys in every document, and `config doctor` appears in every subcommand list
 - The two families of ADR-0077 are cited without `count` and `list`, whose `ok:false` with exit `13` was measured
 
 ### Fixed — closing the tail (2026-10-31)
@@ -565,7 +819,7 @@
 - `search` memory and deadline: the note that a huge file with no match only saw the deadline at the end of its scan no longer holds, `CancelRead` fixed it
 - Exit 129: the note that `agent-surface` did not list it no longer holds
 - Schema totals: earlier bullets of this entry said 59 names served by 58 files. The final tree serves 55 names backed by 54 files, and ten places in seven documents still carried the old total until this audit fixed them (`llms.txt`, `llms-full.txt`, `docs/MIGRATION.md`, `docs/COOKBOOK.md`, `docs/schemas/README.md`, `docs/TESTING.md` and `docs/TESTING.pt-BR.md`)
-- Key totals: earlier bullets of this entry said 23 typed keys. The final tree serves 37 keys, and `docs/MIGRATION.md`, `docs/MIGRATION.pt-BR.md`, `docs/decisions/README.md` and both ADR-0058 files carried the old total until this audit fixed them
+- Key totals: earlier bullets of this entry said 23 typed keys. The final tree serves 43 keys, and `docs/MIGRATION.md`, `docs/MIGRATION.pt-BR.md`, `docs/decisions/README.md` and both ADR-0058 files carried the old total until this audit fixed them
 
 ### Removed
 - The tool-protocol key of `agent-surface`, the matching `doctor` policy check and every mention of a tool-protocol server in `src/` and in the docs
@@ -692,7 +946,7 @@
 - XDG `[watch].debounce_ms` + CLI `--debounce-ms`; idle default `DEFAULT_WATCH_IDLE_EXIT_MS=500` (was ~3s)
 - `delete --plan` for plan-only listing (one-shot safe); `delete --confirm` and `delete --yes` / `-y` are rejected (fail-closed)
 - Agent-surface notes for write/watch/merge anti-patterns (A-DISC-001)
-- Local contract suite `tests/cli_e2e_v0135` + residual A-* closeout (gaps.md §20)
+- Local contract suite `tests/cli_e2e_v0135` + residual A-* closeout (gaps.md of that release, §20)
 
 ### Changed
 - Version 0.1.35
@@ -707,7 +961,7 @@
 - A-WRITE-002: `--require-large-ack` was alias of `--confirm` ("used multiple times"); now independent
 - A-MERGE-001: conflict status wrote prefer-ours without markers; markers default ON
 - A-ONESHOT-001: watch idle default reduced to 500 ms
-- A-GAPS-DOC-001: gaps.md banner + §20 supersede stale "suite 100% / FALHA XDG" headers
+- A-GAPS-DOC-001: gaps.md banner and §20 of that release supersede stale "suite 100% / FALHA XDG" headers
 - Doctor-only env detect allowlisted (A-ENV-001); zero product env knobs
 
 ### Notes
@@ -1057,6 +1311,10 @@
 - GAP-068: `prune-backups` without filter → exit 65 with JSON
 - GAP-069: `extract` JSON nesting overflow → exit 65 with JSON
 - GAP-070: `edit --multi` per-op validation → exit 65 with JSON
+
+### Windows CI Fix
+- 11 `cli_batch` tests fixed on `windows-2025-vs2026`, and the NDJSON manifest now uses correct JSON escaping through the `common::manifest` helper
+- Added regression test `batch_write_escapes_backslash_in_target_path`
 
 ### ADRs
 - ADR-0045: Actionable suggestion for clap parse errors
@@ -1472,7 +1730,29 @@
   - Refactored all 11 affected tests in `tests/cli_batch.rs` to use the new helper via the `serde_json::json!` macro.
   - Refactored 2 additional tests with the same bug pattern: `tests/snapshot_write.rs::batch_summary_ndjson_structure_snapshot` and `tests/ndjson_valid_test.rs::ndjson_batch_output_valid` (also added the missing `mod common;` to the latter).
   - Added regression test `batch_write_escapes_backslash_in_target_path` that constructs a path string with a forced backslash on any platform, so the bug would be caught on every CI run, not just Windows.
-- Total tests: 303/303 PASS (was 302; +1 from the new regression test).
+- Total tests: 445/445 PASS in 43 suites (the Windows regression test included).
+
+### Validation
+- `cargo test --all-features`: 445/445 PASS in 43 test suites
+- `cargo fmt -- --check`: PASS
+- `cargo clippy --all-features --all-targets -- -D warnings`: PASS
+- `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`: PASS
+- `cargo audit`: PASS (0 vulnerabilities, 379 crates)
+- `cargo deny check`: PASS (advisories, bans, licenses, sources all OK)
+- `cargo +1.88 check --all-targets`: PASS (MSRV compliant)
+- `cargo build --release`: PASS
+- `cargo package --allow-dirty`: PASS
+- `cargo publish --dry-run`: PASS
+- `cargo install --path . --force`: PASS (`atomwrite 0.1.12 (6af0d76)` installed)
+
+### Tests
+- 445/445 tests passing (320 baseline in v0.1.10, +125 new): 9 set, 7 case, 5 query, 5 outline, 6 syntax_check E2E, 4 WAL E2E, 6 get/del integration, 4 xattr/reflink Linux-only, 27 regression audit (strsim 5, heck 6, toml_edit 9, content_inspector 4, serde_yaml 4, locale pt-BR 1, LANG=C 1, --max-filesize edge 1, shell-completion bash/zsh/fish 3, --threads 1 query+outline 2, G72 stream >1MiB 1, case --subvert boundary 4, recover_orphan_journals 3, --json-schema 6).
+
+### Notes
+- v0.1.12 is an ADDITIVE release. No existing subcommand was renamed or removed. All new exit codes (83, 88, 91, 92, 93) are added without changing the existing ones (0-86 unchanged).
+- `atomwrite write --syntax-check` is OPT-IN. The default `write` behavior did not change.
+- `atomwrite write` now writes a WAL sidecar only when the env var `ATOMWRITE_WAL=1` is set, OR when `--strict-atomic` is passed. The default `write` behavior does NOT write the sidecar (consultative only).
+- See `docs/MIGRATION.md` for the full upgrade guide from v0.1.11 to v0.1.12.
 
 ## [0.1.11] - 2026-06-05
 
@@ -1691,11 +1971,14 @@
 ### Security
 - `cargo audit` baseline 1 vulnerability acknowledged: `RUSTSEC-2026-0009` in `time 0.3.45` (DoS via stack exhaustion). Fix requires `time >= 0.3.47` which needs Rust 1.88. Our MSRV is 1.85, and atomwrite uses `time` only via `tracing-appender` for log timestamps — not exploitable. Tracked for MSRV bump in 0.2.0.
 
+### Tests
+- 10 new regression tests in `tests/cli_v012_regressions.rs` covering all 6 fixed bugs
+- Total: 33 test suites, 292+ tests passing (was 282 in v0.1.1)
+
 
 ## [0.1.1] - 2026-06-01
 
 ### Fixed
-### Search and Replace Engine
 - `search --include`/`--exclude` now correctly filter files via OverrideBuilder (was silently ignored)
 - `replace --include`/`--exclude` now correctly filter files via OverrideBuilder
 - `transform --include`/`--exclude` now correctly filter files via OverrideBuilder
@@ -1705,28 +1988,21 @@
 - `search --sort` now sorts results by file path (was returning in unspecified order)
 - `transform` now processes files in parallel via WalkParallel + crossbeam channel (was sequential)
 - `search` regex special characters in patterns now properly escaped when `--literal` is set
-
-### Atomic Writes and Backups
 - `batch delete` backup now uses atomic create_backup() with fsync (was racing the write)
 - `create_backup` now uses `fs::copy` instead of `fs::hard_link` to prevent backup corruption when original is overwritten in-place (hard links would diverge silently)
 - Hardlink detection before atomic rename with `tracing::warn` when nlink > 1
 - Same-file detection in `copy` and `move` to prevent source=destination data loss (was overwriting)
-
-### Error Handling and Code Quality
 - 12 broken intra-doc links in `error.rs` corrected (`DiskFull` to `Self::DiskFull` and similar)
 - Six `unwrap()` calls in `edit.rs` multi-edit mode replaced with `ok_or_else` for safer error handling
 - `scope.rs` thread join changed from `unwrap()` to `let _ = join()` to prevent panic propagation
 - `rollback.rs` `unwrap()` replaced with descriptive `expect` message
 - Exit codes in `output.rs`, `read.rs`, `batch.rs`, and `hash.rs` moved from magic numbers to named constants in `constants.rs`
 - `DETECTION_SIZE` in `binary_detect.rs` centralized to `BINARY_DETECT_SIZE` in `constants.rs`
-
-### Output Format
 - `read` modified timestamp now returns ISO 8601 format instead of epoch seconds (LLM-readable)
 - `# Errors` documentation added to three `output.rs` public functions returning `Result`
 - Portuguese test data in `file_io.rs` replaced with English (code-in-english convention)
 
 ### Added
-### New Subcommands
 - `scope` subcommand for grammatical scoping: select AST categories (comments, functions, strings, etc.) and apply actions (delete, upper, lower, titlecase, squeeze, replace)
 - `scope` supports Rust (30 prepared queries), Python (13), JavaScript/TypeScript (11), Go (8), and custom AST patterns via `--pattern`
 - `backup` subcommand for creating timestamped file backups with BLAKE3 checksums and configurable retention
@@ -1826,7 +2102,8 @@
 - Release profile with LTO, single codegen unit, symbol stripping, and panic=abort
 
 
-[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.37...HEAD
+[Unreleased]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.38...HEAD
+[0.1.38]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.37...v0.1.38
 [0.1.37]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.36...v0.1.37
 [0.1.36]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.35...v0.1.36
 [0.1.35]: https://github.com/danilo-aguiar-br/atomwrite/compare/v0.1.34...v0.1.35

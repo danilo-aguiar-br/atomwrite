@@ -176,15 +176,15 @@ pub fn cmd_semantic_search(
         let mut files = if roots.is_empty() {
             Vec::new()
         } else {
-            // Dotfiles hold meaning for a semantic search, so the shared walker
-            // runs in the always-hidden flavor.
+            // Dotfiles are searched only under `--hidden`, like every other
+            // tree walk, so the shared walker honors the global flags.
             // An ignore file the walk half-reads is a hole too, and `ignore`
             // never reports it by itself.
             crate::concurrency::record_ignore_file_failures(&roots, Some(&failures));
             let wb = crate::commands::build_scoped_walker_flavored(
                 &roots,
                 global,
-                crate::commands::WalkerFlavor::AlwaysVisitHidden,
+                crate::commands::WalkerFlavor::RespectGlobalFlags,
                 &[],
                 &[],
             )?;

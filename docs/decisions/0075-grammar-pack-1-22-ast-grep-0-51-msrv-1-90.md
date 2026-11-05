@@ -3,6 +3,7 @@
 ## Status
 - Accepted (2026-10-28)
 - Amends ADR-0019 on the pack version (1.8.1 to 1.22.1), on the grammar count (305 to 372) and on the cache path (`v1.8.1` to `v1.22.1`), so the 1.8 figures in that record stay as dated history
+- Amends ADR-0057 on the MSRV, which rises from 1.89 to 1.90, because `ast-grep-core 0.51` and `tree-sitter 0.27` both declare that floor
 
 ## Context
 - `cargo audit --deny warnings` reported 4 vulnerabilities and 10 unsound warnings against `zstd 0.13.3`, `zstd-safe 7.2.4` and `zstd-sys 2.0.16`, and `cargo deny check` failed the `advisories` gate with the same set.

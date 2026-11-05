@@ -81,6 +81,7 @@ pub const STREAM_RECORD_TYPES: &[&str] = &[
     "case_preview",
     "change",
     "codemod",
+    "command",
     "context",
     "deleted",
     "end",
@@ -125,7 +126,7 @@ fn is_success_envelope(value: &Value) -> bool {
         return false;
     };
     // An error envelope already carries `ok: false`; never overwrite it.
-    if value.get("error").and_then(Value::as_bool) == Some(true) {
+    if value.get("ok") == Some(&Value::Bool(false)) {
         return false;
     }
     SUCCESS_ENVELOPE_TYPES.contains(&kind)
@@ -192,9 +193,9 @@ pub fn error_message(err: &anyhow::Error) -> String {
 
 /// Keys of the error envelope that a terminal event must not copy.
 ///
-/// `ok`, `code` and `exit` are stamped by [`stamp_failed`], and `error` is the
-/// sentinel of the standalone error envelope, which this event is not.
-const FAILURE_STAMPED_KEYS: [&str; 4] = ["error", "ok", "code", "exit"];
+/// `ok`, `code` and `exit` are stamped by [`stamp_failed`] and are the whole
+/// verdict this event already carries, so a terminal event never copies them.
+const FAILURE_STAMPED_KEYS: [&str; 3] = ["ok", "code", "exit"];
 
 /// Run `read` on the typed error behind `err`.
 ///
@@ -289,7 +290,9 @@ pub fn failure_identity(err: &anyhow::Error) -> (&'static str, u8) {
 /// These are the only events that name the resolved target: a stream record
 /// describes one item and would repeat the same path on every line.
 fn is_terminal_envelope(value: &Value) -> bool {
-    if value.get("error").and_then(Value::as_bool) == Some(true) {
+    // A failure record is identified by `ok: false` plus a `code`, because the
+    // redundant `error` flag left the envelope in v0.1.39.
+    if value.get("ok").and_then(Value::as_bool) == Some(false) && value.get("code").is_some() {
         return true;
     }
     let Some(kind) = value.get("type").and_then(Value::as_str) else {
@@ -314,14 +317,34 @@ fn stamp_workspace_key(value: &mut Value, source: &str) {
 /// Attach `target_resolved` and `target_source` to a terminal envelope.
 ///
 /// An envelope that already carries either key keeps its own value.
-fn stamp_target_keys(value: &mut Value, resolved: &str, source: &str) {
+fn stamp_target_keys(value: &mut Value, resolved: &Value, source: &str, refusal: bool) {
     if !is_terminal_envelope(value) {
         return;
     }
+    // A refusal already names the subject once in `path`, so the resolved copy
+    // is omitted when it says the same thing. Multi-target runs keep it.
+    let repeated_path = refusal
+        && value.get("path").and_then(Value::as_str).is_some_and(|path| {
+            resolved
+                .as_array()
+                .is_some_and(|items| items.len() == 1 && items[0].as_str() == Some(path))
+        });
     if let Some(obj) = value.as_object_mut() {
-        obj.entry("target_resolved")
-            .or_insert_with(|| Value::String(resolved.to_string()));
-        obj.entry("target_source")
-            .or_insert_with(|| Value::String(source.to_string()));
+        // `target_source` proves where the target came from, and no other field
+        // carries that fact. A refusal that already knows the caller passed the
+        // target on argv does not need it repeated.
+        if !(refusal && source == "argv") {
+            obj.entry("target_source")
+                .or_insert_with(|| Value::String(source.to_string()));
+        }
+        // `target_resolved` names the file the run resolved the target to. It is
+        // stamped on every envelope that reaches this function, success or
+        // refusal, because a caller comparing a passing run against a failing
+        // one has to find the same keys on both. A read-only verb never reaches
+        // here, since its caller passes no target at all.
+        if !repeated_path {
+            obj.entry("target_resolved")
+                .or_insert_with(|| resolved.clone());
+        }
     }
 }

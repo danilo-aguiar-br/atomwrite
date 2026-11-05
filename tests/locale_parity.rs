@@ -143,6 +143,7 @@ fn locale_override_pt_br_on_error_suggestion() {
     let missing = dir.path().join("does-not-exist.txt");
     let out = bin()
         .args([
+            "-v",
             "--locale",
             "pt-BR",
             "--workspace",

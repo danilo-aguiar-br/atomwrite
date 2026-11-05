@@ -331,6 +331,7 @@ fn write_large_default_deny_requires_ack_overwrite() {
     fs::write(&path, vec![b'x'; 120_000]).unwrap();
     bin()
         .args([
+            "-v",
             "--workspace",
             dir.path().to_str().unwrap(),
             "write",
@@ -458,6 +459,7 @@ fn write_large_before_shrink_mentions_ack() {
     fs::write(&path, vec![b'A'; 120 * 1024]).unwrap();
     bin()
         .args([
+            "-v",
             "--workspace",
             dir.path().to_str().unwrap(),
             "write",

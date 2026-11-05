@@ -18,9 +18,12 @@ enum HunkOp<'a> {
 /// One `@@` section of a unified diff.
 struct Hunk<'a> {
     /// 1-based first line of the old side, as written in the header.
-    old_start: usize,
+    ///
+    /// `None` when the header carries no line numbers (`@@` or
+    /// `@@ ... @@`); the hunk is then located by its context lines.
+    old_start: Option<usize>,
     /// Old-side line count, as written in the header.
-    old_count: usize,
+    old_count: Option<usize>,
     ops: Vec<HunkOp<'a>>,
 }
 
@@ -46,15 +49,24 @@ impl<'a> Hunk<'a> {
 
     /// Drop blank padding lines the header does not account for.
     fn trim_padding(&mut self) {
-        while self.old_side().len() > self.old_count
-            && matches!(self.ops.last(), Some(HunkOp::Context("")))
-        {
+        let Some(count) = self.old_count else {
+            return;
+        };
+        while self.old_side().len() > count && matches!(self.ops.last(), Some(HunkOp::Context(""))) {
             self.ops.pop();
         }
     }
+
+    /// Header text quoted by an error, with or without line numbers.
+    fn header_label(&self) -> String {
+        self.old_start.map_or_else(
+            || "@@ (no line numbers)".to_owned(),
+            |start| format!("@@ -{start}"),
+        )
+    }
 }
 
-fn apply_unified(original: &str, patch: &str) -> Result<(String, usize)> {
+fn apply_unified(original: &str, patch: &str) -> Result<(String, usize, Option<usize>)> {
     let hunks = parse_unified_hunks(patch)?;
     if hunks.is_empty() {
         return Err(AtomwriteError::InvalidInput {
@@ -68,12 +80,11 @@ fn apply_unified(original: &str, patch: &str) -> Result<(String, usize)> {
     if let Some(empty) = hunks.iter().position(|h| h.old_side().is_empty() && h.inserts() == 0) {
         return Err(AtomwriteError::InvalidInput {
             reason: format!(
-                "unified hunk {}/{} (@@ -{},{} @@) has neither context, removed nor added lines; \
+                "unified hunk {}/{} ({}) has neither context, removed nor added lines; \
                  refusing a no-op hunk",
                 empty + 1,
                 hunks.len(),
-                hunks[empty].old_start,
-                hunks[empty].old_count
+                hunks[empty].header_label()
             ),
         }
         .into());
@@ -83,19 +94,39 @@ fn apply_unified(original: &str, patch: &str) -> Result<(String, usize)> {
     // Length change of the hunks applied so far plus how far the last one
     // landed from where its header said (`patch(1)` offset semantics).
     let mut drift: i64 = 0;
+    let mut first_line = None;
 
     for (index, hunk) in hunks.iter().enumerate() {
         let old_side = hunk.old_side();
-        // An insert-only hunk names the line AFTER which it inserts.
-        let base = if old_side.is_empty() {
-            hunk.old_start
-        } else {
-            hunk.old_start.saturating_sub(1)
+        let (pos, expected) = match hunk.old_start {
+            Some(old_start) => {
+                // An insert-only hunk names the line AFTER which it inserts.
+                let base = if old_side.is_empty() {
+                    old_start
+                } else {
+                    old_start.saturating_sub(1)
+                };
+                let expected = (base as i64 + drift).clamp(0, lines.len() as i64) as usize;
+                let Some(pos) = locate_hunk(&lines, &old_side, expected) else {
+                    return Err(
+                        hunk_mismatch(index + 1, total, hunk, &lines, expected, &old_side).into(),
+                    );
+                };
+                (pos, expected)
+            }
+            // A header with no numbers (`@@` or `@@ ... @@`) locates the hunk
+            // by its context alone, so the file decides where it goes. There
+            // is no header position to drift from, so `expected` is the hit.
+            None => {
+                let pos = locate_hunk_by_context(&lines, &old_side, index + 1, total, hunk)?;
+                (pos, pos)
+            }
         };
-        let expected = (base as i64 + drift).clamp(0, lines.len() as i64) as usize;
-        let Some(pos) = locate_hunk(&lines, &old_side, expected) else {
-            return Err(hunk_mismatch(index + 1, total, hunk, &lines, expected, &old_side).into());
-        };
+        if index == 0 {
+            // The line the first hunk landed on, 1-based. The caller cannot
+            // infer it: `patch(1)` may shift a hunk from its header.
+            first_line = Some(pos + 1);
+        }
 
         // Context lines keep the FILE's text; only added lines come from the patch.
         let mut new_lines: Vec<&str> = Vec::with_capacity(hunk.ops.len());
@@ -119,7 +150,7 @@ fn apply_unified(original: &str, patch: &str) -> Result<(String, usize)> {
     if original.ends_with('\n') && !result.ends_with('\n') {
         result.push('\n');
     }
-    Ok((result, total))
+    Ok((result, total, first_line))
 }
 
 /// Position of `old_side` in `lines`: at `expected`, else the nearest exact
@@ -151,6 +182,71 @@ fn locate_hunk(lines: &[&str], old_side: &[&str], expected: usize) -> Option<usi
     None
 }
 
+/// Position of a hunk whose header carries no numbers, found by its context.
+///
+/// The context must occur exactly once. Zero places is a miss; more than one
+/// is refused with the line of each place, because picking one would be the
+/// guess this verb exists to avoid.
+fn locate_hunk_by_context(
+    lines: &[&str],
+    old_side: &[&str],
+    number: usize,
+    total: usize,
+    hunk: &Hunk<'_>,
+) -> Result<usize> {
+    if old_side.is_empty() {
+        return Err(AtomwriteError::InvalidInput {
+            reason: format!(
+                "unified hunk {number}/{total} ({}) has neither line numbers nor context; \
+                 add a `@@ -a,b +c,d @@` header or the lines around the change",
+                hunk.header_label()
+            ),
+        }
+        .into());
+    }
+    let mut hits = Vec::new();
+    if old_side.len() <= lines.len() {
+        for pos in 0..=lines.len() - old_side.len() {
+            let matches = old_side
+                .iter()
+                .zip(&lines[pos..])
+                .all(|(want, have)| want.trim_end() == have.trim_end());
+            if matches {
+                hits.push(pos);
+            }
+        }
+    }
+    match hits.len() {
+        0 => Err(AtomwriteError::MatchFailed {
+            reason: format!(
+                "unified hunk {number}/{total} (@@ without line numbers) does not match any line \
+                 of the file; nothing was written"
+            ),
+            best_candidate: None,
+            candidates: None,
+        }
+        .into()),
+        1 => Ok(hits[0]),
+        _ => {
+            let at = hits
+                .iter()
+                .map(|pos| (pos + 1).to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(AtomwriteError::MatchAmbiguous {
+                reason: format!(
+                    "unified hunk {number}/{total} (@@ without line numbers) matches {} places, \
+                     at lines {at}; add context or line numbers",
+                    hits.len()
+                ),
+                count: hits.len() as u64,
+                best_candidate: None,
+            }
+            .into())
+        }
+    }
+}
+
 /// `MATCH_FAILED` naming the hunk, the first line that disagrees, what the
 /// patch expected there and what the file has.
 fn hunk_mismatch(
@@ -176,9 +272,9 @@ fn hunk_mismatch(
         .map_or_else(|| "<end of file>".to_owned(), |l| format!("{l:?}"));
     AtomwriteError::MatchFailed {
         reason: format!(
-            "unified hunk {number}/{total} (@@ -{}) does not match the file: line {line_no} \
+            "unified hunk {number}/{total} ({}) does not match the file: line {line_no} \
              expected {want:?}, found {found}; nothing was written",
-            hunk.old_start
+            hunk.header_label()
         ),
         best_candidate: Some(Box::new(crate::ndjson_types::BestCandidate {
             text: have,
@@ -204,11 +300,12 @@ fn parse_unified_hunks(patch: &str) -> Result<Vec<Hunk<'_>>> {
     let mut current: Option<Hunk<'_>> = None;
 
     for (number, line) in patch.lines().enumerate() {
-        if let Some(header) = line.strip_prefix("@@ ") {
+        if line == "@@" || line.starts_with("@@ ") {
             if let Some(mut done) = current.take() {
                 done.trim_padding();
                 hunks.push(done);
             }
+            let header = line.strip_prefix("@@ ").unwrap_or("");
             let Some((old_start, old_count)) = parse_hunk_header(header) else {
                 return Err(AtomwriteError::InvalidInput {
                     reason: format!(
@@ -245,14 +342,23 @@ fn parse_unified_hunks(patch: &str) -> Result<Vec<Hunk<'_>>> {
 }
 
 /// `(old_start, old_count)` from the text after `@@ `.
-fn parse_hunk_header(header: &str) -> Option<(usize, usize)> {
+///
+/// `@@` and `@@ ... @@` carry no numbers and yield `(None, None)`: the hunk is
+/// then located by its context. A header that names the old side without the
+/// new one is malformed, so a partial parse is always `None`.
+fn parse_hunk_header(header: &str) -> Option<(Option<usize>, Option<usize>)> {
+    let header = header.trim();
+    if header.is_empty() || header.starts_with(crate::constants::PATCH_ELLIPSIS_MARKER) {
+        return Some((None, None));
+    }
     let parts: Vec<&str> = header.split_whitespace().collect();
-    if parts.len() < crate::constants::PATCH_HUNK_HEADER_MIN_FIELDS {
+    if parts.len() < 2 {
         return None;
     }
     let old_part = parts[0].strip_prefix('-')?;
     parts[1].strip_prefix('+')?;
-    parse_range(old_part)
+    let (start, count) = parse_range(old_part)?;
+    Some((Some(start), Some(count)))
 }
 
 fn parse_range(range: &str) -> Option<(usize, usize)> {

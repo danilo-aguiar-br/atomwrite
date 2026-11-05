@@ -6,15 +6,47 @@
 - One CLI replaces dozens of file-manipulation tool calls your agent makes today
 
 
+## Objectives
+- Spend fewer tokens: one NDJSON object per call replaces the shell pipeline, and `commands --brief` answers in 5 020 bytes where the full tree costs 67 492
+- Lower the financial cost, because the bill follows the tokens and the round trips, and one call replaces the several shell calls a file task needs
+- Reduce errors with an atomic write and a BLAKE3 checksum on every response, so a stale or partial result is caught instead of assumed
+- Reduce hallucinations with a `type` discriminator, a closed schema per verb and an exit code that names the failure
+- Reduce the time spent on each task, because the read, the search and the write run in one process instead of a chain of shell tools
+- Reduce latency with local execution and no network on the file path, measured at medians of 5.6 ms on `read` and 6.7 ms on `write` for small files
+- Multiply the speed of operations with `batch`, `edit-loop`, `replace`, `case`, `transform` and `codemod` settling many files in one call
+- Cut the lead time between the request and the verified result, because the response already carries the checksum, the `target_resolved` and the next step
+- Make the agent faster, more effective and more assertive, since the exit code, the `code` and the `suggestion` say what to do next without a retry guess
+
+
 ## Reading and Running Time
-- Reading time is about 45 minutes for the whole guide (about 10000 words at 230 words per minute)
+- Reading time is about 51 minutes for the whole guide, DERIVADO 11822 words outside the code fences at 230 words per minute
 - First Command in 60 Seconds takes 2 minutes to read and run
-- Every example ran on Linux against atomwrite 0.1.37 inside an isolated home directory
+- Every example ran on Linux against atomwrite 0.1.38 inside an isolated home directory
 - A plain write finished in 8 ms on the measurement host, so examples answer at once
 - The first AST call downloads tree-sitter parsers, which takes seconds (see Prerequisites)
 - macOS and Windows were not measured for this guide
 - Examples use a POSIX shell, and on PowerShell you pipe text with `'text' | atomwrite ...`
 - When you are done, the [COOKBOOK](COOKBOOK.md) holds longer recipes
+
+
+## What's New in v0.1.38 (2026-11-04)
+- The failure envelope carries `ok`, `code` and `exit`, and `error: true` left it because it duplicated `ok: false` plus `code`, cost 13 bytes on every failure and no caller branched on it alone; a consumer that read it switches to `.ok == false`
+- `read --format raw` stops at 24,000 bytes and prints one stderr line with the `--lines` that reads the rest, and `--all` removes the cap
+- `read --format raw` on a single target honors `--max-filesize` and exits 65 `FILE_TOO_LARGE` instead of streaming a file above the ceiling
+- `--symbol NAME`, `--line N --enclosing`, repeatable `--lines` and `--no-comments` choose the window by syntax tree
+- `outline` reads a Markdown heading as a `section` that runs to the end of its own section, and `read --symbol Part` returns that whole section with its sub-sections
+- A file whose image signature is damaged fails `read` with exit 65 `INVALID_INPUT` instead of returning its bytes as text
+- A picture arrives as one `data:` URI, `--high-res` raises the tier to 2 576 pixels and 4 784 visual tokens, and a picture already sent in this session answers with a short token line unless `--force` is given
+- `read doc.pdf` returns the text of every page, `--pages` selects windows, `needs_vision` names a page that carries no text, and `--ocr` recognizes characters on a picture or a rendered page in pure Rust
+- `search --format text` writes one `path:line:col:text` per match, and a tree where every file was binary exits `89 ALL_SKIPPED_BINARY` instead of `NO_MATCHES`
+- `apply` matches whole lines, applies several files in one invocation, publishes the changed lines with `--show`, and sorts the targets before it takes the locks
+- The lock targets the inode with `std::fs::File::try_lock`, and `delete` takes the same lock before it hashes and unlinks, so a deletion and a write to one target no longer interleave
+- `delete -r <dir>` owns the whole named tree, including hidden, ignored, linked, fifo, socket and device entries, and a link is never followed
+- `target_resolved` is always an array in invocation order, because a path may contain the comma that used to join several targets
+- `[defaults].backup = true` reaches `delete` and `batch delete`, and `[delete].backup` wins over it for `delete` only
+- `output.profile = "lean"` drops the digests, the byte counts and the timing from a successful mutation record, which took one `apply` on a three-line file from 433 bytes to 196
+- `config` lists 43 keys, and `atomwrite commands --brief` prints one line per subcommand in 5 020 bytes against 67 492 for the full tree
+- Pin agents to `^0.1.38`. 47 subcommands (SSOT)
 
 
 ## What's New in v0.1.37 (2026-10-31)
@@ -60,7 +92,7 @@
 - Install from crates.io and confirm the version
 
 ```bash
-cargo install atomwrite --locked --version "^0.1.37"
+cargo install atomwrite --locked --version "^0.1.38"
 atomwrite --version
 ```
 
@@ -160,7 +192,8 @@ printf 'tail line\n' | atomwrite --workspace "$WS" write --append src/hello.txt
 - An existing target above 100 KiB (`[write].confirm_large_bytes`) needs `--ack-overwrite`, or exits 65
 - Empty stdin exits 65 unless you pass `--allow-empty-stdin`
 - `--preserve-timestamps` keeps the old mtime, and by default mtime is updated so build tools rebuild
-- Other flags are `--max-size`, `--require-backup`, `--auto-rotate`, `--risk-threshold PERCENT` and `--retention N`
+- Other flags are `--max-size`, `--require-backup`, `--auto-rotate`, `--risk-threshold PERCENT`, `--require-large-ack` and `--retention N`
+- `--no-checksum-when-empty` lets an empty stdin skip `--expect-checksum`
 - `--require-backup` and `--auto-rotate` take no value, and `--risk-threshold` is a percentage with default 255 (off)
 - Success reports `platform.durability`, `platform.rename_method` and `platform.backup_method`
 - A SIGTERM during a write removes the tempfile and exits 143
@@ -185,6 +218,8 @@ atomwrite --workspace "$WS" read --format raw 'src/*.rs'
 - Expect `type` `read` with `mode` `stat` or `full`, and `lines_total` when you read a slice
 - `--format ndjson` is the default, and `--format raw` writes the bytes to stdout without an envelope
 - `--bytes` is kept for old pipelines and means the same as `--format raw`
+- The default answer stops at `read.max_output_bytes` on a complete line, aligned to the end of the last outline item, and publishes `truncated` plus a ready `next` range
+- `--format raw` prints the next range on stderr and separates non-adjacent ranges with `--`, so a reader can tell where one range ends
 - Several operands concatenate in argv order, and an operand that names an existing path is read as it is
 - An operand with `*`, `?` or `[` that does not exist is expanded by the binary against one level of its directory, in byte order, skipping hidden names
 - A missing file, a directory or a glob that matched nothing prints one line on stderr and the other targets still reach stdout, with the first failure's status
@@ -192,6 +227,26 @@ atomwrite --workspace "$WS" read --format raw 'src/*.rs'
 - `**` is not supported, and only the final name may be a pattern: a wildcard in a directory name exits 65 instead of expanding halfway
 - `--verify-checksum HASH` exits 81 (`CHECKSUM_VERIFY_FAILED`) with an error envelope on a mismatch
 - `--grep REGEX` keeps only matching lines, and an invalid regex exits 65
+- `--no-comments` needs `--number`, because dropping lines without keeping the file's own numbers would point the next `apply` at the wrong one, and the call exits 65 without it
+- A picture is answered as one `data:` URI line on stdout, because that is the shape the vision channel accepts
+- The type of a picture comes from the magic bytes, and the size follows the 28-pixel patch rule
+- `--max-tokens N` shrinks the picture until the rounded patch count fits N, and `--crop X,Y,W,H` cuts the region before the resize
+- `--high-res` moves the ceiling to 2576 pixels and 4784 visual tokens, and the standard tier stays at 1568 of each
+- The EXIF orientation is applied, and a picture above 100 megapixels is refused before the decode
+- A file whose magic bytes name a picture but whose header is broken is refused with exit 65 `INVALID_INPUT`, and the name stays in `target_resolved`
+- HEIC and HEIF pictures are decoded like any other picture, and a still image is converted after the decode, so the vision channel receives a format it reads
+- `--stat` on a picture reports width, height, format, visual tokens and GIF frame count without sending pixels
+- A picture already delivered in this session is answered as the token line `[image delivered earlier in this session: <hash>]`, because a second copy of the same pixels costs the whole picture again
+- `--force` sends the picture again inside the same session, and it is the only way to repeat a delivery that the session cache would skip
+- `read doc.pdf` returns the text of every page, and `--pages N` or `--pages A:B` selects windows, repeatable in one call
+- A page that carries no text is named in `needs_vision`, because a scanned page is not an empty document
+- `--page N` renders one page and answers with the same `data:` URI a picture uses, so a scan never reaches the model as a header alone
+- `--dpi N` sets the render resolution, and `--stat` reports the size of the rendering without sending it
+- `--ocr` recognizes the characters on a picture or a rendered page and answers with the text in `content`, exactly where a text file puts it
+- The recognition models are fetched once into the cache directory, so the first `--ocr` run needs a network and every later run does not
+- A rendered page goes to recognition at 300 dpi by default, because small print at 150 dpi is too coarse to separate letters
+- `--crop` sharpens recognition on a wide picture, because the engine reads a line better when the line is a larger share of the frame
+- `--ocr` on a file that carries text exits 65 instead of pretending, because the flag reads pixels and that file has characters
 
 ### edit
 - Edits a file by exact text, by line number or by marker, and the write is atomic
@@ -257,6 +312,7 @@ atomwrite --workspace "$WS" search --target files lib src/
 - `--include` (`-g`) and `--exclude` filter by glob, and `--sort path|modified|created|none` orders files
 - `--max-filesize BYTES` skips larger files (default 10 MiB, counted in `files_skipped`), and `--max-columns N` cuts long lines
 - `--binary` also searches binary files, and `--include-fifo` opens named pipes, which the default skips
+- `--no-begin-end` suppresses the begin and end events of a file with no match, which keeps an empty search clean
 - `--offset N` and `--limit N` page through match events
 - Read `partial` and `files_failed` on the summary before you trust a result, and a root named in the invocation that does not exist fails the run with exit 4 even when it matched, in every summary that publishes them
 
@@ -302,7 +358,7 @@ atomwrite --workspace "$WS" hash --verify "$H" src/lib.rs
 - `--verify HASH` answers with `type` `hash_verify` and `verified`, and exits 81 on a mismatch
 
 ### delete
-- Deletes files or trees, keeps a `.bak.<timestamp>` backup and can print only the plan
+- Deletes files or trees, keeps no copy unless `--backup` is given, which creates a `.bak.<timestamp>`, and can print only the plan
 - Deleting never asks for confirmation, so use `--plan` first
 
 ```bash
@@ -315,10 +371,14 @@ atomwrite --workspace "$WS" delete --recursive tmp/d
 
 - Expect `type` `plan` with `would_modify`, then `type` `deleted` with `checksum_before`, then a `summary`
 - A directory without `--recursive` (`-r`) exits 65 and names the missing flag
+- `delete -r <dir>` without a narrowing filter owns the whole named tree and removes hidden, ignored, linked, fifo, socket and device entries, and a link is never followed
+- A run narrowed by `--include`, `--exclude`, `--older-than` or `--limit` exits 0 with `dirs_left` and `entries_left`, and an unfiltered run that leaves a directory exits with the measured I/O code and the surviving path in `errors[]`
+- `--hidden`, `--no-gitignore` and `--follow-symlinks` are no-ops on `delete` and only emit one diagnostic line
 - `--dry-run` works like `--plan`, and `--older-than 1d` filters by age with the suffixes s, m, h, d and w
-- `--include` (`-g`) and `--exclude` filter by glob, and `--no-backup` skips the backup
+- `--include` (`-g`) and `--exclude` filter by glob, and `--no-backup` is accepted and turns off the copy that `[defaults].backup = true` would request, because a delete copies only when the call asks
 - `delete --confirm` and `delete --yes` (`-y`) are rejected with exit 65, so run again without them
-- A delete backup is always kept, so clear it with `prune-backups`
+- `--backup` with a directory root is refused before any change, because the copy would be created inside the tree, so run `copy -r` first or pass `--no-backup`
+- A delete copy is never auto-removed, so clear it with `prune-backups`; `--keep-backup` only adds a warning and `--backup` is what creates the copy
 
 ### count
 - Counts lines, blank lines and bytes, by extension or by size
@@ -460,7 +520,7 @@ atomwrite --workspace "$WS" scope --pattern 'a + b' --action upper -l rust --dry
 
 ### transform
 - Searches and rewrites code by AST pattern with the ast-grep engine
-- `$NAME` captures one node, `$$$ARGS` captures several, and `-p` and `-r` are used together
+- `$NAME` captures one node, `$$$ARGS` captures several, and `-p`/`--pattern` and `-r`/`--rewrite` are used together
 
 ```bash
 atomwrite --workspace "$WS" transform --dry-run -p '$E.unwrap()' -r '$E?' -l rust src/
@@ -493,6 +553,7 @@ printf '%s\n' '{"op":"write","target":"batch.txt","content":"y"}' | atomwrite --
 - Detection is automatic, and `--format auto|unified|search-replace|full|markdown` forces one
 - A body with no marker at all is refused with exit 65, and only `--format full` replaces the whole file, so a malformed patch can no longer become a silent overwrite
 - `--format full` walks the same two barriers as `write`: `--ack-overwrite` above `[write].confirm_large_bytes` and `--allow-shrink` below `[write].shrink_block_percent`
+- `--strict-atomic` exits 91 instead of falling back to a cross-device copy, and `--no-syntax-check` skips the parse check that refuses a patch which breaks the file
 - A `---`/`+++` header with no `@@` hunk is refused with exit 65, because applying it as a full file would overwrite the target with the patch text
 
 ```bash
@@ -502,9 +563,13 @@ atomwrite --workspace "$WS" apply --dry-run src/b.rs < tmp/fix.patch
 atomwrite --workspace "$WS" apply src/b.rs < tmp/fix.patch
 ```
 
-- Expect `type` `plan` on the dry run and `type` `applied` with `format_detected` and `hunks_applied`
+- Expect `type` `plan` on the dry run and `type` `applied` with `format_detected`, `hunks_applied` and `backup_path` when the run made a copy
 - A unified diff must match context and removed lines within 64 lines, or it exits 65 with `MATCH_FAILED`
 - A SEARCH/REPLACE block that is missing fails the whole batch, and nothing is written
+- The target argument is optional: a patch that names its own files is applied in one call, and every file is checked before the first write
+- A SEARCH/REPLACE patch names a file with a bare path line just above that file's first block, and a unified patch uses its own header pair for the same job
+- The refusal of a file names it in `target_resolved`, and every applied file gets its own record with its own path and checksums
+- Two sections for the same file are refused, and a write that fails after another file was written restores the files already written and publishes one `rollback` record with the count
 
 ### set
 - Writes a value at a dotted path in a TOML or JSON file and keeps comments and key order
@@ -700,18 +765,19 @@ atomwrite --workspace "$WS" recipe run --name search-replace-verify --pattern be
 
 ```bash
 printf 'src/lib.rs\nsrc/b.rs\n' > tmp/paths.txt
-atomwrite --workspace "$WS" sparse list src/ --max-files 10 --max-bytes 1048576
+atomwrite --workspace "$WS" sparse list src/ --max-files 10 --max-bytes 1048576 --all
 atomwrite --workspace "$WS" sparse read --paths-file tmp/paths.txt --head 2
-atomwrite --workspace "$WS" sparse outline --max-files 5 src/
+atomwrite --workspace "$WS" sparse outline --max-files 5 --all src/
 ```
 
 - Expect `sparse_entry`, `sparse_read` or `outline_item` events and a `sparse_summary` with `truncated`
 - `sparse list` also takes `--include` and `--exclude` globs, and an invalid glob exits 65
+- `--all` adds the dotfile to the visit, so `files_scanned` grows by the hidden entries and the default run keeps them out
 - `sparse outline` reports `sparse_outline_budget`, and a slim build without `ast` exits 78
 
 ### semantic-merge
 - Merges three files line by line (base, ours, theirs), and it is not AST-aware
-- Conflict markers are written by default, and `--no-conflict-markers` turns them off
+- Conflict markers are written by default, `--write-conflict-markers true|false` states it explicitly, and `--no-conflict-markers` turns them off
 
 ```bash
 printf 'a\nb\nc\n' > tmp/base.txt
@@ -804,7 +870,7 @@ atomwrite --workspace "$WS" agent-surface --format json
 ```
 
 - Expect `type` `agent_surface` with `tools`, `exit_codes`, `discovery`, `flag_contract` and `notes`
-- `tools` has 47 entries, and `exit_codes` has 41 entries with 33 distinct numbers
+- `tools` has 47 entries, and `exit_codes` has 42 entries with 34 distinct numbers
 - `discovery` lists the `--print-schema` names, and `watch` reports `available: false` on the default build
 
 ### locale
@@ -832,7 +898,7 @@ atomwrite completions bash --install
 ```
 
 - Expect the raw script on stdout for the first call and an `installed` event for the second
-- That event is `{"type":"installed","path":"<completion file>","ok":true,"target_resolved":"<same path>","target_source":"argv"}`
+- That event is `{"type":"installed","path":"<completion file>","ok":true,"target_resolved":["<same path>"],"target_source":"argv"}`
 - The path comes from the XDG data directory of the shell, as listed in Where Files Live
 - A write that fails because the reader closed exits 141 (`BROKEN_PIPE`) with no panic and no crash report
 - Very short output, such as `--version | head -1`, can finish before the reader closes and then exits 0
@@ -862,11 +928,11 @@ atomwrite --workspace "$WS" config unset fuzzy.threshold --scope workspace
 
 - Expect `type` `config` with `action`, `key`, `value`, `origin` and `default`
 - `origin` is `default`, `global`, `workspace`, or `explicit` when `--config PATH` is used
-- The 37 keys, their ranges and scopes are in the Configuration section
+- The 43 keys, their ranges and scopes are in the Configuration section
 
 
 ## 47 Subcommands (SSOT)
-- Pin agents to `^0.1.37`, and read `atomwrite agent-surface` for the live manifest
+- Pin agents to `^0.1.38`, and read `atomwrite agent-surface` for the live manifest
 - `CANONICAL_SUBCOMMAND_COUNT` is 47, and the machine tree is `atomwrite commands --include-globals`
 
 | Command | Summary |
@@ -874,7 +940,7 @@ atomwrite --workspace "$WS" config unset fuzzy.threshold --scope workspace
 | `read` | Reads a file with checksum, size and lines, or only a slice |
 | `write` | Creates or overwrites a file atomically from stdin |
 | `edit` | Edits by exact or fuzzy text, line number or marker |
-| `delete` | Deletes files or trees with backup, or prints the plan |
+| `delete` | Deletes files or trees, owning the whole named tree on `-r`, copying one only when the call asks (`--backup` or `[defaults].backup = true`), or prints the plan |
 | `copy` | Copies a file or tree with checksum verification |
 | `move` | Moves or renames a file atomically |
 | `apply` | Applies a unified diff, SEARCH/REPLACE or full file from stdin |
@@ -995,9 +1061,9 @@ printf '%s\n' '{"path":"src/lib.rs","owner":"alice"}' | atomwrite --workspace "$
 
 ## Exit Codes and Error Classes
 - Read the exit code before parsing stdout, because an error envelope also goes to stdout
-- The table has 41 rows and 33 distinct exit numbers, and it comes from `atomwrite agent-surface`
+- The table has 42 rows and 34 distinct exit numbers, and it comes from `atomwrite agent-surface`
 - `atomwrite --help` prints the same list under `Exit codes`
-- The error enum has 34 variants, and `code` in the envelope is a free string, not a closed enum
+- The error enum has 38 variants, counted with `rg -c '#\[error' src/error/variants.inc.rs`, and `code` in the envelope is a free string, not a closed enum
 
 | Exit | Code | Class | Retryable |
 |---|---|---|---|
@@ -1020,6 +1086,7 @@ printf '%s\n' '{"path":"src/lib.rs","owner":"alice"}' | atomwrite --workspace "$
 | 73 | `CROSS_DEVICE` | conflict | yes |
 | 74 | `IO_ERROR` | transient | yes |
 | 78 | `CONFIG_INVALID` | permanent | no |
+| 79 | `SYMLINK_BLOCKED` | precondition_failed | no |
 | 80 | `TRANSACTION_ROLLBACK_FAILED` | permanent | no |
 | 81 | `CHECKSUM_VERIFY_FAILED` | precondition_failed | no |
 | 82 | `STATE_DRIFT` | conflict | yes |
@@ -1029,12 +1096,12 @@ printf '%s\n' '{"path":"src/lib.rs","owner":"alice"}' | atomwrite --workspace "$
 | 86 | `DEVICE_FILE` | precondition_failed | no |
 | 87 | `EDIT_LOOP_PARTIAL` | permanent | no |
 | 88 | `SYNTAX_ERROR_DETECTED` | precondition_failed | no |
+| 89 | `ALL_SKIPPED_BINARY` | permanent | no |
 | 91 | `EXDEV_FALLBACK_DISABLED` | precondition_failed | no |
 | 92 | `COPY_BACK_BLAKE3_FAILED` | conflict | yes |
 | 93 | `ORPHAN_JOURNAL` | precondition_failed | no |
 | 124 | `TIMEOUT` | precondition_failed | no |
 | 126 | `WORKSPACE_JAIL` | precondition_failed | no |
-| 127 | `SYMLINK_BLOCKED` | precondition_failed | no |
 | 128 | `IMMUTABLE_FILE` | precondition_failed | no |
 | 129 | `SIGHUP` | none | no |
 | 130 | `CANCELLED` | permanent | no |
@@ -1044,8 +1111,10 @@ printf '%s\n' '{"path":"src/lib.rs","owner":"alice"}' | atomwrite --workspace "$
 | 255 | `INTERNAL_ERROR` | permanent | no |
 
 - Exit 0 is success and exit 1 `NO_MATCHES` is a normal answer of `search`, `replace`, `transform`, `scope` and `semantic-search`
-- A failing run ends in exactly one terminal event with `ok: false`, and `error_class`, `retryable` and `suggestion` live inside it
-- Error envelopes carry `error`, `ok`, `code`, `exit`, `message`, `path`, `error_class`, `retryable` and often `suggestion`
+- A failing run ends in exactly one terminal event with `ok: false`, and `suggestion` lives inside it
+- The default error envelope carries `ok`, `code`, `exit`, `path` when there is one, `suggestion`, `target_resolved` and `target_source`
+- Pass `-v` to add the diagnostic prose back: `message`, `error_class`, `retryable` and `suggestion_lang`
+- The same `-v` raises stderr logging to info, while stdout keeps its single terminal line
 - `MATCH_FAILED` adds `match_count` and `best_candidate`, and `MATCH_AMBIGUOUS` adds `best_candidate` and `match_count`
 - Classes are `none`, `permanent`, `precondition_failed`, `transient` and `conflict`
 - Retry only when `retryable` is true, back off on `transient` and re-read the file on `conflict`
@@ -1058,7 +1127,7 @@ printf '%s\n' '{"path":"src/lib.rs","owner":"alice"}' | atomwrite --workspace "$
 - A write that fails because the reader closed exits 141 (`BROKEN_PIPE`), including `completions`, `--print-schema`, `--help` and every verb
 
 ```json
-{"error":true,"ok":false,"code":"MATCH_FAILED","exit":65,"message":"match failed: old string not found (fuzzy mode off = exact-only): \"nothere\"","error_class":"permanent","retryable":false,"suggestion":"inspect best_candidate in the error NDJSON and adjust --old, or lower --fuzzy-threshold","match_count":0,"suggestion_lang":"en"}
+{"ok":false,"ok":false,"code":"MATCH_FAILED","exit":65,"target_resolved":["src/a.rs"],"target_source":"argv","match_count":0,"suggestion":"inspect best_candidate in the error NDJSON and adjust --old, or lower --fuzzy-threshold"}
 ```
 
 - SIGPIPE has a cooperative handler that ends the run with exit 141 after cleanup
@@ -1076,7 +1145,7 @@ printf '%s\n' '{"path":"src/lib.rs","owner":"alice"}' | atomwrite --workspace "$
 - `config` still works when `config.toml` is broken, and a file that is not valid TOML is never rewritten
 - The terminal event of `set` and `unset` carries `target_resolved`, so check that the path is the file you meant
 
-### The 37 Keys
+### The 43 Keys
 - Run `atomwrite config list` for the live table with type, default, value, origin and scopes
 - `log.file`, `log.rotation`, `storage.home` and `locale` are global-only, and the workspace scope exits 65
 - An unknown key or a value outside its range exits 65 and writes nothing
@@ -1084,7 +1153,8 @@ printf '%s\n' '{"path":"src/lib.rs","owner":"alice"}' | atomwrite --workspace "$
 | Key | Type | Default | Accepted values | Scopes |
 |---|---|---|---|---|
 | `defaults.line_ending` | string | `auto` | `auto`, `lf`, `crlf` | global, workspace |
-| `defaults.backup` | boolean | true | `true`, `false` | global, workspace |
+| `defaults.backup` | boolean | none (true for rewrites, false for delete) | `true`, `false` | global, workspace |
+| `delete.backup` | boolean | none (falls back to `defaults.backup`) | `true`, `false` | global, workspace |
 | `defaults.retention` | integer | 5 | 0 to 255 | global, workspace |
 | `defaults.max_filesize` | integer | 1073741824 | 1 or more | global, workspace |
 | `fuzzy.mode` | string | `auto` | `auto`, `aggressive`, `off` | global, workspace |
@@ -1094,9 +1164,11 @@ printf '%s\n' '{"path":"src/lib.rs","owner":"alice"}' | atomwrite --workspace "$
 | `fuzzy.threshold_jw` | float | 0.85 | 0 to 1 | global, workspace |
 | `fuzzy.soft_floor_delta` | float | 0.05 | 0 to 1 | global, workspace |
 | `fuzzy.max_content_bytes` | integer | 268435456 | 1 or more | global, workspace |
+| `apply.max_ellipsis_lines` | integer | 200 | 1 or more | global, workspace |
 | `write.confirm_large_bytes` | integer | 102400 | 1 or more | global, workspace |
 | `write.shrink_block_percent` | integer | 50 | 1 to 99 | global, workspace |
 | `write.auto_rotate_max_age_secs` | integer | 86400 | 1 or more | global, workspace |
+| `write.content_risk_patterns` | list of strings | the built-in risky-command list | any string | global, workspace |
 | `watch.idle_exit_ms` | integer | 500 | 0 or more (0 disables) | global, workspace |
 | `watch.debounce_ms` | integer | 200 | 1 or more | global, workspace |
 | `log.file` | boolean | false | `true`, `false` | global |
@@ -1110,6 +1182,10 @@ printf '%s\n' '{"path":"src/lib.rs","owner":"alice"}' | atomwrite --workspace "$
 | `search.max_filesize` | integer | 10485760 | 1 or more | global, workspace |
 | `search.max_columns` | integer | 500 | 1 or more | global, workspace |
 | `search.max_inflight_bytes` | integer | 8388608 | 4 MiB to 1 GiB | global, workspace |
+| `search.format` | string | `ndjson` | `ndjson`, `text` | global, workspace |
+| `read.max_output_bytes` | integer | 24000 | 1 or more | global, workspace |
+| `read.number` | boolean | false | `true`, `false` | global, workspace |
+| `output.profile` | string | `full` | `full`, `lean` | global, workspace |
 | `summary.errors_max_entries` | integer | 50 | 1 to 1000 | global, workspace |
 | `lock.acquire_timeout_ms` | integer | 5000 | 100 to 3600000 | global, workspace |
 | `retry.base_ms` | integer | 50 | 1 to 60000, not above `retry.max_ms` | global, workspace |
@@ -1123,6 +1199,8 @@ printf '%s\n' '{"path":"src/lib.rs","owner":"alice"}' | atomwrite --workspace "$
 - A flag still wins over a key, as `extract-artifact --max-text-chars` wins over `extract.max_text_chars`
 - `fuzzy.max_content_bytes` is the ceiling above which the fuzzy cascade does not run, and exact matches still work
 - `write.confirm_large_bytes` is the size above which an overwrite needs `--ack-overwrite`
+- `search.format` decides whether `search` writes NDJSON or text when `--format` is absent, and the flag always wins over the key
+- `output.profile = "lean"` drops the digests, the byte counts and the timing from a successful mutation record
 - `retry.*` shapes the jittered retry of lock and rename waits, and `--timeout-secs` still caps it
 - `storage.home` relocates config and state under `{home}/config` and `{home}/state`
 
@@ -1144,7 +1222,7 @@ atomwrite --workspace "$WS" config set log.file true --scope global
 
 | Field | Meaning |
 |---|---|
-| `defaults.backup`, `defaults.retention` | Default backup switch and retention for mutating commands |
+| `defaults.backup`, `defaults.retention` | Default backup switch and retention for mutating commands; an absent backup key keeps each verb's own default |
 | `write.shrink_block_percent` | Shrink guard threshold, default 50 |
 | `write.auto_rotate_max_age_secs` | Age window of `--auto-rotate`, default 24 hours |
 | `write.content_risk_patterns` | Extra patterns for the write risk assessment |
@@ -1363,7 +1441,7 @@ fn main() -> std::io::Result<()> {
 - Use a path inside the workspace, and stage content files under `.atomwrite/scratch`
 
 ```json
-{"error":true,"ok":false,"code":"WORKSPACE_JAIL","exit":126,"message":"path outside workspace jail: /etc/passwd (workspace: /home/user/project)","path":"/etc/passwd","error_class":"precondition_failed","retryable":false,"suggestion":"use a path inside the workspace (/home/user/project); for --old-file/--new-file stage under /home/user/project/.atomwrite/scratch/ (never OS /tmp outside the jail)","workspace":"/home/user/project","suggestion_lang":"en"}
+{"ok":false,"ok":false,"code":"WORKSPACE_JAIL","exit":126,"suggestion":"use a path inside the workspace (/home/user/project); for --old-file/--new-file stage under /home/user/project/.atomwrite/scratch/ (never OS /tmp outside the jail)","path":"/etc/passwd","workspace":"/home/user/project"}
 ```
 
 ### Exit 4 FILE_NOT_FOUND

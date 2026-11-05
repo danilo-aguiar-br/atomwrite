@@ -4,22 +4,22 @@
 # Política de Privacidade — atomwrite
 
 
-- Última atualização: 2026-10-31 (atomwrite 0.1.37)
+- Última atualização: 2026-11-04 (atomwrite 0.1.38)
 
 
 ## Resumo
 - `atomwrite` é uma CLI local
 - Não tem telemetria, analytics nem phone-home: nada é coletado, então não existe chave de opt-in para ligar (um opt-in explícito seria exigido antes de qualquer telemetria ser adicionada)
 - Nunca envia o conteúdo dos seus arquivos
-- O único tráfego de rede que o produto inicia sozinho é o download único dos parsers do tree-sitter, descrito em [Acesso à Rede](#acesso-à-rede)
+- O único tráfego de rede que o produto inicia sozinho é o download único dos parsers do tree-sitter e dos dois modelos de OCR, descrito em [Acesso à Rede](#acesso-à-rede)
 
 
 ## O Que Roda Localmente
 - Todas as leituras, escritas, buscas, backups e sidecars WAL executam na máquina que invoca o binário
-- A configuração é somente flags CLI + diretórios XDG + `.atomwrite.toml`, sem knobs de produto `ATOMWRITE_*` em runtime (política desde a v0.1.35, linha atual `0.1.37`)
-- O código do produto não chama `env::var`, e um teste guarda isso
+- A configuração é somente flags CLI + diretórios XDG + `.atomwrite.toml`, sem knobs de produto `ATOMWRITE_*` em runtime (política desde a v0.1.35, linha atual `0.1.38`)
+- O código do produto lê exatamente uma variável, `CLAUDE_CODE_SESSION_ID`, e só para compor a chave do cache de mídia por sessão, e o guarda de código-fonte carrega essa única linha permitida
 - As crates de SO `sys-locale` e `directories` leem `LANG` (e `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` no Unix), `HOME` e `XDG_*` por você, veja [Leituras de Ambiente por Dependências](#leituras-de-ambiente-por-dependências)
-- O `doctor` não lê nenhuma variável de ambiente: a detecção do host usa só sondas locais de arquivo
+- O `doctor` detecta o host só com sondas locais de arquivo, e o check `locale` dele segue o locale do SO por `sys-locale`, então `LANG` muda o locale publicado
 - Diretórios de staging do agente sob `.atomwrite/scratch/` são arquivos locais do workspace, nunca enviados
 - `atomwrite config set` e `config unset` gravam apenas o `config.toml` XDG (modo `0600` no Unix) ou o `.atomwrite.toml` do workspace, de forma atômica, e `config list` e `config get` apenas os leem
 - Os verbos `watch`, `semantic-search` e `semantic-merge` operam somente em dados do filesystem local
@@ -34,6 +34,12 @@
 - As execuções seguintes reutilizam o cache e não fazem requisição
 - Como evitar o download: copie um diretório de cache já preenchido de uma máquina conectada para o mesmo caminho, compile sem `ast` (`cargo install atomwrite --no-default-features --features core`), ou não use `outline`, `query` e `--syntax-check`
 - `transform` usa as gramáticas compiladas no `ast-grep-language` e não usa este download (medido na ADR-0057)
+- `read --ocr` precisa de dois modelos, e o build não embarca nenhum deles: o modelo de detecção `text-detection-ssfbcj81.rten` e o de reconhecimento `text-rec-checkpoint-s52qdbqt.rten` são baixados na primeira vez que o OCR roda numa máquina cujo cache não tem cópia
+- O download vem de `huggingface.co/robertknight/ocrs` (`resolve/main`), pelo cliente `ureq`, com teto de 64 MiB e prazo de 120 segundos por arquivo, e os arquivos ficam em `$XDG_CACHE_HOME/atomwrite/models/` (`~/.cache/atomwrite/models/` por padrão)
+- O pedido de OCR não carrega dado nenhum dos seus arquivos, o host vê o IP da sua máquina como em qualquer download, e as execuções seguintes reaproveitam o cache e não fazem pedido
+- O `read` sem `--ocr`, e todos os outros verbos, não abrem conexão nenhuma e nunca tocam esse caminho
+- Para evitar esse download: preencha `$XDG_CACHE_HOME/atomwrite/models/` com os dois arquivos a partir de uma máquina conectada, ou não use `read --ocr`
+- O download de OCR não tem verificação de checksum, diferente do pacote do tree-sitter, então um proxy na frente do host pode servir outro arquivo e o produto carrega esse arquivo
 - `cargo install atomwrite` baixa crates do crates.io, e esse tráfego é entre o seu host e o crates.io
 
 
@@ -52,9 +58,14 @@
 - Logs: somente quando `log.file` é `true` (padrão `false`), linhas JSON sob `$XDG_STATE_HOME/atomwrite/logs/atomwrite.<data>.jsonl`, rotacionadas por dia por padrão (`log.rotation`) e limitadas a 7 arquivos
 - As linhas de log guardam eventos de diagnóstico e podem incluir os caminhos de arquivo e o locale da execução, então trate-as como sensíveis quando os caminhos forem
 - Journals WAL: `.atomwrite.journal.<alvo>.atomwrite.journal.json` ao lado do arquivo alvo, removidos depois de uma escrita confirmada e pelo `wal-heal`
-- Backups: `<arquivo>.bak.<timestamp>` ao lado do arquivo, criados pelos verbos que gravam e removidos depois de uma escrita bem-sucedida por padrão (`delete` e `replace` os mantêm, medido em 2026-10-31, e `prune-backups` remove os antigos)
-- Sidecars de lock (`.<alvo>.atomwrite.lock`) e arquivos temporários ao lado do alvo durante uma escrita
-- O sidecar de lock mantém o nome literal até `.<alvo>.atomwrite.lock` passar de 255 bytes, e acima disso ele vira um digest curto BLAKE3 no mesmo diretório, então o nome não carrega caminho além do nome do alvo
+- Backups: `<arquivo>.bak.<timestamp>` ao lado do arquivo, criados pelos verbos que gravam e removidos depois de uma escrita bem-sucedida por padrão (`delete` copia só com `--backup` ou `[defaults].backup = true`, `--keep-backup` mantém a cópia após o sucesso, e `prune-backups` remove os antigos, medido em 2026-11-04)
+- Modelos de OCR: os dois arquivos `.rten` em `$XDG_CACHE_HOME/atomwrite/models/`, gravados uma vez pelo `read --ocr` no primeiro uso, e nunca removidos pelo produto
+- Cache de mídia por sessão: um marcador `<blake3>` sob `$XDG_CACHE_HOME/atomwrite/media-sessions/<sessão>/`, com chave em `CLAUDE_CODE_SESSION_ID`, para uma imagem ou página de PDF ser enviada uma vez por sessão e nunca removida pelo produto
+- O lock consultivo é tomado no próprio arquivo alvo por `File::try_lock`, que é `flock(2)` no Unix e `LockFileEx` no Windows, então mantê-lo não grava nada
+- Um sidecar `.<alvo>.atomwrite.lock` é criado em melhor esforço ao lado do alvo, e a escrita segue pelo lock do inode quando o diretório não permite criá-lo
+- O sidecar mantém o nome literal até `.<alvo>.atomwrite.lock` passar de 255 bytes, e acima disso ele vira um digest curto BLAKE3 no mesmo diretório, então o nome não carrega caminho além do nome do alvo
+- No Unix o sidecar é removido quando o último guard cai, um processo morto por SIGKILL pode deixar um para trás, e o escritor seguinte o reusa e remove; no Windows ele é reusado em vez de removido
+- Arquivos temporários ao lado do alvo durante uma escrita
 - Staging: `.atomwrite/scratch/` no workspace, criado por `scratch init`
 - Scripts de completion de shell quando você roda `atomwrite completions --install`
 - Relatórios de falha: o hook `human-panic` grava um arquivo `report-<uuid>.toml` no diretório temporário do SO quando o programa entra em pânico, com o nome do SO, a versão da crate, a mensagem do pânico e um backtrace, e ele pode incluir caminhos que aparecem neles

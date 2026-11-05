@@ -209,6 +209,10 @@ fn success_cases(ws: &Path) -> Vec<Case> {
             "--format".into(),
             "full".into(),
             "--allow-shrink".into(),
+            // v0.1.38 refuses a patch that grows the parse error count. This
+            // case intentionally writes the text "x" into a .rs fixture, so it
+            // opts out the way a caller would.
+            "--no-syntax-check".into(),
         ],
     );
     apply.stdin = Some("x\n");
@@ -887,7 +891,7 @@ fn r11_scope_readonly_failure_is_reported_on_stdout() {
         || out
             .events
             .iter()
-            .any(|e| (e["error"] == true || e["ok"] == false) && e.to_string().contains("ro.rs"));
+            .any(|e| e["ok"] == false && e.to_string().contains("ro.rs"));
     assert!(
         reported,
         "the write failure is not reported on stdout: {:.400}",

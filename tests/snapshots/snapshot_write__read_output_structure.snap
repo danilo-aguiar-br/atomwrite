@@ -16,6 +16,8 @@ expression: event
   "mode": "full",
   "ok": true,
   "workspace_source": "argv",
-  "target_resolved": "[redacted]",
-  "target_source": "argv"
+  "target_source": "argv",
+  "target_resolved": [
+    "[redacted]"
+  ]
 }

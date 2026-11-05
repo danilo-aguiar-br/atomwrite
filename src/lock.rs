@@ -81,16 +81,19 @@ pub struct LockGuard {
     pub held_ms: u64,
 }
 
-/// The OS lock on one sidecar, released when the last guard drops.
+/// The OS locks one guard holds, released when the last guard drops.
 struct Held {
     /// Path of the sidecar lock file, unlinked on release. Unix only: the
     /// Windows sidecar is reused instead of unlinked, so the field would be
     /// dead there.
     #[cfg(unix)]
-    lock_path: PathBuf,
-    /// The sidecar lock file. Kept open while the guard lives so the
-    /// `flock` on its open file description stays valid.
-    file: std::fs::File,
+    lock_path: Option<PathBuf>,
+    /// Every locked handle. The first is the target itself, which is the
+    /// object being mutated; the second, when present, is the sidecar that
+    /// older releases lock, kept for the migration window.
+    files: Vec<std::fs::File>,
+    /// Whether [`Self::files`] starts with the target's own inode.
+    locked_target: bool,
 }
 
 thread_local! {
@@ -115,13 +118,14 @@ impl Drop for Held {
         // retries on a fresh file, so two writers never hold "the" lock.
         // Best-effort: Drop must be short and panic-free.
         #[cfg(unix)]
-        crate::best_effort::best_effort(
-            std::fs::remove_file(&self.lock_path),
-            "remove lock sidecar",
-        );
+        if let Some(lock_path) = &self.lock_path {
+            crate::best_effort::best_effort(std::fs::remove_file(lock_path), "remove lock sidecar");
+        }
         // If this fails, the process is exiting anyway and the kernel
         // releases the lock when the file is closed.
-        crate::best_effort::best_effort(self.file.unlock(), "release advisory lock");
+        for file in &self.files {
+            crate::best_effort::best_effort(file.unlock(), "release advisory lock");
+        }
     }
 }
 
@@ -161,8 +165,7 @@ pub fn acquire_for_update(target: &Path) -> Result<LockGuard> {
 /// or the time left of the global deadline, whichever is smaller.
 pub fn acquire_exclusive(target: &Path, timeout_ms: u64) -> Result<LockGuard> {
     let start = Instant::now();
-    let lock_path = sidecar_path(target);
-    let key = lock_key(&lock_path);
+    let key = lock_key(target);
     if let Some(held) = HELD.with(|m| m.borrow().get(&key).and_then(std::rc::Weak::upgrade)) {
         return Ok(LockGuard {
             target: target.to_path_buf(),
@@ -176,42 +179,219 @@ pub fn acquire_exclusive(target: &Path, timeout_ms: u64) -> Result<LockGuard> {
         timeout_ms,
         crate::constants::LOCK_RETRY_MAX_ATTEMPTS,
     ));
-    loop {
-        let file = std::fs::OpenOptions::new()
+    let mut files: Vec<std::fs::File> = Vec::new();
+    let mut locked_target = false;
+
+    // The subject is the file, not its name. Locking the inode the caller will
+    // mutate means an in-place write needs permission on the file and nothing
+    // on the directory, which is exactly what the write itself needs.
+    match open_target_for_lock(target) {
+        Ok(Some(file)) => {
+            // A writer that renamed its result into place while this call was
+            // waiting leaves the lock on an inode the path no longer reaches.
+            // Holding it would exclude nobody, so the acquisition restarts on
+            // whatever inode answers to the path now.
+            let mut current = Some(file);
+            let mut restarts = 0;
+            loop {
+                let Some(handle) = current.as_ref() else {
+                    break;
+                };
+                try_acquire_loop(handle, target, timeout_ms, &mut backoff)?;
+                if target_is_same_inode(handle, target)
+                    || restarts >= crate::constants::LOCK_STALE_INODE_MAX_RESTARTS
+                {
+                    break;
+                }
+                restarts += 1;
+                // The old handle goes when it is replaced, releasing the lock
+                // on the unreachable inode.
+                current = open_target_for_lock(target).ok().flatten();
+            }
+            if let Some(handle) = current {
+                files.push(handle);
+                locked_target = true;
+            }
+        }
+        // A new file has no inode to lock yet; the sidecar carries that case.
+        Ok(None) => {}
+        // A file we may read but not open for writing still gets the sidecar,
+        // and the write fails later on its own terms rather than here.
+        Err(e) => tracing::debug!(
+            path = %target.display(),
+            error = %e,
+            "target cannot be opened for locking; falling back to the sidecar"
+        ),
+    }
+
+    // The sidecar keeps older releases and this one mutually excluded, and it
+    // is best-effort: a directory this process cannot write to no longer stops
+    // a write the inode lock already covers.
+    let lock_path = sidecar_path(target);
+    let mut sidecar_held = None;
+    let mut sidecar_error = None;
+    // A writer that finishes releases the sidecar by unlinking it, so a
+    // handle this call already holds can name an inode no other writer can
+    // reach. That handle is retaken, not trusted, and the retakes are bounded.
+    for _ in 0..=crate::constants::LOCK_STALE_INODE_MAX_RESTARTS {
+        let file = match std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
             .open(&lock_path)
-            .map_err(|e| AtomwriteError::from_io_at(&lock_path, e))?;
-
-        try_acquire_loop(&file, target, timeout_ms, &mut backoff)?;
-
-        if is_current_sidecar(&file, &lock_path) {
-            let held_ms = start.elapsed().as_millis() as u64;
-            tracing::debug!(
-                target = %target.display(),
-                lock = %lock_path.display(),
-                held_ms,
-                "advisory lock acquired"
+        {
+            Ok(file) => file,
+            Err(e) => {
+                if locked_target {
+                    tracing::debug!(
+                        path = %target.display(),
+                        error = %e,
+                        "lock sidecar unavailable; the target inode lock carries the run"
+                    );
+                }
+                sidecar_error = Some(e);
+                break;
+            }
+        };
+        if let Err(e) = try_acquire_loop(&file, target, timeout_ms, &mut backoff) {
+            // An older release holds the sidecar while this run already owns
+            // the inode. The two generations cannot write at once, so the
+            // timeout is the answer instead of a silent bypass; a sidecar the
+            // directory cannot create stays best-effort.
+            if locked_target
+                && matches!(
+                    e.downcast_ref::<crate::error::AtomwriteError>(),
+                    Some(crate::error::AtomwriteError::LockTimeout { .. })
+                )
+            {
+                return Err(e);
+            }
+            // The lock attempt ran out of budget or was refused; the kind is
+            // what the caller branches on, so it survives the flattening.
+            sidecar_error = Some(
+                crate::runtime::find_io_error(&e)
+                    .map(std::io::Error::from)
+                    .unwrap_or_else(|| std::io::Error::other(e.to_string())),
             );
-            #[cfg(unix)]
-            let held = std::rc::Rc::new(Held { lock_path, file });
-            #[cfg(not(unix))]
-            let held = std::rc::Rc::new(Held { file });
-            HELD.with(|m| {
-                let mut map = m.borrow_mut();
-                map.retain(|_, w| w.strong_count() > 0);
-                map.insert(key, std::rc::Rc::downgrade(&held));
-            });
-            return Ok(LockGuard {
-                target: target.to_path_buf(),
-                _held: held,
-                held_ms,
-            });
+            break;
         }
-        // The previous holder unlinked the sidecar while we waited: our lock
-        // sits on a dead inode. `file` drops here; retry on the fresh path.
+        if is_current_sidecar(&file, &lock_path) {
+            files.push(file);
+            sidecar_held = Some(lock_path.clone());
+            break;
+        }
+    }
+
+    let Some(_) = files.first() else {
+        let error = sidecar_error
+            .unwrap_or_else(|| std::io::Error::other("no lockable handle for the target"));
+        // The subject is the target, because that is the file the caller named
+        // and the one a retry has to reach. The sidecar is the mechanism that
+        // failed, and this run creates and unlinks it, so it cannot be the path
+        // the verdict reports.
+        // The field is `path`, not `target`: `target` is the tracing event's
+        // own key, and a second one would repeat the name in the JSON line.
+        tracing::warn!(
+            path = %target.display(),
+            sidecar = %lock_path.display(),
+            error = %error,
+            "no lockable handle for the target"
+        );
+        return Err(AtomwriteError::from_io_at(target, error).into());
+    };
+
+    let held_ms = start.elapsed().as_millis() as u64;
+    tracing::debug!(
+        target = %target.display(),
+        inode_locked = locked_target,
+        sidecar = sidecar_held.is_some(),
+        held_ms,
+        "advisory lock acquired"
+    );
+    #[cfg(unix)]
+    let held = std::rc::Rc::new(Held {
+        lock_path: sidecar_held,
+        files,
+        locked_target,
+    });
+    #[cfg(not(unix))]
+    let held = std::rc::Rc::new(Held {
+        files,
+        locked_target,
+    });
+    HELD.with(|m| {
+        let mut map = m.borrow_mut();
+        map.retain(|_, w| w.strong_count() > 0);
+        map.insert(key, std::rc::Rc::downgrade(&held));
+    });
+    Ok(LockGuard {
+        target: target.to_path_buf(),
+        _held: held,
+        held_ms,
+    })
+}
+
+/// Open the target for the exclusive lock, or report that it does not exist.
+fn open_target_for_lock(target: &Path) -> std::io::Result<Option<std::fs::File>> {
+    match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(target)
+    {
+        Ok(file) => Ok(Some(file)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+impl LockGuard {
+    /// True when the path still resolves to the inode this guard locked.
+    ///
+    /// The check is what makes a rename safe to perform: between the moment
+    /// the lock was taken and the moment the swap runs, the path may have been
+    /// pointed at another file, and swapping then would overwrite content this
+    /// run never read. A guard that locked no inode (a new file) has nothing to
+    /// compare and reports `true`.
+    #[must_use]
+    pub fn target_unchanged(&self) -> bool {
+        if !self._held.locked_target {
+            return true;
+        }
+        let Some(file) = self._held.files.first() else {
+            return true;
+        };
+        let Ok(clone) = file.try_clone() else {
+            return true;
+        };
+        match (
+            same_file::Handle::from_file(clone),
+            same_file::Handle::from_path(&self.target),
+        ) {
+            (Ok(held), Ok(current)) => held == current,
+            // Unreadable metadata is not evidence of divergence; the write
+            // itself will report what it cannot do.
+            _ => true,
+        }
+    }
+}
+
+/// Whether the locked handle still answers to the same path it was opened from.
+///
+/// The comparison is by inode, because a rename swaps the inode under a path
+/// without touching the file the caller already holds. An unreadable path is
+/// reported as unchanged: the write itself will say what it cannot do, and
+/// turning a metadata error into a retry loop would hide it.
+fn target_is_same_inode(file: &std::fs::File, target: &Path) -> bool {
+    let Ok(clone) = file.try_clone() else {
+        return true;
+    };
+    match (
+        same_file::Handle::from_file(clone),
+        same_file::Handle::from_path(target),
+    ) {
+        (Ok(held), Ok(current)) => held == current,
+        _ => true,
     }
 }
 

@@ -57,9 +57,45 @@ pub struct JoinSpec {
     pub suffix: String,
 }
 
+/// How much of the envelope the consumer wants back.
+///
+/// `Full` is the published contract. `Lean` drops fields an agent never reads,
+/// and it is opt-in through `[output] profile = "lean"`, so a consumer that
+/// already parses the full record is never surprised by a missing key.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OutputProfile {
+    /// Every field the verb produces.
+    #[default]
+    Full,
+    /// Only the fields that change the next decision.
+    Lean,
+}
+
+impl OutputProfile {
+    /// Read the profile from its configuration spelling.
+    #[must_use]
+    pub fn from_name(name: &str) -> Self {
+        if name.eq_ignore_ascii_case("lean") {
+            Self::Lean
+        } else {
+            Self::Full
+        }
+    }
+}
+
 /// Optional projection / filter / limit applied by [`NdjsonWriter`].
 #[derive(Debug, Clone, Default)]
 pub struct OutputShape {
+    /// Requested output profile.
+    pub profile: OutputProfile,
+    /// Keep the diagnostic keys on a failure envelope (`-v` and above).
+    ///
+    /// Without it an error carries its core only: `code`, `exit`, `path`,
+    /// `suggestion` and the conditional signal fields. `message`,
+    /// `error_class`, `retryable` and `suggestion_lang` are diagnostics the
+    /// caller reads while debugging, and a one-shot agent pays for them on
+    /// every failure without branching on any of them.
+    pub verbose: bool,
     /// Top-level keys to keep (order preserved). `None` = no projection.
     pub select: Option<Vec<String>>,
     /// AND-combined equality filters. Empty = no filter.
@@ -92,7 +128,8 @@ impl OutputShape {
     /// True when writer may serialize directly without intermediate `Value`.
     #[inline]
     pub fn is_identity(&self) -> bool {
-        self.select.is_none()
+        self.profile == OutputProfile::Full
+            && self.select.is_none()
             && self.filters.is_empty()
             && self.limit.is_none()
             && self.sort.is_none()
@@ -219,7 +256,16 @@ impl OutputShape {
             normalize_encoding: options.normalize_encoding,
             diff_against: options.diff_against.clone(),
             max_output_bytes: options.max_output_bytes,
+            profile: options.profile,
+            verbose: options.verbose,
         })
+    }
+
+    /// Replace the output profile resolved from configuration.
+    #[must_use]
+    pub fn with_profile(mut self, profile: OutputProfile) -> Self {
+        self.profile = profile;
+        self
     }
 }
 
@@ -230,6 +276,10 @@ impl OutputShape {
 /// how a flag is called. Every field defaults to "operation not requested".
 #[derive(Debug, Clone, Default)]
 pub struct ShapeOptions {
+    /// Requested output profile.
+    pub profile: OutputProfile,
+    /// Keep the diagnostic keys on a failure envelope.
+    pub verbose: bool,
     /// Top-level keys to keep. `None` = no projection.
     pub select: Option<String>,
     /// `key=value` expressions, AND-combined.
@@ -275,6 +325,8 @@ impl ShapeOptions {
             normalize_encoding: global.normalize_encoding,
             diff_against: global.diff_against.clone(),
             max_output_bytes: global.max_output_bytes,
+            profile: OutputProfile::Full,
+            verbose: global.verbose > 0,
         }
     }
 

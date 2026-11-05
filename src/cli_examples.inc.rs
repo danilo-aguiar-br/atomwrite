@@ -5,11 +5,25 @@
 // invocations. The test at the bottom parses every line against the real clap
 // tree, so an example cannot name a flag or a subcommand that does not exist.
 
+/// Footer of every short help page.
+///
+/// The 34 global flags are marked `hide_short_help`, so `-h` shows only what
+/// the verb itself takes. This one line is the pointer that keeps the shared
+/// flags one command away, instead of making a caller guess where they went.
+pub(crate) const GLOBALS_FOOTER: &str =
+    "Global flags: atomwrite --help   Schema discovery: atomwrite --print-schema";
+
 const EX_READ: &str = r#"EXAMPLES:
   atomwrite --workspace . read --head 20 src/main.rs
   atomwrite --workspace . read --lines 10:30 src/main.rs
   atomwrite --workspace . read --format raw src/main.rs src/cli.rs
-  atomwrite --workspace . read --format raw 'src/*.rs'"#;
+  atomwrite --workspace . read --format raw 'src/*.rs'
+  atomwrite --workspace . read --stat shot.png
+  atomwrite --workspace . read --max-tokens 800 shot.png
+  atomwrite --workspace . read --pages 1:3 doc.pdf
+  atomwrite --workspace . read --page 1 --stat doc.pdf
+  atomwrite --workspace . read --page 1 --ocr doc.pdf
+  atomwrite --workspace . read --ocr --crop 140,245,1700,80 shot.png"#;
 const EX_WRITE: &str = r#"EXAMPLES:
   printf 'hello\n' | atomwrite --workspace . write notes.txt
   printf 'more\n' | atomwrite --workspace . write --append notes.txt"#;
@@ -69,7 +83,8 @@ const EX_ROLLBACK: &str = r#"EXAMPLES:
   atomwrite --workspace . rollback --dry-run src/main.rs"#;
 const EX_APPLY: &str = r#"EXAMPLES:
   atomwrite --workspace . apply --dry-run src/main.rs < change.diff
-  atomwrite --workspace . apply --format full notes.txt < new_notes.txt"#;
+  atomwrite --workspace . apply --format full notes.txt < new_notes.txt
+  atomwrite --workspace . apply < two_files.patch   # the patch names its files"#;
 const EX_SET: &str = r#"EXAMPLES:
   atomwrite --workspace . set Cargo.toml package.name demo
   atomwrite --workspace . set config.json server.port 8080"#;

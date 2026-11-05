@@ -108,6 +108,9 @@ pub mod semantic_merge;
 pub mod semantic_search;
 /// v14 Tier 3: structured config value setter.
 pub mod set;
+
+/// Byte-span locator that keeps `set` on JSON from reformatting untouched keys.
+pub(crate) mod set_json_span;
 /// v0.1.29
 pub mod sparse;
 /// DRY dry-run / plan summary counters (R-DRY-001).
@@ -144,19 +147,37 @@ pub(crate) struct ResolvedBackup {
 /// `.atomwrite.toml` `[defaults]` (G-007: no product env).
 ///
 /// Precedence for `backup`: `--no-backup`/`--backup` \> `.atomwrite.toml`
-/// `[defaults].backup` \> `true`.
+/// `[defaults].backup` \> `true`, so an absent key keeps the rewrite default.
 /// Precedence for `retention`: `--retention` \> `.atomwrite.toml`
 /// `[defaults].retention` \> constant default.
 pub(crate) fn resolve_backup(
     opts: &crate::cli_args::BackupOpts,
     defaults: &crate::config::DefaultsSection,
 ) -> ResolvedBackup {
+    resolve_backup_for(opts, defaults, defaults.backup.unwrap_or(true))
+}
+
+/// Resolve the backup decision with a verb-specific default.
+///
+/// `silent_default` is what the verb does when the flags say nothing. `delete`
+/// passes `args.backup == Some(true) || defaults.backup == Some(true)`, so the
+/// verb copies only when the call asks for it, through the flag or through the
+/// key written in the config: removing the file is the request, and a copy the
+/// caller did not ask for keeps the bytes on disk.
+pub(crate) fn resolve_backup_for(
+    opts: &crate::cli_args::BackupOpts,
+    defaults: &crate::config::DefaultsSection,
+    silent_default: bool,
+) -> ResolvedBackup {
+    // clap hands back `Some(false)` for an absent tri-state flag, so only an
+    // explicit `Some(true)` is a request: treating `Some(false)` as "no" made
+    // every verb ignore `[defaults].backup` and stopped creating backups.
     let backup = if opts.no_backup {
         false
     } else if opts.backup == Some(true) {
         true
     } else {
-        defaults.backup
+        silent_default
     };
 
     ResolvedBackup {
@@ -272,9 +293,9 @@ pub(crate) fn read_stdin_content_cancellable(
 ///
 /// The roots, the worker bound and the glob compilation are always shared. What
 /// legitimately differs is whether `--include` filters by path or by file name,
-/// and whether a verb must see dotfiles even without `--hidden`: a hashing,
-/// copying or sparse verb that skipped `.env` would answer a question the
-/// caller did not ask.
+/// and whether the walk ignores the ignore files it finds. Hidden files follow
+/// `--hidden` in every flavor: a tree walk that always saw dotfiles made the
+/// flag inert, while a path named on the command line is still read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WalkerFlavor {
     /// Honor `--hidden`, `--no-gitignore` and `--follow-symlinks`; `--include` is a path glob.
@@ -282,27 +303,65 @@ pub(crate) enum WalkerFlavor {
     /// Same as [`Self::RespectGlobalFlags`], but `--include` selects file names.
     RespectGlobalFlagsByType,
     /// Visit hidden files always; gitignore still honors `--no-gitignore`.
+    ///
+    /// Only a verb whose own flag asks for the whole tree uses this, such as
+    /// `list --all`.
     AlwaysVisitHidden,
-    /// Visit hidden files and ignore nothing: a tree copy that honored a
-    /// gitignore would not copy the tree the caller named.
-    WholeTree,
+    /// Ignore nothing: a tree copy that honored a gitignore would not copy the
+    /// tree the caller named. Hidden files still follow `--hidden`.
+    CopyTree,
+    /// The named tree belongs to the verb: no ignore file, no hidden filter,
+    /// no symlink following and no crossing into another file system.
+    ///
+    /// A recursive delete that honored any filter would leave entries behind
+    /// and then report a directory it never finished as an argument mistake.
+    DeleteTree,
 }
 
 impl WalkerFlavor {
-    /// Hidden files are skipped unless the flavor says otherwise or `--hidden` came.
+    /// Hidden files are skipped unless the flavor always visits them or
+    /// `--hidden` came.
     const fn skips_hidden(self, global_hidden: bool) -> bool {
         match self {
-            Self::RespectGlobalFlags | Self::RespectGlobalFlagsByType => !global_hidden,
-            Self::AlwaysVisitHidden | Self::WholeTree => false,
+            Self::RespectGlobalFlags | Self::RespectGlobalFlagsByType | Self::CopyTree => {
+                !global_hidden
+            }
+            Self::AlwaysVisitHidden | Self::DeleteTree => false,
         }
     }
 
-    /// gitignore is honored unless the flavor walks the whole tree or `--no-gitignore` came.
+    /// gitignore is honored unless the flavor ignores nothing or `--no-gitignore` came.
     const fn honors_gitignore(self, no_gitignore: bool) -> bool {
         match self {
-            Self::WholeTree => false,
+            Self::CopyTree | Self::DeleteTree => false,
             _ => !no_gitignore,
         }
+    }
+
+    /// Whether `.ignore`, parent ignore files, the global gitignore and
+    /// `.git/info/exclude` still filter this walk.
+    ///
+    /// A tree copy and a recursive delete own every entry the caller named, so
+    /// they read no ignore file at all. The remaining flavors keep the shared
+    /// defaults, and `--no-gitignore` still turns off only the gitignore half.
+    const fn honors_ignore_files(self) -> bool {
+        !matches!(self, Self::CopyTree | Self::DeleteTree)
+    }
+
+    /// Symlinks are followed only where the verb reads through them.
+    ///
+    /// A delete removes the link entry and never what it points at, so the
+    /// global flag cannot widen the tree it is allowed to touch.
+    const fn follows_links(self, global_follow: bool) -> bool {
+        match self {
+            Self::DeleteTree => false,
+            _ => global_follow,
+        }
+    }
+
+    /// A recursive delete never crosses into a mounted file system.
+    const fn stays_on_one_file_system(self) -> bool {
+        matches!(self, Self::DeleteTree)
     }
 }
 
@@ -330,8 +389,13 @@ pub(crate) fn build_scoped_walker_flavored(
 
     builder
         .hidden(flavor.skips_hidden(global.hidden))
+        .ignore(flavor.honors_ignore_files())
+        .parents(flavor.honors_ignore_files())
         .git_ignore(flavor.honors_gitignore(global.no_gitignore))
-        .follow_links(global.follow_symlinks);
+        .git_global(flavor.honors_ignore_files())
+        .git_exclude(flavor.honors_ignore_files())
+        .follow_links(flavor.follows_links(global.follow_symlinks))
+        .same_file_system(flavor.stays_on_one_file_system());
 
     // Always apply the shared bound (default = all cores, RAM-capped).
     crate::concurrency::apply_walk_threads(&mut builder, global.threads);

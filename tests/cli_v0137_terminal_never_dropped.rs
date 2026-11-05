@@ -61,7 +61,7 @@ fn assert_terminal(out: &Out, what: &str) {
         "{what}: the last record must carry the verdict, got {last}"
     );
     assert!(
-        last.get("type").is_some() || last.get("error") == Some(&serde_json::Value::Bool(true)),
+        last.get("type").is_some() || last.get("ok") == Some(&serde_json::Value::Bool(false)),
         "{what}: the last record must name what it is, got {last}"
     );
     assert!(

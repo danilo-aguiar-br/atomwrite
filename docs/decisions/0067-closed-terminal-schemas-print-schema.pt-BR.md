@@ -14,7 +14,7 @@ Aceito (2026-10-15), lista de nomes substituída pela ADR-0078 (2026-10-31)
 - Estes eventos terminais são fechados (`additionalProperties: false`, um `required` não nulo com as chaves sempre presentes): `search-summary`, `replace-summary`, `count`, `count-by-ext`, `count-by-size`, `backup-summary`, `list-summary`, `config`, `batch` e `doctor` (`CLOSED_TERMINAL_SCHEMAS`).
 - O `diff` é `type: "object"` com um `oneOf` de quatro ramos fechados (`change`, `summary`, `unified`, `stat`), cada um com `required`.
 - As chaves que o writer carimba (`ok`, `code`, `exit`, `target_resolved`, `target_source`) são propriedades opcionais de todo schema terminal.
-- Um resumo que pode terminar na própria falha (`search-summary`, `replace-summary`, `batch`) acrescenta a regra "`ok: false` exige `code`, `exit`, `error_class`, `retryable`, `suggestion_lang` e `message`" (`FAILURE_REQUIRED`). O `doctor` carrega o mesmo detalhe como opcional.
+- Um resumo que pode terminar na própria falha (`search-summary`, `replace-summary`, `batch`) acrescenta a regra "`ok: false` exige `code` e `exit`" (`FAILURE_REQUIRED`). A primeira versão exigia também `error_class`, `retryable`, `suggestion_lang` e `message`; essas quatro saíram do envelope de falha padrão e voltam só com `-v`, então um schema que ainda as exigisse recusaria toda falha que a build realmente escreve. O `doctor` carrega o detalhe como opcional.
 - Seis nomes novos, `backup-summary`, `count-by-ext`, `count-by-size`, `list-summary`, `replace-summary` e `search-summary`, levam a lista a 58. Um nome desconhecido sai com exit 65 e a lista de nomes.
 
 ## Consequências

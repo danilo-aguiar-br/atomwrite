@@ -134,10 +134,18 @@ pub fn cmd_diff(
                 similar::ChangeTag::Delete => "delete",
                 similar::ChangeTag::Equal => continue,
             };
+            // `similar` indexes from zero, so publishing the index directly
+            // named the line above the change: the caller then edited the
+            // neighbour and blamed the content. Each side keeps its own number,
+            // because an insert has no old line and a delete has no new one.
+            let old_line = change.old_index().map(|index| index + 1);
+            let new_line = change.new_index().map(|index| index + 1);
             writer.write_event(&DiffChangeOutput {
                 r#type: "change",
                 tag,
-                line: change.old_index().or(change.new_index()).unwrap_or(0),
+                line: old_line.or(new_line).unwrap_or(1),
+                old_line,
+                new_line,
                 text: change.value().trim_end_matches('\n'),
             })?;
         }

@@ -44,8 +44,11 @@
       "minimum": 0
     },
     "target_resolved": {
-      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
-      "type": "string"
+      "description": "Absolute targets the run resolved, in invocation order, and never a joined string, so a path holding `,` stays readable; a run with one target publishes a one-item array, so the shape never depends on the count",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
     "target_source": {
       "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",

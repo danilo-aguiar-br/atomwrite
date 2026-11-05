@@ -147,7 +147,19 @@ pub fn prescan_print_schema(argv: &[String]) -> anyhow::Result<Option<ExitCode>>
         ),
     };
     let ctx = crate::error::ErrorContext::default();
-    let shape = crate::output::OutputShape::default();
+    // This path answers before clap parses, so the verbosity flag is read from
+    // the raw argv; without this, `-v` was silently ignored on the one path
+    // that never reaches `OutputShape::from_global_args`.
+    let shape = crate::output::OutputShape {
+        verbose: argv.iter().skip(1).any(|arg| {
+            arg == "--verbose"
+                || (arg.starts_with('-')
+                    && !arg.starts_with("--")
+                    && arg.len() > 1
+                    && arg[1..].chars().all(|c| c == 'v'))
+        }),
+        ..crate::output::OutputShape::default()
+    };
     let written = crate::output::write_error_json_shaped(&mut out, &err, None, &ctx, &shape)
         .and_then(|()| out.flush().map_err(anyhow::Error::from));
     Ok(Some(ExitCode::from(
@@ -209,8 +221,11 @@ pub fn handle_clap_parse_error(clap_err: clap::Error) -> ExitCode {
         _ => {
             let msg = clap_err.to_string();
             let suggestion = enrich_clap_suggestion(&msg);
+            let suggestion_lang = suggestion.as_ref().and_then(|_| {
+                let language = crate::locale::resolved_language();
+                (language != crate::locale::Language::En).then(|| language.as_str())
+            });
             let ej = crate::error::ErrorJson {
-                error: true,
                 ok: false,
                 code: "ARGUMENT_PARSE_ERROR",
                 exit: 2,
@@ -219,6 +234,7 @@ pub fn handle_clap_parse_error(clap_err: clap::Error) -> ExitCode {
                 error_class: crate::error::ErrorClass::Permanent.as_str(),
                 retryable: false,
                 suggestion,
+                suggestion_lang,
                 workspace: None,
                 failed_pair_index: None,
                 pairs_total: None,
@@ -232,7 +248,8 @@ pub fn handle_clap_parse_error(clap_err: clap::Error) -> ExitCode {
                 missing_flag: None,
                 pairs_unmatched: None,
                 pairs_applied: None,
-                suggestion_lang: crate::locale::resolved_language().as_str(),
+                line: None,
+                line_end: None,
             };
             let mut out = io::stdout().lock();
             // `io::Error::from` keeps the original kind of a failed write, so a

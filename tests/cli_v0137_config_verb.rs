@@ -25,6 +25,7 @@ const EXPECTED_KEYS: &[&str] = &[
     // key that changes behaviour is listed like every other live key.
     "defaults.line_ending",
     "defaults.backup",
+    "delete.backup",
     "defaults.retention",
     "defaults.max_filesize",
     "fuzzy.mode",
@@ -34,6 +35,7 @@ const EXPECTED_KEYS: &[&str] = &[
     "fuzzy.threshold_jw",
     "fuzzy.soft_floor_delta",
     "fuzzy.max_content_bytes",
+    "apply.max_ellipsis_lines",
     "write.confirm_large_bytes",
     "write.shrink_block_percent",
     "write.auto_rotate_max_age_secs",
@@ -51,6 +53,13 @@ const EXPECTED_KEYS: &[&str] = &[
     "search.max_filesize",
     "search.max_columns",
     "search.max_inflight_bytes",
+    // v0.1.38: `search` reads the shape of its own answer, `read` reads its
+    // byte budget and its default numbering, and every verb reads the output
+    // profile.
+    "search.format",
+    "read.max_output_bytes",
+    "read.number",
+    "output.profile",
     "summary.errors_max_entries",
     "lock.acquire_timeout_ms",
     "retry.base_ms",
@@ -174,7 +183,7 @@ fn set_global_writes_atomically_owner_only_and_get_reports_value_and_origin() {
     assert_eq!(event["value"], 1_000_000);
     assert_eq!(event["target_source"], "argv");
     assert_eq!(
-        PathBuf::from(event["target_resolved"].as_str().expect("target")),
+        PathBuf::from(event["target_resolved"][0].as_str().expect("target")),
         file
     );
 
@@ -218,9 +227,9 @@ fn verbs_that_write_or_name_a_file_exit_2_without_scope_and_touch_nothing() {
 fn unknown_key_exits_65_and_lists_the_valid_keys() {
     let sb = Sandbox::new();
     for args in [
-        vec!["config", "set", "bogus.key", "1", "--scope", "global"],
-        vec!["config", "get", "bogus.key"],
-        vec!["config", "unset", "bogus.key", "--scope", "global"],
+        vec!["-v", "config", "set", "bogus.key", "1", "--scope", "global"],
+        vec!["-v", "config", "get", "bogus.key"],
+        vec!["-v", "config", "unset", "bogus.key", "--scope", "global"],
     ] {
         let out = sb.run(&args);
         assert_eq!(out.code, Some(65), "{args:?}: {}", out.stdout);
@@ -270,8 +279,9 @@ fn invalid_values_exit_65_and_write_nothing() {
 #[test]
 fn retry_keys_are_checked_against_each_other_when_set_and_when_loaded() {
     let sb = Sandbox::new();
-    let set =
-        |key: &str, value: &str| sb.run(&["config", "set", key, value, "--scope", "workspace"]);
+    let set = |key: &str, value: &str| {
+        sb.run(&["-v", "config", "set", key, value, "--scope", "workspace"])
+    };
     // 1000 is above the 400 ms the cap would still have at run time.
     let lone_base = set("retry.base_ms", "1000");
     assert_eq!(lone_base.code, Some(65), "{}", lone_base.stdout);
@@ -325,6 +335,7 @@ fn validation_message_stays_english_and_only_the_hint_is_localized() {
     for (key, value, marker, hints) in cases {
         for (locale, hint) in hints {
             let out = sb.run(&[
+                "-v",
                 "--locale",
                 locale,
                 "config",
@@ -356,7 +367,7 @@ fn global_only_keys_are_rejected_in_the_workspace_scope() {
     // workspace `.atomwrite.toml` too, so refusing the write here while
     // honouring the key there would be the split this release removed.
     for (key, value) in [("storage.home", "/tmp"), ("locale", "en")] {
-        let out = sb.run(&["config", "set", key, value, "--scope", "workspace"]);
+        let out = sb.run(&["-v", "config", "set", key, value, "--scope", "workspace"]);
         assert_eq!(out.code, Some(65), "{key}: {}", out.stdout);
         let message = out.first()["message"].as_str().expect("message");
         assert!(message.contains("global-only"), "{message}");
@@ -379,7 +390,7 @@ fn the_value_changes_what_edit_does() {
     let big = big_file(&sb);
     let edit = |sb: &Sandbox| {
         sb.run(&[
-            "edit", &big, "--old", "zzzz", "--new", "y", "--fuzzy", "auto",
+            "-v", "edit", &big, "--old", "zzzz", "--new", "y", "--fuzzy", "auto",
         ])
     };
 
@@ -633,7 +644,7 @@ fn storage_home_is_written_to_the_bootstrap_file_and_warns() {
     ]);
     assert_eq!(set.code, Some(0), "{}", set.stdout);
     assert_eq!(
-        PathBuf::from(set.first()["target_resolved"].as_str().expect("target")),
+        PathBuf::from(set.first()["target_resolved"][0].as_str().expect("target")),
         before,
         "storage.home goes to the file that ProjectDirs locates, not to the relocated one"
     );

@@ -6,6 +6,7 @@
 
 use std::fs;
 use std::io::Write;
+use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -14,7 +15,7 @@ use crate::binary_detect;
 use crate::checksum;
 use crate::cli::{GlobalArgs, OutputFormat, ReadArgs};
 use crate::error::AtomwriteError;
-use crate::ndjson_types::{LineRange, ReadOutput};
+use crate::ndjson_types::{LineRange, MediaInfo, ReadOutput};
 use crate::output::NdjsonWriter;
 
 /// Read a file and emit metadata, checksum, and optional content as NDJSON.
@@ -24,8 +25,8 @@ use crate::output::NdjsonWriter;
 /// Returns `AtomwriteError::NotFound` if the file does not exist.
 /// Returns `AtomwriteError::StateDrift` if `--verify-checksum` fails.
 ///
-/// `--format raw` writes the file's bytes even when they look binary: the mode
-/// promises the bytes, so it never refuses a file for its content.
+/// `--format raw` writes the file's bytes, and refuses a binary target with a
+/// hint instead of spending tokens on bytes that carry no text.
 #[tracing::instrument(skip_all, fields(command = "read"))]
 pub fn cmd_read(
     args: &ReadArgs,
@@ -34,6 +35,17 @@ pub fn cmd_read(
     verb: &str,
 ) -> Result<()> {
     let start = Instant::now();
+    // Removing comment lines without numbers would shift every later line, and
+    // the `apply` that follows would target the wrong one.
+    if args.no_comments && !numbering_requested(args) {
+        return Err(AtomwriteError::InvalidInput {
+            reason: format!(
+                "{verb} --no-comments {} so every line keeps the file's number; add --number",
+                crate::constants::NO_COMMENTS_NEEDS_NUMBER_REASON_MARKER
+            ),
+        }
+        .into());
+    }
     let workspace = global.resolve_workspace()?;
     let targets = resolve_targets(&args.paths, &workspace)?;
 
@@ -98,19 +110,59 @@ pub fn cmd_read(
         .into());
     }
 
+    // A picture or a PDF is not text, so the line machinery below would spend
+    // the call on a header and answer nothing a model can use. The media path
+    // owns the payload from here.
+    if let Some(kind) = crate::media::classify(&path) {
+        return read_media(kind, &path, args, writer, &metadata, &hash, bytes);
+    }
+
+    // `--ocr` reads pixels, and this file has characters. Taking the flag and
+    // doing nothing would let a caller believe the text came from recognition.
+    if args.ocr {
+        return Err(AtomwriteError::InvalidInput {
+            reason: format!(
+                "read: {} carries text, so --ocr has nothing to recognize; it applies to a \
+                 picture or to a PDF page",
+                path.display()
+            ),
+        }
+        .into());
+    }
+
+    // `--no-comments` needs a grammar that names comment markers. A plain text
+    // target has none, and the filter still drops blank lines; saying so keeps
+    // the flag from looking like it did nothing.
+    if args.no_comments
+        && !is_binary
+        && crate::syntax_check::detect_language_name(&path, &[]).is_none()
+    {
+        crate::best_effort::best_effort(
+            writeln!(
+                std::io::stderr().lock(),
+                "atomwrite: {} has no known language, so --no-comments drops blank lines and lines starting with //, #, --, /* or *",
+                path.display()
+            ),
+            "warn that --no-comments has no comment syntax to drop",
+        );
+    }
+
     let permissions_str = format_permissions(&metadata);
     let modified_str = format_modified(&metadata);
 
     // `--stat` publishes metadata only; the line total still comes from a
     // streaming pass, so the field keeps its meaning without holding the file.
+    let mut cut = None;
     let (content_str, lines_total) = if is_binary {
         (None, 0u64)
     } else if args.stat {
         (None, count_lines_streaming(&path)?)
     } else {
-        let (content, total) = scan_lines_streaming(&path, args)?;
-        (Some(content), total)
+        let scanned = scan_lines_streaming(&path, args, max_size)?;
+        cut = scanned.truncated.then(|| (true, scanned.next.clone()));
+        (Some(scanned.content), scanned.total)
     };
+    let (truncated, next) = cut.unwrap_or((false, None));
 
     let line_count = content_str
         .as_deref()
@@ -127,7 +179,7 @@ pub fn cmd_read(
         "stat"
     } else if args.line.is_some() {
         "line"
-    } else if args.lines.is_some() {
+    } else if !args.lines.is_empty() {
         "lines"
     } else if args.head.is_some() {
         "head"
@@ -149,6 +201,8 @@ pub fn cmd_read(
         } else {
             None
         },
+        truncated: truncated.then_some(true),
+        next,
         bytes,
         checksum: hash,
         permissions: permissions_str,
@@ -162,12 +216,597 @@ pub fn cmd_read(
         range,
         verified: args.verify_checksum.as_ref().map(|_| true),
         mode: mode.to_string(),
+        media: None,
     };
 
     writer.write_event(&output)?;
 
     tracing::debug!(path = %path.display(), elapsed_ms = start.elapsed().as_millis() as u64, "read complete");
     Ok(())
+}
+/// Answer a picture or a PDF, which the text path cannot carry.
+///
+/// A picture leaves as one `data:` URI line on stdout, because that is the only
+/// shape the vision channel accepts. A PDF leaves as text per page, with the
+/// pages that carry no text named, because silence about a scanned page is the
+/// most expensive answer this verb can give.
+fn read_media(
+    kind: crate::media::MediaKind,
+    path: &Path,
+    args: &ReadArgs,
+    writer: &mut NdjsonWriter<impl Write>,
+    metadata: &fs::Metadata,
+    hash: &str,
+    bytes: u64,
+) -> Result<()> {
+    let request = media_request(args)?;
+    match kind {
+        crate::media::MediaKind::Image(format) => {
+            let facts = crate::media::image_uri::facts(path, format, &request)?;
+            if args.stat {
+                let output = ReadOutput {
+                    r#type: "read",
+                    path: path.display().to_string(),
+                    content: None,
+                    lines: 0,
+                    lines_total: None,
+                    truncated: None,
+                    next: None,
+                    bytes,
+                    checksum: hash.to_owned(),
+                    permissions: format_permissions(metadata),
+                    modified: format_modified(metadata),
+                    kind: "image".into(),
+                    binary: true,
+                    range: None,
+                    verified: None,
+                    mode: "stat".into(),
+                    media: Some(MediaInfo {
+                        kind: "image".into(),
+                        width: Some(facts.width),
+                        height: Some(facts.height),
+                        format: Some(facts.format.to_owned()),
+                        visual_tokens: Some(facts.visual_tokens),
+                        frames: facts.frames,
+                        orientation: facts.orientation,
+                        pages: None,
+                        needs_vision: None,
+                    }),
+                };
+                writer.write_event(&output)?;
+                return Ok(());
+            }
+            let file = FileFacts {
+                path,
+                metadata,
+                hash,
+                bytes,
+            };
+            if args.ocr {
+                let picture = crate::media::image_uri::decode_for_ocr(path, &request)?;
+                return emit_recognized(&file, writer, "image", &picture, None);
+            }
+            // The session already paid for these exact bytes. Answering with
+            // the facts keeps the caller's context free of a second copy, and
+            // `--force` is how it asks for the pixels again.
+            if !args.force && crate::media::image_uri::delivered_in_session(hash) {
+                let output = ReadOutput {
+                    r#type: "read",
+                    path: path.display().to_string(),
+                    content: None,
+                    lines: 0,
+                    lines_total: None,
+                    truncated: None,
+                    next: None,
+                    bytes,
+                    checksum: hash.to_owned(),
+                    permissions: format_permissions(metadata),
+                    modified: format_modified(metadata),
+                    kind: "image".into(),
+                    binary: true,
+                    range: None,
+                    verified: None,
+                    mode: "delivered".into(),
+                    media: Some(MediaInfo {
+                        kind: "image".into(),
+                        width: Some(facts.width),
+                        height: Some(facts.height),
+                        format: Some(facts.format.to_owned()),
+                        visual_tokens: Some(facts.visual_tokens),
+                        frames: facts.frames,
+                        orientation: facts.orientation,
+                        pages: None,
+                        needs_vision: None,
+                    }),
+                };
+                writer.write_event(&output)?;
+                return Ok(());
+            }
+            let (uri, facts) = crate::media::image_uri::to_data_uri(path, format, &request)?;
+            crate::media::image_uri::guard_size(&uri, crate::constants::IMAGE_MAX_DATA_URI_BYTES)?;
+            tracing::debug!(
+                path = %path.display(),
+                width = facts.width,
+                height = facts.height,
+                visual_tokens = facts.visual_tokens,
+                "picture encoded"
+            );
+            writer.flush()?;
+            let mut out = std::io::stdout().lock();
+            out.write_all(uri.as_bytes())?;
+            out.write_all(b"\n")?;
+            out.flush()?;
+            crate::media::image_uri::mark_delivered(hash);
+            Ok(())
+        }
+        crate::media::MediaKind::Heic => {
+            let (source_width, source_height) = crate::media::image_uri::heic_size(path)?;
+            let (max_edge, max_tokens) =
+                crate::media::token_rule::tier_limits(request.high_resolution);
+            let max_tokens = request.max_tokens.unwrap_or(max_tokens);
+            let (final_width, final_height) =
+                crate::media::token_rule::fit(source_width, source_height, max_edge, max_tokens);
+            if args.stat {
+                let output = ReadOutput {
+                    r#type: "read",
+                    path: path.display().to_string(),
+                    content: None,
+                    lines: 0,
+                    lines_total: None,
+                    truncated: None,
+                    next: None,
+                    bytes,
+                    checksum: hash.to_owned(),
+                    permissions: format_permissions(metadata),
+                    modified: format_modified(metadata),
+                    kind: "image".into(),
+                    binary: true,
+                    range: None,
+                    verified: None,
+                    mode: "stat".into(),
+                    media: Some(MediaInfo {
+                        kind: "image".into(),
+                        width: Some(source_width),
+                        height: Some(source_height),
+                        format: Some("heic".into()),
+                        visual_tokens: Some(crate::media::token_rule::visual_tokens(
+                            final_width,
+                            final_height,
+                        )),
+                        frames: None,
+                        orientation: None,
+                        pages: None,
+                        needs_vision: None,
+                    }),
+                };
+                writer.write_event(&output)?;
+                return Ok(());
+            }
+            if args.ocr {
+                let picture = crate::media::image_uri::decode_heic(path)?;
+                let file = FileFacts {
+                    path,
+                    metadata,
+                    hash,
+                    bytes,
+                };
+                return emit_recognized(&file, writer, "image", &picture, None);
+            }
+            if !args.force && crate::media::image_uri::delivered_in_session(hash) {
+                let output = ReadOutput {
+                    r#type: "read",
+                    path: path.display().to_string(),
+                    content: None,
+                    lines: 0,
+                    lines_total: None,
+                    truncated: None,
+                    next: None,
+                    bytes,
+                    checksum: hash.to_owned(),
+                    permissions: format_permissions(metadata),
+                    modified: format_modified(metadata),
+                    kind: "image".into(),
+                    binary: true,
+                    range: None,
+                    verified: None,
+                    mode: "delivered".into(),
+                    media: Some(MediaInfo {
+                        kind: "image".into(),
+                        width: Some(final_width),
+                        height: Some(final_height),
+                        format: Some("jpeg".into()),
+                        visual_tokens: Some(crate::media::token_rule::visual_tokens(
+                            final_width,
+                            final_height,
+                        )),
+                        frames: None,
+                        orientation: None,
+                        pages: None,
+                        needs_vision: None,
+                    }),
+                };
+                writer.write_event(&output)?;
+                return Ok(());
+            }
+            let picture = crate::media::image_uri::decode_heic(path)?;
+            let (uri, facts) = crate::media::image_uri::from_picture(picture, &request)?;
+            crate::media::image_uri::guard_size(&uri, crate::constants::IMAGE_MAX_DATA_URI_BYTES)?;
+            writer.flush()?;
+            let mut out = std::io::stdout().lock();
+            out.write_all(uri.as_bytes())?;
+            out.write_all(b"\n")?;
+            out.flush()?;
+            crate::media::image_uri::mark_delivered(hash);
+            tracing::debug!(
+                path = %path.display(),
+                width = facts.width,
+                height = facts.height,
+                visual_tokens = facts.visual_tokens,
+                "heic picture encoded"
+            );
+            Ok(())
+        }
+        crate::media::MediaKind::Pdf => {
+            // A scanned page carries no text, so `--pages` can only say that
+            // the page needs vision. `--page` renders it instead.
+            if let Some(page) = args.page {
+                let file = FileFacts {
+                    path,
+                    metadata,
+                    hash,
+                    bytes,
+                };
+                return read_rendered_page(&file, page, args, writer, &request);
+            }
+            let total = crate::media::pdf_text::page_count(path)?;
+            if args.stat {
+                // `--stat` asks for the shape of the document, not its words:
+                // decompressing every page here would pay the whole cost of a
+                // text read and then throw the text away.
+                let output = ReadOutput {
+                    r#type: "read",
+                    path: path.display().to_string(),
+                    content: None,
+                    lines: 0,
+                    lines_total: None,
+                    truncated: None,
+                    next: None,
+                    bytes,
+                    checksum: hash.to_owned(),
+                    permissions: format_permissions(metadata),
+                    modified: format_modified(metadata),
+                    kind: "pdf".into(),
+                    binary: true,
+                    range: None,
+                    verified: None,
+                    mode: "stat".into(),
+                    media: Some(MediaInfo {
+                        kind: "pdf".into(),
+                        width: None,
+                        height: None,
+                        format: Some("pdf".into()),
+                        visual_tokens: None,
+                        frames: None,
+                        orientation: None,
+                        pages: Some((1..=total).collect()),
+                        needs_vision: None,
+                    }),
+                };
+                writer.write_event(&output)?;
+                return Ok(());
+            }
+            let pages = requested_pages(&args.pages, total)?;
+            let extracted = crate::media::pdf_text::extract_pages(
+                path,
+                &pages,
+                crate::constants::PDF_MAX_DECOMPRESSED_BYTES,
+            )?;
+            let needs_vision: Vec<u32> = extracted
+                .iter()
+                .filter(|page| page.needs_vision())
+                .map(|page| page.page)
+                .collect();
+            let content = join_pages(&extracted);
+            let line_count = content.lines().count() as u64;
+            let output = ReadOutput {
+                r#type: "read",
+                path: path.display().to_string(),
+                content: Some(content),
+                lines: line_count,
+                lines_total: None,
+                truncated: None,
+                next: None,
+                bytes,
+                checksum: hash.to_owned(),
+                permissions: format_permissions(metadata),
+                modified: format_modified(metadata),
+                kind: "pdf".into(),
+                binary: true,
+                range: None,
+                verified: None,
+                mode: if args.stat { "stat" } else { "pages" }.into(),
+                media: Some(MediaInfo {
+                    kind: "pdf".into(),
+                    width: None,
+                    height: None,
+                    format: Some("pdf".into()),
+                    visual_tokens: None,
+                    frames: None,
+                    orientation: None,
+                    pages: Some(pages),
+                    needs_vision: (!needs_vision.is_empty()).then_some(needs_vision),
+                }),
+            };
+            writer.write_event(&output)?;
+            Ok(())
+        }
+    }
+}
+
+/// Translate the media flags into the request the image path takes.
+fn media_request(args: &ReadArgs) -> Result<crate::media::image_uri::RenderRequest> {
+    let crop = match args.crop.as_deref() {
+        None => None,
+        Some(spec) => Some(parse_crop(spec)?),
+    };
+    Ok(crate::media::image_uri::RenderRequest {
+        high_resolution: args.high_res,
+        max_tokens: args.max_tokens,
+        crop,
+    })
+}
+
+/// Parse `X,Y,W,H`, refusing a window that is not four positive numbers.
+fn parse_crop(spec: &str) -> Result<(u32, u32, u32, u32)> {
+    let parts: Vec<&str> = spec.split(',').map(str::trim).collect();
+    let [x, y, width, height] = parts.as_slice() else {
+        return Err(AtomwriteError::InvalidInput {
+            reason: format!("--crop needs X,Y,W,H and got {spec:?}"),
+        }
+        .into());
+    };
+    let parse = |value: &str, name: &str| -> Result<u32> {
+        value.parse::<u32>().map_err(|_| {
+            anyhow::Error::from(AtomwriteError::InvalidInput {
+                reason: format!("--crop {name} must be a non-negative integer, got {value:?}"),
+            })
+        })
+    };
+    let window = (
+        parse(x, "x")?,
+        parse(y, "y")?,
+        parse(width, "width")?,
+        parse(height, "height")?,
+    );
+    if window.2 == 0 || window.3 == 0 {
+        return Err(AtomwriteError::InvalidInput {
+            reason: "--crop width and height must be greater than zero".into(),
+        }
+        .into());
+    }
+    Ok(window)
+}
+
+/// Pages the caller asked for, as 1-based numbers inside the document.
+fn requested_pages(specs: &[String], total: u32) -> Result<Vec<u32>> {
+    if specs.is_empty() {
+        return Ok((1..=total).collect());
+    }
+    let mut pages: Vec<u32> = Vec::new();
+    for spec in specs {
+        match spec.split_once(':') {
+            Some((first, last)) => {
+                let first =
+                    first
+                        .trim()
+                        .parse::<u32>()
+                        .map_err(|_| AtomwriteError::InvalidInput {
+                            reason: format!(
+                                "--pages range start must be a page number, got {first:?}"
+                            ),
+                        })?;
+                let last =
+                    last.trim()
+                        .parse::<u32>()
+                        .map_err(|_| AtomwriteError::InvalidInput {
+                            reason: format!(
+                                "--pages range end must be a page number, got {last:?}"
+                            ),
+                        })?;
+                pages.extend(crate::media::pdf_text::page_range(first, last, total));
+            }
+            None => {
+                let page =
+                    spec.trim()
+                        .parse::<u32>()
+                        .map_err(|_| AtomwriteError::InvalidInput {
+                            reason: format!("--pages must be N or A:B, got {spec:?}"),
+                        })?;
+                pages.push(page);
+            }
+        }
+    }
+    pages.sort_unstable();
+    pages.dedup();
+    Ok(pages)
+}
+
+/// What every media answer repeats about the file it came from.
+///
+/// The four values travel together in every branch of [`read_media`], so one
+/// struct keeps them from turning each helper into a wall of positional
+/// arguments.
+struct FileFacts<'a> {
+    path: &'a Path,
+    metadata: &'a fs::Metadata,
+    hash: &'a str,
+    bytes: u64,
+}
+
+/// Recognize the characters on a picture and answer with the text itself.
+///
+/// The text leaves as `content`, the same field a text file fills, so the
+/// caller reads one shape whether the page carried a text layer or not.
+fn emit_recognized(
+    file: &FileFacts<'_>,
+    writer: &mut NdjsonWriter<impl Write>,
+    kind: &str,
+    picture: &image::DynamicImage,
+    pages: Option<Vec<u32>>,
+) -> Result<()> {
+    let FileFacts {
+        path,
+        metadata,
+        hash,
+        bytes,
+    } = *file;
+    let text = crate::media::ocr::recognize(picture)?;
+    let lines = u64::try_from(text.lines().count()).unwrap_or(u64::MAX);
+    let output = ReadOutput {
+        r#type: "read",
+        path: path.display().to_string(),
+        content: Some(text),
+        lines,
+        lines_total: Some(lines),
+        truncated: None,
+        next: None,
+        bytes,
+        checksum: hash.to_owned(),
+        permissions: format_permissions(metadata),
+        modified: format_modified(metadata),
+        kind: kind.into(),
+        binary: true,
+        range: None,
+        verified: None,
+        mode: "ocr".into(),
+        media: Some(MediaInfo {
+            kind: kind.into(),
+            width: Some(picture.width()),
+            height: Some(picture.height()),
+            format: None,
+            visual_tokens: None,
+            frames: None,
+            orientation: None,
+            pages,
+            needs_vision: None,
+        }),
+    };
+    writer.write_event(&output)?;
+    tracing::debug!(
+        path = %path.display(),
+        lines,
+        "characters recognized"
+    );
+    Ok(())
+}
+
+/// Render one PDF page and deliver it as a picture.
+///
+/// `--stat` reports the size of the rendering instead of sending it, which is
+/// the cheap way to learn how much a page would cost. The `data:` URI leaves by
+/// stdout alone, exactly as a picture does, so a caller reads one channel.
+fn read_rendered_page(
+    file: &FileFacts<'_>,
+    page: u32,
+    args: &ReadArgs,
+    writer: &mut NdjsonWriter<impl Write>,
+    request: &crate::media::image_uri::RenderRequest,
+) -> Result<()> {
+    let FileFacts {
+        path,
+        metadata,
+        hash,
+        bytes,
+    } = *file;
+    let dpi = args.dpi.unwrap_or(if args.ocr {
+        crate::constants::PDF_OCR_RENDER_DPI
+    } else {
+        crate::constants::PDF_RENDER_DPI
+    });
+    if !crate::constants::PDF_RENDER_DPI_RANGE.contains(&dpi) {
+        return Err(crate::error::AtomwriteError::InvalidInput {
+            reason: format!(
+                "read: --dpi {dpi} is outside {} to {} dots per inch",
+                crate::constants::PDF_RENDER_DPI_RANGE.start(),
+                crate::constants::PDF_RENDER_DPI_RANGE.end()
+            ),
+        }
+        .into());
+    }
+    let picture = crate::media::pdf_render::render_page(
+        path,
+        page,
+        dpi,
+        crate::constants::IMAGE_MAX_MEGAPIXELS.saturating_mul(1_000_000),
+    )?;
+    if args.ocr {
+        return emit_recognized(file, writer, "pdf", &picture, Some(vec![page]));
+    }
+    let (uri, facts) = crate::media::image_uri::from_picture(picture, request)?;
+    if args.stat {
+        let output = ReadOutput {
+            r#type: "read",
+            path: path.display().to_string(),
+            content: None,
+            lines: 0,
+            lines_total: None,
+            truncated: None,
+            next: None,
+            bytes,
+            checksum: hash.to_owned(),
+            permissions: format_permissions(metadata),
+            modified: format_modified(metadata),
+            kind: "pdf".into(),
+            binary: true,
+            range: None,
+            verified: None,
+            mode: "stat".into(),
+            media: Some(MediaInfo {
+                kind: "pdf".into(),
+                width: Some(facts.width),
+                height: Some(facts.height),
+                format: Some(facts.format.to_owned()),
+                visual_tokens: Some(facts.visual_tokens),
+                frames: None,
+                orientation: None,
+                pages: Some(vec![page]),
+                needs_vision: None,
+            }),
+        };
+        writer.write_event(&output)?;
+        return Ok(());
+    }
+    crate::media::image_uri::guard_size(&uri, crate::constants::IMAGE_MAX_DATA_URI_BYTES)?;
+    tracing::debug!(
+        path = %path.display(),
+        page,
+        width = facts.width,
+        height = facts.height,
+        visual_tokens = facts.visual_tokens,
+        "PDF page rendered"
+    );
+    writer.flush()?;
+    let mut out = std::io::stdout().lock();
+    out.write_all(uri.as_bytes())?;
+    out.write_all(b"\n")?;
+    out.flush()?;
+    Ok(())
+}
+
+/// Join the pages, naming each one when the answer covers more than one.
+fn join_pages(pages: &[crate::media::pdf_text::PageText]) -> String {
+    let mut out = String::new();
+    let several = pages.len() > 1;
+    for page in pages {
+        if several {
+            out.push_str(&format!("--- page {} ---\n", page.page));
+        }
+        out.push_str(&page.text);
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    out
 }
 
 fn write_raw(writer: &mut NdjsonWriter<impl Write>, data: &[u8], args: &ReadArgs) -> Result<()> {
@@ -179,10 +818,40 @@ fn write_raw(writer: &mut NdjsonWriter<impl Write>, data: &[u8], args: &ReadArgs
     // Filtering runs on the BYTES, never on a lossy `String`: decoding first
     // rewrote invalid UTF-8 into `EF BF BD` and dropped the `\r` of CRLF
     // files, so `read --format raw --head N` returned bytes that differed from
-    // `head -n N`. Binary files take the same path: the old branch handed the
-    // whole file back and silently ignored `--head`, `--tail` and `--lines`.
-    let filtered = apply_line_filters(data, args);
-    let written = lock.write_all(&filtered);
+    // `head -n N`.
+    let (rendered, emittable, total_lines) = render_raw_lines(data, args);
+    let cap = if args.all {
+        usize::MAX
+    } else {
+        crate::config::read_max_output_bytes()
+    };
+    let (payload, truncated) = cap_lines(&rendered, cap);
+    let written = lock.write_all(payload);
+    // The notice goes to stderr, never to stdout: raw stdout is the byte
+    // channel and must stay `cat` for a pipe. The Bash tool merges both
+    // streams, so the model still reads the next step.
+    if truncated {
+        // Only the lines whose end landed inside the payload count, so the
+        // `--` separators never inflate the notice.
+        let emitted = emittable
+            .iter()
+            .filter(|(_, end)| *end <= payload.len())
+            .count()
+            .max(1);
+        let last = emittable
+            .get(emitted.saturating_sub(1))
+            .map(|(line, _)| *line)
+            .unwrap_or(0);
+        let next = last.saturating_add(1);
+        crate::best_effort::best_effort(
+            writeln!(
+                std::io::stderr().lock(),
+                "atomwrite: showing {emitted} of {} selected lines up to {cap} bytes; next: --lines {next}:{total_lines} (use --all for everything)",
+                emittable.len()
+            ),
+            "write read truncation notice on stderr",
+        );
+    }
     // A closed reader is a failed run (exit 141), never a silent success, and
     // a failed flush loses bytes the same way a failed write does.
     written.and_then(|()| lock.flush()).map_err(|e| {
@@ -193,7 +862,6 @@ fn write_raw(writer: &mut NdjsonWriter<impl Write>, data: &[u8], args: &ReadArgs
         }
     })
 }
-
 /// Write the bytes of the resolved targets, in argv order.
 ///
 /// One target keeps the shape it had before this change: the file is materialized,
@@ -208,64 +876,514 @@ fn write_raw_targets(
     writer: &mut NdjsonWriter<impl Write>,
     verb: &str,
 ) -> Result<()> {
+    // `--stat` answers for one file: a metadata envelope per operand would mix
+    // JSON into the byte channel the caller asked to concatenate.
+    if args.stat && targets.paths.len() > 1 {
+        return Err(AtomwriteError::InvalidInput {
+            reason: format!(
+                "{verb} --stat takes one target per invocation, and {} were named",
+                targets.paths.len()
+            ),
+        }
+        .into());
+    }
     if targets.paths.len() == 1 && targets.empty_patterns.is_empty() {
         let path = crate::path_safety::validate_path(&targets.paths[0], workspace)?;
         if !path.exists() {
             return Err(AtomwriteError::NotFound { path }.into());
         }
+        // Every selector streams: a range, a head or a tail used to materialize
+        // the whole file, which put the peak at the file size. Only a
+        // structural selector needs the complete source for tree-sitter.
+        if args.symbol.is_none() && !args.enclosing {
+            return stream_one_raw(&path, args, global, writer, verb);
+        }
         let raw_bytes = crate::file_io::read_file_bytes(&path, global.effective_max_filesize())?;
-        let hash = checksum::hash_bytes(&raw_bytes);
-        if let Some(ref expected) = args.verify_checksum
-            && &hash != expected
-        {
+        // Binary bytes on the raw channel are paid tokens that carry no text.
+        let head = &raw_bytes[..raw_bytes.len().min(crate::constants::BINARY_DETECT_SIZE)];
+        if binary_detect::is_binary(head) {
+            return Err(AtomwriteError::InvalidInput {
+                reason: format!(
+                    "{verb} --format raw refuses binary {}; drop --format raw: a picture then arrives as a data: URI and a PDF as page text",
+                    path.display()
+                ),
+            }
+            .into());
+        }
+        // The digest is computed only when the caller asked to verify it: a
+        // whole-file hash on every read was work nobody consumed.
+        if let Some(ref expected) = args.verify_checksum {
+            let hash = checksum::hash_bytes(&raw_bytes);
+            if &hash != expected {
+                return Err(AtomwriteError::ChecksumVerifyFailed {
+                    path,
+                    expected: expected.clone(),
+                }
+                .into());
+            }
+        }
+        let mut raw_bytes = raw_bytes;
+        if let Some(name) = &args.symbol {
+            let spans = crate::commands::outline::symbol_spans(&path, &raw_bytes, None, name);
+            let span = crate::commands::outline::resolve_symbol_span(&spans, name, &path)
+                .map_err(anyhow::Error::from)?;
+            raw_bytes = raw_bytes[span.start..span.end].to_vec();
+        } else if args.enclosing {
+            let line = args.line.ok_or_else(|| AtomwriteError::InvalidInput {
+                reason: "--enclosing needs --line N".to_string(),
+            })?;
+            let (start, end) =
+                crate::commands::outline::enclosing_span(&path, &raw_bytes, None, line)
+                    .ok_or_else(|| AtomwriteError::InvalidInput {
+                        reason: format!(
+                            "no structural block contains line {line} in {}",
+                            path.display()
+                        ),
+                    })?;
+            raw_bytes = raw_bytes[start..end].to_vec();
+        }
+        // A range that starts after the last line used to answer an empty
+        // success, which reads as "the file is empty". The line total is the
+        // fact that lets the caller fix the request in one step.
+        if !args.lines.is_empty() {
+            let total = line_spans(&raw_bytes).len();
+            let selected = args.lines.iter().any(|spec| {
+                spec.split(',')
+                    .any(|part| parse_range_str(part.trim(), total).is_some_and(|(s, e)| s < e))
+            });
+            if !selected && total > 0 {
+                return Err(AtomwriteError::InvalidInput {
+                    reason: format!(
+                        "--lines selects nothing in {}: the file has {total} lines",
+                        path.display()
+                    ),
+                }
+                .into());
+            }
+        }
+        return write_raw(writer, &raw_bytes, args);
+    }
+    if !has_line_filters(args) {
+        return stream_raw_targets(targets, global, workspace, writer);
+    }
+    stream_filtered_targets(targets, args, global, workspace, writer, verb)
+}
+
+/// Whether the call asks to carve lines out of the bytes.
+fn has_line_filters(args: &ReadArgs) -> bool {
+    args.head.is_some()
+        || args.tail.is_some()
+        || !args.lines.is_empty()
+        || args.line.is_some()
+        || args.symbol.is_some()
+        || args.enclosing
+        || args.grep.is_some()
+        || args.number
+        || args.no_comments
+}
+
+/// Open `path` and refuse a binary target before one byte reaches stdout.
+fn open_raw_reader(
+    path: &std::path::Path,
+    verb: &str,
+) -> Result<std::io::BufReader<std::fs::File>> {
+    use std::io::BufRead;
+    let file = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::with_capacity(crate::constants::RAW_COPY_BUF_BYTES, file);
+    let head = reader.fill_buf()?;
+    let len = head.len().min(crate::constants::BINARY_DETECT_SIZE);
+    if binary_detect::is_binary(&head[..len]) {
+        return Err(binary_raw_error(verb, path));
+    }
+    Ok(reader)
+}
+
+/// The verdict a raw read publishes for a binary target.
+fn binary_raw_error(verb: &str, path: &std::path::Path) -> anyhow::Error {
+    AtomwriteError::InvalidInput {
+        reason: format!(
+            "{verb} --format raw refuses binary {}; drop --format raw: a picture then arrives as a data: URI and a PDF as page text",
+            path.display()
+        ),
+    }
+    .into()
+}
+
+/// Copy one file to stdout, streaming every selector and the digest.
+///
+/// The binary sniff reads through `fill_buf`, and a filtered read applies the
+/// selectors while the file is read, so memory stays at one buffer plus the
+/// selected lines instead of following the file size.
+fn stream_one_raw(
+    path: &std::path::Path,
+    args: &ReadArgs,
+    global: &GlobalArgs,
+    writer: &mut NdjsonWriter<impl Write>,
+    verb: &str,
+) -> Result<()> {
+    writer.flush()?;
+    let total_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    // Raw streams the file, and that is exactly why the ceiling belongs here:
+    // every other format refuses a target over `--max-filesize`, and this path
+    // used to hand the same file back in silence.
+    let max_size = global.effective_max_filesize();
+    if total_bytes > max_size {
+        return Err(AtomwriteError::FileTooLarge {
+            path: path.to_path_buf(),
+            size: total_bytes,
+            max_size,
+        }
+        .into());
+    }
+    let mut reader = open_raw_reader(path, verb)?;
+    // The digest runs only when the caller asked to verify it, and it streams:
+    // a whole-file hash on every read was work nobody consumed.
+    if let Some(ref expected) = args.verify_checksum {
+        let (hash, _) = checksum::hash_file_streaming(path, global.effective_max_filesize())?;
+        if &hash != expected {
             return Err(AtomwriteError::ChecksumVerifyFailed {
-                path,
+                path: path.to_path_buf(),
                 expected: expected.clone(),
             }
             .into());
         }
-        return write_raw(writer, &raw_bytes, args);
     }
-    refuse_batch_flags(args, verb)?;
-    stream_raw_targets(targets, global, workspace, writer)
+    let mut out = std::io::stdout().lock();
+    if !has_line_filters(args) {
+        return copy_plain_raw(path, args, &mut reader, &mut out, total_bytes);
+    }
+    let cap = if args.all {
+        usize::MAX
+    } else {
+        crate::config::read_max_output_bytes()
+    };
+    let stats = stream_selected_into(path, args, &mut out, cap, verb)?;
+    if cap != usize::MAX && stats.truncated {
+        write_filtered_notice(path, &stats, cap);
+    }
+    out.flush().map_err(map_raw_io)
 }
 
-/// Refuse the flags that carve one file when the call names several.
-///
-/// `cat` has no line range, so a concatenation with `--head` would silently
-/// apply the range to every file or to none. Naming the flag is the only answer
-/// that lets the caller fix the command in one step.
-///
-/// `--stat` is skipped on the `stat` verb: there the flag is set by the verb
-/// itself and not asked for by the caller, and refusing it made
-/// `stat --format raw a b` a contradiction — the mode was chosen and the verb's
-/// own metadata flag vetoed it.
-fn refuse_batch_flags(args: &ReadArgs, verb: &str) -> Result<()> {
-    let flag = if args.head.is_some() {
-        "--head"
-    } else if args.tail.is_some() {
-        "--tail"
-    } else if args.lines.is_some() {
-        "--lines"
-    } else if args.line.is_some() {
-        "--line"
-    } else if args.context != 0 {
-        "--context"
-    } else if args.stat && verb != "stat" {
-        "--stat"
-    } else if args.grep.is_some() {
-        "--grep"
-    } else if args.verify_checksum.is_some() {
-        "--verify-checksum"
-    } else {
-        return Ok(());
-    };
-    Err(AtomwriteError::InvalidInput {
-        reason: format!(
-            "{verb} {flag} expects a single target, and several were named; run the verb once per file"
-        ),
+/// Copy a plain `cat` target, cutting a large answer on a line boundary.
+fn copy_plain_raw(
+    path: &std::path::Path,
+    args: &ReadArgs,
+    reader: &mut std::io::BufReader<std::fs::File>,
+    out: &mut impl Write,
+    total_bytes: u64,
+) -> Result<()> {
+    use std::io::Read;
+    if args.all {
+        copy_raw_stream(reader, out)?;
+        return out.flush().map_err(map_raw_io);
     }
-    .into())
+    let cap = crate::config::read_max_output_bytes();
+    let mut buf = Vec::with_capacity(cap.min(total_bytes as usize).saturating_add(1));
+    reader.by_ref().take(cap as u64 + 1).read_to_end(&mut buf)?;
+    let (payload, truncated) = cap_lines(&buf, cap);
+    // The cut lands on a line boundary, which can still be the middle of a
+    // struct. Stepping back to the last complete outline item keeps the next
+    // read from starting inside one.
+    let payload = if truncated {
+        align_raw_payload(path, payload)
+    } else {
+        payload
+    };
+    let written = out.write_all(payload).and_then(|()| out.flush());
+    if truncated {
+        // The line total costs one streaming pass over the bytes that were not
+        // sent, and it buys the caller a range that lands exactly on the next
+        // line instead of a guess.
+        let emitted = payload.iter().filter(|b| **b == b'\n').count().max(1);
+        let prefixed = buf.iter().filter(|b| **b == b'\n').count();
+        let mut chunk = [0u8; 65_536];
+        let mut remaining = 0usize;
+        loop {
+            let read = reader.read(&mut chunk)?;
+            if read == 0 {
+                break;
+            }
+            remaining += memchr::memchr_iter(b'\n', &chunk[..read]).count();
+        }
+        crate::best_effort::best_effort(
+            writeln!(
+                std::io::stderr().lock(),
+                "atomwrite: {} ({} bytes) has {} lines; showing {} up to {cap} bytes, next: --lines {}:{} (--all for everything)",
+                path.display(),
+                total_bytes,
+                prefixed + remaining,
+                emitted,
+                emitted + 1,
+                prefixed + remaining
+            ),
+            "write read truncation notice on stderr",
+        );
+    }
+    written.map_err(map_raw_io)
+}
+
+/// Counts a streaming selection publishes so the cap notice can name the next range.
+struct SelectedStats {
+    total_lines: u64,
+    selected_lines: u64,
+    payload_indices: Vec<usize>,
+    truncated: bool,
+}
+
+/// Stream one file's selected lines into `out` under `cap`.
+///
+/// `cap == usize::MAX` writes each selected line as it is chosen; any other cap
+/// buffers at most `cap` bytes, cuts at the last complete line and keeps reading
+/// only to count what was left out.
+fn stream_selected_into(
+    path: &std::path::Path,
+    args: &ReadArgs,
+    out: &mut impl Write,
+    cap: usize,
+    verb: &str,
+) -> Result<SelectedStats> {
+    if cap == usize::MAX && !args.lines.is_empty() {
+        // Nothing can be unwritten on the byte channel, so a range that lies
+        // past the end is refused before the first byte leaves.
+        let total = count_lines_streaming(path)?;
+        ensure_ranges_select(path, total, args)?;
+    }
+    drop(open_raw_reader(path, verb)?);
+    let number = numbering_enabled(args);
+    let mut selector = LineSelector::new(args);
+    let mut payload: Vec<u8> = Vec::new();
+    let mut payload_indices: Vec<usize> = Vec::new();
+    let mut truncated = false;
+    let mut selected_lines: u64 = 0;
+    let mut io_error: Option<std::io::Error> = None;
+    let mut previous: Option<usize> = None;
+    let mut emit = |index: usize, raw: &[u8]| {
+        if io_error.is_some() {
+            return;
+        }
+        selected_lines += 1;
+        // `rg -C` separates non-adjacent groups with `--`, so a reader that
+        // asked for two ranges can tell where the first one ends.
+        let gap = previous.is_some_and(|prev| index != prev + 1);
+        previous = Some(index);
+        if cap == usize::MAX {
+            if gap && let Err(error) = out.write_all(b"--\n") {
+                io_error = Some(error);
+                return;
+            }
+            if let Err(error) = write_numbered_raw(out, index, raw, number) {
+                io_error = Some(error);
+            }
+            return;
+        }
+        if truncated {
+            return;
+        }
+        let separator = usize::from(gap) * 3;
+        let mut chunk = Vec::with_capacity(separator + raw.len() + 16);
+        if gap {
+            chunk.extend_from_slice(b"--\n");
+        }
+        chunk.extend_from_slice(&numbered_chunk(index, raw, number));
+        if payload.len() + chunk.len() <= cap {
+            payload.extend_from_slice(&chunk);
+            payload_indices.push(index);
+        } else {
+            let remaining = cap - payload.len();
+            let cut = memchr::memrchr(b'\n', &chunk[..chunk.len().min(remaining)])
+                .map(|position| position + 1)
+                .unwrap_or(0);
+            payload.extend_from_slice(&chunk[..cut]);
+            if cut > separator {
+                payload_indices.push(index);
+            }
+            truncated = true;
+        }
+    };
+    let total = visit_raw_lines(path, |index, line| selector.push(index, line, &mut emit))?;
+    selector.finish(&mut emit);
+    // The closure's borrow ends at its last use, so the buffers it wrote are
+    // readable here without an explicit drop.
+    if let Some(error) = io_error {
+        return Err(map_raw_io(error));
+    }
+    ensure_ranges_select(path, total, args)?;
+    if cap != usize::MAX {
+        out.write_all(&payload).map_err(map_raw_io)?;
+    }
+    Ok(SelectedStats {
+        total_lines: total,
+        selected_lines,
+        payload_indices,
+        truncated,
+    })
+}
+
+/// Write one raw line with its 1-based number in front when numbering is on.
+fn write_numbered_raw(
+    out: &mut impl Write,
+    index: usize,
+    raw: &[u8],
+    number: bool,
+) -> std::io::Result<()> {
+    if number {
+        write!(out, "{}:", index + 1)?;
+    }
+    out.write_all(raw)?;
+    if number && !raw.ends_with(b"\n") {
+        out.write_all(b"\n")?;
+    }
+    Ok(())
+}
+
+/// Build one raw line with its 1-based number in front when numbering is on.
+fn numbered_chunk(index: usize, raw: &[u8], number: bool) -> Vec<u8> {
+    let mut chunk = Vec::with_capacity(raw.len() + 16);
+    if number {
+        chunk.extend_from_slice(format!("{}:", index + 1).as_bytes());
+    }
+    chunk.extend_from_slice(raw);
+    if number && !raw.ends_with(b"\n") {
+        chunk.push(b'\n');
+    }
+    chunk
+}
+
+/// Tell stderr how much of the selection fit under the cap, and what comes next.
+fn write_filtered_notice(path: &std::path::Path, stats: &SelectedStats, cap: usize) {
+    let emitted = stats.payload_indices.len().max(1);
+    let last = stats.payload_indices.last().copied().unwrap_or(0);
+    crate::best_effort::best_effort(
+        writeln!(
+            std::io::stderr().lock(),
+            "atomwrite: {}: showing {emitted} of {} selected lines up to {cap} bytes; next: --lines {}:{} (use --all for everything)",
+            path.display(),
+            stats.selected_lines,
+            last.saturating_add(2),
+            stats.total_lines
+        ),
+        "write read truncation notice on stderr",
+    );
+}
+
+/// Map a stdout write failure to the crate's broken-pipe semantics.
+fn map_raw_io(error: std::io::Error) -> anyhow::Error {
+    if error.kind() == std::io::ErrorKind::BrokenPipe {
+        crate::error::AtomwriteError::BrokenPipe.into()
+    } else {
+        anyhow::Error::from(error)
+    }
+}
+
+/// Copy a reader to a writer in bounded chunks, converting broken pipe to 141.
+fn copy_raw_stream(reader: &mut impl std::io::Read, out: &mut impl Write) -> Result<()> {
+    let mut buf = vec![0u8; crate::constants::RAW_COPY_BUF_BYTES];
+    loop {
+        let read = reader.read(&mut buf)?;
+        if read == 0 {
+            return Ok(());
+        }
+        out.write_all(&buf[..read]).map_err(map_raw_io)?;
+    }
+}
+
+/// Concatenate several targets, filtering each one, preserving argv order.
+///
+/// A header names the file whenever more than one target is in play, because a
+/// concatenated answer with no owner is a fact the caller cannot attribute.
+/// One target may fail and the rest still go out: the status is the first
+/// failure's, the same rule the unfiltered path already follows.
+fn stream_filtered_targets(
+    targets: &ResolvedTargets,
+    args: &ReadArgs,
+    _global: &GlobalArgs,
+    workspace: &std::path::Path,
+    writer: &mut NdjsonWriter<impl Write>,
+    verb: &str,
+) -> Result<()> {
+    writer.flush()?;
+    let mut out = std::io::stdout().lock();
+    let header = targets.paths.len() > 1;
+    let cap = if args.all {
+        usize::MAX
+    } else {
+        crate::config::read_max_output_bytes()
+    };
+    let mut first_error: Option<anyhow::Error> = None;
+    for raw_path in &targets.paths {
+        let path = match crate::path_safety::validate_path(raw_path, workspace) {
+            Ok(path) => path,
+            Err(error) => {
+                crate::best_effort::best_effort(
+                    writeln!(
+                        std::io::stderr().lock(),
+                        "atomwrite: {}: {error}",
+                        raw_path.display()
+                    ),
+                    "report rejected target on stderr",
+                );
+                first_error.get_or_insert(error);
+                continue;
+            }
+        };
+        if !path.exists() {
+            let error = AtomwriteError::NotFound { path: path.clone() };
+            crate::best_effort::best_effort(
+                writeln!(
+                    std::io::stderr().lock(),
+                    "atomwrite: {}: not found",
+                    path.display()
+                ),
+                "report missing target on stderr",
+            );
+            first_error.get_or_insert(error.into());
+            continue;
+        }
+        // The binary sniff runs before the header, so a refused target leaves
+        // no half-written attribution on stdout.
+        open_raw_reader(&path, verb)?;
+        if header {
+            out.write_all(format!("==> {} <==\n", path.display()).as_bytes())
+                .map_err(map_raw_io)?;
+        }
+        match stream_selected_into(&path, args, &mut out, cap, verb) {
+            Ok(stats) => {
+                if cap != usize::MAX && stats.truncated {
+                    write_filtered_notice(&path, &stats, cap);
+                }
+            }
+            Err(error) => {
+                // A binary target and a checksum mismatch end the run; an
+                // unreadable target lets the other files still answer.
+                let fatal = error
+                    .downcast_ref::<AtomwriteError>()
+                    .is_some_and(|failure| {
+                        matches!(
+                            failure,
+                            AtomwriteError::InvalidInput { .. }
+                                | AtomwriteError::ChecksumVerifyFailed { .. }
+                        )
+                    });
+                if fatal {
+                    return Err(error);
+                }
+                crate::best_effort::best_effort(
+                    writeln!(
+                        std::io::stderr().lock(),
+                        "atomwrite: {}: {error}",
+                        path.display()
+                    ),
+                    "report unreadable target on stderr",
+                );
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    out.flush().map_err(map_raw_io)?;
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 /// Concatenate every target byte for byte, the way `cat` does.
@@ -453,58 +1571,171 @@ fn detect_binary_prefix(path: &std::path::Path) -> Result<bool> {
 ///
 /// A file that does not end in a newline keeps that shape: the final line is
 /// copied without a terminator, exactly as `head` and `tail` would print it.
-fn apply_line_filters(data: &[u8], args: &ReadArgs) -> Vec<u8> {
+/// Render the selected raw lines, with optional numbering.
+///
+/// Returns the payload, the original 0-based index of every emitted line and
+/// the file's total line count, so the cap notice can name the exact next
+/// range instead of guessing from a byte count.
+fn render_raw_lines(data: &[u8], args: &ReadArgs) -> (Vec<u8>, Vec<(usize, usize)>, usize) {
     let ranges = line_spans(data);
     let total = ranges.len();
+    let indices = select_line_indices(&ranges, data, args, total);
+    let numbered = numbering_enabled(args);
+    let mut out = Vec::new();
+    let mut emitted = Vec::with_capacity(indices.len());
+    let mut previous: Option<usize> = None;
+    for &index in &indices {
+        // `rg -C` separates non-adjacent groups with `--`, so a reader that
+        // asked for two ranges can tell where the first one ends.
+        if let Some(prev) = previous
+            && index != prev + 1
+        {
+            out.extend_from_slice(b"--\n");
+        }
+        let (start, end) = ranges[index];
+        if numbered {
+            out.extend_from_slice(format!("{}:", index + 1).as_bytes());
+        }
+        out.extend_from_slice(&data[start..end]);
+        if numbered && !out.ends_with(b"\n") {
+            out.push(b'\n');
+        }
+        emitted.push((index + 1, out.len()));
+        previous = Some(index);
+    }
+    (out, emitted, total)
+}
 
-    if let Some(ref range_str) = args.lines {
-        if let Some((start, end)) = parse_range_str(range_str, total) {
-            if start >= end {
-                return Vec::new();
+/// Pick the 0-based line indices the request selects, in file order.
+///
+/// Every selector composes on the ORIGINAL line numbers, so `--no-comments`
+/// removes lines from the answer without renumbering the rest.
+fn select_line_indices(
+    ranges: &[(usize, usize)],
+    data: &[u8],
+    args: &ReadArgs,
+    total: usize,
+) -> Vec<usize> {
+    let mut keep = vec![false; total];
+    let mut filtered = false;
+    if args.enclosing {
+        // The enclosing block is the answer; a line selector inside it would
+        // carve the block back down to the single line it came from.
+    } else if !args.lines.is_empty() {
+        filtered = true;
+        for raw in &args.lines {
+            for part in raw.split(',') {
+                if let Some((start, end)) = parse_range_str(part.trim(), total) {
+                    for slot in keep.iter_mut().take(end).skip(start) {
+                        *slot = true;
+                    }
+                }
             }
-            return concat_spans(data, &ranges[start..end]);
         }
-    }
-
-    if let Some(line_num) = args.line {
+    } else if let Some(line_num) = args.line {
+        filtered = true;
         let idx = line_num.saturating_sub(1);
-        if idx >= total {
-            return Vec::new();
+        if idx < total {
+            let ctx = args.context;
+            let start = idx.saturating_sub(ctx);
+            let end = (idx + ctx + 1).min(total);
+            for slot in keep.iter_mut().take(end).skip(start) {
+                *slot = true;
+            }
         }
-        let ctx = args.context;
-        let start = idx.saturating_sub(ctx);
-        let end = (idx + ctx + 1).min(total);
-        return concat_spans(data, &ranges[start..end]);
-    }
-
-    if let Some(n) = args.head {
-        let end = n.min(total);
-        if end == 0 {
-            return Vec::new();
+    } else if let Some(n) = args.head {
+        filtered = true;
+        for slot in keep.iter_mut().take(n.min(total)) {
+            *slot = true;
         }
-        return concat_spans(data, &ranges[..end]);
-    }
-
-    if let Some(n) = args.tail {
-        if n == 0 {
-            return Vec::new();
+    } else if let Some(n) = args.tail {
+        filtered = true;
+        for slot in keep.iter_mut().skip(total.saturating_sub(n)) {
+            *slot = true;
         }
-        let start = total.saturating_sub(n);
-        return concat_spans(data, &ranges[start..]);
-    }
-
-    if let Some(ref pattern) = args.grep {
+    } else if let Some(pattern) = &args.grep {
+        filtered = true;
         if let Ok(re) = regex::Regex::new(pattern) {
-            let matched: Vec<(usize, usize)> = ranges
-                .iter()
-                .copied()
-                .filter(|span| re.is_match(&String::from_utf8_lossy(&data[span.0..span.1])))
-                .collect();
-            return concat_spans(data, &matched);
+            for (index, (start, end)) in ranges.iter().enumerate() {
+                if re.is_match(&String::from_utf8_lossy(trim_line_ending(
+                    &data[*start..*end],
+                ))) {
+                    let lo = index.saturating_sub(args.context);
+                    let hi = (index + args.context + 1).min(total);
+                    for slot in keep.iter_mut().take(hi).skip(lo) {
+                        *slot = true;
+                    }
+                }
+            }
         }
     }
 
-    data.to_vec()
+    let mut out = Vec::new();
+    for (index, (start, end)) in ranges.iter().enumerate() {
+        if filtered && !keep[index] {
+            continue;
+        }
+        if args.no_comments && is_comment_or_blank(&data[*start..*end]) {
+            continue;
+        }
+        out.push(index);
+    }
+    out
+}
+
+/// Whether a line is blank or a comment in the languages the CLI edits.
+///
+/// Opt-in through `--no-comments`: a filter guessed wrong on an exotic grammar
+/// would silence real content, so the list stays to the markers every language
+/// in the project writes the same way.
+fn is_comment_or_blank(line: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(line);
+    let trimmed = text.trim();
+    trimmed.is_empty()
+        || trimmed.starts_with("//")
+        || trimmed.starts_with('#')
+        || trimmed.starts_with("--")
+        || trimmed.starts_with("/*")
+        || trimmed.starts_with('*')
+}
+
+/// Cut `payload` back to the end of the last complete outline item.
+///
+/// Only a byte cut on a plain `cat` reaches here, because a caller-named range
+/// must return the lines it asked for. Invalid UTF-8 and an unknown grammar
+/// keep the line cut, since no outline can be trusted there.
+fn align_raw_payload<'a>(path: &std::path::Path, payload: &'a [u8]) -> &'a [u8] {
+    let Ok(prefix) = std::str::from_utf8(payload) else {
+        return payload;
+    };
+    let last_line = payload.iter().filter(|b| **b == b'\n').count();
+    let Some(end_line) = align_cut_to_outline(path, prefix, last_line) else {
+        return payload;
+    };
+    if end_line == 0 || end_line >= last_line {
+        return payload;
+    }
+    let mut seen = 0usize;
+    for (index, byte) in payload.iter().enumerate() {
+        if *byte == b'\n' {
+            seen += 1;
+            if seen == end_line {
+                return &payload[..=index];
+            }
+        }
+    }
+    payload
+}
+
+/// Cut `payload` at the last complete line that fits `cap` bytes.
+fn cap_lines(payload: &[u8], cap: usize) -> (&[u8], bool) {
+    if payload.len() <= cap {
+        return (payload, false);
+    }
+    let cut = memchr::memrchr(b'\n', &payload[..cap])
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    (&payload[..cut], true)
 }
 
 /// Byte span of every line in `data`, terminator included when present.
@@ -527,15 +1758,6 @@ fn line_spans(data: &[u8]) -> Vec<(usize, usize)> {
     spans
 }
 
-/// Concatenate the chosen line spans, byte for byte, with no separator added.
-fn concat_spans(data: &[u8], spans: &[(usize, usize)]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(spans.iter().map(|(a, b)| b - a).sum());
-    for (start, end) in spans {
-        out.extend_from_slice(&data[*start..*end]);
-    }
-    out
-}
-
 fn parse_range_str(s: &str, total: usize) -> Option<(usize, usize)> {
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() != 2 {
@@ -550,13 +1772,22 @@ fn parse_range_str(s: &str, total: usize) -> Option<(usize, usize)> {
 }
 
 fn parse_line_range(args: &ReadArgs, total: u64) -> Option<LineRange> {
-    if let Some(ref range_str) = args.lines {
-        if let Some((start, end)) = parse_range_str(range_str, total as usize) {
-            return Some(LineRange {
-                start: start + 1,
-                end,
-            });
+    let mut merged: Option<(usize, usize)> = None;
+    for raw in &args.lines {
+        for part in raw.split(',') {
+            if let Some((start, end)) = parse_range_str(part.trim(), total as usize) {
+                merged = Some(match merged {
+                    Some((lo, hi)) => (lo.min(start), hi.max(end)),
+                    None => (start, end),
+                });
+            }
         }
+    }
+    if let Some((start, end)) = merged {
+        return Some(LineRange {
+            start: start + 1,
+            end,
+        });
     }
     if let Some(line_num) = args.line {
         let ctx = args.context;

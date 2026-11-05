@@ -18,11 +18,20 @@ pub(crate) struct BatchOpOptions<'a> {
     fuzzy_mode: crate::cli::FuzzyMode,
     fuzzy_threshold: Option<f64>,
     fuzzy_cfg: &'a crate::config::FuzzySection,
+    /// Copies the transaction already made, keyed by the path they preserve.
+    ///
+    /// Borrowed rather than owned, so a fan-out closure stays `Copy` and no
+    /// path is cloned per operation.
+    snapshots: &'a [(PathBuf, PathBuf)],
 }
 
 /// Run one operation with the batch-wide options.
 #[allow(clippy::too_many_arguments)]
-fn execute_op_with(op: &BatchOp, idx: usize, opts: &BatchOpOptions<'_>) -> Result<String> {
+fn execute_op_with(
+    op: &BatchOp,
+    idx: usize,
+    opts: &BatchOpOptions<'_>,
+) -> Result<BatchOpOutcome> {
     execute_op(
         op,
         idx,
@@ -37,6 +46,7 @@ fn execute_op_with(op: &BatchOp, idx: usize, opts: &BatchOpOptions<'_>) -> Resul
         opts.fuzzy_mode,
         opts.fuzzy_threshold,
         opts.fuzzy_cfg,
+        opts.snapshots,
     )
 }
 
@@ -44,10 +54,44 @@ fn execute_op_with(op: &BatchOp, idx: usize, opts: &BatchOpOptions<'_>) -> Resul
 ///
 /// A free function, not a method: the fan-out closure cannot borrow the run
 /// (the writer is not `Sync`), and this needs nothing but the retention bound.
-fn snapshot_file(path: &std::path::Path, retention: u8) -> Result<(PathBuf, PathBuf)> {
+fn snapshot_file(
+    path: &std::path::Path,
+    retention: u8,
+) -> Result<Option<(PathBuf, PathBuf)>> {
+    if crate::commands::backup_names::is_backup_path(path) {
+        return Ok(None);
+    }
     let backup = crate::atomic::create_backup(path, retention)
         .with_context(|| format!("transaction pre-backup failed for {}", path.display()))?;
-    Ok((path.to_path_buf(), backup))
+    Ok(Some((path.to_path_buf(), backup)))
+}
+
+/// Remove the pre-transaction snapshots once they are no longer needed.
+///
+/// The snapshots exist so a failed run can be undone. Once every operation
+/// committed, the copy has served its purpose and follows the same rule as
+/// any other backup: it is removed unless the run asked to keep it, and
+/// `--no-backup` never leaves one behind. A failed reversal keeps its copies
+/// on purpose, because they are the last known state of those files.
+fn discard_snapshots(backups: &[(PathBuf, PathBuf)]) {
+    for (_, backup) in backups {
+        crate::atomic::delete_backup_quietly(backup);
+    }
+}
+
+/// Remove the snapshots that became residue, keeping the copies that are the
+/// way back.
+///
+/// A file the run deleted, moved or overwrote has no other way back, and a
+/// rewrite keeps its snapshot only when `--keep-backup` asked for it. The
+/// caller decides which paths belong to that set and when a copy is forbidden.
+fn discard_residue(backups: &[(PathBuf, PathBuf)], destructive: &HashSet<PathBuf>) {
+    for (original, backup) in backups {
+        if destructive.contains(original) {
+            continue;
+        }
+        crate::atomic::delete_backup_quietly(backup);
+    }
 }
 
 /// One batch invocation: the parsed manifest plus the mutable state a run keeps.
@@ -57,6 +101,9 @@ pub(crate) struct BatchRun<'a, W: Write> {
     pub(crate) global: &'a GlobalArgs,
     pub(crate) dry_run: bool,
     pub(crate) transaction: bool,
+    /// Wire token of where the manifest came from (`argv` or `stdin`), so the
+    /// rollback record can name the origin of the targets it reverted.
+    pub(crate) target_source: &'static str,
     pub(crate) keep_backup: bool,
     pub(crate) no_backup: bool,
     pub(crate) backup_explicit: bool,
@@ -80,7 +127,7 @@ impl<W: Write> BatchRun<'_, W> {
     /// A non-transactional batch with unique targets fans out through
     /// `rayon::par_iter`; a transactional batch, or one with overlapping
     /// targets, stays sequential so rollback order and per-file ordering hold.
-    fn execute(&mut self) -> Result<()> {
+    fn execute(&mut self) -> Result<Vec<String>> {
         // A transaction holds every target lock from before the snapshot until
         // the rollback or commit ends this call. Paths are sorted so two
         // concurrent batches with the same targets always wait in the same
@@ -104,7 +151,7 @@ impl<W: Write> BatchRun<'_, W> {
         // Paths are unique (`collect_target_paths` dedups); independent I/O →
         // `par_iter`. Ops and rollback stay sequential.
         let backups: Vec<(PathBuf, PathBuf)> = if self.transaction && !self.dry_run {
-            let paths = collect_target_paths(self.ops, self.workspace);
+            let paths = collect_snapshot_paths(self.ops, self.workspace);
             // The closure captures only the retention bound, never `self`: the
             // writer is not `Sync`, and the snapshot needs no access to it.
             let retention = self.retention;
@@ -113,10 +160,15 @@ impl<W: Write> BatchRun<'_, W> {
                     .par_iter()
                     .map(|path| snapshot_file(path, retention))
                     .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect()
             } else {
                 let mut pairs = Vec::with_capacity(paths.len());
                 for path in paths {
-                    pairs.push(snapshot_file(&path, retention)?);
+                    if let Some(pair) = snapshot_file(&path, retention)? {
+                        pairs.push(pair);
+                    }
                 }
                 pairs
             }
@@ -148,9 +200,9 @@ impl<W: Write> BatchRun<'_, W> {
             tracing::debug!(ops = self.ops.len(), "batch: parallel non-transactional fan-out");
             // Every value the closure needs is copied out first: it cannot
             // borrow the run, whose writer is not `Sync`.
-            let opts = self.op_options();
+            let opts = self.op_options(&backups);
             let shutdown = self.shutdown;
-            let results: Vec<(usize, Result<String, String>, u64)> = self
+            let results: Vec<(usize, Result<BatchOpOutcome, String>, u64)> = self
                 .ops
                 .par_iter()
                 .enumerate()
@@ -169,15 +221,19 @@ impl<W: Write> BatchRun<'_, W> {
             for (idx, result, elapsed_ms) in ordered {
                 let op = &self.ops[idx];
                 match result {
-                    Ok(details) => {
+                    Ok(outcome) => {
                         succeeded += 1;
                         self.writer.write_event(&BatchOpResult {
                             r#type: "batch_op",
                             index: idx as u64,
                             op: &op.op,
                             status: "ok",
-                            details: Some(details),
+                            details: Some(outcome.details),
                             error: None,
+                            write_strategy: Some(outcome.write_strategy),
+                            backup_skipped: outcome.backup_skipped,
+                            backup_path: outcome.backup_path,
+                            warnings: outcome.warnings,
                             elapsed_ms,
                         })?;
                     }
@@ -190,6 +246,10 @@ impl<W: Write> BatchRun<'_, W> {
                             status: "failed",
                             details: None,
                             error: Some(e),
+                            write_strategy: None,
+                            backup_skipped: None,
+                            backup_path: None,
+                            warnings: Vec::new(),
                             elapsed_ms,
                         })?;
                     }
@@ -223,8 +283,8 @@ impl<W: Write> BatchRun<'_, W> {
                     false
                 };
 
-                match self.run_op(op, idx) {
-                    Ok(details) => {
+                match self.run_op(op, idx, &backups) {
+                    Ok(outcome) => {
                         succeeded += 1;
                         self.track_created(op, was_new_file, &mut created_files);
                         self.track_move(op, &mut moves_to_reverse);
@@ -233,8 +293,12 @@ impl<W: Write> BatchRun<'_, W> {
                             index: idx as u64,
                             op: &op.op,
                             status: "ok",
-                            details: Some(details),
+                            details: Some(outcome.details),
                             error: None,
+                            write_strategy: Some(outcome.write_strategy),
+                            backup_skipped: outcome.backup_skipped,
+                            backup_path: outcome.backup_path,
+                            warnings: outcome.warnings,
                             elapsed_ms: op_start.elapsed().as_millis() as u64,
                         })?;
                     }
@@ -247,6 +311,10 @@ impl<W: Write> BatchRun<'_, W> {
                             status: "failed",
                             details: None,
                             error: Some(format!("{e:#}")),
+                            write_strategy: None,
+                            backup_skipped: None,
+                            backup_path: None,
+                            warnings: Vec::new(),
                             elapsed_ms: op_start.elapsed().as_millis() as u64,
                         })?;
                         if self.transaction {
@@ -257,18 +325,46 @@ impl<W: Write> BatchRun<'_, W> {
             }
         }
 
+        // Every operation committed, so the pre-transaction snapshots are no
+        // longer needed, except the one that undoes a deletion: that file lives
+        // nowhere else. `--no-backup` still wins, because the invocation
+        // forbade any copy.
+        if self.no_backup {
+            discard_snapshots(&backups);
+        } else {
+            let destructive =
+                destructive_paths(self.ops, self.workspace, self.keep_backup, self.no_backup);
+            discard_residue(&backups, &destructive);
+        }
+
+        // Whatever survived the commit is the only copy left of a file the run
+        // removed or replaced, so the summary names it.
+        let backups_preserved = backups
+            .iter()
+            .filter(|(_, backup)| backup.exists())
+            .map(|(_, backup)| backup.display().to_string())
+            .collect();
+
         self.succeeded = succeeded;
         self.failed = failed;
-        Ok(())
+        Ok(backups_preserved)
     }
 
     /// Execute one operation with the batch-wide options.
-    fn run_op(&self, op: &BatchOp, idx: usize) -> Result<String> {
-        execute_op_with(op, idx, &self.op_options())
+    fn run_op(
+        &self,
+        op: &BatchOp,
+        idx: usize,
+        snapshots: &[(PathBuf, PathBuf)],
+    ) -> Result<BatchOpOutcome> {
+        execute_op_with(op, idx, &self.op_options(snapshots))
     }
 
     /// The batch-wide execution options, cheap to copy into a fan-out closure.
-    fn op_options(&self) -> BatchOpOptions<'_> {
+    ///
+    /// `snapshots` is the list this run already holds, empty outside a
+    /// transaction, so an operation can name the copy instead of writing one.
+    fn op_options<'s>(&'s self, snapshots: &'s [(PathBuf, PathBuf)]) -> BatchOpOptions<'s> {
         BatchOpOptions {
             workspace: self.workspace,
             global: self.global,
@@ -281,6 +377,7 @@ impl<W: Write> BatchRun<'_, W> {
             fuzzy_mode: self.fuzzy_mode,
             fuzzy_threshold: self.fuzzy_threshold,
             fuzzy_cfg: self.fuzzy_cfg,
+            snapshots,
         }
     }
 
@@ -368,42 +465,88 @@ impl<W: Write> BatchRun<'_, W> {
         idx: usize,
         failure: &anyhow::Error,
     ) -> Result<()> {
-        match rollback_transaction(backups, created, moves, self.workspace) {
-            Ok((restored, removed)) => {
-                // The record goes through `publish_failure`, not `write_event`:
-                // the rollback is the consequence of a failed transaction, so
-                // the record must carry `ok: false` and the very `code`/`exit`
-                // of the error it reports. Stamped as a success it said
-                // `ok: true` one line above the failure envelope, which the
-                // agent reads as "the run that reverted everything succeeded".
-                let err: anyhow::Error = crate::error::AtomwriteError::InvalidInput {
-                    reason: format!(
-                        "transaction rolled back after failure at operation {idx}: {failure:#}"
-                    ),
-                }
-                .into();
-                Err(self.writer.publish_failure(
-                    &RollbackEvent {
-                        r#type: "rollback",
-                        files_restored: restored,
-                        files_removed: removed,
-                        total_reverted: restored + removed,
-                    },
-                    err,
-                ))
-            }
-            Err(rb_err) => {
-                tracing::error!(error = %rb_err, "rollback failed");
-                Err(crate::error::AtomwriteError::TransactionRollbackFailed {
-                    reason: format!("{rb_err:#}"),
-                }
-                .into())
-            }
+        let outcome = rollback_transaction(backups, created, moves, self.workspace);
+        // The targets travel as an array because a transaction touches several
+        // files, and the shape stays an array even for one file, because the
+        // caller cannot know how many came back before reading the field.
+        let mut targets: Vec<String> = backups
+            .iter()
+            .map(|(original, _)| original.display().to_string())
+            .collect();
+        targets.extend(created.iter().map(|path| path.display().to_string()));
+        for (source, target) in moves {
+            targets.push(source.display().to_string());
+            targets.push(target.display().to_string());
         }
+        targets.sort();
+        targets.dedup();
+        self.writer.set_targets(targets, self.target_source);
+
+        if let Some(failed) = outcome.failed_path.clone() {
+            // A reversal that stops halfway leaves the tree in a state the run
+            // cannot vouch for, so the snapshots stay and the record names
+            // them. Without that list the caller would have to list the
+            // directory to find the last known copy of each file.
+            tracing::error!(path = %failed, reason = %outcome.reason, "rollback failed");
+            let preserved: Vec<String> = backups
+                .iter()
+                .filter(|(_, backup)| backup.exists())
+                .map(|(_, backup)| backup.display().to_string())
+                .collect();
+            let err: anyhow::Error = crate::error::AtomwriteError::TransactionRollbackFailed {
+                reason: outcome.reason,
+            }
+            .into();
+            return Err(self.writer.publish_failure(
+                &RollbackEvent {
+                    r#type: "rollback",
+                    files_restored: outcome.restored,
+                    files_removed: outcome.removed,
+                    total_reverted: outcome.restored + outcome.removed,
+                    failed_paths: vec![failed],
+                    backups_preserved: preserved,
+                },
+                err,
+            ));
+        }
+
+        // Every file this rollback could restore is back, so the snapshots
+        // have served their purpose.
+        if !self.keep_backup || self.no_backup {
+            discard_snapshots(backups);
+        }
+        // The record goes through `publish_failure`, not `write_event`:
+        // the rollback is the consequence of a failed transaction, so
+        // the record must carry `ok: false` and the very `code`/`exit`
+        // of the error it reports. Stamped as a success it said
+        // `ok: true` one line above the failure envelope, which the
+        // agent reads as "the run that reverted everything succeeded".
+        let err: anyhow::Error = crate::error::AtomwriteError::InvalidInput {
+            reason: format!(
+                "transaction rolled back after failure at operation {idx}: {failure:#}"
+            ),
+        }
+        .into();
+        Err(self.writer.publish_failure(
+            &RollbackEvent {
+                r#type: "rollback",
+                files_restored: outcome.restored,
+                files_removed: outcome.removed,
+                total_reverted: outcome.restored + outcome.removed,
+                failed_paths: Vec::new(),
+                backups_preserved: Vec::new(),
+            },
+            err,
+        ))
     }
 
     /// Close the run: the summary is the single terminal event either way.
-    fn verdict(&mut self, dry_run: bool, transaction: bool) -> Result<()> {
+    fn verdict(
+        &mut self,
+        dry_run: bool,
+        transaction: bool,
+        backups_preserved: Vec<String>,
+    ) -> Result<()> {
         let summary = BatchSummary {
             r#type: "summary",
             operations: self.ops.len() as u64,
@@ -417,6 +560,7 @@ impl<W: Write> BatchRun<'_, W> {
             } else {
                 None
             },
+            backups_preserved,
         };
         if self.failed > 0 {
             // The summary carries the failure itself, so no second,

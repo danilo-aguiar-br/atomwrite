@@ -97,6 +97,8 @@ fn sample_variants() -> Vec<crate::error::AtomwriteError> {
         AtomwriteError::SyntaxError {
             path: p(),
             count: 0,
+            line: None,
+            line_end: None,
         },
         AtomwriteError::ExdevFallbackDisabled {
             path: p(),
@@ -142,6 +144,7 @@ fn sample_variants() -> Vec<crate::error::AtomwriteError> {
             other: String::new(),
             reason: String::new(),
         },
+        AtomwriteError::AllSkippedBinary { files: 0 },
     ]
 }
 
@@ -277,5 +280,6 @@ fn variant_ordinal(err: &crate::error::AtomwriteError) -> u32 {
         E::DoctorChecksFailed { .. } => 34,
         E::GrammarUnavailable { .. } => 35,
         E::UnsupportedCombination { .. } => 36,
+        E::AllSkippedBinary { .. } => 37,
     }
 }

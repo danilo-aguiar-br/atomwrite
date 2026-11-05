@@ -41,7 +41,6 @@ fn old_file_outside_workspace_is_126_with_staging_suggestion() {
     let _ = fs::remove_file(&outside_new);
     assert.failure().code(predicate::eq(126));
     let v: Value = serde_json::from_str(out.lines().next().unwrap_or("{}")).unwrap();
-    assert_eq!(v["error"], true);
     assert_eq!(v["ok"], false);
     assert_eq!(v["code"], "WORKSPACE_JAIL");
     let sug = v["suggestion"].as_str().unwrap_or("");
@@ -108,7 +107,6 @@ fn match_failed_envelope_has_ok_false_and_match_count_zero() {
         .failure();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).to_string();
     let v: Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
-    assert_eq!(v["error"], true);
     assert_eq!(v["ok"], false);
     assert_eq!(v["match_count"], 0);
     assert!(v["code"].as_str().unwrap().contains("MATCH") || v["exit"].as_u64() == Some(65));
@@ -136,7 +134,6 @@ fn match_ambiguous_exposes_best_candidate() {
         .failure();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).to_string();
     let v: Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
-    assert_eq!(v["error"], true);
     assert_eq!(v["ok"], false);
     assert_eq!(v["code"], "MATCH_AMBIGUOUS");
     assert!(v["match_count"].as_u64().unwrap_or(0) >= 2);
@@ -208,7 +205,6 @@ fn global_select_projects_error_fields() {
     let out = String::from_utf8_lossy(&assert.get_output().stdout).to_string();
     let v: Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
     assert_eq!(v["ok"], false);
-    assert_eq!(v["error"], true);
     assert!(
         v.get("message").is_none(),
         "select must drop unselected fields: {v}"
@@ -284,7 +280,6 @@ fn filter_ok_true_does_not_silence_error_envelope() {
         v["ok"], false,
         "always-emit errors despite filter ok=true: {v}"
     );
-    assert_eq!(v["error"], true);
 }
 
 #[test]
@@ -314,7 +309,6 @@ fn extract_field_conflicts_with_positional() {
         .failure();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).to_string();
     let v: Value = serde_json::from_str(out.lines().next().unwrap_or("{}")).unwrap();
-    assert_eq!(v["error"], true);
     assert_eq!(v["ok"], false);
     let msg = format!("{v}");
     assert!(

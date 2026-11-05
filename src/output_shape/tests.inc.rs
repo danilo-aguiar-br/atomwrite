@@ -79,7 +79,7 @@ mod output_shape_tests {
     fn error_shape_ignores_filter_keeps_select() {
         let mut shape = shaped(Some(vec!["ok", "code"]), vec!["ok=true"]);
         shape.limit = Some(0);
-        let err = json!({"ok": false, "error": true, "code": "WORKSPACE_JAIL", "noise": 1});
+        let err = json!({"ok": false, "code": "WORKSPACE_JAIL", "noise": 1});
         // Success path would drop (ok != true).
         assert!(shape_value(err.clone(), &shape).is_none());
         // Error path always emits and may project.
@@ -329,6 +329,7 @@ mod output_shape_tests {
         let shape = shape_with(|s| {
             s.redact = true;
             s.max_output_bytes = Some(4);
+            s.verbose = true;
         });
         let err = shape_error_value(
             json!({"ok": false, "api_token": "leaked", "message": "long diagnostic text"}),
@@ -549,7 +550,7 @@ mod output_shape_tests {
     fn error_envelope_gets_the_floor_even_without_redact_flag() {
         let shape = OutputShape::default();
         let err = shape_error_value(
-            json!({"ok": false, "error": true, "api_key": "leaked", "code": "X"}),
+            json!({"ok": false, "api_key": "leaked", "code": "X"}),
             &shape,
         );
         assert_eq!(err["api_key"], REDACTED);
@@ -571,6 +572,8 @@ mod output_shape_tests {
             diff_against: None,
             max_output_bytes: Some(64),
             filters: vec!["ok=true".into()],
+            profile: OutputProfile::Full,
+            verbose: false,
         };
         let shape = OutputShape::from_options(options).unwrap();
         assert_eq!(shape.select, Some(vec!["ok".into(), "path".into()]));

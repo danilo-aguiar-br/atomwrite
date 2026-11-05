@@ -285,6 +285,7 @@ fn escape_drift_blocked() {
     fs::write(&f, "foo bar\n").unwrap();
     bin()
         .args([
+            "-v",
             "--workspace",
             dir.path().to_str().unwrap(),
             "edit",

@@ -63,6 +63,18 @@ pub(crate) struct LocaleReport {
     /// Present when `--set` / `--clear` mutated the preference file.
     #[serde(skip_serializing_if = "Option::is_none")]
     preference_action: Option<String>,
+    /// Write strategy the atomic layer used for the preference file.
+    ///
+    /// Present only when this run wrote or removed the preference, so a plain
+    /// report never claims a mechanism it did not use. `--clear` reports
+    /// `none`, because it unlinks the file instead of writing content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    write_strategy: Option<&'static str>,
+    /// Why the requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    backup_skipped: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     note: Option<String>,
 }
@@ -92,9 +104,13 @@ pub fn cmd_locale(
 
     let mut preference_action = None;
     let mut note = None;
+    // Filled only by the two branches that touch the preference file, so a
+    // plain report never claims a write path it did not take.
+    let mut preference_verdict: Option<(&'static str, Option<String>)> = None;
 
     if args.clear {
         let path = clear_persisted_preference()?;
+        preference_verdict = Some(("none", None));
         preference_action = Some("cleared".into());
         note = Some("persisted preference cleared; the report above already shows it".into());
         tracing::info!(?path, "locale preference cleared");
@@ -102,7 +118,8 @@ pub fn cmd_locale(
         let tag = parse_cli_locale(raw)
             .map_err(|e| crate::error::AtomwriteError::invalid("invalid locale", e))?;
         let language = Language::from_tag(&tag).unwrap_or_else(|| negotiate_to_language(&[&tag]));
-        let path = write_persisted_preference(language)?;
+        let (path, written) = write_persisted_preference(language)?;
+        preference_verdict = Some((written.write_strategy, written.backup_skipped));
         preference_action = Some(format!("set:{}", language.as_str()));
         note = Some(format!(
             "persisted {} at {}; the report above already shows it",
@@ -142,6 +159,8 @@ pub fn cmd_locale(
         .to_string(),
         ndjson_policy: "error codes and Display messages stay English; suggestions follow resolved locale",
         preference_action,
+        write_strategy: preference_verdict.as_ref().map(|verdict| verdict.0),
+        backup_skipped: preference_verdict.and_then(|verdict| verdict.1),
         note,
     };
 

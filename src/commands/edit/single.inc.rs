@@ -311,6 +311,8 @@ pub fn cmd_edit(
         match_count,
         indent_adjusted,
         risk_assessment,
+        write_strategy: result.write_strategy,
+        backup_skipped: result.backup_skipped,
     };
 
     writer.write_event(&output)?;

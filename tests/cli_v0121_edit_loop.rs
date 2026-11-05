@@ -21,7 +21,7 @@ fn run_edit_loop(
 ) -> std::process::Output {
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
     let mut cmd = common::hermetic(Command::new(&bin));
-    cmd.args(["--workspace", dir.to_str().unwrap(), "edit-loop"])
+    cmd.args(["-v", "--workspace", dir.to_str().unwrap(), "edit-loop"])
         .arg(target)
         .args(extra)
         .stdin(Stdio::piped())

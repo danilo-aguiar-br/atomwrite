@@ -180,7 +180,7 @@ fn invalid_arg_emits_json_error() {
     assert_eq!(output.status.code(), Some(2));
     let events = common::parse_ndjson(&output.stdout);
     assert!(!events.is_empty(), "stdout should contain JSON error");
-    assert_eq!(events[0]["error"], true);
+    assert_eq!(events[0]["ok"], false);
     assert_eq!(events[0]["code"], "ARGUMENT_PARSE_ERROR");
     assert_eq!(events[0]["exit"], 2);
     assert_eq!(events[0]["retryable"], false);

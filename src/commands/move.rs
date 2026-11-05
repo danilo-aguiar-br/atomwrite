@@ -108,9 +108,11 @@ pub fn cmd_move(
     let source_str = source.display().to_string();
     let target_str = target.display().to_string();
 
-    // Ownership: compute (cross_device, atomic) then emit once so path
+    // Ownership: compute the four verdict values then emit once so path
     // strings and backup_path move into the NDJSON event without clones.
-    let (cross_device, atomic) = match std::fs::rename(&source, &target) {
+    let (cross_device, atomic, write_strategy, backup_skipped) = match std::fs::rename(
+        &source, &target,
+    ) {
         Ok(()) => {
             if let Some(src_parent) = source.parent() {
                 if let Err(e) = platform::fsync_dir(src_parent) {
@@ -130,7 +132,7 @@ pub fn cmd_move(
                     );
                 }
             }
-            (false, true)
+            (false, true, "rename", None)
         }
         Err(e) if e.raw_os_error() == Some(crate::constants::ERRNO_EXDEV) => {
             // EXDEV = 18 on Linux — cross-device: copy + delete
@@ -145,7 +147,7 @@ pub fn cmd_move(
                 .into());
             }
             let content = crate::file_io::read_file_bytes(&source, max_size)?;
-            crate::atomic::atomic_write(
+            let wr = crate::atomic::atomic_write(
                 &target,
                 &content,
                 &crate::atomic::AtomicWriteOptions::default(),
@@ -171,7 +173,7 @@ pub fn cmd_move(
                     );
                 }
             }
-            (true, false)
+            (true, false, wr.write_strategy, wr.backup_skipped)
         }
         Err(e) if e.raw_os_error() == Some(crate::constants::ERRNO_EISDIR) => {
             // EISDIR — permanent precondition, not transient I/O (G-023).
@@ -199,6 +201,8 @@ pub fn cmd_move(
         cross_device,
         atomic,
         backup_path,
+        write_strategy,
+        backup_skipped,
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;
 

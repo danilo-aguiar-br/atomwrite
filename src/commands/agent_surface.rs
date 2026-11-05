@@ -190,6 +190,14 @@ fn flag_contract_entries() -> Vec<FlagContractEntry> {
             semantics: "search skips binary and NUL content by default; this flag opts in",
         },
         FlagContractEntry {
+            flag: "--number",
+            semantics: "prefix every raw line with N:; [read].number makes it the default, and --grep and --no-comments already number",
+        },
+        FlagContractEntry {
+            flag: "output.profile lean",
+            semantics: "config key (`config set output.profile lean`); success keeps ok, the counts and the new size",
+        },
+        FlagContractEntry {
             flag: "--max-events",
             semantics: "watch bound; at least one of --max-events or --timeout-secs is required",
         },

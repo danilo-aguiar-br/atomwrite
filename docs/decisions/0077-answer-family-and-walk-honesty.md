@@ -39,7 +39,7 @@ Accepted (2026-10-30)
 - `read_target_roots` returns the roots of `read`, `stat`, `count`, `list`, `verify`, `get`, `query`, `outline`, `sparse`, `semantic-search`, `watch`, `extract-artifact`, `hash` and `diff`, and `resolve_read_targets` resolves them through `resolve_mutation_targets`
 - `target_source` is `argv` for every typed root and `workspace` for the `.` default that `count`, `list`, `sparse list`, `sparse outline`, `semantic-search` and `watch` carry
 - `hash --stdin` stamps `-` with `target_source: "stdin"`, because the subject of the run is the stream and naming it is more expressive than silence
-- A `-` operand of `diff` stays the token instead of being resolved as a workspace path, so `diff a.txt -` names one file and one stream joined with `,` in argv order
+- A `-` operand of `diff` stays the token instead of being resolved as a workspace path, so `diff a.txt -` names one file and one stream as the two entries of `target_resolved`, in argv order
 - The error envelope consults the same resolver, so a failing run names its subject with the same origin the succeeding run uses, instead of falling back to `argv`
 - A verb with no path of its own stays unstamped and is named as such: `extract`, `calc`, `regex`, `batch`, `agent-surface`, `doctor`, `commands`, `completions` without `--install`, `wal-stats`, reading `locale` and `recipe list`
 

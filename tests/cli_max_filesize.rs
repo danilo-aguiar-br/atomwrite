@@ -10,6 +10,7 @@ fn read_rejects_file_above_max_size() {
 
     let output = common::atomwrite()
         .args([
+            "-v",
             "--workspace",
             dir.path().to_str().unwrap(),
             "--max-filesize",
@@ -29,7 +30,7 @@ fn read_rejects_file_above_max_size() {
     let events = common::parse_ndjson(&output.stdout);
     let err = events
         .iter()
-        .find(|e| e["error"] == true)
+        .find(|e| e["ok"] == false)
         .expect("error event");
     assert_eq!(err["code"], "FILE_TOO_LARGE");
     assert_eq!(err["retryable"], false);
@@ -86,7 +87,7 @@ fn hash_rejects_file_above_max_size() {
     let events = common::parse_ndjson(&output.stdout);
     let err = events
         .iter()
-        .find(|e| e["error"] == true)
+        .find(|e| e["ok"] == false)
         .expect("error event");
     assert_eq!(err["code"], "FILE_TOO_LARGE");
 }

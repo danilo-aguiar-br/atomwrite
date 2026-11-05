@@ -55,6 +55,11 @@ pub struct ErrorContext {
     /// Effective workspace root path, if known. Used to enrich suggestions
     /// with the actual path the user passed.
     pub workspace: Option<PathBuf>,
+    /// Verb that produced the failure, when the caller knows it.
+    ///
+    /// `apply` and `edit` share `MatchFailed`, and the two accept different
+    /// flags, so the hint must name the verb's own remedy.
+    pub verb: Option<&'static str>,
 }
 
 #[cold]
@@ -91,6 +96,8 @@ fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
                 t!("suggestion.single-target")
             } else if reason.contains(crate::constants::READ_MULTI_TARGET_REASON_MARKER) {
                 t!("suggestion.read-multi-target")
+            } else if reason.contains(crate::constants::NO_COMMENTS_NEEDS_NUMBER_REASON_MARKER) {
+                t!("suggestion.read-no-comments-number")
             } else {
                 t!("suggestion.invalid-input")
             };
@@ -121,9 +128,9 @@ fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
         }
         AtomwriteError::FileTooLarge { .. } => Some(t!("suggestion.file-too-large").to_string()),
         AtomwriteError::WorkspaceJail {
+            path,
             workspace,
             content_source,
-            ..
         } => {
             if *content_source && ctx.workspace_provided {
                 Some(
@@ -142,7 +149,24 @@ fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
                     .to_string(),
                 )
             } else {
-                Some(t!("suggestion.workspace-jail-set").to_string())
+                // Without a workspace of its own, the caller gets the exact
+                // command that would reach this file instead of a placeholder.
+                let root = path
+                    .parent()
+                    .map(|parent| parent.display().to_string())
+                    .unwrap_or_else(|| workspace.display().to_string());
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                Some(
+                    t!(
+                        "suggestion.workspace-jail-set",
+                        root = root,
+                        name = name
+                    )
+                    .to_string(),
+                )
             }
         }
         AtomwriteError::SymlinkBlocked { .. } => Some(t!("suggestion.symlink-blocked").to_string()),
@@ -157,9 +181,19 @@ fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
         AtomwriteError::FifoDetected { .. } => Some(t!("suggestion.skip-special").to_string()),
         AtomwriteError::DeviceFile { .. } => Some(t!("suggestion.skip-special").to_string()),
         AtomwriteError::NoMatches => Some(t!("suggestion.no-matches").to_string()),
+        AtomwriteError::AllSkippedBinary { .. } => {
+            Some(t!("suggestion.all-skipped-binary").to_string())
+        }
         AtomwriteError::BrokenPipe => None,
         AtomwriteError::MatchAmbiguous { .. } => Some(t!("suggestion.match-ambiguous").to_string()),
-        AtomwriteError::MatchFailed { .. } => Some(t!("suggestion.match-failed").to_string()),
+        AtomwriteError::MatchFailed { .. } => {
+            let key = if ctx.verb == Some("apply") {
+                t!("suggestion.match-failed-apply")
+            } else {
+                t!("suggestion.match-failed")
+            };
+            Some(key.to_string())
+        }
         AtomwriteError::Cancelled { .. } => Some(t!("suggestion.cancelled").to_string()),
         AtomwriteError::InternalError { .. } => Some(t!("suggestion.internal-error").to_string()),
         AtomwriteError::LockTimeout { path, timeout_ms } => Some(
@@ -170,7 +204,7 @@ fn suggestion_for(err: &AtomwriteError, ctx: &ErrorContext) -> Option<String> {
             )
             .to_string(),
         ),
-        AtomwriteError::SyntaxError { path, count } => Some(
+        AtomwriteError::SyntaxError { path, count, .. } => Some(
             t!(
                 "suggestion.syntax-error",
                 path = path.display().to_string(),

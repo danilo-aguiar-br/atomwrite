@@ -346,12 +346,14 @@ fn transform_one_rule(
                 let checksum_after = checksum::hash_bytes(content.as_bytes());
 
                 if verify_parse {
-                    if let Ok(crate::syntax_check::SyntaxCheckResult::Errors { count, .. }) =
+                    if let Ok(crate::syntax_check::SyntaxCheckResult::Errors { count, first }) =
                         crate::syntax_check::syntax_check(&path, content.as_bytes())
                     {
                         let error = crate::error::AtomwriteError::SyntaxError {
                             path: path.clone(),
                             count: u32::try_from(count).unwrap_or(u32::MAX),
+                            line: Some(first.line),
+                            line_end: Some(first.line),
                         };
                         crate::best_effort::send_to_consumer(
                             &tx,
@@ -376,6 +378,9 @@ fn transform_one_rule(
                     write_cfg.as_ref(),
                 );
 
+                // A dry run takes no write path, so the verdict starts at `none`
+                // and only the branch below replaces it.
+                let mut verdict: (&'static str, Option<String>) = ("none", None);
                 if !dry_run {
                     if stop.load(Ordering::Acquire) {
                         return ignore::WalkState::Quit;
@@ -396,18 +401,23 @@ fn transform_one_rule(
                         ..Default::default()
                     };
                     // A1: refuse to overwrite a file that changed since it was read.
-                    if let Err(error) = crate::atomic::atomic_write_based(
+                    match crate::atomic::atomic_write_based(
                         &validated,
                         content.as_bytes(),
                         &opts,
                         &ws,
                         Some(&checksum_before),
                     ) {
-                        crate::best_effort::send_to_consumer(
-                            &tx,
-                            TransformEvent::Error { path, error },
-                        );
-                        return ignore::WalkState::Continue;
+                        Ok(result) => {
+                            verdict = (result.write_strategy, result.backup_skipped);
+                        }
+                        Err(error) => {
+                            crate::best_effort::send_to_consumer(
+                                &tx,
+                                TransformEvent::Error { path, error },
+                            );
+                            return ignore::WalkState::Continue;
+                        }
                     }
                 }
 
@@ -427,6 +437,8 @@ fn transform_one_rule(
                         checksum_after,
                         elapsed_ms: file_start.elapsed().as_millis() as u64,
                         risk_assessment,
+                        write_strategy: verdict.0,
+                        backup_skipped: verdict.1,
                     },
                 );
 

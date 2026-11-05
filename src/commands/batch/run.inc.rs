@@ -39,7 +39,12 @@ pub fn cmd_batch(
         transaction,
         keep_backup: resolved.keep,
         no_backup: backup_opts.no_backup,
-        backup_explicit: backup_opts.backup == Some(true),
+        backup_explicit: backup_opts.backup == Some(true) || defaults.backup == Some(true),
+        target_source: if manifest_path.is_some() {
+            crate::commands::path_resolution::TargetSource::Argv.as_str()
+        } else {
+            crate::commands::path_resolution::TargetSource::Stdin.as_str()
+        },
         retention: resolved.retention,
         strict_atomic,
         fuzzy_mode: batch_fuzzy_mode,
@@ -54,10 +59,10 @@ pub fn cmd_batch(
 
     // Stage 2 — execution: pre-backup snapshot, then the fan-out or the
     // ordered pass; both report the same counters.
-    run.execute()?;
+    let backups_preserved = run.execute()?;
 
     // Stage 3 — verdict: the summary is the single terminal event.
-    run.verdict(dry_run, transaction)
+    run.verdict(dry_run, transaction, backups_preserved)
 }
 
 include!("manifest.inc.rs");

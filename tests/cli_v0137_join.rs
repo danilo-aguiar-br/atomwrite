@@ -22,6 +22,7 @@ fn run(ws: &Path, args: &[&str], stdin: &[u8]) -> Out {
     let bin = assert_cmd::cargo::cargo_bin("atomwrite");
     let mut child = common::hermetic(Command::new(bin))
         .args([
+            "-v",
             "--workspace",
             ws.to_str().expect("utf8"),
             "--no-progress",

@@ -126,7 +126,11 @@ pub fn match_pair_with(
                 strategy: "exact".into(),
                 strategies_tried: crate::constants::FUZZY_TRIED_EXACT,
                 similarity: None,
-                diff_preview: mini_diff(old, old),
+                // The preview answers "what changed", so it compares the text
+                // that left with the text that arrived. Comparing `old` with
+                // itself printed the removed line twice and never showed the
+                // replacement, which is the one thing the caller asked for.
+                diff_preview: mini_diff(old, new),
                 match_count: if opts.replace_all { exact_count } else { 1 },
                 indent_adjusted: false,
             },

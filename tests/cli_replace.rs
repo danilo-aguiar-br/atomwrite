@@ -201,7 +201,7 @@ fn replace_root_path_outside_workspace_exits_126() {
         "absolute /etc/passwd must abort with exit 126 WORKSPACE_JAIL"
     );
     let events = common::parse_ndjson(&output.stdout);
-    assert_eq!(events[0]["error"], true);
+    assert_eq!(events[0]["ok"], false);
     assert_eq!(events[0]["code"], "WORKSPACE_JAIL");
     assert!(
         events[0]["path"]

@@ -26,6 +26,8 @@ mod tests {
             checksum: "abc123".into(),
             checksum_before: None,
             backup_path: None,
+            backup_skipped: None,
+            write_strategy: "rename",
             elapsed_ms: 5,
             stdin_bytes_read: 42,
             wal_policy: "auto",
@@ -54,6 +56,7 @@ mod tests {
             elapsed_ms: 100,
             transaction: Some(true),
             committed: Some(false),
+            backups_preserved: Vec::new(),
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -123,6 +126,8 @@ mod tests {
             mtime_preserved: Some(false),
             match_count: Some(1),
             indent_adjusted: Some(false),
+            write_strategy: "rename",
+            backup_skipped: None,
             risk_assessment: None,
         };
         assert_valid_ndjson_object(&val);
@@ -156,6 +161,8 @@ mod tests {
             checksum: "x".into(),
             checksum_before: None,
             backup_path: None,
+            backup_skipped: None,
+            write_strategy: "rename",
             elapsed_ms: 1,
             stdin_bytes_read: 10,
             wal_policy: "auto",
@@ -184,6 +191,8 @@ mod tests {
             content: Some("hello".into()),
             lines: 1,
             lines_total: None,
+            truncated: None,
+            next: None,
             bytes: 5,
             checksum: "abc".into(),
             permissions: "0644".into(),
@@ -193,6 +202,7 @@ mod tests {
             range: None,
             verified: None,
             mode: "full".into(),
+            media: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -230,6 +240,9 @@ mod tests {
             strategies_tried: None,
             word_ignored: None,
             risk_assessment: None,
+            backup_path: None,
+            write_strategy: "rename",
+            backup_skipped: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -248,6 +261,8 @@ mod tests {
             checksum_before: "aa".into(),
             checksum_after: "bb".into(),
             elapsed_ms: 3,
+            write_strategy: "rename",
+            backup_skipped: None,
             risk_assessment: None,
         };
         assert_valid_ndjson_object(&val);
@@ -268,6 +283,8 @@ mod tests {
             checksum_before: "x".into(),
             checksum_after: "y".into(),
             elapsed_ms: 10,
+            write_strategy: "rename",
+            backup_skipped: None,
             risk_assessment: None,
         };
         assert_valid_ndjson_object(&val);
@@ -297,6 +314,8 @@ mod tests {
             checksum_before: Some("old".into()),
             checksum_after: "new".into(),
             verified: Some(true),
+            write_strategy: "inplace",
+            backup_skipped: None,
             elapsed_ms: 3,
         };
         assert_valid_ndjson_object(&val);
@@ -310,11 +329,16 @@ mod tests {
             path: "/tmp/ap.rs".into(),
             format_detected: "unified".into(),
             hunks_applied: 2,
+            line: None,
             bytes_before: 100,
             bytes_after: 120,
             checksum_before: "a".into(),
             checksum_after: "b".into(),
+            write_strategy: "rename",
+            backup_path: None,
+            backup_skipped: None,
             elapsed_ms: 4,
+            changed: None,
         };
         assert_valid_ndjson_object(&val);
         assert_roundtrip_json(&val);
@@ -417,6 +441,8 @@ mod tests {
             bytes: 200,
             checksum: "hash".into(),
             verified: true,
+            write_strategy: "rename",
+            backup_skipped: None,
             elapsed_ms: 2,
         };
         assert_valid_ndjson_object(&val);
@@ -434,6 +460,8 @@ mod tests {
             cross_device: false,
             atomic: true,
             backup_path: None,
+            write_strategy: "rename",
+            backup_skipped: None,
             elapsed_ms: 3,
         };
         assert_valid_ndjson_object(&val);
@@ -446,8 +474,11 @@ mod tests {
             r#type: "delete",
             path: "/tmp/del.rs".into(),
             bytes: 150,
-            checksum_before: "dhash".into(),
+            checksum_before: Some("dhash".into()),
             elapsed_ms: 1,
+            backup_path: None,
+            write_strategy: "none",
+            backup_skipped: None,
             warnings: None,
         };
         assert_valid_ndjson_object(&val);

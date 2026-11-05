@@ -4,13 +4,110 @@
 [Read in English](MIGRATION.md)
 
 
+## Objetivos
+- Gastar menos tokens: um objeto NDJSON por chamada substitui o encadeamento de shell, e o `commands --brief` responde em 5.020 bytes onde a árvore completa custa 67.492
+- Reduzir o custo financeiro, porque a conta acompanha os tokens e as idas e voltas, e uma chamada substitui as várias chamadas de shell que uma tarefa de arquivo pede
+- Reduzir os erros com escrita atômica e checksum BLAKE3 em toda resposta, então um resultado velho ou parcial aparece em vez de ser presumido
+- Reduzir as alucinações com discriminador `type`, schema fechado por verbo e código de saída que nomeia a falha
+- Reduzir o tempo gasto em cada tarefa, porque a leitura, a busca e a escrita rodam num processo só em vez de numa corrente de ferramentas de shell
+- Reduzir a latência com execução local e sem rede no caminho do arquivo, medida nas medianas de 5,6 ms no `read` e 6,7 ms no `write` de arquivo pequeno
+- Multiplicar a velocidade das operações com `batch`, `edit-loop`, `replace`, `case`, `transform` e `codemod` resolvendo muitos arquivos numa chamada
+- Reduzir o lead time entre a solicitação e o resultado verificado, porque a resposta já traz o checksum, o `target_resolved` e o próximo passo
+- Tornar o agente mais rápido, mais veloz, mais eficaz e mais assertivo, já que o código de saída, o `code` e o `suggestion` dizem o que fazer sem tentar às cegas
+
+
 ## Versão Atual
-- atomwrite está na v0.1.37
-- Este documento cobre migração de v0.1.0 a v0.1.37
+- atomwrite está na v0.1.38
+- Este documento cobre migração de v0.1.0 a v0.1.38
 - Veja as seções abaixo para mudanças aditivas e breaking changes em cada versão
 
 
-## Trabalho dobrado na v0.1.37: read ampliado e teto de busca (Atual)
+## Trabalho dobrado na v0.1.38: o envelope de falha enxuto
+### O Que Muda
+- O envelope de falha padrão carrega `ok`, `code`, `exit`, `path` quando existe, `suggestion`, `target_resolved` e `target_source`, e não carrega mais `error`, `message`, `error_class`, `retryable` nem `suggestion_lang`
+- Passe `-v` para receber as quatro chaves de volta, tanto no envelope de erro quanto no resumo que falha, e o resumo que falha mantém `code` e `exit` e nada mais do detalhe de falha
+- Os schemas publicados de erro e de terminal exigem `ok`, `code` e `exit` numa falha e mantêm as quatro chaves de diagnóstico opcionais, então um validador regenerado dos arquivos novos aceita as duas formas
+- Quem ramifica por `retryable` deve passar `-v` ou mapear o código pela tabela de retry, e o exit code continua o sinal primário
+- Pin: `cargo install atomwrite --locked --version "^0.1.38"`
+
+
+## Trabalho dobrado na v0.1.38: o registro enxuto, a imagem recusada e a seção Markdown
+### O Que Muda
+- O `output.profile = "lean"` tira os digests, as contagens de bytes e o tempo de um registro de mutação bem-sucedida, o que levou um `apply` de três linhas de 433 bytes para 196, e o `full` continua o padrão
+- Um arquivo cuja assinatura de imagem está corrompida falha no `read` com exit 65 `INVALID_INPUT` em vez de devolver os bytes como texto, então quem tratava todo arquivo legível como texto precisa tratar a recusa
+- O `outline` lê um título Markdown como uma `section` que vai até o fim da própria seção, e o `read --symbol NOME` devolve essa seção inteira com as subseções
+- Pin: `cargo install atomwrite --locked --version "^0.1.38"`
+
+
+## Trabalho dobrado na v0.1.38: o delete recursivo é dono da árvore
+### O Que Muda
+- O `delete --recursive <dir>` sem `--include`, `--exclude`, `--older-than` ou `--limit` passa a remover a árvore nomeada inteira, incluindo entrada oculta, ignorada, link, fifo, socket e dispositivo, então exit 0 significa que o diretório sumiu
+- O chamador que recebia exit 65 de um delete filtrado na versão anterior agora recebe exit 0 com `dirs_left` e `entries_left`, porque a sobra é o que o filtro pediu para manter
+- O chamador que recebia exit 65 de um delete sem filtro agora recebe o código de I/O medido com o caminho sobrevivente em `errors[]`, ou exit 0 quando nada sobrevive
+- O chamador que lia o `hint` para saber que `--hidden` resolveria deve parar de mandar a flag, que é no-op no `delete` e emite uma linha de diagnóstico
+- O chamador que contava com `--follow-symlinks` para apagar o alvo de um link deve nomear o alvo na linha de invocação, porque o link é sempre removido como entrada e nunca seguido
+- O chamador que passa `--backup` com raiz de diretório agora recebe exit 65 antes de qualquer mudança, porque a cópia nasceria dentro da árvore e sobreviveria à remoção, então rode `copy -r` antes ou passe `--no-backup`
+- O chamador que trata `checksum_before` como obrigatório deve aceitar a ausência no evento de fifo, socket ou dispositivo, porque não há conteúdo para somar
+- O chamador que lê `dirs_left`, `entries_left` ou `hint` de `--plan` ou `--dry-run` deve parar de exigi-los, porque um plano não remove nada e não publica sobra
+- O `copy -r` agora inclui o caminho listado em `.ignore`, no gitignore global ou no `info/exclude`, que o contrato da cópia de árvore já prometia
+- Pin: `cargo install atomwrite --locked --version "^0.1.38"`
+
+
+## Trabalho dobrado na v0.1.38: o desfazer do batch e o alvo em array
+### O Que Muda
+- `target_resolved` é sempre array, inclusive na execução que resolveu um alvo só, então o campo deixa de trocar de tipo conforme a contagem
+- Leia o sujeito com `jaq -r '.target_resolved[0]'` ou `jq -r '.target_resolved[0]'`; um programa lê `event["target_resolved"][0]`
+- O schema publicado declara `target_resolved` como `array` de strings, então um validador gerado pela união anterior de string e array precisa ser regerado
+- O `batch` publica `warnings` no registro da operação, então o `--keep-backup` redundante num `delete` responde ali exatamente como responde no verbo isolado
+- O `batch` publica `backup_path` no registro da operação quando ela fez cópia, e o `move` que recusa cópia de uma cópia nomeia a recusa em `backup_skipped`
+- O resumo de um `batch --transaction` publica `backups_preserved`, nomeando o snapshot que o commit guardou de um arquivo excluído ou sobrescrito
+- Um `move` ou um `copy` dentro de `--transaction` guarda o snapshot do destino que sobrescreveu, porque aquele conteúdo não vive em outro lugar; a origem do `move` fica fora, porque o conteúdo dela vive no destino
+- `write`, `replace`, `edit` e `copy` dentro de `--transaction` reutilizam o snapshot que a execução já tirou, então `--keep-backup` deixa uma cópia em vez de duas, e `backup_path` nomeia o caminho que sobrevive em `backups_preserved`
+- O `delete` cria cópia só quando a chamada pede, por `--backup` ou por `[defaults].backup = true`; `--keep-backup` só preserva uma que existe, o aviso nomeia `--backup` como a flag que cria a cópia, e o `delete` do `batch` segue a mesma regra
+- `[defaults].backup` alcança o `delete` e as operações do `batch` quando está escrita, porque a chave agora distingue ausente de `false`; a chave ausente mantém a reescrita copiando e o delete não copiando, e `retention` continua valendo para os 15
+- Um `apply` que falha publica `backups_preserved` com as cópias que o rollback deixou no disco
+- Fixe: `cargo install atomwrite --locked --version "^0.1.38"`
+
+
+## Trabalho dobrado na v0.1.38: `--hidden` e o veredito de escrita
+### O Que Muda
+- `hash`, `copy -r` e `semantic-search` agora escondem dotfile no padrão, do mesmo jeito que `count`, `list`, `search` e a família `sparse` já faziam; a flag que devolve o inventário anterior é `--hidden`
+- Recupere a caminhada antiga com `atomwrite --workspace "$WS" hash -r . --hidden`, `atomwrite --workspace "$WS" copy -r . dst --hidden` ou `atomwrite --workspace "$WS" semantic-search "CONSULTA" . --hidden`
+- Um caminho nomeado na invocação continua sendo lido sem a flag, então `atomwrite --workspace "$WS" hash .env` funciona como antes e a mudança só alcança a caminhada que nunca nomeou o dotfile
+- `sparse list` e `sparse outline` aceitam `--all`, que soma as entradas ocultas à visita dentro do próprio verbo; `--all` e `--hidden` pedem a mesma visita, e o padrão continua escondendo
+- `copy`, `move`, `delete`, `rollback`, `semantic-merge`, `config set`, `config unset` e cada operação do `batch` publicam `write_strategy` e `backup_skipped`, então o consumidor lê o mecanismo no evento em vez de deduzi-lo da chamada de sistema
+- `edit`, `replace`, `transform`, `scope`, `case`, `set`, `del`, `edit-loop` e `locale` publicam os mesmos dois nomes, a prévia publica `"none"`, e o `del` de chave ausente omite `write_strategy`
+- O `batch delete` recusa copiar uma cópia, então um alvo nomeado como `x.bak.<carimbo>` é removido sem segunda cópia e o evento carrega `backup_skipped`
+- O `apply` publica `backup_path` quando a escrita fez cópia, e omite a chave quando não fez
+- Um `apply` que falha depois de gravar um arquivo restaura o arquivo e publica um registro `rollback` com `ok: false`, e a restauração que falha sai `TRANSACTION_ROLLBACK_FAILED`
+- O rollback do `apply` e do `batch --transaction` compara conteúdo em vez de inode, então o arquivo que a própria execução regravou volta; a versão anterior recusava toda restauração como deriva de estado e deixava a árvore parcialmente revertida
+- Uma transação bem-sucedida do `batch --transaction` remove o snapshot tirado antes da mutação em vez de deixar `x.bak.<carimbo>`, e `--keep-backup` é a única flag que o mantém; `--no-backup` vence
+- O registro `rollback` do `apply` e do `batch --transaction` nomeia todo caminho revertido em `target_resolved`, sempre como array mesmo quando um arquivo só voltou, e `target_source` diz se o manifesto veio de `argv` ou de `stdin`
+- Uma transação do `batch` que exclui um arquivo mantém a cópia feita antes da mutação depois do commit, porque o arquivo excluído não vive em nenhum outro lugar, e `--no-backup` é a única forma de proibir essa cópia
+- Uma reversão que não consegue restaurar um arquivo publica um registro `rollback` com `failed_paths` e `backups_preserved`, e os snapshots ficam no disco para quem precisa recuperar
+- O `apply` relata `target_source: "stdin"` quando o patch traz a própria linha de caminho, e `argv` quando `--file` nomeia o alvo na linha de invocação
+- `backup_path`, `backup_skipped` e `write_strategy` são strings puras em todo schema publicado, então um validador gerado pelos arquivos anteriores continua aceitando os eventos
+- Um consumidor que falha com campo desconhecido precisa permitir os dois nomes; `backup_skipped` fica ausente quando nenhuma cópia foi recusada, então o evento não carrega `null`
+- Fixe: `cargo install atomwrite --locked --version "^0.1.38"`
+- Superfície: 47 subcomandos, sem mudança desde a v0.1.37, e a fonte única continua sendo `atomwrite agent-surface`
+
+
+## Trabalho dobrado na v0.1.38: leituras mais baratas e saídas honestas (Atual)
+### O Que Muda
+- `read --format raw` agora para em `READ_DEFAULT_MAX_BYTES` (24.000 bytes) e imprime uma linha no stderr com o próximo `--lines`, então quem contava com o arquivo inteiro precisa passar `--all` ou seguir a dica
+- `read --lines` é repetível e aceita vários alvos numa chamada, o que a recusa anterior transformava em exit 65; as faixas unidas imprimem na ordem do argv com cabeçalhos `==> caminho <==`
+- O `read` ganhou `--number`, `--no-comments`, `--symbol NOME` e `--line N --enclosing`, e `--range` virou apelido de `--lines`
+- Uma janela de `--lines` que começa depois da última linha é erro com o total, onde a versão anterior respondia sucesso vazio
+- `search --format text` tem teto e imprime um `caminho:linha:coluna:texto` por achado, e o `search` sai `89 ALL_SKIPPED_BINARY` quando todo candidato era binário, onde a versão anterior respondia `NO_MATCHES`
+- `list --format text` e `outline --format tsv` são novos, e o `outline` publica `parse_errors` e `first_error_line`
+- O `apply` casa linha inteira, então SEARCH que é pedaço de linha não casa mais; SEARCH repetido sai 65 a menos que `--all` seja passado
+- O `apply` roda a checagem de sintaxe antes e depois da troca e recusa quando a contagem de erros de parse sobe; `--no-syntax-check` restaura o aceite incondicional antigo
+- `apply --show` devolve as linhas alteradas, o `diff` publica `old_line` e `new_line` a partir de 1, e o `delete` publica `backups_kept`, `backup_bytes` e `dirs_left` quando existe backup ou sobra
+- Pin: `cargo install atomwrite --locked --version "^0.1.38"`
+- Superfície: 47 subcomandos, sem mudança desde a v0.1.37, e a fonte única da verdade continua sendo `atomwrite agent-surface`
+
+
+## Trabalho dobrado na v0.1.37: read ampliado e teto de busca
 ### O Que Muda
 - O `read` expande padrão cujo prefixo de diretório tem vários níveis, e só curinga dentro do nome de um diretório sai 65, porque a checagem antiga contava todos os componentes do caminho em vez de perguntar qual deles é padrão
 - Operando com `*`, `?` ou `[` que existe no disco é lido literalmente em vez de ser expandido, então `read` e `cat` concordam num arquivo como `relatorio[1].txt`
@@ -36,7 +133,7 @@
 ### O Que Muda
 - Avaliação de risco: `edit`, `edit-loop`, `replace`, `case`, `transform` e `codemod` passam a publicar `risk_assessment` quando o conteúdo que seriam gravados casa um padrão de risco, exatamente como o `write` já fazia. O campo fica ausente quando nenhum padrão casa, e as barreiras de tamanho continuam fora desses verbos de propósito, porque eles reescrevem uma região e um resultado menor é a operação funcionando
 - Novo status de saída: `69` `GRAMMAR_UNAVAILABLE` com classe `precondition_failed`. Uma gramática tree-sitter ausente que não pode ser baixada chegava como 255 `INTERNAL_ERROR` com uma sugestão mandando abrir um bug; agora ela nomeia o idioma e diz para rodar o verbo uma vez com a rede ligada
-- Superfície de configuração: `write.content_risk_patterns` passa a ser acessível por `config get` e `config set` como valor de lista, então os padrões de risco são configuração XDG e não literal compilado. A tabela tem 37 chaves
+- Superfície de configuração: `write.content_risk_patterns` passa a ser acessível por `config get` e `config set` como valor de lista, então os padrões de risco são configuração XDG e não literal compilado. A tabela tem 43 chaves
 - `log.file` e `log.rotation` passam a ser aceitos também no escopo workspace: a seção `[log]` do `.atomwrite.toml` agora liga o destino de log, onde antes ela era validada e descartada
 - O `--version` não acrescenta mais `-dirty`: o identificador é o id curto do commit da árvore rastreada, então um arquivo não rastreado não muda mais a string
 - `batch --transaction` publica um veredito só: o evento `rollback` carrega `ok: false` com o `code` e o `exit` da falha que o causou, em vez de `ok: true` antes da falha
@@ -58,15 +155,16 @@
 - Contrato do `edit-loop`: tudo-ou-nada por padrão. Par sem match sai com 65 e nada é gravado. `edit-loop --partial` grava os pares que casam e sai com 87 (`EDIT_LOOP_PARTIAL`)
 - Caminhos obrigatórios: `replace`, `scope`, `codemod`, `case`, `delete`, `backup` e `prune-backups` exigem seus caminhos. `wal-heal` e `scratch init` recebem o caminho como posicional, e `recipe run` exige `--path` ou `--target`. Sem alvo a saída é 2, e `replace foo src/` não lê mais `src/` como o texto novo
 - Evidência de alvo: o evento terminal de todo verbo com efeito colateral traz `target_resolved` e `target_source` (sempre `argv`)
+- Nota de correção acrescentada depois: essa linha descreve a v0.1.13, e o contrato atual está em `docs/AGENTS.md`, onde `target_source` é `argv` ou `stdin` e `target_resolved` é sempre array
 - `doctor`: não lê nenhuma variável de ambiente. Os campos `ci`, `github_actions` e `sudo` saíram do bloco de ambiente, e o check de política sobre servidor de protocolo de ferramentas saiu do relatório
 - `agent-surface`: a chave de protocolo de ferramentas saiu do manifesto
 - Config estrita: chave desconhecida ou arquivo inválido em `config.toml` ou `.atomwrite.toml` sai com 78 (`CONFIG_INVALID`). A chave `version` (valor atual 1) é aceita, e uma maior é rejeitada
 - Arquivo de log: desligado por padrão. Ligue com `[log] file = true` no `config.toml` XDG global (rotação diária ou horária, 7 arquivos, modo 0600)
-- Lock de escrita: automático e multiplataforma. O `std::fs::File::try_lock` embrulha o `flock` no Unix e o `LockFileEx` no Windows, então a escrita espera até 5 s pelo sidecar `.<alvo>.atomwrite.lock` e sai com 83 (`LOCK_TIMEOUT`) no estouro, e o Windows não foi validado
+- Lock de escrita: automático e multiplataforma. O `std::fs::File::try_lock` embrulha o `flock` no Unix e o `LockFileEx` no Windows, e o lock é tomado no próprio inode do alvo, então a escrita espera até 5 s pelo arquivo que vai mudar e sai com 83 (`LOCK_TIMEOUT`) no estouro. O sidecar `.<alvo>.atomwrite.lock` continua sendo tomado ao lado, sem garantia, o que mantém as versões antigas excluídas, e ele segura o lock sozinho quando o alvo ainda não existe. O Windows não foi validado
 - Nome do sidecar de lock: ele mantém o literal `.<alvo>.atomwrite.lock` até 255 bytes, e acima disso o radical vira um digest de 16 caracteres do nome do alvo no mesmo diretório, então um alvo de nome longo deixa de falhar com `ENAMETOOLONG`
 - `search`: respeita `--timeout-secs` em cerca de 1x, e todo `match` fica dentro do par `begin` / `end` do próprio arquivo. `files_skipped` no resumo conta os arquivos pulados por tamanho
 - Stdin: write, edit, edit-loop, apply, hash `--stdin`, extract, diff, calc e regex obedecem SIGTERM (143), SIGHUP (129) e o prazo (124) com stdin aberto
-- Verbo `config` (o 47º subcomando): `config path|list|get|set|unset|doctor` lê e grava 37 chaves persistentes. `--scope global|workspace` é obrigatório em `path`, `set` e `unset`; `list` e `get` mostram o valor efetivo e a origem. A gravação preserva os comentários do arquivo, valida o arquivo inteiro e entra de forma atômica (modo 0600 no arquivo global em Unix)
+- Verbo `config` (o 47º subcomando): `config path|list|get|set|unset|doctor` lê e grava 43 chaves persistentes. `--scope global|workspace` é obrigatório em `path`, `set` e `unset`; `list` e `get` mostram o valor efetivo e a origem. A gravação preserva os comentários do arquivo, valida o arquivo inteiro e entra de forma atômica (modo 0600 no arquivo global em Unix)
 - Camadas de config: o `.atomwrite.toml` do workspace e o `config.toml` global agora são mesclados chave a chave (flag, depois workspace, depois global, depois embutido). Antes, o arquivo do workspace substituía o global inteiro
 - Um evento terminal: o resumo que falha (`search`, `replace`, `transform`, `edit-loop`, `semantic-merge`, `recipe`, `scope`) carrega `ok: false`, `code`, `exit` e o detalhe do erro nele mesmo, e nenhum segundo envelope de erro vem depois. Quem esperava uma linha de erro depois do resumo deve ler o resumo
 - `MATCH_FAILED` para par ausente: um par sem match no `edit-loop` ou num `edit` multi-par agora reporta o código `MATCH_FAILED` (exit 65, com `best_candidate`); antes, a mesma falha reportava `INVALID_INPUT`
@@ -140,6 +238,7 @@
 - `semantic-search "unwrap value" src/ --index-dir /tmp/FORA`: exit 126 `WORKSPACE_JAIL`
 - `case --subvert foo foo`: exit 65, e `read ARQUIVO --verify-checksum deadbeef`: exit 81 `CHECKSUM_VERIFY_FAILED`
 - `--print-schema` lista 55 nomes e `--print-schema nope` sai 65
+- O envelope de falha não carrega mais `error`: `read FALTANDO` publica `{"ok":false,"code":"FILE_NOT_FOUND","exit":4,...}`, e quem ramificava por `has("error")` passa a testar `.ok == false and .code`
 - Não reproduzido aqui: `STATE_DRIFT` sob corrida real, `doctor --strict` com check falho (este host não tem nenhum), `write` interrompido por SIGTERM e SIGINT, NFS, macOS e Windows
 
 ### Os 47 Subcomandos na 0.1.37
@@ -172,7 +271,7 @@
 - `rollback` — Restaura um arquivo a partir de um backup anterior. Exemplo: `atomwrite --workspace "$WS" rollback src/a.rs --latest --verify`
 - `batch` — Executa operações NDJSON do stdin, com opção de transação única. Exemplo: `printf '{"op":"write","target":"batch.txt","content":"x"}\n' | atomwrite --workspace "$WS" batch --transaction`
 - `edit-loop` — Aplica N pares antigo/novo numa escrita só, tudo ou nada. Exemplo: `printf '[{"old":"gamma","new":"delta"}]\n' | atomwrite --workspace "$WS" edit-loop src/b.rs`
-- `prune-backups` — Remove arquivos .bak antigos por idade ou quantidade. Exemplo: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run .`
+- `prune-backups` — Remove arquivos .bak antigos por idade ou quantidade. Exemplo: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run --recursive .`
 - `wal-stats` — Mostra o estado dos journals WAL (só leitura). Exemplo: `atomwrite --workspace "$WS" wal-stats`
 - `wal-heal` — Remove journals WAL terminais órfãos mais antigos que um limite. Exemplo: `atomwrite --workspace "$WS" wal-heal --threshold-secs 3600 .`
 - `verify` — Confere um arquivo contra um hash BLAKE3 esperado (exit 0 se igual, 81 se diferente). Exemplo: `atomwrite --workspace "$WS" verify src/a.rs HASH_A`
@@ -194,7 +293,7 @@
 - `scratch` — Cria o diretório de staging .atomwrite/scratch dentro do jail do workspace. Exemplo: `atomwrite --workspace "$WS" scratch init .atomwrite/scratch`
 - `locale` — Mostra, define ou limpa o idioma da interface. Exemplo: `atomwrite --workspace "$WS" locale`
 - `commands` — Imprime a árvore completa de comandos em JSON. Exemplo: `atomwrite --workspace "$WS" commands --include-globals`
-- `config` — Lê e grava chaves de ajuste persistentes (37 chaves, escopos global e workspace). Exemplo: `atomwrite --workspace "$WS" config get fuzzy.threshold`
+- `config` — Lê e grava chaves de ajuste persistentes (43 chaves, escopos global e workspace). Exemplo: `atomwrite --workspace "$WS" config get fuzzy.threshold`
 
 ### Migração Passo a Passo
 
@@ -225,7 +324,7 @@
 
 ### Veja Também
 - `CHANGELOG.md`, seção 0.1.37, para a lista completa de mudanças, medições e notas
-- `docs/INSTALL.pt-BR.md` para os perfis de instalação, os tamanhos, os caminhos XDG e as 37 chaves de config
+- `docs/INSTALL.pt-BR.md` para os perfis de instalação, os tamanhos, os caminhos XDG e as 43 chaves de config
 - `docs/schemas/README.md` para os 54 arquivos de schema e o mapa nome-arquivo
 - `docs/decisions/README.md` para o ADR-0058 em diante (as decisões da v0.1.37, entre elas o handler de SIGPIPE no ADR-0063)
 - `docs/CROSS_PLATFORM.pt-BR.md` para o que foi e o que não foi validado em cada plataforma
@@ -234,19 +333,19 @@
 ## v0.1.35 para v0.1.36 (substituída pela v0.1.37)
 
 ### O Que Muda
-- Staging: `atomwrite scratch init .atomwrite/scratch` e `--old-file`/`--new-file` sob `.atomwrite/scratch/` (jail em `/tmp` permanece)
+- Staging: `atomwrite scratch init .atomwrite/scratch` e `--old-file`/`--new-file` sob `.atomwrite/scratch/` (WORKSPACE_JAIL 126 em `/tmp` do SO permanece)
 - Envelope: `ok: false` + `match_count` em falhas
 - Stdout agent-native: `--select`/`--fields`, `--filter`, `--limit` (só long — sem `-n` global). Erros always-emit mesmo com `--filter` agressivo; `--limit` só conta sucesso
 - extract: `--field` local (repetível) ou posicionais; `--select` global projeta a linha (não pode haver `--select` local — colide com o global). Planos/CAPA legados que citam `extract --select` → use `extract --field`
-- Fuzzy: similarity honesta; dual-gate; XDG soft_floor
-- Histórico (v0.1.36): 46 subcomandos SSOT (`Commands` / `agent-surface` / `CANONICAL_SUBCOMMAND_COUNT`)
-- Pin histórico: `^0.1.36`
+- Fuzzy: `similarity: null` em estratégias normalizadas; dual-gate block_anchor; `soft_floor_delta` no XDG
+- Histórico (v0.1.36): 46 subcomandos SSOT (`Commands` / `agent-surface` / `CANONICAL_SUBCOMMAND_COUNT`) — não “41” nem “42” incompleto
+- Pin histórico: `cargo install atomwrite --locked --version "^0.1.36"`
 
 ### Passos
 
 1. Pin `^0.1.37`
 2. Substitua scratch em `/tmp` por `.atomwrite/scratch/`
-3. Cheque exit e `ok`/`error` antes de campos de sucesso (stdout ainda pode ter linha de erro com exit ≠ 0 sob `--filter`)
+3. Cheque exit e `ok` antes de campos de sucesso (stdout ainda pode ter linha de erro com exit ≠ 0 sob `--filter`)
 4. Use `--select` e `--limit N` em vez de jq/`-n` quando bastar projeção top-level
 5. Gate: `cargo test --tests`
 
@@ -266,7 +365,7 @@
 
 ### Migração Passo a Passo
 
-1. Histórico (pin 0.1.34 → 0.1.35 naquela release): `cargo install atomwrite --locked --version "^0.1.35"` (ou `cargo install --path . --force` a partir do fonte). Linha atual é `^0.1.37`.
+1. Histórico (pin 0.1.34 → 0.1.35 naquela release): `cargo install atomwrite --locked --version "^0.1.35"` (ou `cargo install --path . --force` a partir do fonte). Linha atual é `^0.1.38`.
 2. Agentes que sobrescrevem arquivos grandes: adicionar `--ack-overwrite` (e opcionalmente `--require-large-ack`).
 3. Agentes que usavam `delete --confirm` como “preview”: trocar para `delete --plan`.
 4. Agentes que usavam `delete --yes` / `-y`: remover essas flags; agora falham com exit 65.
@@ -500,7 +599,7 @@ Logging: `init_tracing` + CLI; tee de arquivo sob state XDG — sem knobs de amb
 ### Cobertura de Testes
 - 631+ testes passando
 - 13 gaps resolvidos (9 CODE + 4 BY-DESIGN) em 5 rodadas de auditoria
-- Veja `gaps.md` para a auditoria completa
+- Veja `gaps.md` daquela versão para a auditoria completa
 
 
 ## v0.1.24 para v0.1.25 (2026-06-22)
@@ -544,7 +643,7 @@ Logging: `init_tracing` + CLI; tee de arquivo sob state XDG — sem knobs de amb
 ### Cobertura de Testes
 - 631 testes passando (621 na v0.1.24 + 10 novos na v0.1.25)
 - ~505 cenários e2e em 6 rodadas de auditoria
-- Veja `gaps.md` para a auditoria completa de 64 gaps
+- Veja `gaps.md` daquela versão para a auditoria completa de 64 gaps
 
 
 ## v0.1.23 para v0.1.24 (2026-06-21)
@@ -607,7 +706,7 @@ Logging: `init_tracing` + CLI; tee de arquivo sob state XDG — sem knobs de amb
 ### Cobertura de Testes
 - 621 testes passando (609 na v0.1.23 + 12 novos na v0.1.24)
 - 3 ADRs adicionados (0045-0047)
-- Veja `gaps.md` para a auditoria completa de 52 issues resolvidos
+- Veja `gaps.md` daquela versão para a auditoria completa de 52 issues resolvidos
 
 
 ## v0.1.22 para v0.1.23
@@ -817,7 +916,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 ### Ação de Migração
 - Atualizar pin de versão: `cargo install atomwrite --locked --version "^0.1.12"`
 - Novos subcomandos e flags são opt-in. Nenhuma mudança de código necessária para chamadores existentes.
-- Veja a seção [trabalho dobrado na v0.1.37](#trabalho-dobrado-na-v0137-read-ampliado-e-teto-de-busca-atual) para a transição mais recente; a seção [v0.1.32 para v0.1.33](#v0132-para-v0133) cobre o break de runtime one-shot.
+- Veja a seção [trabalho dobrado na v0.1.38](#trabalho-dobrado-na-v0138-leituras-mais-baratas-e-saídas-honestas-atual) para a transição mais recente; a seção [v0.1.32 para v0.1.33](#v0132-para-v0133) cobre o break de runtime one-shot.
 
 ### Cobertura de Testes
 - 542 testes passando (445 na v0.1.12 + 2 na v0.1.14 + 8 G117 + 6 G118 na v0.1.15 + 40 v0.1.16-v0.1.18 cross-platform + 21 v0.1.19 + 20 v0.1.20)
@@ -829,7 +928,7 @@ Todas aditivas. Nenhuma dependência existente removida.
 ## v0.1.11 para v0.1.12
 ### v0.1.12
 
-A release v0.1.12 fecha 13 dos Top 20 gaps da auditoria PRD v5-v16 (`gaps.md`). É aditiva: todo comportamento de v0.1.11 é preservado.
+A release v0.1.12 fecha 13 dos Top 20 gaps da auditoria PRD v5-v16 (`gaps.md` daquela versão). É aditiva: todo comportamento de v0.1.11 é preservado.
 
 ### Adicionado (Novos Subcomandos -- v14 Tier 3)
 - `set <PATH> <KEY_PATH> <VALUE>` -- escreve um valor em um caminho dotted em arquivo TOML ou JSON, preservando comentários e ordem das chaves via `toml_edit`.
@@ -915,7 +1014,7 @@ Impacto da migração:
 
 ### Referência
 
-Veja as seções "GAP 13" e "GAP 14" em `gaps.md` para a análise completa de causa raiz e rationale de design.
+Veja as seções "GAP 13" e "GAP 14" em `gaps.md` daquela versão para a análise completa de causa raiz e rationale de design.
 
 
 ## v0.1.2 para v0.1.3
@@ -953,7 +1052,7 @@ Campo de diagnóstico:
 
 ### Referência
 
-Veja `gaps.md` seção "Atomic Edit Preserva mtime E Quebra Detecção De Mudança Pelo Cargo" (GAP 12) para a análise completa de causa raiz e justificativa de design.
+Veja `gaps.md` daquela versão, seção "Atomic Edit Preserva mtime E Quebra Detecção De Mudança Pelo Cargo" (GAP 12) para a análise completa de causa raiz e justificativa de design.
 
 
 ## v0.1.1 para v0.1.2

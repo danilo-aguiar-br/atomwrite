@@ -124,7 +124,7 @@ fn print_schema_accepts_the_equals_form() {
 #[test]
 fn print_schema_unknown_name_reports_a_typed_error() {
     let assert = bin()
-        .args(["--print-schema", "nope"])
+        .args(["-v", "--print-schema", "nope"])
         .assert()
         .failure()
         .code(predicate::eq(65));
@@ -139,7 +139,7 @@ fn print_schema_unknown_name_reports_a_typed_error() {
         "the failure needs a machine code, got: {}",
         lines[0]
     );
-    assert_eq!(lines[0]["error"], true);
+    assert_eq!(lines[0]["ok"], false);
     let message = lines[0]["message"].as_str().unwrap_or_default();
     assert!(
         message.contains("nope"),
@@ -162,6 +162,7 @@ fn print_schema_after_a_command_never_replaces_the_command() {
     let a = td.path().join("a.txt");
     let assert = bin()
         .args([
+            "-v",
             "--workspace",
             &ws,
             "read",
@@ -599,6 +600,7 @@ fn confirm_side_effect_is_rejected_where_the_contract_does_not_ask() {
     let (td, ws) = workspace_with_files();
     let assert = bin()
         .args([
+            "-v",
             "--workspace",
             &ws,
             "--confirm-side-effect",
@@ -607,7 +609,11 @@ fn confirm_side_effect_is_rejected_where_the_contract_does_not_ask() {
         ])
         .assert()
         .code(65)
-        .stderr(predicate::str::is_empty());
+        // `-v` is what brings `message` back into the envelope, and it also
+        // turns on info logging on stderr. What must not happen is the failure
+        // being reported twice, so the check is that stderr carries no error
+        // envelope, not that stderr is silent.
+        .stderr(predicate::str::contains("\"error\":true").not());
 
     let lines = ndjson_lines(&assert.get_output().stdout);
     let v = lines.first().expect("stdout must carry the error envelope");

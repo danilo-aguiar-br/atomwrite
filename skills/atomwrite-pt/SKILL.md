@@ -1,10 +1,23 @@
 ---
 name: atomwrite
 description: >-
- Esta skill DEVE auto-ativar quando a LLM precisar do atomwrite para ler, escrever, editar, buscar, substituir, patch, transformar AST, verificar hash BLAKE3, backup e rollback, mesclar, podar, codemod, configurar e orquestrar. Esta skill DEVE ensinar 47 subcomandos com --workspace absoluto no jail, entrada por flag ou stdin NDJSON e saída NDJSON always-emit com checksum, error_class, retryable e exit code. Esta skill DEVE auto-invocar sem pedido explícito em qualquer mutação ou descoberta de arquivo.
+ Esta skill DEVE auto-ativar quando a LLM precisar do atomwrite para ler, escrever, editar, buscar, substituir, transformar AST, hash BLAKE3, backup, rollback, mesclar, podar, codemod, texto de PDF, imagem e OCR, watch, sparse, busca semântica e configuração de arquivos. DEVE ensinar 47 subcomandos com --workspace absoluto, entrada por flag ou stdin NDJSON e saída NDJSON com checksum, error_class, retryable e exit code, e DEVE auto-invocar em qualquer mutação ou descoberta, sem pedido explícito.
 ---
 
 # atomwrite
+
+
+## Objetivos
+- Gastar menos tokens em toda tarefa de arquivo, porque uma chamada NDJSON substitui o encadeamento de shell e o `commands --brief` responde em 5.020 bytes onde a árvore completa custa 67.492
+- Reduzir o custo financeiro, porque a conta acompanha os tokens e as idas e voltas
+- Reduzir os erros com escrita atômica e checksum BLAKE3 em toda resposta
+- Reduzir as alucinações com schema fechado por verbo e código de saída que nomeia a falha
+- Reduzir o tempo gasto, porque leitura, busca e escrita rodam num processo só
+- Reduzir a latência, porque toda operação é local e nenhuma rede fica no caminho do arquivo
+- Multiplicar a velocidade das operações com `batch`, `edit-loop`, `replace`, `case`, `transform` e `codemod` sobre muitos arquivos numa chamada
+- Reduzir o lead time, porque a resposta já traz o checksum, o `target_resolved` e o próximo passo
+- Tornar o agente mais rápido, mais veloz, mais eficaz e mais assertivo, porque `code` e `suggestion` dizem o que fazer em seguida
+
 
 ## Missão
 ### OBRIGATÓRIO
@@ -27,16 +40,30 @@ description: >-
 - A LLM DEVE executar `atomwrite agent-surface --format json` na primeira necessidade de superfície
 
 
+## Fórmulas mais baratas
+### OBRIGATÓRIO
+- A LLM DEVE preferir estas chamadas, porque cada uma responde em menos bytes e menos chamadas de ferramenta do que a grafia que ela substitui
+- Localizar símbolo com `atomwrite --workspace "$WS" read --format raw --symbol NOME caminho`, e localizar bloco com `--line N --enclosing`
+- Ler várias janelas de vários arquivos numa chamada com `--lines 1:3 --lines 10:12 a.rs b.rs`, que imprime `==> caminho <==` por arquivo
+- Ter número de linha com `--number`, que imprime `N:texto`, e ter contexto com `-C N --grep`, então awk, nl e printf saem da linha de comando
+- Uma leitura com teto para em 24 000 bytes, imprime o próximo `--lines` no stderr, e `--all` desliga o teto: siga a dica em vez de reler a partir da linha 1
+- Use `search --format text` para um `caminho:linha:coluna:texto` por achado, e `list --format text` ou `outline --format tsv` para caber numa tela
+- Leia o `--show` na resposta que o `apply` já devolveu, e não releia o arquivo para confirmar a troca
+- Corrija vários arquivos numa chamada: omita o alvo e ponha uma linha de caminho acima do primeiro bloco de cada arquivo, porque uma chamada por arquivo custa o prompt inteiro toda vez
+### PROIBIDO
+- NUNCA passe `--all` ao `apply` por reflexo: SEARCH repetido sai 65 `MATCH_AMBIGUOUS` de propósito, e `--all` troca todas as ocorrências
+- NUNCA suponha que o `apply` grava código quebrado: a checagem de sintaxe roda antes e depois, e `--no-syntax-check` é a saída explícita
+
+
 ## Contrato
 ### OBRIGATÓRIO
-- stdout DEVE emitir SEMPRE NDJSON (um JSON por linha), stderr só logs
+- stdout DEVE sempre emitir NDJSON (um JSON por linha), stderr é só log
 - Toda mutação DEVE usar tempfile-fsync-rename, sucesso DEVE expor o BLAKE3: `write`, `hash` e `read` trazem `checksum`, e `edit` traz `checksum_before` e `checksum_after` (nunca `checksum`)
 - Todo envelope terminal DEVE trazer `workspace_source` valendo `argv` quando `--workspace` foi passado e `cwd` quando não foi, mais `target_resolved` e `target_source`. DEVE conferir os três antes de afirmar onde a CLI tocou
-- Cada schema é UNIÃO de todos os eventos do verbo mais o envelope de erro, então DEVE validar contra a união inteira em `docs/schemas/` e NUNCA contra um formato fixo imaginado
+- Cada schema é UNIÃO de todos os eventos do verbo mais o envelope de erro, então DEVE buscar a união inteira com `--print-schema NOME` e NUNCA validar contra um formato fixo imaginado
 - Ops de arquivo DEVEM passar `--workspace <DIR>` e DEVEM ficar no jail
 - `--json` é aceita e DEVE ser ignorada (saída SEMPRE NDJSON)
-- Schemas DEVEM seguir `docs/schemas/` quando validação formal for necessária
-- Precedência DEVE ser flags CLI, depois o `.atomwrite.toml` do workspace, depois o `config.toml` XDG global (os dois arquivos são mesclados chave a chave), depois defaults embutidos
+- A precedência DEVE ser flags CLI, depois o `.atomwrite.toml` do workspace, depois o `config.toml` XDG global (os dois arquivos são mesclados chave por chave), depois os padrões embutidos
 ### PROIBIDO
 - NUNCA escreva fora do jail. NUNCA dependa de knobs de env de produto em runtime
 - NUNCA trate exit 1 em `search`/`replace`/`transform`/`scope`/`semantic-search` como crash quando for `NO_MATCHES`
@@ -60,14 +87,19 @@ description: >-
 ## Contratos de segurança do agente
 ### OBRIGATÓRIO
 - Sobrescrita grande DEVE passar `--ack-overwrite` (XDG `[write].confirm_large_bytes`, padrão 100 KiB). Falta = exit 65, `--ack-overwrite` cobre só o arquivo grande, e encolher mais de 50% exige `--allow-shrink` à parte (sem ele sai 65)
-- Delete plan-only DEVE usar `delete --plan`. Execução DEVE omitir `--plan` e flags de confirm. Diretório exige `-r` até no plano (sem ele sai 65 com `missing_flag`)
+- Delete plan-only DEVE usar `delete --plan`
+- Execução DEVE omitir `--plan` e flags de confirm
+- Diretório exige `-r` até no plano (sem ele sai 65 com `missing_flag`)
 - `watch` DEVE terminar com NDJSON `watch_summary` e DEVE ter teto `--max-events` ou timeout (idle ~500 ms)
 - `watch` só existe em build com `--features watch` (`cargo install atomwrite --features watch`), e sem ela sai 78 `CONFIG_INVALID`, então DEVE checar `atomwrite agent-surface | jaq '.tools[]|select(.name=="watch").available'` antes
-- `semantic-merge` DEVE gravar markers line-based por padrão. Prefer-ours sem markers DEVE usar `--no-conflict-markers`
+- `semantic-merge` DEVE gravar marcadores por linha por padrão. Prefer-ours sem marcadores DEVE usar `--no-conflict-markers`
+- Um verbo cuja feature falta no build DEVE sair 78 `CONFIG_INVALID`, como o `outline` num build só core, então DEVE ler o campo `available` do `agent-surface` antes de planejar essa chamada
 - Exit 65 DEVE ler `best_candidate` e `match_count`, 82 DEVE recarregar checksum, 124 DEVE aumentar timeout ou estreitar path, 143 = SIGTERM limpo, 126 = jail, 81 = checksum, 88 = sintaxe
 ### PROIBIDO
 - NUNCA passe `delete --confirm`/`--yes`/`-y`. NUNCA sobrescreva grande sem `--ack-overwrite`
-- NUNCA use confirm interativo. NUNCA assuma stdout vazio de `watch`. NUNCA desligue markers por acidente
+- NUNCA use confirm interativo
+- NUNCA assuma stdout vazio de `watch`
+- NUNCA desligue markers por acidente
 ### Padrão Correto
 - A LLM DEVE executar `printf 'x' | atomwrite --workspace "$WS" write --ack-overwrite --allow-shrink big.txt` e `atomwrite --workspace "$WS" delete --plan -r tmp/`
 
@@ -78,15 +110,19 @@ description: >-
 - DEVE usar `-j N` / `--threads N` / `--max-concurrency N` (omitido ou zero = todos os cores até um teto embutido de 16, limitado pela RAM, um N explícito vale como pedido, até acima de 16)
 - DEVE usar `--max-filesize <BYTES>` (padrão global 1 GiB), `--locale <TAG>` (NUNCA global `--lang`)
 - DEVE usar `--json-schema`, `--no-auto-heal`, `--no-progress`, `--no-gitignore`, `--hidden`, `--follow-symlinks`
-- `--strict-atomic` DEVE falhar com exit 91 quando o rename atômico for impossível, em vez de cair na cópia entre dispositivos
-- DEVE usar `--color auto|always|never` ou `--no-color`, `-v`/`-vv`/`-vvv` ou `-q`/`-qq`
+- `--strict-atomic` numa escrita como `write` ou `apply` DEVE falhar com exit 91 quando o rename atômico for impossível, em vez de cair na cópia entre dispositivos
+- DEVE usar `--color auto|always|never` ou `--no-color`, `-v`/`--verbose` até `-vvv` ou `-q`/`--quiet` até `-qq`
+- `--ready-file CAMINHO` DEVE gravar o ID do processo assim que os tratadores de sinal estiverem instalados, que é como um host sabe que o processo aceita sinal
 - Shape agent-native OBRIGATÓRIO: `--select`/`--fields KEYS`, `--filter key=value` (AND, `!=`/`==`), `--limit N`
 - Envelopes always-emit: `--filter` NÃO silencia `ok` false. DEVE preferir shape a pipes jq/sed
 - DEVE descobrir superfície via `atomwrite agent-surface` (SSOT 47)
 - Shape de stream, tudo opcional e global: `--sort-by path-line|line-path|CHAVE`, `--dedupe CHAVES` (CSV), `--aggregate CHAVE[:OP[:CAMPO]]` (OP `count|sum|min|max`), `--join CHAVE:SUFIXO` (a tabela vem do stdin), `--diff-against CAMINHO` (NDJSON base dentro do jail, emite uma linha `stream_diff`), `--redact`, `--normalize-encoding` (NFC), `--truncate-content CHAVE:TAM`
 - `--max-output-bytes N` corta todo valor string, `checksum` incluído, e DEVE vir junto com `--allow-truncate` (cada um é rejeitado sem o outro, exit 2). NUNCA use os dois quando o `checksum` ou o `content` inteiro for necessário
 - `--non-interactive` declara execução hospedada por agente (nunca pergunta, nunca lê confirmação do stdin), `--confirm-side-effect` reconhece um efeito colateral só onde o contrato do comando pede (veja `commands --include-globals`)
-- `--print-schema [NOME]` lista os 55 nomes de schema, ou emite um schema. Nome desconhecido sai 65. Todo verbo que escreve mais de um registro serve a união de todo registro mais o envelope de erro, e os nomes de sinal são `best-candidate`, `cancelled`, `error`, `progress`, `stream_diff`, `write-risk`, `count-by-ext` e `count-by-size`
+- `--print-schema [NOME]` lista os 55 nomes de schema, ou emite um schema
+- Nome desconhecido sai 65
+- Todo verbo que escreve mais de um registro serve a união de todo registro mais o envelope de erro, então `search`, `replace`, `list`, `backup`, `batch`, `recipe`, `codemod`, `sparse`, `case`, `watch`, `semantic-search` e `semantic-merge` precisam de um nome só
+- Os nomes de schema de sinal são `best-candidate`, `cancelled`, `error`, `progress`, `stream_diff`, `write-risk`, `count-by-ext` e `count-by-size`
 ### PROIBIDO
 - NUNCA invente flags ausentes de `atomwrite --help`
 - NUNCA use `-n` global para limit (`-n` é do `replace`, use `--limit`)
@@ -97,55 +133,56 @@ description: >-
 
 ## Superfície completa de comandos
 ### OBRIGATÓRIO
-A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --workspace "$WS"` omitido quando óbvio. A LLM DEVE incluir `--workspace` em ops de arquivo.
+- A LLM DEVE invocar cada um dos 47 subcomandos, e o prefixo típico `atomwrite --workspace "$WS"` pode ser omitido abaixo quando óbvio
+- A LLM DEVE incluir `--workspace` em ops de arquivo
 
-1. `read`: ler com checksum, `read --head 40 path`
-2. `write`: criar/sobrescrever via stdin, `echo body | write --durability auto path`
-3. `edit`: edição cirúrgica, `edit path --old a --new b --fuzzy auto`
-4. `search`: localizar padrões, `search TODO src/ --include '*.rs'`
-5. `replace`: replace multiarquivo, `replace --dry-run --fuzzy auto OLD NEW src/`
-6. `hash`: BLAKE3, `hash path | jaq -r .checksum`
-7. `delete`: remover com plan, `delete --plan path`
-8. `count`: contagens, `count --by-size --top 10 src/`
-9. `diff`: diff unificado, `diff a.rs b.rs --unified`
-10. `move`: mover/renomear, `move src/old.rs src/new.rs`
-11. `copy`: copiar, `copy --recursive --preserve src/ dest/`
-12. `list`: listar árvore, `list --long --depth 2 src/`
-13. `extract`: projetar campos NDJSON, `extract --field path` ou `extract path`
-14. `calc`: expressões/unidades, `atomwrite calc "2 hours to seconds"`
-15. `regex`: gerar regex, `atomwrite regex abc-12 xyz-99 id-7 --digits`
-16. `transform`: rewrite AST, `transform --dry-run -p '$E.unwrap()' -r '$E?' -l rust src/`
-17. `scope`: ações gramaticais, `scope src/ --lang rust --query comments --delete --dry-run`
-18. `batch`: manifesto NDJSON, `echo '{"op":"write","target":"a.txt","content":"x"}' | batch --transaction`
-19. `backup`: backup com retention, `backup path --retention 3`
-20. `rollback`: restaurar, `rollback path --latest --verify`
-21. `apply`: patch unified/SR, `echo body | apply path --format full`
-22. `set`: gravar dotted TOML/JSON, `set Cargo.toml package.name x`
-23. `get`: ler dotted, `get config.toml database.pool.max`
-24. `del`: remover chave, `del --force-missing config.toml features.x`
-25. `case`: case/subvert em ARQUIVO (diretório não faz nada), `case --to pascal --subvert user_id UserId --dry-run src/a.rs`
-26. `query`: nós AST, `query --kinds src/main.rs`
-27. `outline`: outline, `outline --kind function_item --positions src/main.rs`
-28. `wal-stats`: journals WAL, `wal-stats`
-29. `wal-heal`: remover journals terminais antigos, `wal-heal . --threshold-secs 3600`
-30. `semantic-merge`: merge line-based, `semantic-merge --base b --ours o --theirs t --output out --fail-on-conflict`
-31. `sparse`: monorepo sob orçamento, `sparse list src/ --max-files 50 --max-bytes 524288`
-32. `recipe`: receitas, `recipe run --name search-replace-verify --pattern OLD --replacement NEW --path src --dry-run`
-33. `stat`: alias `read --stat`, `stat path`
-34. `agent-surface`: SSOT 47 tools, `atomwrite agent-surface --format json`
-35. `watch`: FS com teto, só em build `--features watch` (sem ela sai 78), `watch src/ --max-events 100 --idle-exit-ms 500`
-36. `codemod`: rewrites em massa, `codemod --rules rules.yaml --dry-run src/`
-37. `semantic-search`: Jaccard offline, `semantic-search query src/ --k 20 --min-score 0.05`
-38. `doctor`: host, `atomwrite doctor --strict`
-39. `scratch`: staging no jail, `scratch init .atomwrite/scratch`
-40. `locale`: locale, `atomwrite locale --set pt-BR`
-41. `commands`: árvore JSON, `atomwrite commands --include-globals`
-42. `completions`: shell, `atomwrite completions bash --install`
-43. `prune-backups`: podar, `prune-backups --max-age-secs 86400 --dry-run src/lib.rs`, só nomes `.bak.<carimbo>` são candidatos
-44. `edit-loop`: N pares numa escrita, tudo-ou-nada (par sem match sai com 65), `--partial` grava os que casam e sai com 87, `echo '[{"old":"a","new":"b"}]' | edit-loop path`
-45. `verify`: hash esperado, `verify path EXPECTED_HASH`
-46. `extract-artifact`: sinal delimitado de cabeçalhos de PDF, OOXML e imagem, `extract-artifact path`
-47. `config`: chaves de ajuste persistentes com `--scope global|workspace`, `config set fuzzy.max_content_bytes 1000000 --scope global`
+- `read`: ler com checksum, `read --head 40 path`
+- `write`: criar/sobrescrever via stdin, `echo body | write --durability auto path`
+- `edit`: edição cirúrgica, `edit path --old a --new b --fuzzy auto`
+- `search`: localizar padrões, `search TODO src/ --include '*.rs'`
+- `replace`: replace multiarquivo, `replace --dry-run --fuzzy auto OLD NEW src/`
+- `hash`: BLAKE3, `hash path | jaq -r .checksum`
+- `delete`: remover com plan, `delete --plan path`
+- `count`: contagens, `count --by-size --top 10 src/`
+- `diff`: diff unificado, `diff a.rs b.rs --unified`
+- `move`: mover/renomear, `move src/old.rs src/new.rs`
+- `copy`: copiar, `copy --recursive --preserve src/ dest/`
+- `list`: listar árvore, `list --long --depth 2 src/`
+- `extract`: projetar campos NDJSON, `extract --field path` ou `extract path`
+- `calc`: expressões/unidades, `atomwrite calc "2 hours to seconds"`
+- `regex`: gerar regex, `atomwrite regex abc-12 xyz-99 id-7 --digits`
+- `transform`: rewrite AST, `transform --dry-run -p '$E.unwrap()' -r '$E?' -l rust src/`
+- `scope`: ações gramaticais, `scope src/ --lang rust --query comments --delete --dry-run`
+- `batch`: manifesto NDJSON, `echo '{"op":"write","target":"a.txt","content":"x"}' | batch --transaction`
+- `backup`: backup com retention, `backup path --retention 3`
+- `rollback`: restaurar, `rollback path --latest --verify`
+- `apply`: patch unified/SR, `echo body | apply path --format full`
+- `set`: gravar dotted TOML/JSON, `set Cargo.toml package.name x`
+- `get`: ler dotted, `get config.toml database.pool.max`
+- `del`: remover chave, `del --force-missing config.toml features.x`
+- `case`: case/subvert em ARQUIVO (diretório não faz nada), `case --to pascal --subvert user_id UserId --dry-run src/a.rs`
+- `query`: nós AST, `query --kinds src/main.rs`
+- `outline`: outline, `outline --kind function_item --positions src/main.rs`
+- `wal-stats`: journals WAL, `wal-stats`
+- `wal-heal`: remover journals terminais antigos, `wal-heal . --threshold-secs 3600`
+- `semantic-merge`: merge line-based, `semantic-merge --base b --ours o --theirs t --output out --fail-on-conflict`
+- `sparse`: monorepo sob orçamento, `sparse list src/ --max-files 50 --max-bytes 524288`
+- `recipe`: receitas, `recipe run --name search-replace-verify --pattern OLD --replacement NEW --path src --dry-run`
+- `stat`: alias `read --stat`, `stat path`
+- `agent-surface`: SSOT 47 tools, `atomwrite agent-surface --format json`
+- `watch`: FS com teto, só em build `--features watch` (sem ela sai 78), `watch src/ --max-events 100 --idle-exit-ms 500`
+- `codemod`: rewrites em massa, `codemod --rules rules.yaml --dry-run src/`
+- `semantic-search`: Jaccard offline, `semantic-search query src/ --k 20 --min-score 0.05`
+- `doctor`: host, `atomwrite doctor --strict`
+- `scratch`: staging no jail, `scratch init .atomwrite/scratch`
+- `locale`: locale, `atomwrite locale --set pt-BR`
+- `commands`: árvore JSON, `atomwrite commands --include-globals`
+- `completions`: shell, `atomwrite completions bash --install`
+- `prune-backups`: podar, `prune-backups --max-age-secs 86400 --dry-run src/lib.rs`, só nomes `.bak.<carimbo>` são candidatos
+- `edit-loop`: N pares numa escrita, tudo-ou-nada (par sem match sai com 65), `--partial` grava os que casam e sai com 87, `echo '[{"old":"a","new":"b"}]' | edit-loop path`
+- `verify`: hash esperado, `verify path EXPECTED_HASH`
+- `extract-artifact`: sinal delimitado de cabeçalhos de PDF, OOXML e imagem, `extract-artifact path`
+- `config`: chaves de ajuste persistentes com `--scope global|workspace`, `config set fuzzy.max_content_bytes 1000000 --scope global`
 ### PROIBIDO
 - NUNCA invente um 48º subcomando. NUNCA omita `agent-surface` quando a superfície for desconhecida
 - NUNCA omita `--workspace` em ops de arquivo dentro do jail
@@ -156,7 +193,9 @@ A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --work
 - Fuzzy em `edit`/`replace` padrão `auto`, valores SOMENTE `--fuzzy auto|aggressive|off`
 - `--fuzzy off` = exact-only. Miss edit = exit 65 `MATCH_FAILED`, miss replace árvore = exit 1 `NO_MATCHES` frequente
 - DEVE usar `--fuzzy-threshold` 0.0–1.0. Com `--regex` no replace o fuzzy DEVE ser ignorado
-- Multi-apply DEVE ser one-pass L→R no original. NEW embute OLD → força 1 ocorrência. Sem `--max-replacements` padrão multi = 1, teto duro 10000
+- Multi-apply DEVE ser one-pass L→R no original
+- NEW que embute OLD DEVE forçar 1 ocorrência
+- Sem `--max-replacements` o padrão multi = 1, com teto duro 10000
 - Caps: pattern 64 KiB, Levenshtein 8192, janelas 4096, crescimento max 4x ou +16 MiB
 - Estratégias normalizadas (`line_trimmed`, `whitespace_normalized`, `punctuation_normalized`, `indent_flexible`, `trimmed_boundary`, `escape_normalized`) emitem `similarity` null: NUNCA trate 1.0 falso como igualdade byte a byte se não for `exact`
 - Soft-floor `context_aware`: XDG `[fuzzy].soft_floor_delta` padrão 0.05. Aceite efetivo = threshold OU threshold menos soft_floor_delta
@@ -164,7 +203,9 @@ A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --work
 - Conteúdo acima de `[fuzzy].max_content_bytes` (padrão 256 MiB) nunca roda a cascata: `edit` sai 65 `INVALID_INPUT` citando a chave e `--fuzzy off`, e `replace` registra o arquivo em `files_failed`. Match exato e `--fuzzy off` ainda funcionam acima dele
 - `escape_normalized` é pulada acima de 32 MiB de conteúdo, e a cascata segue com as outras estratégias
 - Um miss em arquivo enorme ainda respeita `--timeout-secs`: exit 124 com envelope `cancelled`, nunca um `MATCH_FAILED` tardio
-- `MATCH_AMBIGUOUS` DEVE incluir `best_candidate`. DEVE expandir `--old` ou `--replace-all` (edit) ou estreitar escopo: NUNCA chute. Só ocorre quando dois ou mais candidatos passam o dual-gate, e um bloco ausente que apenas lembra várias linhas é `MATCH_FAILED` com `best_candidate`
+- `MATCH_AMBIGUOUS` DEVE incluir `best_candidate`, e DEVE expandir `--old` ou `--replace-all` (edit) ou estreitar escopo em vez de chutar
+- Só ocorre quando dois ou mais candidatos passam o dual-gate
+- Um bloco ausente que apenas lembra várias linhas é `MATCH_FAILED` com `best_candidate`
 - Fuzzy NÃO é AST: DEVE usar `transform`/`scope`/`codemod` para semântica
 ### PROIBIDO
 - NUNCA espere rebusca do texto inserido no mesmo replace fuzzy. NUNCA use `--replace-all` em `replace`
@@ -213,7 +254,10 @@ A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --work
 - `config list` e `config get CHAVE` DEVEM ser lidos antes de um `set`. Eles mostram `value`, `origin` (`default`, `global`, `workspace` ou `explicit` com `--config`) e `default`, sem `--scope`
 - O escopo `global` é o `config.toml` XDG (modo 0600), o escopo `workspace` é o `.atomwrite.toml` na raiz do workspace. O `set` preserva comentários, valida o arquivo inteiro e grava por tempfile-fsync-rename sem backup
 - O evento terminal carrega `target_resolved` e `target_source: "argv"`. DEVE conferir que o caminho é o arquivo do escopo pretendido
-- As 37 chaves são `defaults.line_ending`, `defaults.backup`, `defaults.retention`, `defaults.max_filesize`, `fuzzy.mode`, `fuzzy.threshold`, `fuzzy.threshold_aggressive`, `fuzzy.threshold_context`, `fuzzy.threshold_jw`, `fuzzy.soft_floor_delta`, `fuzzy.max_content_bytes`, `write.confirm_large_bytes`, `write.shrink_block_percent`, `write.auto_rotate_max_age_secs`, `write.content_risk_patterns`, `watch.idle_exit_ms`, `watch.debounce_ms`, `log.file`, `log.rotation`, `storage.home`, `locale`, `concurrency.max_threads`, `concurrency.ram_fraction_percent`, `search.context`, `search.smart_case`, `search.max_filesize`, `search.max_columns`, `search.max_inflight_bytes`, `summary.errors_max_entries`, `lock.acquire_timeout_ms`, `retry.base_ms`, `retry.max_ms`, `retry.max_elapsed_ms`, `extract.max_sample_rows`, `extract.max_text_chars`, `extract.max_sheets` e `extract.max_slides`
+- As 43 chaves são `defaults.line_ending`, `defaults.backup`, `delete.backup`, `defaults.retention`, `defaults.max_filesize`, `fuzzy.mode`, `fuzzy.threshold`, `fuzzy.threshold_aggressive`, `fuzzy.threshold_context`, `fuzzy.threshold_jw`, `fuzzy.soft_floor_delta`, `fuzzy.max_content_bytes`, `apply.max_ellipsis_lines`, `write.confirm_large_bytes`, `write.shrink_block_percent`, `write.auto_rotate_max_age_secs`, `write.content_risk_patterns`, `watch.idle_exit_ms`, `watch.debounce_ms`, `log.file`, `log.rotation`, `storage.home`, `locale`, `concurrency.max_threads`, `concurrency.ram_fraction_percent`, `search.context`, `search.smart_case`, `search.max_filesize`, `search.max_columns`, `search.max_inflight_bytes`, `search.format`, `read.max_output_bytes`, `read.number`, `output.profile`, `summary.errors_max_entries`, `lock.acquire_timeout_ms`, `retry.base_ms`, `retry.max_ms`, `retry.max_elapsed_ms`, `extract.max_sample_rows`, `extract.max_text_chars`, `extract.max_sheets` e `extract.max_slides`
+- O `output.profile` DEVE ficar em `full` a menos que a sessão precise gastar os menores tokens, porque `lean` tira os digests, as contagens de bytes e o tempo de uma mutação bem-sucedida e mantém os campos de decisão, o que levou um `apply` num arquivo de três linhas de 433 bytes para 196
+- O `delete.backup` DEVE sobrescrever o `defaults.backup` só no `delete`, e chave ausente DEVE cair no `defaults.backup`
+- `read.max_output_bytes` (padrão 24000) DEVE ser o teto de uma leitura raw, e `read.number` e `search.format` DEVEM definir o padrão de `--number` e `--format`
 - `log.file`, `log.rotation`, `storage.home` e `locale` são só globais (escopo workspace = exit 65). Chave desconhecida ou valor fora da faixa sai 65 e não grava nada
 - Faixas aceitas: `concurrency.max_threads` de 1 a 256, `concurrency.ram_fraction_percent` de 1 a 100, `lock.acquire_timeout_ms` de 100 a 3600000, `retry.base_ms` e `retry.max_ms` de 1 a 60000 (a base não pode passar do máximo), `retry.max_elapsed_ms` de 1 a 3600000, `search.max_inflight_bytes` de 4 MiB a 1 GiB, `extract.max_sample_rows` até 100000, `extract.max_text_chars` até 10000000, `extract.max_sheets` e `extract.max_slides` até 10000
 - Uma flag ainda vence a configuração (`extract-artifact --max-text-chars` e `--max-sample-rows`), e `--config CAMINHO` substitui os dois arquivos em `get` e `list`
@@ -232,7 +276,9 @@ A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --work
 - DEVE usar `--allow-empty-stdin`, `--no-checksum-when-empty`, `--syntax-check` (exit 88), `--ack-overwrite`
 - Flags write: `--append`, `--prepend`, `--max-size`, `--line-ending`, `--preserve-timestamps`, `--require-backup`, `--auto-rotate`, `--require-large-ack`, `--risk-threshold`, `--wal-policy`, `--dry-run`, opts de backup
 - SIGTERM no write DEVE limpar tempfile e retornar exit 143
-- `edit` DEVE usar `--old`/`--new` (pares repetíveis). Multi-par emite `pairs_total`/`pair_results`. Falha aborta lote salvo `--partial`
+- `edit` DEVE usar `--old`/`--new` (pares repetíveis)
+- Multi-par emite `pairs_total`/`pair_results`
+- Falha aborta o lote salvo `--partial`
 - Multi-ocorrência em edit DEVE usar `--replace-all` e DEVE emitir `match_count`. Indent realinhado emite `indent_adjusted` true
 - Flags posição: `--after-line`, `--before-line`, `--range`, `--delete-range`, `--after-match`, `--before-match`, `--between`, `--multi`
 - Patch com `//`, jq, aspas ou multilinha DEVE usar `--old-file`/`--new-file` estagiados em `$WS/.atomwrite/scratch/` após `scratch init .atomwrite/scratch`
@@ -244,12 +290,13 @@ A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --work
 - `replace` exit 1 = zero matches (NÃO crash). DEVE SEMPRE `--dry-run`/`--preview` antes de apply em massa
 - Multi fuzzy em replace DEVE usar só `--max-replacements` (`-n`)
 - Flags replace: `--regex`, `-w/--word`, `-F/--literal`, `-g/--include`, `--exclude`, `--expect-checksum`, `--preserve-timestamps`, `--preserve-case`, opts de backup
+- Um padrão ou uma substituição que começa com hífen DEVE vir depois do separador `--`, para flag desconhecida ser erro de argumento em vez de virar o padrão
 ### PROIBIDO
-- NUNCA pipe edit para `jaq` sem `${PIPESTATUS[0]}`. NUNCA passe `--strategy` no edit
+- NUNCA pipe edit para `jaq` sem `${PIPESTATUS[0]}`
 - NUNCA coloque old/new-file sob `/tmp` do SO fora do jail
 - NUNCA passe `$VAR` sem aspas quando o dólar literal deve sobreviver: DEVE quote `"$VAR"`
 - NUNCA trate fuzzy como AST. NUNCA quote no shell patches frágeis como `--old`/`--new` quando scratch existe
-- NUNCA use `--replace-all` em replace. NUNCA pule dry-run em árvore grande. NUNCA encolha >50% sem `--allow-shrink`
+- NUNCA pule dry-run em árvore grande. NUNCA encolha >50% sem `--allow-shrink`
 ### Padrão Correto
 - A LLM DEVE executar edição multilinha: `atomwrite --workspace "$WS" apply --no-backup path <<'EOF'`, depois uma linha com `<<<<<<< SEARCH`, o texto antigo, uma linha com `=======`, o texto novo, uma linha com `>>>>>>> REPLACE`, e por fim `EOF`. Vários blocos cabem no mesmo heredoc
 - A LLM DEVE executar staging: `atomwrite --workspace "$WS" scratch init .atomwrite/scratch; SCR="$WS/.atomwrite/scratch"; printf %s "$OLD" >"$SCR/old.txt"; printf %s "$NEW" >"$SCR/new.txt"; atomwrite --workspace "$WS" edit --old-file "$SCR/old.txt" --new-file "$SCR/new.txt" path`
@@ -259,7 +306,10 @@ A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --work
 ## Path e estruturado
 ### OBRIGATÓRIO
 - `delete` DEVE usar `--no-backup`, idade via `--older-than`, recursivo `-r`, globs `-g/--include`, plan via `--plan`
-- `delete -r` DEVE respeitar o filtro do walker, então arquivo ignorado como `*.bak.*` com gitignore ligado é preservado e NUNCA entra na remoção
+- `delete -r <dir>` DEVE ser dono da árvore nomeada inteira: entrada oculta, ignorada, link, fifo, socket e dispositivo são removidos, e o link é desvinculado sem ser seguido
+- `delete -r` DEVE ser estreitado só por `--include`, `--exclude`, `--older-than` ou `--limit`, e o run que mantém entradas de propósito sai 0 com `dirs_left` e `entries_left`
+- `--hidden`, `--no-gitignore` e `--follow-symlinks` NÃO DEVEM ser enviados ao `delete`, porque são no-op que só emitem uma linha de diagnóstico
+- `delete --backup` NÃO DEVE ser combinado com raiz de diretório, porque o verbo recusa o par antes de qualquer mudança, então rode `copy -r` antes ou passe `--no-backup`
 - `move` DEVE usar `--preserve-hardlinks` quando o alvo tiver hardlink
 - `move`/`copy` DEVEM `--force` ou `--backup` para sobrescrever destino
 - `copy` DEVE usar `--recursive`, `--preserve`, `--no-reflink`, `--preserve-xattr` quando exigido
@@ -278,8 +328,17 @@ A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --work
 - `read`: conteúdo + checksum/size/lines/mode, `stat PATH` é alias de `read --stat`
 - `read --format raw` DEVE aceitar vários caminhos e glob numa chamada: relativo resolve contra `--workspace`, glob sem match sai 4 `GLOB_NO_MATCHES`, alvo fora do jail sai 126 sem imprimir byte, e metacaractere literal que existe no disco é lido literal
 - `read --format raw` DEVE gravar os bytes no stdout e mover o envelope JSON para o stderr. DEVE separar os dois canais antes de parsear qualquer coisa
+- `read --format raw` DEVE honrar `--max-filesize` e DEVE sair 65 acima dele, e `--all` NÃO DEVE desligar esse portão
+- Um arquivo cuja assinatura de imagem está corrompida DEVE falhar no `read` com exit 65 `INVALID_INPUT` em vez de devolver os bytes como texto
 - `case --limit` DEVE publicar `walker_stopped_early`, e `list --limit` ou `hash --limit` DEVEM publicar `files_budget_dropped`. Campo ausente significa que o walker terminou sem corte
-- Flags read: `--lines`, `--line`, `-C/--context`, `--head`, `--tail`, `--format raw|ndjson`, `--bytes` (redundante com `--format raw`, aceito também no `stat`), `--grep`, `--verify-checksum` (mismatch exit 81)
+- Flags read: `--lines` (repetível, apelido `--range`), `--line`, `--enclosing`, `--symbol`, `-C/--context`, `--head`, `--tail`, `--all`, `--number`, `--no-comments`, `--format raw|ndjson`, `--bytes` (redundante com `--format raw`, aceito também no `stat`), `--grep`, `--verify-checksum` (mismatch exit 81), `--crop`, `--max-tokens`, `--pages`, `--high-res`
+- `--no-comments` DEVE vir com `--number`, porque tirar linhas sem renumerar quebraria o próximo `apply`, e sem ele sai 65
+- `read` de imagem DEVE emitir uma linha `data:` no stdout, nunca bytes crus: o tipo vem dos bytes mágicos, o tamanho da regra de blocos de 28 pixels, e `--max-tokens N`, `--crop X,Y,W,H` e `--high-res` escolhem o custo antes da codificação
+- `read --stat` de imagem DEVE responder largura, altura, formato, `visual_tokens` e quadros de GIF sem enviar pixel
+- `read doc.pdf` DEVE devolver o texto de cada página, `--pages N` ou `--pages A:B` escolhe janelas repetíveis, e página sem texto DEVE aparecer em `needs_vision`: página digitalizada não é documento vazio
+- `read doc.pdf --page N` DEVE renderizar a página como `data:` URI, e `--dpi N` DEVE escolher a resolução: use `--page` em vez de ler página digitalizada como página vazia
+- `--ocr` DEVE transformar imagem ou página renderizada em texto no `content`, e os arquivos de modelo DEVEM ser baixados uma vez para o diretório de cache
+- O custo visual de uma imagem DEVE ser `ceil(largura/28) * ceil(altura/28)`, e o `--stat` DEVE informá-lo antes de qualquer codificação
 - `search` ANTES de mutar se alvo desconhecido, flags `-g/--include`, `--exclude`, `-C`, `-F/--fixed`, `-e/--regex`, `-w/--word`, `-i/--case-insensitive`, `-S/--smart-case`, `-c/--count`, `-l/--files`, `-m/--max-count`, `-U/--multiline`, `-P/--pcre2`, `--offset`, `--invert`, `--binary`, `--sort`, `--max-columns`, `--no-begin-end`, `--include-fifo`
 - Default local `--max-filesize` no search = 10 MiB
 - `list`: `--include`, `--exclude`, `--long`, `--depth`, `--count-by-ext`, `--all`
@@ -303,6 +362,7 @@ A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --work
 - Queries scope: comments, strings, fn, pub-fn, async-fn, struct, enum, trait, impl, mod, use, class, def, import, export
 - `query`: `--kinds`, `--tree`, `-Q/--query`, `--positions`, `--language`
 - `outline`: `--kind` repetível, `--positions`, `--language`
+- O `outline` DEVE ler um título Markdown como uma `section` que vai até o fim da própria seção, e `read --symbol NOME` DEVE devolver essa seção inteira
 ### PROIBIDO
 - NUNCA aplique `scope --delete` sem dry-run. NUNCA use fuzzy textual quando transform/scope resolve
 ### Padrão Correto
@@ -314,7 +374,10 @@ A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --work
 - `batch`: NDJSON stdin com `op` em write/replace/delete/edit/move/copy/hash, move/copy com `"force":true` para sobrescrever
 - DEVE usar `--transaction`, `--file <PATH>`, `--dry-run`, `--batch-size`, `--input-schema`, opts de backup
 - `batch --transaction` com falha DEVE publicar UM único evento `rollback` com `ok` false, `code` e `exit`, e o primeiro alvo já revertido. NUNCA espere um erro por operação
-- `sparse list` aceita `--max-files`, `--max-bytes`, `--include` e `--exclude` (globs de verdade, os dois aplicados, um inválido sai 65), `sparse read --paths-file` aceita `--head` e `--max-files`, `sparse outline` roda sob orçamento
+- `sparse list` aceita `--max-files`, `--max-bytes`, `--include`, `--exclude` (globs de verdade, os dois aplicados, um inválido sai 65) e `--all` (toda entrada, oculta incluída), `sparse read --paths-file` aceita `--head` e `--max-files`, `sparse outline` roda sob orçamento e também aceita `--all`
+- `hash`, `copy -r` e `semantic-search` escondem dotfile no padrão, então uma caminhada que precisa de um `.env` DEVE passar `--hidden`; um caminho nomeado na invocação continua sendo lido sem a flag
+- `copy`, `move`, `delete`, `rollback`, `semantic-merge`, `config set`, `config unset`, cada operação do `batch`, `edit`, `replace`, `transform`, `scope`, `case`, `set`, `del`, `edit-loop` e `locale` publicam `write_strategy`, e `delete` publica `none` porque desfaz o vínculo em vez de escrever atomicamente
+- A prévia publica `none`, o `del` de chave ausente omite o campo, e o `batch delete` recusa copiar uma cópia, então um alvo `x.bak.<carimbo>` é removido sem segunda cópia
 - `sparse list` DEVE publicar `files_scanned` e `path_bytes`. DEVE conferir os dois para saber quanto do orçamento o walker consumiu
 - `recipe list` e `recipe run --name search-replace-verify`. Receitas embutidas `search-replace-verify` e `edit-loop-syntax-check`
 - `recipe` sem limite DEVE emitir cada `match`, um `hash`, um `plan` e dois `recipe_step` com `child_summary`, `--limit N` DEVE acrescentar `steps_skipped` e NUNCA truncar em silêncio
@@ -323,7 +386,9 @@ A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --work
 - `semantic-merge --base A --ours B --theirs C --output OUT` é line-based com markers ON (NUNCA AST/embedding)
 - Flags merge: `--fail-on-conflict`, `--write-conflict-markers`, `--no-conflict-markers`, `--expect-checksum`, opts de backup
 - `agent-surface --format json` = manifesto SSOT
-- `watch`: `--debounce-ms`, `--max-events`, `--idle-exit-ms`, `--checksum`, `--gitignore`. Feature binária `watch` (build com `--features watch`, senão exit 78). Termina com `watch_summary`
+- Flags watch: `--debounce-ms`, `--max-events`, `--idle-exit-ms`, `--checksum`, `--gitignore`
+- Feature binária `watch` (build com `--features watch`, senão exit 78)
+- `watch` termina com `watch_summary`
 - `codemod --rules rules.yaml --dry-run` ANTES de apply. O `rules.yaml` é uma lista YAML de itens com `id`, `language`, `pattern` e `rewrite`, e o formato com `rule:` e `fix:` do ast-grep sai 65
 - `codemod` DEVE publicar `rule_id` por regra e `by_rule_id` somando os matches. DEVE ler `by_rule_id` para saber qual regra rendeu antes de culpar o alvo
 - `semantic-search "query" PATH --k 20 --min-score 0.05` é Jaccard offline, `--index-dir` só se índice local for necessário, `--include-backups` inclui os `*.bak.*` que o padrão exclui
@@ -347,13 +412,19 @@ A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --work
 
 ## Utilitários
 ### OBRIGATÓRIO
-- `hash`: BLAKE3. Ler campo `checksum` e NUNCA `value`. Flags `--verify`, `--stdin`, `-r/--recursive`, `--exclude`
+- `hash` é BLAKE3, então DEVE ler o campo `checksum` e NUNCA `value`
+- Flags hash: `--verify`, `--stdin`, `-r/--recursive`, `--exclude`
 - `verify <PATH> <EXPECTED_HASH>`: exit 0 se casa, 81 se não
 - `backup`: `--retention`, `--output-dir`, `rollback --latest --verify`. Flags rollback `--timestamp`, `--latest`, `--verify`, `--dry-run`, `--backup` opt-in
 - `prune-backups`: `--max-age-secs` ou `--max-count <N>` e NUNCA `--max-age`. Diretório puro DEVE ser recusado com 65 `INVALID_INPUT` e sugestão, porque a varredura exige raiz de arquivos
 - `calc` sem workspace, `regex` a partir de ≥3 exemplos (`-d`, `-w`/`--words`, `-s`/`--spaces`, `-r`/`--repetitions`, `-i`/`--case-insensitive`, `--no-anchors`, `--stdin`)
 - `wal-stats` só inspeciona, `wal-heal PATH` remove só journals `committed` e `aborted` mais velhos que `--threshold-secs` (`--max-duration-ms`, `--dry-run`) e nunca remove `started`. O PATH é obrigatório
-- Journals WAL: `--wal-policy always` registra todo write. Em `auto`, depois de 10 journals abertos em 60 s as próximas gravações não abrem nenhum (continuam atômicas). Journal que gravou é sempre removido, `startup_wal_heal` roda só em verbo que muta e só nos diretórios citados no argv. Uma execução cancelada por SIGTERM, SIGINT ou prazo não deixa journal, enquanto um crash (`kill -9`) deixa o journal `started`, o tempfile e o `.lock` com o alvo íntegro, e o `wal-heal` NÃO remove journal `started`, então DEVE conferir o alvo e tratar o resíduo à mão
+- `--wal-policy always` DEVE registrar todo write
+- Em `auto`, depois de 10 journals abertos em 60 s as próximas gravações não abrem nenhum, e continuam atômicas
+- Journal que gravou DEVE ser sempre removido, e o `startup_wal_heal` roda só em verbo que muta e só nos diretórios citados no argv
+- Uma execução cancelada por SIGTERM, SIGINT ou prazo não deixa journal
+- Um crash por `kill -9` deixa o journal `started`, o tempfile e o `.lock` com o alvo íntegro
+- O `wal-heal` NÃO remove journal `started`, então DEVE conferir o alvo e tratar o resíduo à mão
 - `edit-loop` aplica N pares numa escrita e é tudo-ou-nada, `--partial` sai com 87 (`EDIT_LOOP_PARTIAL`). Verbos que gravam exigem caminho explícito (exit 2 sem ele) e o evento terminal reporta `target_source: "argv"`, `completions` bash/zsh/fish/elvish/powershell com `--install`
 - `scratch init .atomwrite/scratch` cria staging em `$WS/.atomwrite/scratch/`, e o PATH é obrigatório (sem ele sai 2)
 ### PROIBIDO
@@ -365,20 +436,26 @@ A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --work
 ## Parsing erros + exit codes
 ### OBRIGATÓRIO
 - DEVE verificar exit code ANTES de parsear stdout
-- Envelope de erro: `error` true, `ok` false, `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`, `suggestion_lang`, `missing_flag` (a flag exigida que faltou), `workspace`, `best_candidate`, `match_count`
+- Envelope de erro: `ok` false, `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`, `suggestion_lang`, `missing_flag` (a flag exigida que faltou), `workspace`, `best_candidate`, `match_count`, e sem a chave `error`, porque `ok` false já a carrega
 - Always-emit: `--filter` NÃO silencia falhas `ok` false
 - `MATCH_FAILED` exit 65: miss edit/fuzzy com `best_candidate`
 - `MATCH_AMBIGUOUS`: inclui `best_candidate`. DEVE expandir contexto ou `--replace-all` (edit): NUNCA chute
 - `NO_MATCHES` exit 1: search/replace zero matches
-- permanent NUNCA retenta. Transient DEVE backoff. Conflict DEVE reler. Precondition_failed DEVE corrigir pré-condição. DEVE usar `suggestion`
-- Exit 0 sucesso, 1 `NO_MATCHES`, 2 arg inválido, 4 não encontrado, 13 `PERMISSION_DENIED`, 65 entrada/`MATCH_FAILED`/ack/conteúdo fuzzy acima do teto/chave ou valor inválido do `config`, 78 config/feature (também chave desconhecida dentro do `config.toml`), 81 checksum, 82 drift, 83 timeout de lock, 84 conflito de merge, 87 edit-loop parcial, 88 sintaxe, 124 timeout, 126 jail, 129 SIGHUP, 130 SIGINT ou cancelado, 141 pipe fechado, 143 SIGTERM, 255 erro interno
+- permanent NUNCA retenta
+- Transient DEVE backoff
+- Conflict DEVE reler
+- Precondition_failed DEVE corrigir a pré-condição
+- A LLM DEVE usar `suggestion`
+- Exit 0 sucesso, 1 `NO_MATCHES` ou `DOCTOR_CHECKS_FAILED`, 2 argumento ou combinação não suportada, 4 `FILE_NOT_FOUND` ou `GLOB_NO_MATCHES`, 13 `PERMISSION_DENIED`, 28 disco cheio, 30 cota, 65 `INVALID_INPUT`/`MATCH_FAILED`/`MATCH_AMBIGUOUS`/`BINARY_FILE`/`FILE_TOO_LARGE`/ack/chave `config` desconhecida, 69 gramática indisponível, 73 entre dispositivos, 74 erro de I/O, 78 config ou feature (também chave desconhecida dentro do `config.toml`), 80 rollback falhou, 81 checksum, 82 drift, 83 timeout de lock, 84 conflito de merge, 85 FIFO, 86 arquivo de dispositivo, 87 edit-loop parcial, 88 sintaxe, 91 strict-atomic, 92 checksum de cópia de volta, 93 journal órfão, 124 timeout, 126 jail, 127 symlink bloqueado, 128 arquivo imutável, 129 SIGHUP, 130 SIGINT ou cancelado, 141 pipe fechado, 143 SIGTERM, 255 erro interno
 - DEVE mapear demais códigos por `exit` e `error_class` sem inventar semântica
 - Uma execução com falha termina em EXATAMENTE UM evento terminal com `ok` false (`error_class`, `retryable` e `suggestion` vão dentro dele). NUNCA espere uma segunda linha de erro
 - Uma execução cancelada termina em `{"type":"cancelled","reason",...,"deadline_exceeded"}` com exit 124 (prazo, `deadline_exceeded` true), 130 (SIGINT) ou 143 (SIGTERM), e NUNCA em `MATCH_FAILED` tardio
 - `search`, `replace`, `transform` e `scope` relatam arquivo que não conseguiram ler ou gravar como `files_failed` e `errors[]` (primeiras 50 entradas) no resumo. Zero matches sai com o primeiro erro, matches com falha saem 0, então DEVE ler `files_failed` antes de confiar num resultado
 - Exit 141 significa que o leitor fechou o pipe e a saída está incompleta. O processo faz a limpeza antes (nenhum lock, journal ou tempfile fica), e DEVE reconferir o estado em vez de assumir que o trabalho terminou
 - Verbos de leitura-modificação-escrita (`edit`, `edit-loop`, `set`, `del`, `config set`, `apply`, `write --append`) serializam no lock advisory, `case`, `transform` e `scope` falham um arquivo que mudou desde a leitura com `STATE_DRIFT` (82, retryable), então DEVE refazer a execução e NUNCA assumir que a gravação aconteceu
-- `apply` com diff unificado compara contexto e linhas removidas com o arquivo (deslocamento até 64 linhas): divergência é `MATCH_FAILED` (65) com `best_candidate` e nada gravado. SEARCH/REPLACE com qualquer bloco ausente falha o lote inteiro do mesmo jeito (`MATCH_FAILED`), e um bloco equivalente em dois lugares é `MATCH_AMBIGUOUS` (65) com `match_count`. NUNCA espere aplicação parcial
+- `apply` com diff unificado DEVE comparar contexto e linhas removidas com o arquivo e aceitar deslocamento até 64 linhas, então divergência é `MATCH_FAILED` (65) com `best_candidate` e nada gravado
+- SEARCH/REPLACE com qualquer bloco ausente falha o lote inteiro do mesmo jeito, e um bloco equivalente em dois lugares é `MATCH_AMBIGUOUS` (65) com `match_count`
+- A LLM NUNCA DEVE esperar aplicação parcial
 - `get`, `set` e `del` num arquivo TOML ou JSON inválido saem 65 `INVALID_INPUT` (só linha e coluna). Um erro sem tipo publica `INTERNAL_ERROR` no stdout
 - Um erro de entrada do usuário (regex ou glob inválido em qualquer verbo, `sparse` e `hash -r` inclusive, padrão AST ou regras YAML, `query -Q`, `read --grep`, `locale --set`, ops de `edit --multi`) sai 65 `INVALID_INPUT`, 255 `INTERNAL_ERROR` é falha interna de verdade e NUNCA deve ser tratado como correção de entrada
 ### PROIBIDO
@@ -419,4 +496,6 @@ A LLM DEVE invocar cada um dos 47 subcomandos. Prefixo típico `atomwrite --work
 - A LLM DEVE executar descoberta de schema: `atomwrite --print-schema` lista os 55 nomes e `atomwrite --print-schema read` emite um
 - A LLM DEVE executar shape de stream: `atomwrite --workspace "$WS" --sort-by path-line --aggregate type:count list src/ --depth 1`
 ### PROIBIDO
-- NUNCA pule dry-run em mutação em massa. NUNCA ignore `best_candidate` em exit 65. NUNCA rode watch sem teto
+- NUNCA pule dry-run em mutação em massa
+- NUNCA ignore `best_candidate` em exit 65
+- NUNCA rode watch sem teto

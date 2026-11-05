@@ -4,9 +4,31 @@
 [Read in English](TESTING.md)
 
 
-## O Que Há de Novo na v0.1.37 (Atual)
+## Objetivos
+- Gastar menos tokens: um objeto NDJSON por chamada substitui o encadeamento de shell, e o `commands --brief` responde em 5.020 bytes onde a árvore completa custa 67.492
+- Reduzir o custo financeiro, porque a conta acompanha os tokens e as idas e voltas, e uma chamada substitui as várias chamadas de shell que uma tarefa de arquivo pede
+- Reduzir os erros com escrita atômica e checksum BLAKE3 em toda resposta, então um resultado velho ou parcial aparece em vez de ser presumido
+- Reduzir as alucinações com discriminador `type`, schema fechado por verbo e código de saída que nomeia a falha
+- Reduzir o tempo gasto em cada tarefa, porque a leitura, a busca e a escrita rodam num processo só em vez de numa corrente de ferramentas de shell
+- Reduzir a latência com execução local e sem rede no caminho do arquivo, medida nas medianas de 5,6 ms no `read` e 6,7 ms no `write` de arquivo pequeno
+- Multiplicar a velocidade das operações com `batch`, `edit-loop`, `replace`, `case`, `transform` e `codemod` resolvendo muitos arquivos numa chamada
+- Reduzir o lead time entre a solicitação e o resultado verificado, porque a resposta já traz o checksum, o `target_resolved` e o próximo passo
+- Tornar o agente mais rápido, mais veloz, mais eficaz e mais assertivo, já que o código de saída, o `code` e o `suggestion` dizem o que fazer sem tentar às cegas
+
+
+## Linha de Release Atual: v0.1.38
+- A suíte completa saiu 0 em 2026-11-04 com `cargo test --no-fail-fast`, e a corrida imprimiu 134 blocos `test result: ok`
+- O schema do envelope de falha exige `ok`, `code` e `exit`, então uma suíte que afirmava `error: true` passa a ler `.ok == false` mais `.code`
+- Nenhum teste foi acrescentado para as correções da 0.1.38 e as suítes existentes foram atualizadas no lugar, porque a prova é a execução real no binário instalado e não uma maquete nova
+- O binário 0.1.38 foi executado em 2026-11-04 e respondeu ao `agent-surface` com 47 ferramentas, 42 códigos de saída e 34 números distintos, e ao `config list` com 43 chaves
+- Os 47 exemplos do smoke test abaixo rodaram contra o binário 0.1.38 em 2026-11-04, e 46 saíram 0 enquanto o `watch` saiu 78
+
+
+## O Que Há de Novo na v0.1.37
 - Superfície completa da CLI sob política de teste: 47 subcomandos (`CANONICAL_SUBCOMMAND_COUNT`): `agent-surface`, `apply`, `backup`, `batch`, `calc`, `case`, `codemod`, `commands`, `completions`, `config`, `copy`, `count`, `del`, `delete`, `diff`, `doctor`, `edit`, `edit-loop`, `extract`, `extract-artifact`, `get`, `hash`, `list`, `locale`, `move`, `outline`, `prune-backups`, `query`, `read`, `recipe`, `regex`, `replace`, `rollback`, `scope`, `scratch`, `search`, `semantic-merge`, `semantic-search`, `set`, `sparse`, `stat`, `transform`, `verify`, `wal-heal`, `wal-stats`, `watch`, `write`
-- Suites de documentação: `cargo test --test docs_consistency --test docs_exit_codes`. O `docs_consistency` lê o manifesto do binário real e confere toda contagem total de subcomandos (simples ou em negrito, como `47 subcomandos`) no README, nos `llms*`, nos guias e nas skills; também prova que o próprio leitor reprova uma contagem em negrito desatualizada
+- Suites de documentação: `cargo test --test docs_coverage --test docs_consistency --test docs_exit_codes --test docs_schemas_sync`
+- O `docs_coverage` exige todo subcomando e toda flag local em cada documento principal, e o `docs_consistency` confere todo total citado contra o binário real e prova que o próprio leitor reprova uma contagem velha
+- O `docs_exit_codes` compara as tabelas de saída do README com o `agent-surface`, e o `docs_schemas_sync` mantém os arquivos de schema e os nomes publicados em passo
 - Verbo `config`: `cargo test --test cli_v0137_config_verb` (ida e volta de set/get/unset, escopo obrigatório, valor inválido não grava nada, camadas chave a chave, gravação atômica 0600)
 - Evento terminal e relato de falhas: `cargo test --test cli_v0137_terminal_event --test cli_v0137_terminal_pipe --test cli_v0137_terminal_schema` (um evento terminal, `MATCH_FAILED` para par ausente, `files_failed` e `errors[]`, exit 141 com leitor fechado, os seis schemas de resumo)
 - Retry, cancelamento e limites: `cargo test --test cli_v0137_retry_deadline --test cli_v0137_retry_guards --test cli_v0137_cancel --test cli_v0137_search_rss --test cli_v0137_wal_startup_heal`
@@ -19,11 +41,11 @@
 - Versão e build slim: `cargo test --test cli_v0137_version`; `cargo xtask check-features` confere os conjuntos de features `core` e `core,watch`
 - A execução de teste suportada usa as features padrão: `cargo test --locked`. Não use `cargo test --no-default-features --features core` como gate (veja Perfis de teste local)
 - DoD local (só gates locais, sem automação remota): `cargo test --lib --tests`, `cargo clippy --all-targets -- -D warnings`
-- Pin docs/agentes em `^0.1.37`
+- Pin docs/agentes em `^0.1.38`
 
 
 ## Smoke Test dos 47 Subcomandos
-- Um exemplo por subcomando, cada um executado contra o `atomwrite 0.1.37` (o comando, o resumo de uma linha e o exemplo)
+- Um exemplo por subcomando, cada um executado contra o `atomwrite 0.1.38` (o comando, o resumo de uma linha e o exemplo)
 - Preparação: `WS` é o caminho absoluto de um workspace vazio que contém `src/a.rs` (um `unwrap()` e um comentário), `src/b.rs` (a palavra `beta` uma vez), `src/c.rs` (com `user_id`), `src/tmp.rs`, `config.toml` (uma tabela `[package]` com `name` e uma tabela `[features]` com `x`), `notes.txt`, `tmp.txt`, `base.txt`, `ours.txt`, `theirs.txt`, `img.png` e `rules.yaml` (uma lista YAML com `id`, `language`, `pattern` e `rewrite`)
 - `HASH_A` é o `checksum` que `hash src/a.rs` imprime
 - Rode-os com `HOME` e as variáveis `XDG_*` apontando para dentro do workspace, como o `common::hermetic` faz na suíte de testes, para não tocar em nenhuma config, preferência de locale ou arquivo de completion reais
@@ -54,7 +76,7 @@
 - `rollback` — Restaura um arquivo a partir de um backup anterior. Exemplo: `atomwrite --workspace "$WS" rollback src/a.rs --latest --verify`
 - `batch` — Executa operações NDJSON do stdin, com opção de transação única. Exemplo: `printf '{"op":"write","target":"batch.txt","content":"x"}\n' | atomwrite --workspace "$WS" batch --transaction`
 - `edit-loop` — Aplica N pares antigo/novo numa escrita só, tudo ou nada. Exemplo: `printf '[{"old":"gamma","new":"delta"}]\n' | atomwrite --workspace "$WS" edit-loop src/b.rs`
-- `prune-backups` — Remove arquivos .bak antigos por idade ou quantidade. Exemplo: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run .`
+- `prune-backups` — Remove arquivos .bak antigos por idade ou quantidade. Exemplo: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run --recursive .`
 - `wal-stats` — Mostra o estado dos journals WAL (só leitura). Exemplo: `atomwrite --workspace "$WS" wal-stats`
 - `wal-heal` — Remove journals WAL terminais órfãos mais antigos que um limite. Exemplo: `atomwrite --workspace "$WS" wal-heal --threshold-secs 3600 .`
 - `verify` — Confere um arquivo contra um hash BLAKE3 esperado (exit 0 se igual, 81 se diferente). Exemplo: `atomwrite --workspace "$WS" verify src/a.rs HASH_A`
@@ -76,7 +98,7 @@
 - `scratch` — Cria o diretório de staging .atomwrite/scratch dentro do jail do workspace. Exemplo: `atomwrite --workspace "$WS" scratch init .atomwrite/scratch`
 - `locale` — Mostra, define ou limpa o idioma da interface. Exemplo: `atomwrite --workspace "$WS" locale`
 - `commands` — Imprime a árvore completa de comandos em JSON. Exemplo: `atomwrite --workspace "$WS" commands --include-globals`
-- `config` — Lê e grava chaves de ajuste persistentes (37 chaves, escopos global e workspace). Exemplo: `atomwrite --workspace "$WS" config get fuzzy.threshold`
+- `config` — Lê e grava chaves de ajuste persistentes (43 chaves, escopos global e workspace). Exemplo: `atomwrite --workspace "$WS" config get fuzzy.threshold`
 
 
 ## O Que Há de Novo na v0.1.36
@@ -114,8 +136,8 @@
 - O NDJSON do write reporta `platform.rename_method` (`renameat2` ou `rename`)
 - `write --durability full|fast|auto` para trade-off de custo de fsync
 - Histórico (na v0.1.29): novos subcomandos: `semantic-merge`, `sparse`, `recipe`, `stat`, `agent-surface`, `watch` (feature), `codemod`, `semantic-search` — 41 subcomandos no total
-- Matriz de features: slim `core` (10.908.040 bytes = 10,40 MiB medidos em 2026-10-31, size-gate local ≤15 MiB) vs default AST (57.096.064 bytes = 54,45 MiB medidos em 2026-10-31)
-- Gates locais (manuais; sem scripts locais remoto): size-gate slim ≤15 MiB; core-test; schema-diff em `docs/schemas`
+- Matriz de features: slim `core` (26.560.352 bytes = 25,33 MiB medidos em 2026-11-04, acima do size-gate local de 15 MiB) vs default AST (71.084.440 bytes = 67,79 MiB medidos em 2026-11-04)
+- Gates locais (manuais; sem scripts locais remoto): size-gate slim ≤15 MiB, cujo build slim medido em 2026-11-04 é 25,33 MiB e fica acima dele; core-test; schema-diff em `docs/schemas`
 - Rode a suíte de contrato 0.1.30: `cargo test --test cli_v0130_agent_contract`
 - Rode a suíte 0.1.29: `cargo test --test cli_v0129_fuzzy_replace`
 
@@ -289,7 +311,7 @@ cargo test --test cross_compile_check -- --ignored
 
 
 ## Estatísticas Atuais
-- Execução final da v0.1.37 registrada no `CHANGELOG.md`: 131 alvos de teste, 1486 testes passaram, 0 falharam e 9 ignorados (os testes `cross_compile_*`)
+- Execução final da v0.1.38 registrada no `CHANGELOG.md`: 131 alvos de teste, 1486 testes passaram, 0 falharam e 9 ignorados (os testes `cross_compile_*`)
 - Inventário medido com `fd` e `rg` na árvore de código: 131 alvos de teste de integração em `tests/` (mais `tests/common/mod.rs`, `doc_scan.rs` e `schema_check.rs`), 994 funções `#[test]` em `tests/` e 485 em `src/` (DERIVADO: 994 + 485 = 1479), mais 9 arquivos de snapshot, 4 arquivos de proptest e 2 alvos de fuzzing
 - Meça de novo com `rg -c '#\[test\]' tests src` e `cargo test --lib --tests`. Um teste gerado por macro (proptest) não entra nessa contagem do `rg`, então o número de testes que rodam pode diferir do número de atributos `#[test]`
 - Suítes por tema: unitários + integração + snapshot + property-based + sinal + tracing + NDJSON + regressão + cross-compile + concorrência
@@ -650,3 +672,54 @@ fd -e sh -e md -e toml -e yml -e yaml -e json -x sd -- '--lang\b' '--locale' {}
 # Ou via ruplacer (só simula até você acrescentar --go)
 ruplacer -- '--lang' '--locale' .
 ```
+
+
+## Toda flag local, por comando
+- Esta lista nomeia toda flag local de cada comando, e as flags globais ficam em `atomwrite --help`.
+- `agent-surface`: `--format`
+- `apply`: `--ack-overwrite`, `--all`, `--allow-shrink`, `--backup`, `--dry-run`, `--format`, `--keep-backup`, `--no-backup`, `--no-syntax-check`, `--retention`, `--show`, `--strict-atomic`
+- `backup`: `--dry-run`, `--output-dir`, `--retention`
+- `batch`: `--backup`, `--batch-size`, `--dry-run`, `--file`, `--input-schema`, `--keep-backup`, `--no-backup`, `--retention`, `--strict-atomic`, `--transaction`
+- `calc`: `--stdin`
+- `case`: `--backup`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`, `--subvert`, `--to`
+- `codemod`: `--backup`, `--dry-run`, `--keep-backup`, `--no-backup`, `--retention`, `--rules`, `--strict-atomic`
+- `commands`: `--brief`, `--include-globals`
+- `completions`: `--install`
+- `config`: não tem flag local própria, só o conjunto global
+- `copy`: `--backup`, `--dry-run`, `--force`, `--keep-backup`, `--no-backup`, `--no-reflink`, `--preserve-xattr`, `--preserve`, `--recursive`, `--retention`, `--strict-atomic`
+- `count`: `--by-extension`, `--by-size`, `--exclude`, `--include`, `--top`
+- `del`: `--backup`, `--dry-run`, `--force-missing`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`
+- `delete`: `--backup`, `--confirm`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--no-backup`, `--older-than`, `--plan`, `--recursive`, `--retention`, `--yes`
+- `diff`: `--algorithm`, `--context`, `--stat`, `--unified`
+- `doctor`: `--strict`
+- `edit`: `--after-line`, `--after-match`, `--allow-sequential-drift`, `--backup`, `--before-line`, `--before-match`, `--between`, `--delete-range`, `--dry-run`, `--expect-checksum`, `--fuzzy-threshold`, `--fuzzy`, `--keep-backup`, `--line-ending`, `--multi`, `--new-file`, `--new`, `--no-backup`, `--old-file`, `--old`, `--partial`, `--preserve-timestamps`, `--range`, `--replace-all`, `--retention`, `--strict-atomic`, `--wal-policy`
+- `edit-loop`: `--allow-sequential-drift`, `--backup`, `--keep-backup`, `--line-ending`, `--no-backup`, `--partial`, `--retention`, `--strict-atomic`, `--syntax-check`
+- `extract`: `--delimiter`, `--field`, `--stdin`
+- `extract-artifact`: `--max-sample-rows`, `--max-text-chars`
+- `get`: não tem flag local própria, só o conjunto global
+- `hash`: `--exclude`, `--recursive`, `--stdin`, `--verify`
+- `list`: `--all`, `--count-by-ext`, `--depth`, `--exclude`, `--format`, `--include`, `--long`
+- `locale`: `--clear`, `--set`
+- `move`: `--backup`, `--dry-run`, `--force`, `--keep-backup`, `--no-backup`, `--preserve-hardlinks`, `--retention`
+- `outline`: `--format`, `--kind`, `--language`, `--positions`
+- `prune-backups`: `--dry-run`, `--max-age-secs`, `--max-count`, `--recursive`
+- `query`: `--kinds`, `--language`, `--positions`, `--query`, `--tree`
+- `read`: `--all`, `--bytes`, `--context`, `--crop`, `--dpi`, `--enclosing`, `--force`, `--format`, `--grep`, `--head`, `--high-res`, `--line`, `--lines`, `--max-tokens`, `--no-comments`, `--number`, `--ocr`, `--page`, `--pages`, `--stat`, `--symbol`, `--tail`, `--verify-checksum`
+- `recipe`: não tem flag local própria, só o conjunto global
+- `regex`: `--case-insensitive`, `--digits`, `--no-anchors`, `--repetitions`, `--spaces`, `--stdin`, `--words`
+- `replace`: `--backup`, `--dry-run`, `--exclude`, `--expect-checksum`, `--fuzzy-threshold`, `--fuzzy`, `--include`, `--keep-backup`, `--literal`, `--max-replacements`, `--no-backup`, `--preserve-case`, `--preserve-timestamps`, `--preview`, `--progress-every`, `--regex`, `--retention`, `--strict-atomic`, `--word`
+- `rollback`: `--backup`, `--dry-run`, `--keep-backup`, `--latest`, `--no-backup`, `--retention`, `--strict-atomic`, `--timestamp`, `--verify`
+- `scope`: `--action`, `--backup`, `--delete`, `--dry-run`, `--exclude`, `--include`, `--keep-backup`, `--language`, `--no-backup`, `--pattern`, `--query`, `--replace-with`, `--retention`, `--strict-atomic`
+- `scratch`: não tem flag local própria, só o conjunto global
+- `search`: `--binary`, `--case-insensitive`, `--context`, `--count`, `--exclude`, `--files`, `--fixed`, `--format`, `--include-fifo`, `--include`, `--invert`, `--limit`, `--max-columns`, `--max-count`, `--max-filesize`, `--multiline`, `--no-begin-end`, `--offset`, `--pcre2`, `--regex`, `--smart-case`, `--sort`, `--target`, `--word`
+- `semantic-merge`: `--backup`, `--base`, `--dry-run`, `--expect-checksum`, `--fail-on-conflict`, `--keep-backup`, `--no-backup`, `--no-conflict-markers`, `--ours`, `--output`, `--retention`, `--strict-atomic`, `--theirs`, `--write-conflict-markers`
+- `semantic-search`: `--include-backups`, `--index-dir`, `--k`, `--min-score`
+- `set`: `--backup`, `--dry-run`, `--keep-backup`, `--no-backup`, `--preserve-timestamps`, `--retention`, `--strict-atomic`
+- `sparse`: não tem flag local própria, só o conjunto global
+- `stat`: `--all`, `--bytes`, `--context`, `--crop`, `--dpi`, `--enclosing`, `--force`, `--format`, `--grep`, `--head`, `--high-res`, `--line`, `--lines`, `--max-tokens`, `--no-comments`, `--number`, `--ocr`, `--page`, `--pages`, `--stat`, `--symbol`, `--tail`, `--verify-checksum`
+- `transform`: `--backup`, `--dry-run`, `--exclude`, `--include`, `--inline-rules`, `--keep-backup`, `--language`, `--no-backup`, `--pattern`, `--retention`, `--rewrite`, `--rules`, `--strict-atomic`, `--verify-parse`
+- `verify`: não tem flag local própria, só o conjunto global
+- `wal-heal`: `--dry-run`, `--max-duration-ms`, `--threshold-secs`
+- `wal-stats`: `--dry-run`
+- `watch`: `--checksum`, `--debounce-ms`, `--gitignore`, `--idle-exit-ms`, `--max-events`
+- `write`: `--ack-overwrite`, `--allow-empty-stdin`, `--allow-shrink`, `--append`, `--auto-rotate`, `--backup`, `--confirm`, `--dry-run`, `--durability`, `--expect-checksum`, `--keep-backup`, `--line-ending`, `--max-size`, `--no-backup`, `--no-checksum-when-empty`, `--prepend`, `--preserve-timestamps`, `--require-backup`, `--require-large-ack`, `--retention`, `--risk-threshold`, `--strict-atomic`, `--syntax-check`, `--wal-policy`

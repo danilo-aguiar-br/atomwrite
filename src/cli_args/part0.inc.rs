@@ -1,7 +1,7 @@
 /// Shared backup flags for mutating subcommands.
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct BackupOpts {
-    /// Create a backup before writing (default: on, unless `[defaults]` in `.atomwrite.toml` turns it off).
+    /// Create a backup before changing the target (on by default for rewrites; `delete` copies with this flag or with `[defaults].backup = true`).
     // Tri-state on purpose: `None` follows the config default, `Some(true)` is
     // `--backup`, and `no_backup` forces it off.
     #[arg(long, action = clap::ArgAction::SetTrue, conflicts_with = "no_backup", help_heading = "Backup")]
@@ -9,7 +9,7 @@ pub struct BackupOpts {
     /// Disable backup creation
     #[arg(long, action = clap::ArgAction::SetTrue, help_heading = "Backup")]
     pub no_backup: bool,
-    /// Keep the backup file after success (default: auto-remove on success)
+    /// Keep the backup file after success (default: auto-remove on success; `delete` keeps only a copy that exists)
     #[arg(long, action = clap::ArgAction::SetTrue, help_heading = "Backup")]
     pub keep_backup: bool,
     /// Number of backups to retain (default: `[defaults]` retention in `.atomwrite.toml`, else 5).
@@ -366,6 +366,15 @@ pub struct ListArgs {
     /// Group file counts by extension.
     #[arg(long, help = "Group file counts by extension", action = clap::ArgAction::SetTrue)]
     pub count_by_ext: bool,
+
+    /// Output shape: `ndjson` (default) or `text`, one path per line.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = crate::cli::SearchFormat::Ndjson,
+        help = "Output shape: ndjson or text"
+    )]
+    pub format: crate::cli::SearchFormat,
 
     /// Show all files including hidden.
     #[arg(long, help = "Show all files including hidden", action = clap::ArgAction::SetTrue)]

@@ -17,7 +17,7 @@ use std::time::Instant;
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::atomic::{AtomicWriteOptions, atomic_write};
+use crate::atomic::AtomicWriteOptions;
 use crate::cli::{GlobalArgs, SetArgs};
 use crate::commands::resolve_backup;
 use crate::output::NdjsonWriter;
@@ -33,7 +33,22 @@ pub(crate) struct SetResult {
     old_value: Option<String>,
     new_value: String,
     format: &'static str,
-    comments_preserved: bool,
+    /// Whether every comment of the source survived the edit.
+    ///
+    /// Omitted for JSON, because JSON has no comments: `true` there was a fact
+    /// about the format and not about the run, and a caller that reads the
+    /// field cannot tell the two apart.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    comments_preserved: Option<bool>,
+    /// Write strategy the atomic layer used: `rename`, `inplace` or `copyback`.
+    ///
+    /// A config file with more than one hard link is written in place so the
+    /// other links keep the same inode, and this field names the path that ran.
+    write_strategy: &'static str,
+    /// Why the requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    backup_skipped: Option<String>,
     elapsed_ms: u64,
 }
 
@@ -115,10 +130,20 @@ pub fn cmd_set(
         durability: crate::platform::Durability::Auto,
     };
 
-    atomic_write(&validated, new_content.as_bytes(), &opts, &workspace)?;
+    // The content was computed from `original`, so a file that changed since
+    // that read is refused under the lock instead of being overwritten.
+    let base = crate::checksum::hash_bytes(original.as_bytes());
+    let result = crate::atomic::atomic_write_based(
+        &validated,
+        new_content.as_bytes(),
+        &opts,
+        &workspace,
+        Some(&base),
+    )?;
 
-    // JSON carries no comments, so only TOML can lose them.
-    let comments_preserved = format != "toml" || comments_survive(&original, &new_content);
+    // JSON carries no comments, so only TOML reports on them. Reporting `true`
+    // for JSON said nothing about the edit and read as a check that passed.
+    let comments_preserved = (format == "toml").then(|| comments_survive(&original, &new_content));
     let output = SetResult {
         r#type: "set",
         path: validated.display().to_string(),
@@ -128,6 +153,8 @@ pub fn cmd_set(
         new_value: args.value.clone(),
         format,
         comments_preserved,
+        write_strategy: result.write_strategy,
+        backup_skipped: result.backup_skipped,
         elapsed_ms: start.elapsed().as_millis() as u64,
     };
     writer.write_event(&output)?;
@@ -346,6 +373,13 @@ fn json_set(
         other => other.to_string(),
     });
     apply_json_pointer(&mut value_json, &pointer, value);
+
+    // The canonical rewrite asks the value first, so any disagreement on the
+    // spliced text below is decided by the same rule that decides the fallback.
+    if let Some(spliced) = splice_json_value(original, &pointer, value, &value_json) {
+        return Ok((spliced, old_value, "json"));
+    }
+
     // Pretty-print is intentional: human-edited config files, not NDJSON stdout.
     let mut new_content = serde_json::to_string_pretty(&value_json)?;
     // G-022: POSIX text files end with newline; keep agent diffs clean.
@@ -353,6 +387,38 @@ fn json_set(
         new_content.push('\n');
     }
     Ok((new_content, old_value, "json"))
+}
+
+/// Replace only the bytes of the value at `pointer`, leaving the rest intact.
+///
+/// Returns `None` when the path or the value cannot be located, or when the
+/// spliced document does not decode to exactly `expected` — the value the
+/// canonical rewrite produced. That check is what makes the fallback in
+/// [`json_set`] safe: a scanner that guesses wrong costs formatting, never data.
+fn splice_json_value(
+    original: &str,
+    pointer: &str,
+    value: &str,
+    expected: &serde_json::Value,
+) -> Option<String> {
+    let segments: Vec<String> = pointer
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(unescape_json_pointer_token)
+        .collect();
+    let (start, end) = crate::commands::set_json_span::locate_value_span(original, &segments)?;
+    let replacement = serde_json::to_string(&parse_json_value(value)).ok()?;
+    let mut spliced = String::with_capacity(original.len() - (end - start) + replacement.len());
+    spliced.push_str(&original[..start]);
+    spliced.push_str(&replacement);
+    spliced.push_str(&original[end..]);
+    // G-022: a written document ends with a newline. The splice keeps every
+    // other byte as it was, so the terminal newline is settled here alone.
+    if !spliced.ends_with('\n') {
+        spliced.push('\n');
+    }
+    (parse_json_source(&spliced).ok()? == *expected).then_some(spliced)
 }
 
 fn apply_json_pointer(root: &mut serde_json::Value, pointer: &str, value: &str) {

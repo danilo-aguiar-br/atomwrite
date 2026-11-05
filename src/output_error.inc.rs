@@ -70,7 +70,7 @@ pub fn write_error_json_shaped_with_target(
     path: Option<&Path>,
     ctx: &ErrorContext,
     shape: &OutputShape,
-    target: Option<(&str, &str)>,
+    target: Option<(&serde_json::Value, &str)>,
 ) -> anyhow::Result<()> {
     let mut json = ErrorJson::from_error_with_context(err, ctx);
     if json.path.is_none() {
@@ -86,7 +86,7 @@ pub fn write_error_json_shaped_with_target(
     // credential in a success payload was redacted.
     let mut value = serde_json::to_value(&json)?;
     if let Some((resolved, source)) = target {
-        stamp_target_keys(&mut value, resolved, source);
+        stamp_target_keys(&mut value, resolved, source, true);
     }
     let shaped = shape_error_value(value, shape);
     serde_json::to_writer(&mut *out, &shaped).map_err(io::Error::from)?;

@@ -14,7 +14,7 @@ Accepted (2026-10-15), name list superseded by ADR-0078 (2026-10-31)
 - These terminal events are closed (`additionalProperties: false`, a non-null `required` with the keys that are always present): `search-summary`, `replace-summary`, `count`, `count-by-ext`, `count-by-size`, `backup-summary`, `list-summary`, `config`, `batch` and `doctor` (`CLOSED_TERMINAL_SCHEMAS`).
 - `diff` is `type: "object"` with a `oneOf` of four closed branches (`change`, `summary`, `unified`, `stat`), each with `required`.
 - The keys the writer stamps (`ok`, `code`, `exit`, `target_resolved`, `target_source`) are optional properties of every terminal schema.
-- A summary that can end in its own failure (`search-summary`, `replace-summary`, `batch`) adds the rule "`ok: false` requires `code`, `exit`, `error_class`, `retryable`, `suggestion_lang` and `message`" (`FAILURE_REQUIRED`). `doctor` carries the same detail as optional.
+- A summary that can end in its own failure (`search-summary`, `replace-summary`, `batch`) adds the rule "`ok: false` requires `code` and `exit`" (`FAILURE_REQUIRED`). The first version demanded `error_class`, `retryable`, `suggestion_lang` and `message` as well; those four left the default failure envelope and come back only under `-v`, so a schema that still demanded them rejected every failure the build really writes. `doctor` carries the detail as optional.
 - Six new names, `backup-summary`, `count-by-ext`, `count-by-size`, `list-summary`, `replace-summary` and `search-summary`, bring the list to 58. An unknown name exits 65 with the name list.
 
 ## Consequences

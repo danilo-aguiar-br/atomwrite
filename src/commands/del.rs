@@ -12,7 +12,7 @@ use std::time::Instant;
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::atomic::{AtomicWriteOptions, atomic_write};
+use crate::atomic::AtomicWriteOptions;
 use crate::cli::{DelArgs, GlobalArgs};
 use crate::commands::resolve_backup;
 use crate::output::NdjsonWriter;
@@ -27,6 +27,17 @@ pub(crate) struct DelResult {
     removed_value: Option<String>,
     existed: bool,
     format: &'static str,
+    /// Write strategy the atomic layer used: `rename`, `inplace` or `copyback`.
+    ///
+    /// Absent when the key was already missing, because that run took no write
+    /// path and a verdict would claim a mechanism it never used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    write_strategy: Option<&'static str>,
+    /// Why the requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    backup_skipped: Option<String>,
     elapsed_ms: u64,
 }
 
@@ -124,6 +135,8 @@ pub fn cmd_del(
             removed_value,
             existed: false,
             format,
+            write_strategy: None,
+            backup_skipped: None,
             elapsed_ms: start.elapsed().as_millis() as u64,
         };
         writer.write_event(&output)?;
@@ -157,7 +170,16 @@ pub fn cmd_del(
         durability: crate::platform::Durability::Auto,
     };
 
-    atomic_write(&validated, new_content.as_bytes(), &opts, &workspace)?;
+    // The content was computed from `original`, so a file that changed since
+    // that read is refused under the lock instead of being overwritten.
+    let base = crate::checksum::hash_bytes(original.as_bytes());
+    let result = crate::atomic::atomic_write_based(
+        &validated,
+        new_content.as_bytes(),
+        &opts,
+        &workspace,
+        Some(&base),
+    )?;
 
     let output = DelResult {
         r#type: "del",
@@ -166,6 +188,8 @@ pub fn cmd_del(
         removed_value,
         existed: true,
         format,
+        write_strategy: Some(result.write_strategy),
+        backup_skipped: result.backup_skipped,
         elapsed_ms: start.elapsed().as_millis() as u64,
     };
     writer.write_event(&output)?;

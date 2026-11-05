@@ -191,7 +191,7 @@ fn assert_deadline_with_open_stdin(label: &str, verb_args: &[String], payload: &
     assert!(
         events
             .iter()
-            .all(|e| e["code"] != "INVALID_INPUT" && e["error"] != Value::Bool(true)),
+            .all(|e| e["code"] != "INVALID_INPUT" && e["ok"] != Value::Bool(false)),
         "{label}: a cancelled run must not emit an error envelope: {events:?}"
     );
     drop(live.stdin.take());
@@ -367,7 +367,7 @@ fn r2a_regex_stdin_with_open_stdin_exits_143_on_sigterm() {
     assert!(
         events
             .iter()
-            .all(|e| e["code"] != "INVALID_INPUT" && e["error"] != Value::Bool(true)),
+            .all(|e| e["code"] != "INVALID_INPUT" && e["ok"] != Value::Bool(false)),
         "a SIGTERM run must not emit an error envelope: {events:?}"
     );
     drop(live.stdin.take());

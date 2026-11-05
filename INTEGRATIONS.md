@@ -3,17 +3,44 @@
 
 # Integrations
 
+
 - atomwrite is a CLI that talks NDJSON on stdout: any agent that can run a shell command can call it as a subprocess
 
 
-## Compatible Agents (v0.1.37)
+## Objectives
+- Spend fewer tokens: one NDJSON object per call replaces the shell pipeline, and `commands --brief` answers in 5 020 bytes where the full tree costs 67 492
+- Lower the financial cost, because the bill follows the tokens and the round trips, and one call replaces the several shell calls a file task needs
+- Reduce errors with an atomic write and a BLAKE3 checksum on every response, so a stale or partial result is caught instead of assumed
+- Reduce hallucinations with a `type` discriminator, a closed schema per verb and an exit code that names the failure
+- Reduce the time spent on each task, because the read, the search and the write run in one process instead of a chain of shell tools
+- Reduce latency with local execution and no network on the file path, measured at medians of 5.6 ms on `read` and 6.7 ms on `write` for small files
+- Multiply the speed of operations with `batch`, `edit-loop`, `replace`, `case`, `transform` and `codemod` settling many files in one call
+- Cut the lead time between the request and the verified result, because the response already carries the checksum, the `target_resolved` and the next step
+- Make the agent faster, more effective and more assertive, since the exit code, the `code` and the `suggestion` say what to do next without a retry guess
+
+
+## Compatible Agents (v0.1.38)
 - Current surface: 47 subcommands (SSOT via `atomwrite agent-surface` / `CANONICAL_SUBCOMMAND_COUNT`), all listed with a tested example in [All 47 Commands](#all-47-commands)
-- Historical (at v0.1.35): 41 subcommands after residual A-* (large write `--ack-overwrite`, `watch_summary`, merge markers, delete `--plan` not `--confirm`/`--yes`)
-- Agent integration (pin `^0.1.37`): discover tools with `agent-surface` / `commands`, stage large or fragile patches via `scratch init` + `--old-file`/`--new-file` under `.atomwrite/scratch/`, parse the exit code first, then treat every error line as `ok: false` (always-emit even under `--filter`)
+- Historical: 41 subcommands at v0.1.29, and 46 before the `config` verb landed in v0.1.37 (the large write `--ack-overwrite`, `watch_summary`, merge markers and delete `--plan` came in that window)
+- Agent integration (pin `^0.1.37` until 0.1.38 is published, and `^0.1.38` from that release on): discover tools with `agent-surface` / `commands`, stage large or fragile patches via `scratch init` + `--old-file`/`--new-file` under `.atomwrite/scratch/`, parse the exit code first, then treat every error line as `ok: false` (always-emit even under `--filter`)
+- Bounded `read` (v0.1.38): the cap is `read.max_output_bytes` (24,000 bytes), the event carries `truncated` and `next`, which spells the range that follows, and `--all` lifts the cap
+- `read` selectors compose in one pass: repeatable `--lines` with `--range` as its alias, `--number`, `--symbol NAME`, `--line N --enclosing` and `--no-comments` (`--no-comments` requires `--number` and exits 65 without it)
+- Text shapes for shell pipelines (v0.1.38): `search --format text` with `search.format`, `list --format text` and `outline --format tsv`, while the default output stays NDJSON
+- `search` exits 89 with `ALL_SKIPPED_BINARY` when every candidate was binary, which is a different answer from `NO_MATCHES` (exit 1)
+- `apply` matches whole lines, so every SEARCH line must match the file line from its first to its last byte; `--show` prints the changed lines with their numbers, and `--all` replaces every whole-line occurrence
+- `apply --format unified` accepts `@@ ... @@` and a bare `@@`, matches a hunk without numbers by context, and refuses more than one match by naming the line of each
+- `apply` refuses a patch that breaks the parse of the edited file, `--no-syntax-check` skips that gate, and one patch can carry several files when each block names its own path line
+- `MATCH_AMBIGUOUS` (exit 65) means the SEARCH matched more lines than the call allowed, so tighten the block or pass `--all`, and `apply.max_ellipsis_lines` bounds the `...` gap
+- `diff` reports 1-based `line`, `old_line` and `new_line`, so the numbers line up with `read --number`
+- `delete --recursive` owns the whole tree and publishes `backups_kept`, `backup_bytes` and `dirs_left` when a backup or a leftover exists
+- `output.profile` is `full` or `lean`: `lean` drops the prose fields, and `--select`/`--fields` compose with both
+- `commands --brief` prints the tree without the long descriptions, and `-h` on a subcommand lists only that verb's own flags
+- The failure envelope is `{"ok":false,"code":"...","exit":N,"path":"...","suggestion":"..."}`, and `message`, `error_class`, `retryable` and `suggestion_lang` appear only under `-v`
+- `target_resolved` is always an array, even when the call names a single path
 - Prefer the global `--select`/`--fields`, `--filter`, `--limit` over jq for field projection
 - atomwrite requires only shell access to function
 - NDJSON output (one JSON object per line) is parseable by any JSON parser without a custom adapter
-- No plugins, extensions, or SDKs required
+- No plugins, extensions or SDKs are required or offered: integration is a subprocess, by design
 - Validation status: only the agents marked validated in the [Summary Table](#summary-table) were run, every other agent is marked not validated
 - Tuning without editing TOML by hand: `config list` shows every key with its effective value and origin, `config set KEY VALUE --scope global|workspace` writes one key atomically (`--scope` is required, there is no default), `config unset` removes it
 - One terminal event per run: when a summary fails it carries `ok: false`, `code` and `exit` itself
@@ -28,14 +55,21 @@
 - Use `agent-surface` for the tool manifest, integration is by subprocess, CLI with NDJSON output
 - Prefer `recipe list|run` for multi-step search-replace-verify pipelines (excludes `*.bak.*`, including the hash step)
 - Backup method is `reflink_or_copy`, never a hardlink of the live file
-- Exit codes: read the table with `atomwrite agent-surface --format json | jaq '.exit_codes'` (41 entries, 33 distinct numbers) and branch on `exit` and `error_class`
+- Exit codes: read the table with `atomwrite agent-surface --format json | jaq '.exit_codes'` (42 entries, 34 distinct numbers) and branch on `exit` and `error_class`
 - Slim install: `cargo install --path . --locked --force --no-default-features --features core`
 - In the slim build the AST verbs `outline`, `query`, `scope`, `transform` and `sparse outline` fail closed with exit 78 and a rebuild hint (read from `src/commands/*_stub.rs`, the slim build was not executed for this document)
 - The default build has no `watch`: the `watch` verb exits 78 until you build with `--features watch`
-- Pin agents to `^0.1.37`
+- Pin agents to `^0.1.37` until `0.1.38` lands on crates.io, then to `^0.1.38`
 - Platform status: Linux is exercised end to end, Windows is checked with `cargo check --target x86_64-pc-windows-gnu` from a Linux host, macOS is not exercised on a real Mac (see `CHANGELOG.md`, 0.1.36)
 - History: v0.1.15 fixed G117 (multi-pair `edit` fuzzy parity, `pair_results`, `failed_pair_index`, opt-in `--partial`) and G118 (`write` resolves the target against the workspace, so append and checksum are safe with a divergent CWD)
 - History: v0.1.16 added G119 L1 WalPolicy and L4 HeuristicsEngine, v0.1.17 wired the G119 L3 startup heal, v0.1.18 added G118 universal resolve-first propagation, G120 L3 cross-flag tests and G117 edge cases
+
+
+## Vision And Documents
+- `read photo.png` answers one `data:` URI line for the vision channel, and `--max-tokens`, `--crop` and `--high-res` pick the cost before the encode
+- `read doc.pdf` answers the text of each page, `--pages 1-3` picks a range, `--page N` renders that page as a `data:` URI, `--dpi N` sets the resolution and `--ocr` returns the recognized text in `content`
+- `extract-artifact` gives a bounded header signal from PDF, OOXML and image, never raw bytes
+- The two OCR models and the parser bundles are the only downloads, and `PRIVACY.md` describes both caches
 
 
 ## Summary Table
@@ -58,21 +92,22 @@
 ## All 47 Commands
 - Set `WS` once to the absolute path of the workspace root before running an example: `WS="$PWD"`
 - Every example ran with exit 0 on 2026-10-19 against `atomwrite 0.1.37` in a throwaway workspace, in the order below, except `watch` (see its entry)
+- The v0.1.38 flags quoted in the bullets above were run on 2026-11-04 against `atomwrite 0.1.38`, and the 47 examples below were not re-run in full for this version
 - The examples assume the files `src/a.rs` (with an `unwrap()` call), `src/b.rs` (with the word `beta`), `src/c.rs` (with `user_id`), `src/tmp.rs`, `config.toml` (with `package.name` and `features.x`), `notes.txt`, `tmp.txt`, `base.txt`, `ours.txt`, `theirs.txt`, `img.png` and `rules.yaml`
-- `read` — read a file with checksum, size and lines, optionally only head, tail or a range. Example: `atomwrite --workspace "$WS" read --head 2 src/a.rs`
+- `read` — read a file with checksum, size and lines, optionally only head, tail, a line range, a named symbol or the block around one line, under a byte cap that `--all` lifts. Example: `atomwrite --workspace "$WS" read --lines 1:3 --number src/a.rs`
 - `write` — create or overwrite a file atomically from stdin. Example: `printf 'x\n' | atomwrite --workspace "$WS" write notes/new.txt`
 - `edit` — edit a file by exact or fuzzy text match, line number or marker. Example: `atomwrite --workspace "$WS" edit src/b.rs --old beta --new gamma`
-- `delete` — delete files or trees with backup, or only print the plan with `--plan`. Example: `atomwrite --workspace "$WS" delete --plan tmp.txt`
+- `delete` — delete files or a whole tree with `--recursive`, or only print the plan with `--plan`; a tree delete reports `backups_kept`, `backup_bytes` and `dirs_left`. Example: `atomwrite --workspace "$WS" delete --plan tmp.txt`
 - `copy` — copy a file or tree with checksum verification. Example: `atomwrite --workspace "$WS" copy src/a.rs src/a_copy.rs`
 - `move` — move or rename a file atomically. Example: `atomwrite --workspace "$WS" move src/tmp.rs src/tmp2.rs`
-- `apply` — apply a patch (unified diff, SEARCH/REPLACE, full file) read from stdin. Example: `printf 'new body\n' | atomwrite --workspace "$WS" apply --format full notes.txt`
-- `search` — search file contents in parallel with the ripgrep engine. Example: `atomwrite --workspace "$WS" search alpha src/`
+- `apply` — apply a patch (unified diff, SEARCH/REPLACE, full file) read from stdin, matching whole lines, with `--all`, `--show` and `--no-syntax-check`. Example: `printf 'new body\n' | atomwrite --workspace "$WS" apply --format full notes.txt`
+- `search` — search file contents in parallel with the ripgrep engine, with `--format text` for a shell pipeline and exit 89 when every candidate was binary. Example: `atomwrite --workspace "$WS" search alpha src/`
 - `replace` — replace text across files with atomic writes and fuzzy matching. Example: `atomwrite --workspace "$WS" replace --dry-run alpha omega src/`
 - `transform` — rewrite code by AST pattern (ast-grep). Example: `atomwrite --workspace "$WS" transform --dry-run -p '$E.unwrap()' -r '$E?' -l rust src/`
 - `hash` — print the BLAKE3 checksum of files. Example: `atomwrite --workspace "$WS" hash src/a.rs`
 - `count` — count lines and files by extension or by size. Example: `atomwrite --workspace "$WS" count --by-extension src/`
-- `diff` — compare two files (unified, stat or changes). Example: `atomwrite --workspace "$WS" diff src/a.rs src/b.rs --unified`
-- `list` — list a directory tree with metadata. Example: `atomwrite --workspace "$WS" list --long --depth 1 src/`
+- `diff` — compare two files (unified, stat or changes), with 1-based `line`, `old_line` and `new_line`. Example: `atomwrite --workspace "$WS" diff src/a.rs src/b.rs --unified`
+- `list` — list a directory tree with metadata, in NDJSON or `--format text`. Example: `atomwrite --workspace "$WS" list --long --depth 1 src/`
 - `extract` — pick fields from NDJSON read on stdin. Example: `printf '{"a":1}\n' | atomwrite extract --field a`
 - `extract-artifact` — bounded signal from PDF, OOXML and image headers, never raw bytes. Example: `atomwrite --workspace "$WS" extract-artifact img.png`
 - `scope` — grammatical scoping: act on comments, strings, functions and other code categories. Example: `atomwrite --workspace "$WS" scope src/ --language rust --query comments --delete --dry-run`
@@ -83,7 +118,7 @@
 - `rollback` — restore a file from a previous backup (run `backup` first). Example: `atomwrite --workspace "$WS" rollback src/a.rs --latest --verify`
 - `batch` — run NDJSON operations from stdin, optionally as one transaction. Example: `printf '{"op":"write","target":"batch.txt","content":"x"}\n' | atomwrite --workspace "$WS" batch --transaction`
 - `edit-loop` — apply N old/new pairs in one write, all or nothing (run the `edit` example first). Example: `printf '[{"old":"gamma","new":"delta"}]\n' | atomwrite --workspace "$WS" edit-loop src/b.rs`
-- `prune-backups` — remove old `.bak` files by age or count. Example: `atomwrite --workspace "$WS" prune-backups --max-age-secs 86400 --dry-run .`
+- `prune-backups` — remove old `.bak` files by age or count. Example: `atomwrite --workspace "$WS" prune-backups -r --max-age-secs 86400 --dry-run .`
 - `wal-stats` — show the state of the WAL journals (read only). Example: `atomwrite --workspace "$WS" wal-stats`
 - `wal-heal` — remove orphan terminal WAL journals older than a threshold, and also remove a `Started` journal whose owning PID is gone, reported as `dead_owner_removed`. Example: `atomwrite --workspace "$WS" wal-heal --threshold-secs 3600 .`
 - `verify` — check a file against an expected BLAKE3 hash (exit 0 on match, 81 on mismatch). Example: `atomwrite --workspace "$WS" verify src/a.rs "$(atomwrite --workspace "$WS" hash src/a.rs | jaq -r .checksum)"`
@@ -92,7 +127,7 @@
 - `del` — remove a key from a TOML or JSON file. Example: `atomwrite --workspace "$WS" del config.toml features.x`
 - `case` — rename identifiers across files and directories between case styles, and a directory is expanded through the walker. Example: `atomwrite --workspace "$WS" case --subvert user_id UserId --to pascal --dry-run src/c.rs`
 - `query` — walk the tree-sitter AST and emit nodes. Example: `atomwrite --workspace "$WS" query --kinds src/a.rs`
-- `outline` — emit the high-level structure of a source file (a file, never a directory). Example: `atomwrite --workspace "$WS" outline src/a.rs`
+- `outline` — emit the high-level structure of a source file (a file, never a directory), in NDJSON or `--format tsv`. Example: `atomwrite --workspace "$WS" outline src/a.rs`
 - `semantic-merge` — line-based three-way merge with conflict markers, not AST. Example: `atomwrite --workspace "$WS" semantic-merge --base base.txt --ours ours.txt --theirs theirs.txt --output merged.txt --fail-on-conflict`
 - `sparse` — budgeted list, read and outline for large trees. Example: `atomwrite --workspace "$WS" sparse list src/ --max-files 10 --max-bytes 1048576`
 - `recipe` — list and run built-in multi-step recipes. Example: `atomwrite --workspace "$WS" recipe run --name search-replace-verify --pattern alpha --replacement omega --path src --dry-run`
@@ -104,8 +139,8 @@
 - `doctor` — host readiness diagnostics. Example: `atomwrite doctor`
 - `scratch` — create the staging directory `.atomwrite/scratch` inside the workspace jail (the path is required). Example: `atomwrite --workspace "$WS" scratch init .atomwrite/scratch`
 - `locale` — show, set or clear the UI locale. Example: `atomwrite locale`
-- `commands` — print the full command tree as JSON. Example: `atomwrite commands --include-globals`
-- `config` — read and write persistent tuning keys (37 keys, scopes global and workspace). Example: `atomwrite --workspace "$WS" config get fuzzy.threshold`
+- `commands` — print the full command tree as JSON, or short with `--brief`. Example: `atomwrite commands --include-globals`
+- `config` — read and write persistent tuning keys (43 keys, scopes global and workspace). Example: `atomwrite --workspace "$WS" config get fuzzy.threshold`
 
 
 ## Claude Code

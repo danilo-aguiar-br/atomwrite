@@ -33,13 +33,13 @@ cargo install atomwrite
 
 ### Builds enxuto e completo
 - Features: `core`, `ast`, `lang-rust`, `lang-ts`, `lang-py`, `lang-go`, `lang-full`, `watch`, `full` (default = `core` + `ast` + `lang-rust` + `lang-ts` + `lang-py`; `watch` é opt-in; `semantic-search` é sempre compilado)
-- Build enxuto (somente core, 10.908.040 bytes medidos em 2026-10-31, DERIVADO: 10908040 / 1048576 = 10,40 MiB, size-gate local até 15 MiB): `cargo install --path . --locked --force --no-default-features --features core`
-- Build completo/default (linguagens AST, 54,4 MiB medidos no build release da v0.1.37 desta árvore): `cargo install --path . --locked --force`
+- Build enxuto (somente core, 26.560.352 bytes medidos em 2026-11-04, DERIVADO: 26560352 / 1048576 = 25,33 MiB, acima do size-gate local de 15 MiB): `cargo install --path . --locked --force --no-default-features --features core`
+- Build completo/default (linguagens AST, 71.084.440 bytes medidos em 2026-11-04, DERIVADO: 71084440 / 1048576 = 67,79 MiB): `cargo install --path . --locked --force`
 - Build com `watch`: `cargo install --path . --locked --force --features watch` (o binário padrão sai 78 em `watch` com uma dica de rebuild)
 - Build enxuto: `outline` e `sparse outline` saem 78 com dica de rebuild (medido), e `query`, `scope`, `transform` e `write --syntax-check` têm stubs para o mesmo caso (lido em `src/commands/*_stub.rs` e `src/syntax_check_stub.rs`, o build enxuto não foi executado para confirmar)
 - `cargo xtask check-features` confere os conjuntos `core` e `core,watch`
 - As features `i18n-cjk`, `i18n-rtl`, `i18n-europe`, `i18n-full` e `slow-tests` são placeholders ou chaves de teste: não as ative
-- A meta de 5-8 MB do plano do produto vale para o perfil core, não para o build default com AST: o core medido (10,40 MiB) fica acima dessa meta e abaixo do gate de 15 MiB
+- A meta de 5-8 MB do plano do produto vale para o perfil core, não para o build default com AST: o core medido (25,33 MiB) fica acima dessa meta e acima do gate de 15 MiB
 
 ### Do código-fonte
 ```bash
@@ -98,6 +98,32 @@ atomwrite --workspace . wal-heal . --threshold-secs 3600
 ```
 
 
+## Novidades na v0.1.38 (2026-11-04)
+- `read --format raw` para em 24.000 bytes e imprime uma linha no stderr com o próximo `--lines`, porque a ferramenta Bash já cortava o fluxo em 30.000 caracteres sem avisar
+- `--all` remove o teto, e o caminho raw lê em streaming com `BufReader` em vez de manter o arquivo na memória
+- `--number` imprime `N:texto`, `--lines` é repetível com `--range` como apelido, e várias janelas e vários arquivos chegam numa chamada só com cabeçalhos `==> caminho <==`
+- `--symbol NOME` e `--line N --enclosing` selecionam pela árvore sintática, e `--no-comments` remove comentário e linha vazia antes de contar a janela
+- `search --format text` escreve um `caminho:linha:coluna:texto` por achado sob um teto de bytes, e uma árvore em que tudo era binário sai `89 ALL_SKIPPED_BINARY` em vez de `NO_MATCHES`
+- `list --format text` escreve um caminho por linha, e `total_bytes` conta somente arquivo
+- `outline --format tsv` escreve `linha<TAB>tipo<TAB>nome` com o caminho uma vez, lista títulos e seções setext de Markdown, parseia bytes crus e publica `parse_errors` com `first_error_line`
+- O `outline` lê um título Markdown como uma `section` que vai até o fim da própria seção, e o `read --symbol Part` devolve essa seção inteira com as subseções
+- O `apply` casa linha inteira, recusa SEARCH repetido com exit `65 MATCH_AMBIGUOUS` a menos que `--all` seja dado, e recusa bloco que perdeu `=======` ou `>>>>>>> REPLACE` nomeando o índice
+- `apply --show` devolve as linhas alteradas com o número delas a partir de 1, o que remove a releitura que confirmava a troca
+- O `apply` roda a checagem de sintaxe antes e depois da troca e recusa só quando a contagem de erros de parse sobe, com `--no-syntax-check` como saída
+- O `apply --format unified` aceita `@@ ... @@` e um `@@` sozinho, então um trecho sem números casa por contexto e mais de um casamento é recusado com a linha de cada um
+- O `diff` publica `line` a partir de 1 e separa `old_line` de `new_line`, e `--select` vale também no resumo de terminal
+- O `delete` publica `backups_kept`, `backup_bytes` e `dirs_left` quando existe backup ou sobra
+- O envelope de falha carrega `ok`, `code` e `exit`, e o `error: true` saiu porque duplicava `ok: false` mais `code`, custava 13 bytes em toda falha (179 para 166 bytes no mesmo caminho) e nenhum consumidor decidia por ele sozinho
+- O lock mira o inode com `std::fs::File::try_lock`, e o `delete` toma o mesmo lock antes de calcular o hash e antes do unlink
+- O `delete -r <dir>` domina a árvore nomeada inteira, incluindo entradas ocultas, ignoradas, links, fifo, socket e dispositivo, e um link nunca é seguido
+- O `target_resolved` é sempre uma lista na ordem de invocação, porque um caminho pode conter a vírgula que antes unia vários alvos
+- O `read --format raw` de alvo único honra `--max-filesize` e sai 65 `FILE_TOO_LARGE` acima do teto
+- Um arquivo cuja assinatura de imagem está corrompida falha no `read` com exit 65 `INVALID_INPUT` em vez de devolver os bytes como texto
+- `output.profile = "lean"` tira os digests, as contagens de bytes e o tempo de um registro de mutação bem-sucedido, o que levou um `apply` de três linhas de 433 bytes para 196
+- O `config` lista 43 chaves, e o `atomwrite commands --brief` imprime uma linha por subcomando em 5.020 bytes contra 67.492 da árvore completa
+- Fixe agentes em `^0.1.38`. 47 subcomandos (SSOT)
+
+
 ## Expansão do read na v0.1.37 (2026-10-31)
 - O `read` aceita um ou mais caminhos: caminho explícito sai na ordem do argv, e operando com `*`, `?` ou `[` é padrão que o próprio binário expande contra um nível do diretório dele
 - A ordem do padrão é a do shell com `LC_ALL=C`, tirada dos bytes codificados de cada nome, então o mesmo código ordena nos três alvos, e só o Linux foi executado, enquanto macOS e Windows seguem não validados
@@ -115,7 +141,7 @@ atomwrite --workspace . wal-heal . --threshold-secs 3600
 ## Novidades na v0.1.37 (2026-10-31)
 - A avaliação de risco agora roda em todo verbo que grava: `edit`, `edit-loop`, `replace`, `case`, `transform` e `codemod` publicam `risk_assessment` quando o conteúdo casa um padrão de risco, exatamente como o `write` já fazia. As barreiras de tamanho continuam fora desses verbos de propósito, porque eles reescrevem uma região e um resultado menor é a operação funcionando
 - Gramática que esta máquina não consegue fornecer é exit 69 `GRAMMAR_UNAVAILABLE` com classe `precondition_failed`, e nunca 255 `INTERNAL_ERROR`. O `atomwrite doctor` publica o check novo `grammar_cache` com quantas das 23 gramáticas que os verbos de AST podem precisar já estão em cache
-- `write.content_risk_patterns` é acessível por `config get` e `config set` como valor de lista, então os padrões de risco são configuração XDG em vez de literal compilado (37 chaves)
+- `write.content_risk_patterns` é acessível por `config get` e `config set` como valor de lista, então os padrões de risco são configuração XDG em vez de literal compilado (43 chaves)
 - `log.file` e `log.rotation` passam a ser aceitos também no escopo workspace, e a seção `[log]` do `.atomwrite.toml` agora liga o destino de log em vez de ser validada e descartada
 - `batch --transaction` publica um veredito só: o evento `rollback` carrega `ok: false` com o `code` e o `exit` da falha que o causou, e a transação trava todos os alvos em ordem de caminho antes do snapshot
 - O `--version` não acrescenta mais `-dirty`, então um arquivo não rastreado não consegue mudar a string
@@ -123,7 +149,7 @@ atomwrite --workspace . wal-heal . --threshold-secs 3600
 
 ## Novidades na v0.1.37 (rascunho de 2026-10-15)
 - O histórico completo está no [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md), os passos de atualização estão em [docs/MIGRATION.pt-BR.md](docs/MIGRATION.pt-BR.md)
-- Verbo novo `config` (o 47º subcomando): `config path|list|get|set|unset|doctor` lê e grava 37 chaves persistentes de ajuste, veja [Configuração](#configuração)
+- Verbo novo `config` (o 47º subcomando): `config path|list|get|set|unset|doctor` lê e grava 43 chaves persistentes de ajuste, veja [Configuração](#configuração)
 - Verbo novo `extract-artifact`: sinal delimitado de cabeçalhos de PDF, OOXML e imagem, nunca os bytes brutos
 - Shape de stream global: `--sort-by`, `--dedupe`, `--aggregate`, `--join`, `--diff-against`, `--redact`, `--normalize-encoding`, `--truncate-content`, `--max-output-bytes`, veja [Flags Globais](#flags-globais)
 - O evento terminal de sucesso carrega `ok: true` (os eventos por item de um stream, como `entry` e `match`, não carregam), e uma execução com falha termina em exatamente um evento terminal com `ok: false`
@@ -151,6 +177,18 @@ atomwrite --workspace . wal-heal . --threshold-secs 3600
 - atomwrite resolve todos os quatro problemas com um único `cargo install`
 
 
+## Objetivos
+- Gastar menos tokens: um objeto NDJSON por chamada substitui o encadeamento de shell, e o `commands --brief` responde em 5.020 bytes onde a árvore completa custa 67.492
+- Reduzir o custo financeiro, porque a conta acompanha os tokens e as idas e voltas, e uma chamada substitui as várias chamadas de shell que uma tarefa de arquivo pede
+- Reduzir os erros com escrita atômica e checksum BLAKE3 em toda resposta, então um resultado velho ou parcial aparece em vez de ser presumido
+- Reduzir as alucinações com discriminador `type`, schema fechado por verbo e código de saída que nomeia a falha
+- Reduzir o tempo gasto em cada tarefa, porque a leitura, a busca e a escrita rodam num processo só em vez de numa corrente de ferramentas de shell
+- Reduzir a latência com execução local e sem rede no caminho do arquivo, medida nas medianas de 5,6 ms no `read` e 6,7 ms no `write` de arquivo pequeno
+- Multiplicar a velocidade das operações com `batch`, `edit-loop`, `replace`, `case`, `transform` e `codemod` resolvendo muitos arquivos numa chamada
+- Reduzir o lead time entre a solicitação e o resultado verificado, porque a resposta já traz o checksum, o `target_resolved` e o próximo passo
+- Tornar o agente mais rápido, mais veloz, mais eficaz e mais assertivo, já que o código de saída, o `code` e o `suggestion` dizem o que fazer sem tentar às cegas
+
+
 ## Superpoderes
 ### Escritas Atômicas
 - Usa tempfile + fsync + rename + fsync do diretório em cada escrita
@@ -163,7 +201,7 @@ atomwrite --workspace . wal-heal . --threshold-secs 3600
 - stdout é SEMPRE JSON estruturado, um objeto por linha
 - Cada objeto carrega um campo discriminador `"type"`
 - Agentes parseiam saída sem regex ou scraping frágil de texto
-- Erros também emitem JSON com `error: true` e `ok: false` no stdout
+- Erros também emitem JSON no stdout com `ok: false` mais `code`, `exit`, `message` e `suggestion`
 
 ### Checksums BLAKE3
 - Cada resposta de `read` e `write` inclui um hash BLAKE3
@@ -214,6 +252,7 @@ atomwrite --workspace . wal-heal . --threshold-secs 3600
 
 ## Flags Globais
 - 33 flags são aceitas antes ou depois do subcomando (fonte: `atomwrite commands --include-globals`); um `--json` oculto também é aceito e ignorado, porque a saída é sempre NDJSON
+- A ajuda curta `-h` de um subcomando lista só as flags daquele verbo, e a linha de rodapé aponta `atomwrite --help` para as 33 globais
 - Aliases: `--max-concurrency` para `-j` / `--threads`, `--timeout` para `--timeout-secs`, `--fields` para `--select`
 - Flags com nome igual a um global mas locais a um comando (por exemplo `search --max-filesize`, 10 MiB por padrão) aparecem em `atomwrite <comando> --help`
 
@@ -272,19 +311,19 @@ printf '{"path":"src/lib.rs","owner":"alice"}\n' | atomwrite --workspace . --joi
 ## Comandos (47 no total — SSOT)
 
 ### I/O Central
-- `read` — ler arquivos com metadados, checksum, conteúdo opcional (`--format raw` ou `ndjson`, `--head`, `--tail`, `--lines`)
+- `read` — ler arquivos com metadados, checksum e corpo limitado: `--format raw` ou `ndjson`, `--head`, `--tail`, `--lines` e `--range` (repetível), `--number`, `--symbol NOME`, `--line N --enclosing`, `--no-comments`, `--all`, e `--pages`, `--max-tokens`, `--crop` ou `--ocr` para PDF ou imagem
 - `write` — criar ou sobrescrever arquivos atomicamente via stdin (alvos existentes grandes exigem `--ack-overwrite`)
 - `edit` — editar cirurgicamente por número de linha, marcador de texto ou match exato
 - `edit-loop` — aplicar N pares `old`/`new` do NDJSON stdin em uma escrita atômica
-- `delete` — deletar arquivos com backup opcional (`--plan` plan-only; `--confirm`/`--yes` rejeitados)
+- `delete` — deletar arquivos, copiando um só quando a chamada pede (`--backup` ou `[defaults].backup = true`; `--plan` plan-only; `--confirm`/`--yes` rejeitados)
 - `copy` — copiar arquivos com verificação de checksum
 - `move` — mover ou renomear arquivos atomicamente (fallback copy em EXDEV)
-- `apply` — aplicar patches do stdin (unified diff, search/replace, full, markdown)
+- `apply` — aplicar patches do stdin (unified diff, search/replace, full, markdown); o alvo é opcional, então uma chamada aplica em vários arquivos, `--show` devolve as linhas alteradas com o número delas e `--no-syntax-check` dispensa o parse antes e depois
 - `scratch` — criar diretório de staging do agente sob o workspace (nunca OS `/tmp`)
 - `verify` — verificar integridade do arquivo comparando checksum BLAKE3
 
 ### Buscar e substituir
-- `search` — buscar conteúdo de arquivos em paralelo (engine ripgrep)
+- `search` — buscar conteúdo de arquivos em paralelo (engine ripgrep); `--format text` imprime um `caminho:linha:coluna:texto` por achado sob teto de bytes, `-e`/`--regex` repete um padrão e `search.format` torna o formato texto o padrão
 - `replace` — substituir texto entre arquivos com escritas atômicas
 - `transform` — refatoração AST via ast-grep (28 linguagens)
 - `codemod` — campanha de codemod multi-regra (YAML rules, delega a transform)
@@ -294,9 +333,9 @@ printf '{"path":"src/lib.rs","owner":"alice"}\n' | atomwrite --workspace . --joi
 ### Inspeção
 - `hash` — calcular checksums BLAKE3
 - `stat` — alias de metadados de `read --stat` (tamanho, mode, checksum; sem corpo)
-- `count` — contar linhas, arquivos por extensão ou por tamanho
-- `diff` — comparar dois arquivos (unified, stat ou changes)
-- `list` — listar arquivos em uma árvore de diretório
+- `count` — contar linhas, matches ou arquivos por extensão
+- `diff` — comparar dois arquivos ou um arquivo contra o stdin (unified ou stat), publicando `line` a partir de 1 e separando `old_line` de `new_line`
+- `list` — listar a estrutura de arquivos do projeto com metadados (um registro NDJSON por entrada, ou um caminho por linha com `--format text`, onde `total_bytes` conta somente arquivo)
 - `sparse` — list/read/outline esparso com orçamento (limita arquivos e bytes para contexto do agente)
 - `extract` — extrair campos de entrada NDJSON via pipe (campos posicionais ou `--field` local; nunca `extract --select` local: o `--select` global só projeta chaves de saída)
 - `extract-artifact` — sinal delimitado de cabeçalhos de PDF, OOXML e imagem (nunca os bytes brutos do artefato)
@@ -305,8 +344,8 @@ printf '{"path":"src/lib.rs","owner":"alice"}\n' | atomwrite --workspace . --joi
 - `calc` — matemática e conversões de unidades
 - `doctor` — diagnosticar ambiente e dependências
 - `locale` — mostrar locale de UI resolvido / persistir preferência (XDG)
-- `commands` — emitir árvore completa de comandos como JSON para descoberta do agente
-- `config` — chaves persistentes de ajuste: `config path|list|get|set|unset|doctor`, 37 chaves, `--scope global|workspace` obrigatório em `set` e `unset` (e em `path`)
+- `commands` — emitir árvore completa de comandos como JSON para descoberta do agente, e `--brief` imprime uma linha por subcomando
+- `config` — chaves persistentes de ajuste: `config path|list|get|set|unset|doctor`, 43 chaves, `--scope global|workspace` obrigatório em `set` e `unset` (e em `path`)
 - `agent-surface` — manifesto da superfície de ferramentas do agente (integração por subprocesso, CLI com saída NDJSON)
 - `watch` — observar eventos de filesystem (exige build com `--features watch`; o binário padrão sai 78)
 - `completions` — gerar completions de shell (bash, zsh, fish, elvish, powershell)
@@ -326,7 +365,7 @@ printf '{"path":"src/lib.rs","owner":"alice"}\n' | atomwrite --workspace . --joi
 
 ### Ferramentas AST (via tree-sitter-language-pack)
 - `query <PATH> [--kinds|--query <KIND>|-Q <KIND>|--tree] [--positions]` — caminhar um AST tree-sitter e emitir nós como NDJSON
-- `outline <PATH> [--kind <KIND>] [--positions]` — extrair estrutura de alto nível (funções, classes, structs, enums, traits, módulos) como NDJSON; exige um arquivo, não um diretório
+- `outline <PATH> [--kind <KIND>] [--positions] [--format tsv]` — extrair estrutura de alto nível (funções, classes, structs, enums, traits, módulos, títulos Markdown) como NDJSON ou como `linha<TAB>tipo<TAB>nome`; exige arquivo, não diretório, e publica `parse_errors` com `first_error_line`
 - `write --syntax-check` — verificação de sintaxe real via tree-sitter, exit 88 com primeira linha, coluna, kind e mensagem de erro
 
 ### Limpeza de WAL
@@ -335,10 +374,15 @@ printf '{"path":"src/lib.rs","owner":"alice"}\n' | atomwrite --workspace . --joi
 
 ### Padrões comuns para cada subcomando
 ```bash
-# read
+# read (limitado por read.max_output_bytes; --all remove o teto)
 atomwrite --workspace . read src/main.rs
 atomwrite --workspace . read --head 20 src/main.rs
 atomwrite --workspace . read --format raw --lines 1:3 src/main.rs
+atomwrite --workspace . read src/main.rs --number --lines 1:20
+atomwrite --workspace . read src/main.rs --symbol main
+atomwrite --workspace . read src/main.rs --line 42 --enclosing
+atomwrite --workspace . read --format raw --lines 1:5 --lines 40:60 src/main.rs
+atomwrite --workspace . read src/main.rs --grep 'unimplemented' --no-comments
 
 # write
 echo "fn main() {}" | atomwrite --workspace . write src/main.rs
@@ -359,8 +403,10 @@ atomwrite --workspace . edit src/main.rs \
 # verify
 atomwrite --workspace . verify src/main.rs abc123def456
 
-# search
+# search (search.format = text torna o formato barato o padrão)
 atomwrite --workspace . search 'TODO' src/ --include '*.rs'
+atomwrite --workspace . search 'TODO' src/ --format text --limit 20
+atomwrite --workspace . search -e 'TODO' -e 'FIXME' src/ --format text
 
 # replace
 atomwrite --workspace . replace 'nome_antigo' 'nome_novo' src/ --include '*.rs'
@@ -386,6 +432,7 @@ atomwrite --workspace . copy src/template.rs src/new_module.rs
 
 # list
 atomwrite --workspace . list src/ --depth 2
+atomwrite --workspace . list src/ --format text --depth 2
 
 # extract: campos posicionais ou --field local; NUNCA extract --select local
 atomwrite --workspace . search 'TODO' src/ | atomwrite extract path line
@@ -422,8 +469,9 @@ atomwrite --workspace . rollback src/config.toml
 atomwrite --workspace . prune-backups --max-age-secs 86400 src/config.toml
 atomwrite --workspace . prune-backups --max-count 3 --dry-run src/config.toml
 
-# apply
+# apply: o alvo pode vir do próprio patch, então uma chamada aplica em vários arquivos
 echo "novo conteúdo" | atomwrite --workspace . apply src/file.txt --format full
+printf '<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n' | atomwrite --workspace . apply --show src/file.txt
 
 # set
 atomwrite --workspace . set Cargo.toml package.version 0.2.0
@@ -443,6 +491,7 @@ atomwrite --workspace . query src/main.rs -Q function_item --positions
 
 # outline
 atomwrite --workspace . outline src/app.py
+atomwrite --workspace . outline src/app.py --format tsv
 
 # wal-stats
 atomwrite --workspace . wal-stats
@@ -486,9 +535,10 @@ atomwrite locale
 atomwrite locale --set pt-BR
 atomwrite locale --clear
 
-# commands (árvore clap completa para descoberta do agente)
+# commands (árvore clap completa para descoberta do agente; --brief cabe em uma tela)
 atomwrite commands
 atomwrite commands --include-globals
+atomwrite commands --brief
 
 # completions
 atomwrite completions bash
@@ -501,6 +551,52 @@ atomwrite --workspace . config unset fuzzy.threshold --scope workspace
 ```
 - `codemod --rules` lê uma lista YAML de itens com `language`, `pattern`, `rewrite` e um `id` opcional; a forma estilo ast-grep com `rule:` e `fix:` sai 65
 - `prune-backups --dry-run` não recebe valor: omita a flag para aplicar a poda
+
+
+## Flags Locais Por Comando
+- Cada comando aceita as flags locais listadas aqui, além das 33 flags globais da seção de flags globais
+- `agent-surface`: `--format`
+- `apply`: `--strict-atomic`, `--format`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `--dry-run`, `--ack-overwrite`, `--allow-shrink`, `--show`, `--all`, `--no-syntax-check`
+- `backup`: `--output-dir`, `--retention`, `--dry-run`
+- `batch`: `--strict-atomic`, `--dry-run`, `--file`, `--transaction`, `--input-schema`, `--batch-size`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`
+- `calc`: `--stdin`
+- `case`: `--strict-atomic`, `-g/--include`, `--exclude`, `--subvert`, `--to`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `--preserve-timestamps`, `--dry-run`
+- `codemod`: `--strict-atomic`, `--rules`, `--dry-run`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`
+- `commands`: `--include-globals`, `--brief`
+- `completions`: `--install`
+- `copy`: `--strict-atomic`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `-f/--force`, `-r/--recursive`, `--preserve`, `--dry-run`, `--no-reflink`, `--preserve-xattr`
+- `count`: `--by-extension`, `--by-size`, `--top`, `-g/--include`, `--exclude`
+- `del`: `--strict-atomic`, `--dry-run`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `--preserve-timestamps`, `--force-missing`
+- `delete`: `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `-r/--recursive`, `-g/--include`, `--exclude`, `--older-than`, `--plan`, `--dry-run`, `--confirm`, `-y/--yes`
+- `diff`: `--unified`, `--stat`, `-C/--context`, `--algorithm`
+- `doctor`: `--strict`
+- `edit`: `--after-line`, `--before-line`, `--range`, `--delete-range`, `--after-match`, `--before-match`, `--between`, `--old`, `--new`, `--old-file`, `--new-file`, `--fuzzy`, `--multi`, `--expect-checksum`, `--line-ending`, `--dry-run`, `--preserve-timestamps`, `--partial`, `--fuzzy-threshold`, `--replace-all`, `--wal-policy`, `--strict-atomic`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `--allow-sequential-drift`
+- `edit-loop`: `--strict-atomic`, `--allow-sequential-drift`, `--partial`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `--syntax-check`, `--line-ending`
+- `extract`: `--field`, `-d/--delimiter`, `--stdin`
+- `extract-artifact`: `--max-sample-rows`, `--max-text-chars`
+- `hash`: `--verify`, `--stdin`, `-r/--recursive`, `--exclude`
+- `list`: `-d/--depth`, `-l/--long`, `--count-by-ext`, `--format`, `--all`, `-g/--include`, `--exclude`
+- `locale`: `--set`, `--clear`
+- `move`: `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `-f/--force`, `--dry-run`, `--preserve-hardlinks`
+- `outline`: `--language`, `--kind`, `--positions`, `--format`
+- `prune-backups`: `--max-age-secs`, `--max-count`, `-r/--recursive`, `--dry-run`
+- `query`: `--language`, `-Q/--query`, `--tree`, `--kinds`, `--positions`
+- `read`: `--lines`, `--all`, `--number`, `--no-comments`, `--symbol`, `--enclosing`, `--line`, `-C/--context`, `--head`, `--tail`, `--stat`, `--format`, `--bytes`, `--verify-checksum`, `--grep`, `--crop`, `--max-tokens`, `--force`, `--pages`, `--page`, `--dpi`, `--ocr`, `--high-res`
+- `regex`: `--stdin`, `-d/--digits`, `-w/--words`, `-s/--spaces`, `-r/--repetitions`, `-i/--case-insensitive`, `--no-anchors`
+- `replace`: `--strict-atomic`, `--regex`, `-w/--word`, `-F/--literal`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `-g/--include`, `--exclude`, `--preview`, `-n/--max-replacements`, `--expect-checksum`, `--dry-run`, `--preserve-case`, `--fuzzy`, `--fuzzy-threshold`, `--progress-every`, `--preserve-timestamps`
+- `rollback`: `--strict-atomic`, `--timestamp`, `--latest`, `--verify`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `--dry-run`
+- `scope`: `-l/--language`, `--query`, `--pattern`, `--delete`, `--action`, `--replace-with`, `-g/--include`, `--exclude`, `--dry-run`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `--strict-atomic`
+- `search`: `-e/--regex`, `-F/--fixed`, `-w/--word`, `-i/--case-insensitive`, `-S/--smart-case`, `-C/--context`, `-g/--include`, `--exclude`, `-c/--count`, `-l/--files`, `-m/--max-count`, `-U/--multiline`, `--invert`, `--sort`, `--include-fifo`, `--max-filesize`, `--max-columns`, `--binary`, `--no-begin-end`, `-P/--pcre2`, `--target`, `--offset`, `--limit`, `--format`
+- `semantic-merge`: `--strict-atomic`, `--base`, `--ours`, `--theirs`, `--output`, `--fail-on-conflict`, `--write-conflict-markers`, `--no-conflict-markers`, `--expect-checksum`, `--dry-run`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`
+- `semantic-search`: `--k`, `--min-score`, `--index-dir`, `--include-backups`
+- `set`: `--strict-atomic`, `--dry-run`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `--preserve-timestamps`
+- `stat`: `--lines`, `--all`, `--number`, `--no-comments`, `--symbol`, `--enclosing`, `--line`, `-C/--context`, `--head`, `--tail`, `--stat`, `--format`, `--bytes`, `--verify-checksum`, `--grep`, `--crop`, `--max-tokens`, `--force`, `--pages`, `--page`, `--dpi`, `--ocr`, `--high-res`
+- `transform`: `--strict-atomic`, `-p/--pattern`, `-r/--rewrite`, `-l/--language`, `-g/--include`, `--exclude`, `--dry-run`, `--rules`, `--inline-rules`, `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `--verify-parse`
+- `wal-heal`: `--threshold-secs`, `--max-duration-ms`, `--dry-run`
+- `wal-stats`: `--dry-run`
+- `watch`: `--debounce-ms`, `--max-events`, `--idle-exit-ms`, `--checksum`, `--gitignore`
+- `write`: `--backup`, `--no-backup`, `--keep-backup`, `--retention`, `--max-size`, `--append`, `--prepend`, `--syntax-check`, `--durability`, `--expect-checksum`, `--allow-shrink`, `--line-ending`, `--allow-empty-stdin`, `--no-checksum-when-empty`, `--wal-policy`, `--strict-atomic`, `--preserve-timestamps`, `--require-backup`, `--confirm`, `--require-large-ack`, `--ack-overwrite`, `--auto-rotate`, `--risk-threshold`, `--dry-run`
+- `config`, `get`, `recipe`, `scratch`, `sparse` e `verify` não têm flag local, e suas opções vêm do conjunto global e dos próprios subcomandos
 
 
 ## Configuração
@@ -539,7 +635,18 @@ atomwrite --workspace . config unset fuzzy.threshold --scope workspace
 | `extract.max_text_chars` | integer | 400 | 1 a 10000000 | global, workspace |
 | `extract.max_sheets` | integer | 32 | 1 a 10000 | global, workspace |
 | `extract.max_slides` | integer | 64 | 1 a 10000 | global, workspace |
+| `read.max_output_bytes` | integer | 24000 | 1 ou mais | global, workspace |
+| `read.number` | boolean | `false` | `true`, `false` | global, workspace |
+| `search.format` | string | `ndjson` | `ndjson`, `text` | global, workspace |
+| `output.profile` | string | `full` | `full`, `lean` | global, workspace |
+| `apply.max_ellipsis_lines` | integer | 200 | 1 ou mais | global, workspace |
+| `delete.backup` | boolean | ausente | `true`, `false` | global, workspace |
 
+- `read.max_output_bytes` é o teto que o `read` honra antes de imprimir o próximo `--lines` no stderr e marcar o evento NDJSON com `truncated: true` e a dica `next`, e `--all` é a forma de passar dele numa chamada
+- `read.number` torna o `--number` o padrão, e `search.format` torna o `--format text` o padrão, enquanto a flag explícita ainda vence
+- `output.profile = "lean"` tira os digests, as contagens de bytes e o tempo de um registro de mutação bem-sucedida, e `full` é o padrão
+- `apply.max_ellipsis_lines` limita o trecho que uma linha `...` pode casar dentro de um bloco SEARCH
+- `delete.backup` é ausente por padrão e herda `defaults.backup`, porque a reescrita copia e o delete não copia, a menos que a chamada peça
 - Um escopo fora da última coluna sai 65 (por exemplo `config set storage.home /srv --scope workspace`)
 - Esses campos são chaves do `config` como qualquer linha acima, e cada um responde a `config get`: `defaults.backup`, `defaults.retention`, `defaults.line_ending`, `defaults.max_filesize`, `write.shrink_block_percent`, `write.auto_rotate_max_age_secs`, `write.content_risk_patterns`, `watch.idle_exit_ms`, `watch.debounce_ms`, `search.context`, `search.smart_case`, `search.max_filesize` e `search.max_columns`; uma seção desconhecida no `.atomwrite.toml` faz o `read` sair 78 (medido)
 - Arquivos no Linux: config global `$XDG_CONFIG_HOME/atomwrite/config.toml`, locale salvo `$XDG_CONFIG_HOME/atomwrite/locale`, log `$XDG_STATE_HOME/atomwrite/logs/atomwrite.<data>.jsonl` (só com `log.file = true`, arquivo modo 0600, diretório 0700), parsers `$XDG_CACHE_HOME/tree-sitter-language-pack/v1.22.1/`
@@ -594,6 +701,7 @@ atomwrite --workspace . config set fuzzy.max_content_bytes 1000000 --scope globa
 - `73` CROSS_DEVICE: rename cross-device (limite de filesystem)
 - `74` IO_ERROR: erro de I/O
 - `78` CONFIG_INVALID: configuração inválida, ou verbo que precisa de uma feature ausente neste build (slim)
+- `79` SYMLINK_BLOCKED: symlink recusado pela jaula; use `--follow-symlinks` para resolver e conferir o alvo contra o workspace
 - `80` TRANSACTION_ROLLBACK_FAILED: rollback da transação do batch falhou (backups mantidos)
 - `81` CHECKSUM_VERIFY_FAILED: verificação de checksum falhou
 - `82` STATE_DRIFT: state drift (mismatch de checksum, lock otimista falhou)
@@ -603,12 +711,12 @@ atomwrite --workspace . config set fuzzy.max_content_bytes 1000000 --scope globa
 - `86` DEVICE_FILE: arquivo de dispositivo detectado (bloco ou caractere)
 - `87` EDIT_LOOP_PARTIAL: `edit-loop --partial` gravou os pares que casaram e alguns pares falharam
 - `88` SYNTAX_ERROR_DETECTED: erro de sintaxe detectado (`--syntax-check` falhou)
+- `89` ALL_SKIPPED_BINARY: todos os arquivos visitados eram binários e foram pulados, então nada foi buscado (`search`; use --binary para buscar neles)
 - `91` EXDEV_FALLBACK_DISABLED: fallback EXDEV desabilitado (fallback de cópia cross-device não é permitido)
 - `92` COPY_BACK_BLAKE3_FAILED: verificação BLAKE3 do copy-back falhou
 - `93` ORPHAN_JOURNAL: journal órfão detectado
 - `124` TIMEOUT: prazo de `--timeout-secs` global excedido (default 120; passe `0` para desligar)
 - `126` WORKSPACE_JAIL: violação do jail do workspace (caminho escapa do workspace)
-- `127` SYMLINK_BLOCKED: symlink bloqueado (alvo fora do workspace)
 - `128` IMMUTABLE_FILE: arquivo imutável (não pode modificar)
 - `129` SIGHUP: terminal desligado (SIGHUP)
 - `130` CANCELLED: execução cancelada antes de terminar (o status segue a causa)
@@ -636,11 +744,11 @@ atomwrite --workspace . config set fuzzy.max_content_bytes 1000000 --scope globa
 
 
 ## Tratamento de Erro
-- Todos os erros emitem um objeto JSON no stdout com `error: true` e `ok: false`
+- Todos os erros emitem um objeto JSON no stdout com `ok: false` mais `code`, `exit`, `message` e `suggestion`
 - Campos de erro: `code`, `exit`, `message`, `path`, `error_class`, `retryable`, `suggestion`, `workspace`
 - Todo resumo que publica `files_failed` acrescenta `partial: true` e `errors[]` ao lado (cada entrada tem `path`, `code` e `message`, `path` é `<walk>` quando a varredura falhou sem nomear um arquivo, no máximo 50), e isso cobre `search`, `transform`, `replace`, `scope`, `count`, `list`, `sparse`, `semantic-search` e `case`
 - Classes de erro: `permanent`, `transient`, `conflict`, `precondition_failed`
-- 35 variantes de erro em `src/error/variants.inc.rs`
+- 38 variantes de erro em `src/error/variants.inc.rs`, contadas com `rg -c '#\[error' src/error/variants.inc.rs`
 - Erros transient e conflict definem `retryable: true`
 - O campo `suggestion` fornece orientação de recuperação acionável para agentes, no locale ativo (`suggestion_lang`)
 - Veja `docs/schemas/error-output.schema.json` para o contrato completo
@@ -658,7 +766,8 @@ atomwrite --workspace . config set fuzzy.max_content_bytes 1000000 --scope globa
 ## Limites Conhecidos
 - O `replace --expect-checksum` compara o checksum sob o lock, então um escritor que entra entre a checagem e a escrita é detectado como exit 82 `STATE_DRIFT`; os verbos que leem, mudam e regravam (`edit`, `edit-loop`, `replace`, `set`, `del`, `config set`, `apply`, `write --append`) serializam sob o lock
 - Um nome de alvo grande o bastante para passar o sidecar de 255 bytes recebe um digest BLAKE3 curto como nome do sidecar, então um alvo de 240 bytes trava em vez de falhar com `ENAMETOOLONG`; um alvo de 244 bytes foi provado com `replace`
-- O diretório do alvo precisa permitir a criação desse sidecar de lock: gravar num arquivo existente dentro de um diretório somente leitura sai 13 mesmo com o arquivo gravável
+- O lock é tomado no inode do próprio alvo, então um arquivo do usuário dentro de um diretório somente leitura é gravado no lugar em vez de recusado com exit 13
+- O sidecar `.<alvo>.atomwrite.lock` é melhor esforço e a falha dele não aborta mais a escrita, porque uma versão antiga que segura só esse arquivo ainda encontra o lock do inode
 - O teto de RAM da contagem automática de workers lê `MemAvailable` de `/proc/meminfo` só no Linux e ignora limites de contêiner (cgroup)
 - `--limit` é teto de trabalho: a lista de alvos é cortada antes da ação e a varredura sai no registro que atinge o teto, então uma árvore enorme não é lida até o fim; o `walker_stopped_early` reporta a saída do próprio caminhante, então uma árvore pequena o bastante para o walk paralelo terminar de despachar antes reporta `false` e o `files_visited` é a contagem honesta
 - Sem `--sort-by`, a ordem dos resultados do `search` varia de uma execução para outra porque os walkers rodam em paralelo
@@ -672,7 +781,7 @@ atomwrite --workspace . config set fuzzy.max_content_bytes 1000000 --scope globa
 ## API da Biblioteca
 - A interface suportada do atomwrite é o CLI e seu contrato NDJSON; o crate também publica um alvo de biblioteca Rust que não é coberto por essa promessa
 - A API Rust pública da v0.1.37 mudou em relação à 0.1.36 publicada de formas que o SemVer trata como quebra: o `cargo semver-checks` 0.50.0 reportou 10 verificações major reprovadas (removidos `locale::Idioma` e `locale::{negotiate_to_idioma,resolved_idioma}`, removido `LocaleSource::EnvVar`, removido `signal::reset_sigpipe`, quatro constantes de lock removidas, `LockGuard` deixou de ser `Send` e `Sync`, variantes novas em `Commands` e campos públicos novos em structs sem `#[non_exhaustive]`, e `watch` deixou de ser feature padrão)
-- Fixe o `atomwrite` como dependência de biblioteca em uma versão exata (`=0.1.37`) e leia o [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md) antes de cada atualização
+- Fixe o `atomwrite` como dependência de biblioteca em uma versão exata (`=0.1.38`) e leia o [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md) antes de cada atualização
 
 
 ## FAQ de Troubleshooting
@@ -756,7 +865,7 @@ atomwrite --workspace . config set fuzzy.max_content_bytes 1000000 --scope globa
 
 ## Arquitetura
 - Veja [ARCHITECTURE.pt-BR.md](ARCHITECTURE.pt-BR.md) para mapa de módulos, fluxo de dados e decisões de design
-- Veja [docs/decisions/](docs/decisions/README.md) para o índice de 60 ADRs (0019 a 0078; mais 3 ficam em `docs/adr/`)
+- Veja [docs/decisions/](docs/decisions/README.md) para o índice de 77 ADRs (0019 a 0095; mais 3 ficam em `docs/adr/`)
 - A verificação é rodar o programa, e não uma suíte de testes: toda afirmação deste README tem por trás uma invocação real do binário, e o [docs/TESTING.pt-BR.md](docs/TESTING.pt-BR.md) descreve o arranjo dos casos que o mantenedor escolhe manter
 - Veja [docs/schemas/](docs/schemas/README.md) para os contratos de JSON Schema da saída NDJSON, onde 54 arquivos descrevem os 55 nomes que `atomwrite --print-schema` lista
 

@@ -18,11 +18,13 @@ fn search_file_names(
 ) -> Result<bool> {
     use crate::cli_args::SearchTarget;
     if matches!(args.target, SearchTarget::Files | SearchTarget::Both) {
-        let pat = if args.case_insensitive || args.smart_case {
-            args.pattern.to_ascii_lowercase()
-        } else {
-            args.pattern.clone()
-        };
+        // The name search matches the union of every pattern, the same set the
+        // content search compiles, lowercased once when casefold applies.
+        let casefold = args.case_insensitive || args.smart_case;
+        let patterns: Vec<String> = search_patterns(args)
+            .into_iter()
+            .map(|pat| if casefold { pat.to_ascii_lowercase() } else { pat })
+            .collect();
         // WalkParallel collect + parallel name filter; sort for stable NDJSON.
         let walker = build_walker(args, canonical_paths, global)?;
         // A subtree the walk could not read must reach the summary: the answer
@@ -33,7 +35,6 @@ fn search_file_names(
             &walker,
             Some(Arc::clone(&failures)),
         );
-        let casefold = args.case_insensitive || args.smart_case;
         let mut matches: Vec<(String, String)> =
             if crate::concurrency::should_parallelize(files.len()) {
                 use rayon::prelude::*;
@@ -52,7 +53,7 @@ fn search_file_names(
                         } else {
                             name.clone()
                         };
-                        if hay.contains(&pat) {
+                        if patterns.iter().any(|pat| hay.contains(pat)) {
                             Some((path.display().to_string(), name))
                         } else {
                             None
@@ -72,7 +73,7 @@ fn search_file_names(
                         } else {
                             name.clone()
                         };
-                        if hay.contains(&pat) {
+                        if patterns.iter().any(|pat| hay.contains(pat)) {
                             Some((path.display().to_string(), name))
                         } else {
                             None
@@ -147,7 +148,7 @@ fn search_file_names(
                 failures,
                 missing_roots.len() as u64,
                 true,
-                args.format == crate::cli::SearchFormat::Text,
+                args.format == Some(crate::cli::SearchFormat::Text),
             )?;
             return Ok(true);
         }

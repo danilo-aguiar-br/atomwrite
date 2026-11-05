@@ -20,7 +20,7 @@ fn apply(patch: &str, extra: &[&str]) -> (Option<i32>, Vec<Value>, String) {
     let dir = tempfile::tempdir().expect("tempdir");
     let file = common::create_test_file(dir.path(), "a.txt", ORIGINAL);
     let output = common::atomwrite()
-        .args(["--workspace", dir.path().to_str().unwrap(), "apply"])
+        .args(["-v", "--workspace", dir.path().to_str().unwrap(), "apply"])
         .args(extra)
         .arg("--no-backup")
         .arg(&file)

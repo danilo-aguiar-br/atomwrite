@@ -97,6 +97,18 @@ pub struct ArtifactOutput {
     /// `width * height / 1e6` (image) — the size figure a human reasons about.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub megapixels: Option<f64>,
+    /// Width after the standard tier resizes the picture, when it has to.
+    ///
+    /// The header says what the file holds; this says what a vision call
+    /// would actually receive, which is the size the model is billed for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_final: Option<u64>,
+    /// Height after the standard tier resizes the picture.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height_final: Option<u64>,
+    /// Visual tokens the delivered size costs, by the 28-pixel patch rule.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visual_tokens: Option<u64>,
     /// Paragraph count (word-processing document).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paragraphs: Option<u64>,
@@ -245,6 +257,9 @@ pub(crate) fn extract_signal(
         width: None,
         height: None,
         megapixels: None,
+        width_final: None,
+        height_final: None,
+        visual_tokens: None,
         paragraphs: None,
         text_chars: None,
         text_excerpt: None,
@@ -255,7 +270,7 @@ pub(crate) fn extract_signal(
     };
 
     match detect_container(&head) {
-        Some(Container::Pdf) => extract_pdf(path, max_part, &mut output)?,
+        Some(Container::Pdf) => extract_pdf(path, max_text_chars, max_part, &mut output)?,
         Some(Container::Zip) => {
             extract_office(path, max_sample_rows, max_text_chars, max_part, &mut output)?;
         }

@@ -3,6 +3,7 @@
 ## Status
 - Aceita (2026-10-28)
 - Emenda a ADR-0019 na versão do pack (1.8.1 para 1.22.1), na contagem de gramáticas (305 para 372) e no caminho do cache (`v1.8.1` para `v1.22.1`), então os números 1.8 daquele registro ficam como história datada
+- Emenda a ADR-0057 na MSRV, que sobe de 1.89 para 1.90, porque `ast-grep-core 0.51` e `tree-sitter 0.27` declaram esse piso
 
 ## Contexto
 - O `cargo audit --deny warnings` reportou 4 vulnerabilidades e 10 avisos de unsound contra `zstd 0.13.3`, `zstd-safe 7.2.4` e `zstd-sys 2.0.16`, e o `cargo deny check` reprovava o portão `advisories` com o mesmo conjunto.

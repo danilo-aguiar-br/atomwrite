@@ -63,22 +63,22 @@ pub fn cmd_prune_backups(
 
     // Phase 1 — per-target retention (policy is per-file) but readdir fans out
     // across independent targets, then flatten for the unlink stage.
-    let max_age_secs = args.max_age_secs;
-    let max_count = args.max_count;
+    let scope = PruneScope {
+        max_age_secs: args.max_age_secs,
+        max_count: args.max_count,
+        recursive: args.recursive,
+        global,
+    };
     type Phase1Item = Result<(Vec<PathBuf>, Option<PruneBackupEntry>), anyhow::Error>;
     let phase1: Vec<Phase1Item> = if should_parallelize(args.paths.len()) {
         args.paths
             .par_iter()
-            .map(|raw_path| {
-                collect_backups_for_target(raw_path, &workspace, max_age_secs, max_count)
-            })
+            .map(|raw_path| collect_backups_for_target(raw_path, &workspace, &scope))
             .collect()
     } else {
         args.paths
             .iter()
-            .map(|raw_path| {
-                collect_backups_for_target(raw_path, &workspace, max_age_secs, max_count)
-            })
+            .map(|raw_path| collect_backups_for_target(raw_path, &workspace, &scope))
             .collect()
     };
 
@@ -156,13 +156,27 @@ pub fn cmd_prune_backups(
     Ok(())
 }
 
+/// Retention policy plus the walk settings a directory argument needs.
+#[derive(Clone, Copy)]
+struct PruneScope<'a> {
+    max_age_secs: Option<u32>,
+    max_count: Option<u8>,
+    recursive: bool,
+    global: &'a GlobalArgs,
+}
+
 /// Per-target readdir + retention filter (safe to run in parallel across targets).
 fn collect_backups_for_target(
     raw_path: &std::path::Path,
     workspace: &std::path::Path,
-    max_age_secs: Option<u32>,
-    max_count: Option<u8>,
+    scope: &PruneScope<'_>,
 ) -> Result<(Vec<PathBuf>, Option<PruneBackupEntry>)> {
+    let PruneScope {
+        max_age_secs,
+        max_count,
+        recursive,
+        ..
+    } = *scope;
     let target = validate_path(raw_path, workspace)?;
 
     if !target.exists() {
@@ -177,20 +191,24 @@ fn collect_backups_for_target(
         ));
     }
 
-    // A directory is not a backup subject. Before this guard the verb derived a
-    // prefix from the directory name, found nothing and exited 0, which reads as
-    // "nothing to prune" for a request that named the wrong kind of path. A
-    // verb that deletes files fails closed instead (ETD: the subject is the file
-    // argv named, never a tree guessed from it).
+    // A directory is not a backup subject unless the caller says `-r`. Before
+    // this guard the verb derived a prefix from the directory name, found
+    // nothing and exited 0, which reads as "nothing to prune" for a request
+    // that named the wrong kind of path. A verb that deletes files fails closed
+    // instead (ETD: the subject is the file argv named, never a tree guessed
+    // from it), and the flag is the caller turning that tree into a subject.
     if target.is_dir() {
-        return Err(crate::error::AtomwriteError::InvalidInput {
-            reason: format!(
-                "{} is a directory [{}]; prune-backups takes the files whose backups are pruned",
-                target.display(),
-                crate::constants::PRUNE_DIRECTORY_REASON_MARKER
-            ),
+        if !recursive {
+            return Err(crate::error::AtomwriteError::InvalidInput {
+                reason: format!(
+                    "{} is a directory [{}]; prune-backups takes the files whose backups are pruned, or a tree with --recursive",
+                    target.display(),
+                    crate::constants::PRUNE_DIRECTORY_REASON_MARKER
+                ),
+            }
+            .into());
         }
-        .into());
+        return collect_backups_in_tree(&target, scope);
     }
 
     let parent = target.parent().unwrap_or_else(|| std::path::Path::new("."));
@@ -206,22 +224,17 @@ fn collect_backups_for_target(
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
-            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+            let named = p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
                 n.starts_with(&prefix) && crate::commands::is_backup_timestamp_name(n)
-            })
+            });
+            // `symlink_metadata` describes the entry itself: a directory that
+            // carries a backup name matches the name and is not a backup, and
+            // following a link here would offer to prune whatever it points at.
+            named && fs::symlink_metadata(p).is_ok_and(|meta| meta.file_type().is_file())
         })
         .collect();
 
-    if let Some(max_age_secs) = max_age_secs {
-        let now = SystemTime::now();
-        let cutoff = now - Duration::from_secs(u64::from(max_age_secs));
-        backups.retain(|p| {
-            p.metadata()
-                .and_then(|m| m.modified())
-                .map(|m| m < cutoff)
-                .unwrap_or(false)
-        });
-    }
+    retain_older_than(&mut backups, max_age_secs);
 
     if let Some(max_count) = max_count {
         if max_count > 0 {
@@ -232,6 +245,87 @@ fn collect_backups_for_target(
     }
 
     Ok((backups, None))
+}
+
+/// Every timestamped backup under `root`, aged and ranked per original file.
+///
+/// Only `--recursive` reaches here, and only names that carry a valid stamp
+/// become candidates: the stamp is the provenance that the file is a backup
+/// this tool wrote, and a directory that merely looks like one is never
+/// removed by a verb whose contract is "prune backups".
+fn collect_backups_in_tree(
+    root: &std::path::Path,
+    scope: &PruneScope<'_>,
+) -> Result<(Vec<PathBuf>, Option<PruneBackupEntry>)> {
+    let walker = crate::commands::build_scoped_walker(
+        std::slice::from_ref(&root.to_path_buf()),
+        scope.global,
+        &[],
+        &[],
+    )?;
+    let mut backups: Vec<PathBuf> = crate::concurrency::collect_mapped_parallel(&walker, |entry| {
+        if !entry.file_type().is_some_and(|kind| kind.is_file()) {
+            return None;
+        }
+        let name = entry.file_name().to_str()?;
+        crate::commands::backup_names::is_backup_path(std::path::Path::new(name))
+            .then(|| entry.path().to_path_buf())
+    });
+
+    retain_older_than(&mut backups, scope.max_age_secs);
+
+    // `--max-count` is per original file, exactly like the single-target path:
+    // a tree with ten targets and `--max-count 1` keeps one backup of each.
+    if let Some(max_count) = scope.max_count.filter(|count| *count > 0) {
+        let mut by_target: std::collections::BTreeMap<PathBuf, Vec<PathBuf>> =
+            std::collections::BTreeMap::new();
+        for backup in backups {
+            by_target
+                .entry(backup_target_of(&backup))
+                .or_default()
+                .push(backup);
+        }
+        backups = Vec::new();
+        for (_, mut group) in by_target {
+            group.sort();
+            let excess = group.len().saturating_sub(usize::from(max_count));
+            group.truncate(excess);
+            backups.extend(group);
+        }
+    }
+
+    Ok((backups, None))
+}
+
+/// The original file a backup name belongs to, used to group a tree by target.
+fn backup_target_of(backup: &std::path::Path) -> PathBuf {
+    let parent = backup.parent().unwrap_or_else(|| std::path::Path::new("."));
+    backup
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.rsplit_once(crate::constants::BACKUP_INFIX))
+        .map_or_else(|| backup.to_path_buf(), |(base, _)| parent.join(base))
+}
+
+/// Keep the backups strictly older than the age limit.
+///
+/// The age comes from the stamp in the name, because that is the moment this
+/// tool wrote the copy. The mtime is only the fallback: a reflink or a clone
+/// carries the source file's time, so a backup made a second ago from a year
+/// old file looked a year old and was pruned in the same breath.
+fn retain_older_than(backups: &mut Vec<PathBuf>, max_age_secs: Option<u32>) {
+    let Some(max_age_secs) = max_age_secs else {
+        return;
+    };
+    let cutoff = SystemTime::now() - Duration::from_secs(u64::from(max_age_secs));
+    backups.retain(|backup| {
+        let stamped = backup
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(crate::commands::backup_names::parse_backup_timestamp);
+        let created = stamped.or_else(|| backup.metadata().and_then(|m| m.modified()).ok());
+        created.is_some_and(|created| created < cutoff)
+    });
 }
 
 fn prune_one(

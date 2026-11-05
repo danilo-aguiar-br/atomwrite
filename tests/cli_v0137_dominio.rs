@@ -48,7 +48,7 @@ fn run_edit_loop(
 ) -> std::process::Output {
     let bin_path = assert_cmd::cargo::cargo_bin("atomwrite");
     let mut cmd = common::hermetic(Command::new(&bin_path));
-    cmd.args(["--workspace", ws.to_str().unwrap(), "edit-loop"])
+    cmd.args(["-v", "--workspace", ws.to_str().unwrap(), "edit-loop"])
         .arg(target)
         .args(extra)
         .stdin(Stdio::piped())
@@ -82,6 +82,7 @@ fn c1_merge_conflict_uses_own_exit_code_and_count() {
 
     let assert = bin()
         .args([
+            "-v",
             "--workspace",
             ws.to_str().unwrap(),
             "semantic-merge",
@@ -415,6 +416,7 @@ fn c4_identical_subvert_pair_is_rejected() {
 
     let assert = bin()
         .args([
+            "-v",
             "--workspace",
             ws.to_str().unwrap(),
             "case",
@@ -609,6 +611,7 @@ fn strict_atomic_refuses_the_in_place_write_of_a_hardlinked_target() {
 
     let assert = bin()
         .args([
+            "-v",
             "--workspace",
             ws.to_str().unwrap(),
             "write",

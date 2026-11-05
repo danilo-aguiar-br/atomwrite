@@ -216,7 +216,7 @@ fn map_run_error(err: &anyhow::Error, cli: &atomwrite::cli::Cli) -> ExitCode {
 /// Whether this invocation owns stdout as a byte or text channel.
 ///
 /// `search --format text` promises stdout carries result lines and nothing
-/// else, so the error envelope cannot land there: an `{"error":true,...}`
+/// else, so the error envelope cannot land there: an `{"ok":false,...}`
 /// record would be a document in place of the format the caller asked for.
 /// `read --format raw` makes the same promise over bytes, and a `cat`
 /// replacement whose error arrives as JSON on stdout is not a `cat`: the
@@ -224,7 +224,12 @@ fn map_run_error(err: &anyhow::Error, cli: &atomwrite::cli::Cli) -> ExitCode {
 /// should be. Both modes therefore report on stderr.
 fn is_byte_stream_mode(cli: &atomwrite::cli::Cli) -> bool {
     match &cli.command {
-        atomwrite::cli::Commands::Search(args) => args.format == atomwrite::cli::SearchFormat::Text,
+        atomwrite::cli::Commands::Search(args) => match args.format {
+            Some(format) => format == atomwrite::cli::SearchFormat::Text,
+            // The dispatch is what applies the config, so a failure raised
+            // before it still has to know that stdout was promised as text.
+            None => atomwrite::config::tuning().search_format_is_text,
+        },
         atomwrite::cli::Commands::Read(args) | atomwrite::cli::Commands::Stat(args) => {
             matches!(args.format, atomwrite::cli::OutputFormat::Raw)
         }
@@ -264,13 +269,30 @@ fn publish_error_envelope(
     let ctx = atomwrite::error::ErrorContext {
         workspace_provided: cli.global.workspace.is_some(),
         workspace: cli.global.workspace.clone(),
+        verb: match cli.command {
+            atomwrite::cli::Commands::Apply(_) => Some("apply"),
+            atomwrite::cli::Commands::Edit(_) => Some("edit"),
+            _ => None,
+        },
     };
     // `from_global_args`, not `from_cli`: the flat constructor only carries
     // select/filter/limit, so `--redact` arrived inert here and a credential
     // inside a path survived the error envelope while the same credential in
     // a success payload was redacted. One constructor for both channels is
     // what stops the two from drifting apart again.
-    let shape = atomwrite::output::OutputShape::from_global_args(&cli.global).unwrap_or_default();
+    // The constructor refuses a malformed `--filter`, `--join`, `--aggregate`
+    // or `--truncate-content` spec, and that refusal IS the failure this
+    // envelope reports. Falling back to a bare default there dropped both the
+    // `-v` the caller asked for and the redaction switch, so the two flags that
+    // cannot be malformed are carried over by hand.
+    let shape =
+        atomwrite::output::OutputShape::from_global_args(&cli.global).unwrap_or_else(|_| {
+            atomwrite::output::OutputShape {
+                verbose: cli.global.verbose > 0,
+                redact: cli.global.redact,
+                ..atomwrite::output::OutputShape::default()
+            }
+        });
     // A run that failed before writing its terminal record still names the
     // subject it did not reach, so the caller can tell which target is intact.
     let target = atomwrite::error_envelope_target(cli);
@@ -280,7 +302,7 @@ fn publish_error_envelope(
         None,
         &ctx,
         &shape,
-        target.as_ref().map(|(r, s)| (r.as_str(), s.as_str())),
+        target.as_ref().map(|(r, s)| (r, s.as_str())),
     )
     .and_then(|()| out.flush().map_err(anyhow::Error::from));
     ExitCode::from(atomwrite::best_effort::settle_error_report(

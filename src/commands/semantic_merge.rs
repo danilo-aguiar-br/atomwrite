@@ -84,6 +84,12 @@ pub(crate) struct SemanticMergeResult {
     checksum_theirs: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     checksum_output: Option<String>,
+    /// Write strategy the atomic engine used for the output file.
+    write_strategy: &'static str,
+    /// Why a requested backup was skipped, when the directory refused it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("type" = "string"))]
+    backup_skipped: Option<String>,
     conflicts: Vec<MergeConflict>,
     elapsed_ms: u64,
 }
@@ -187,6 +193,9 @@ pub fn cmd_semantic_merge(
             checksum_ours: co,
             checksum_theirs: ct,
             checksum_output: None,
+            // The conflict returns before the write, so no mechanism ran.
+            write_strategy: "none",
+            backup_skipped: None,
             conflicts,
             elapsed_ms: start.elapsed().as_millis() as u64,
         };
@@ -244,6 +253,8 @@ pub fn cmd_semantic_merge(
         checksum_ours: co,
         checksum_theirs: ct,
         checksum_output: Some(wr.checksum),
+        write_strategy: wr.write_strategy,
+        backup_skipped: wr.backup_skipped,
         conflicts,
         elapsed_ms: start.elapsed().as_millis() as u64,
     })?;

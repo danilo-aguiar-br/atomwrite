@@ -89,13 +89,16 @@ mod tests {
         assert_eq!(line["ok"], false);
         assert_eq!(line["code"], "NO_MATCHES");
         assert_eq!(line["exit"], 1);
-        assert_eq!(line["error_class"], "permanent");
-        assert_eq!(line["retryable"], false);
+        // The diagnostics stay off the default run and come back under `-v`.
+        assert!(line.get("error_class").is_none());
+        assert!(line.get("retryable").is_none());
+        assert!(line.get("message").is_none());
         assert_eq!(line["match_count"], 0);
-        assert!(line["suggestion_lang"].is_string());
+        // v0.1.38 — the language is stated only when it differs from English,
+        // so the default run carries no field and the caller saves the bytes.
         assert!(
-            line.get("error").is_none(),
-            "not a standalone error envelope"
+            line.get("suggestion_lang").is_none(),
+            "suggestion_lang must be absent when the language is en"
         );
         assert_eq!(buf.iter().filter(|b| **b == b'\n').count(), 1);
     }
@@ -188,7 +191,7 @@ mod tests {
             .map(|l| serde_json::from_slice(l).expect("NDJSON line"))
             .collect();
         assert!(lines[0].get("target_resolved").is_none());
-        assert_eq!(lines[1]["target_resolved"], "/ws/a.txt");
+        assert_eq!(lines[1]["target_resolved"], serde_json::json!(["/ws/a.txt"]));
         assert_eq!(lines[1]["target_source"], "argv");
         assert!(lines[2].get("target_resolved").is_none());
     }

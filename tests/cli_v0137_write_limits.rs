@@ -36,7 +36,7 @@ fn error_code(output: &std::process::Output) -> String {
     let events = common::parse_ndjson(&output.stdout);
     let err = events
         .iter()
-        .find(|e| e["error"] == true)
+        .find(|e| e["ok"] == false)
         .expect("error event");
     assert_eq!(err["exit"], 65, "{err}");
     err["code"].as_str().unwrap_or_default().to_string()
@@ -111,7 +111,7 @@ fn write_max_size_still_bounds_stdin() {
     let events = common::parse_ndjson(&output.stdout);
     let err = events
         .iter()
-        .find(|e| e["error"] == true)
+        .find(|e| e["ok"] == false)
         .expect("error event");
     assert_eq!(err["code"], "INVALID_INPUT", "{err}");
     assert!(!dir.path().join("out.txt").exists(), "nothing is written");

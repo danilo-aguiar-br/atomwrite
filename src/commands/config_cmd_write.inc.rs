@@ -116,7 +116,7 @@ fn commit(
     scope: ConfigScope,
     workspace: &Path,
     content: &str,
-) -> Result<(), AtomwriteError> {
+) -> Result<crate::atomic::WriteResult, AtomwriteError> {
     let parent = path.parent().ok_or_else(|| AtomwriteError::ConfigInvalid {
         reason: format!("config path {} has no parent directory", path.display()),
     })?;
@@ -132,7 +132,7 @@ fn commit(
         wal_policy: crate::wal::WalPolicy::Never,
         ..AtomicWriteOptions::default()
     };
-    atomic_write(path, content.as_bytes(), &opts, jail).map_err(|e| {
+    let result = atomic_write(path, content.as_bytes(), &opts, jail).map_err(|e| {
         e.downcast::<AtomwriteError>()
             .unwrap_or_else(|other| AtomwriteError::InternalError {
                 reason: other.to_string(),
@@ -141,11 +141,13 @@ fn commit(
     if scope == ConfigScope::Global {
         crate::storage::restrict_to_owner(path).map_err(|source| AtomwriteError::Io { source })?;
     }
-    Ok(())
+    Ok(result)
 }
 
 /// Persist the locale preference; returns the previous tag.
-fn set_locale(parsed: &Parsed) -> Result<Option<serde_json::Value>, AtomwriteError> {
+fn set_locale(
+    parsed: &Parsed,
+) -> Result<(Option<serde_json::Value>, Option<crate::atomic::WriteResult>), AtomwriteError> {
     let old = crate::locale::preference_path()
         .and_then(|path| crate::locale::read_persisted_preference(&path))
         .map(|tag| serde_json::json!(tag));
@@ -154,12 +156,13 @@ fn set_locale(parsed: &Parsed) -> Result<Option<serde_json::Value>, AtomwriteErr
             reason: format!("'{}' is not a supported locale", parsed.toml_text),
         }
     })?;
-    crate::locale::write_persisted_preference(language)
+    let (_, written) = crate::locale::write_persisted_preference(language)
         .map_err(|source| AtomwriteError::Io { source })?;
-    Ok(old)
+    Ok((old, Some(written)))
 }
 
-/// Write one TOML key; returns the value the scope file held before.
+/// Write one TOML key; returns the value the scope file held before and the
+/// write verdict when the file was actually rewritten.
 fn set_toml_key(
     spec: &KeySpec,
     parsed: &Parsed,
@@ -167,17 +170,19 @@ fn set_toml_key(
     scope: ConfigScope,
     workspace: &Path,
     warnings: &mut Vec<String>,
-) -> Result<Option<serde_json::Value>> {
+) -> Result<(Option<serde_json::Value>, Option<crate::atomic::WriteResult>)> {
     let _update_lock = lock_config_file(path)?;
     let original = read_existing(path)?;
     let old = lookup_in(&parse_syntax(path, &original)?, spec);
     let key_path = format!("{}.{}", spec.section, spec.field);
     let (updated, _, _) = crate::commands::set::toml_set(&original, &key_path, &parsed.toml_text)?;
     validate_edit(path, &original, &updated, spec, warnings)?;
-    if updated != original {
-        commit(path, scope, workspace, &updated)?;
-    }
-    Ok(old)
+    let written = if updated != original {
+        Some(commit(path, scope, workspace, &updated)?)
+    } else {
+        None
+    };
+    Ok((old, written))
 }
 
 fn set_action(args: &ConfigSetArgs, workspace: &Path) -> Result<ConfigOutput> {
@@ -207,7 +212,7 @@ fn set_action(args: &ConfigSetArgs, workspace: &Path) -> Result<ConfigOutput> {
         out.value = Some(parsed.json);
         return Ok(out);
     }
-    let old = match spec.store {
+    let (old, written) = match spec.store {
         Store::LocaleFile => set_locale(&parsed)?,
         Store::Toml | Store::Bootstrap => set_toml_key(
             spec,
@@ -218,6 +223,10 @@ fn set_action(args: &ConfigSetArgs, workspace: &Path) -> Result<ConfigOutput> {
             &mut out.warnings,
         )?,
     };
+    if let Some(wr) = written {
+        out.write_strategy = Some(wr.write_strategy);
+        out.backup_skipped = wr.backup_skipped;
+    }
     if spec.store == Store::Bootstrap {
         let relocated = crate::storage::config_dir_from(Some(PathBuf::from(&parsed.toml_text)))
             .map(|dir| dir.join(crate::constants::GLOBAL_CONFIG_FILE));
@@ -237,19 +246,20 @@ fn set_action(args: &ConfigSetArgs, workspace: &Path) -> Result<ConfigOutput> {
     Ok(out)
 }
 
-/// Remove one TOML key; returns the value the scope file held before.
+/// Remove one TOML key; returns the value the scope file held before and the
+/// write verdict when the file was actually rewritten.
 fn unset_toml_key(
     spec: &KeySpec,
     path: &Path,
     scope: ConfigScope,
     workspace: &Path,
     warnings: &mut Vec<String>,
-) -> Result<Option<serde_json::Value>> {
+) -> Result<(Option<serde_json::Value>, Option<crate::atomic::WriteResult>)> {
     let _update_lock = lock_config_file(path)?;
     let original = read_existing(path)?;
     let old = lookup_in(&parse_syntax(path, &original)?, spec);
     if old.is_none() {
-        return Ok(None);
+        return Ok((None, None));
     }
     let mut doc: toml_edit::DocumentMut =
         original
@@ -272,9 +282,9 @@ fn unset_toml_key(
         }
         let updated = doc.to_string();
         validate_edit(path, &original, &updated, spec, warnings)?;
-        commit(path, scope, workspace, &updated)?;
+        return Ok((old, Some(commit(path, scope, workspace, &updated)?)));
     }
-    Ok(old)
+    Ok((old, None))
 }
 
 fn unset_action(args: &ConfigUnsetArgs, workspace: &Path) -> Result<ConfigOutput> {
@@ -299,18 +309,27 @@ fn unset_action(args: &ConfigUnsetArgs, workspace: &Path) -> Result<ConfigOutput
         out.old_value = old;
         return Ok(out);
     }
-    let old = match spec.store {
+    let (old, written) = match spec.store {
         Store::LocaleFile => {
             let old =
                 crate::locale::read_persisted_preference(&path).map(|tag| serde_json::json!(tag));
             crate::locale::clear_persisted_preference()
                 .map_err(|source| AtomwriteError::Io { source })?;
-            old
+            if old.is_some() {
+                // Unlinking the preference file is not an atomic write, and
+                // `delete` publishes the same verdict for the same mechanism.
+                out.write_strategy = Some("none");
+            }
+            (old, None)
         }
         Store::Toml | Store::Bootstrap => {
             unset_toml_key(spec, &path, args.scope, workspace, &mut out.warnings)?
         }
     };
+    if let Some(wr) = written {
+        out.write_strategy = Some(wr.write_strategy);
+        out.backup_skipped = wr.backup_skipped;
+    }
     out.changed = Some(old.is_some());
     out.old_value = old;
     Ok(out)

@@ -1,121 +1,735 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ApplyResult",
-  "description": "NDJSON output for a patch apply operation.",
+  "title": "ApplyOutput",
+  "description": "Records of `atomwrite apply`: the plan of `--dry-run`, one `applied` record per patched file, and the rollback record when a failed run put the files it had already written back.",
   "type": "object",
-  "properties": {
-    "type": {
-      "description": "Event type discriminator.",
-      "type": "string"
-    },
-    "path": {
-      "description": "Path of the patched file.",
-      "type": "string"
-    },
-    "format_detected": {
-      "description": "Detected or specified patch format.",
-      "type": "string"
-    },
-    "hunks_applied": {
-      "description": "Number of hunks or blocks applied.",
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
-    },
-    "bytes_before": {
-      "description": "File size in bytes before patching.",
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
-    },
-    "bytes_after": {
-      "description": "File size in bytes after patching.",
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
-    },
-    "checksum_before": {
-      "description": "BLAKE3 checksum before patching.",
-      "type": "string"
-    },
-    "checksum_after": {
-      "description": "BLAKE3 checksum after patching.",
-      "type": "string"
-    },
-    "elapsed_ms": {
-      "description": "Operation duration in milliseconds.",
-      "type": "integer",
-      "format": "uint64",
-      "minimum": 0
-    },
-    "ok": {
-      "description": "Outcome of the run, stamped by the writer",
-      "type": "boolean"
-    },
-    "code": {
-      "description": "Machine error code, present when ok is false",
-      "type": "string"
-    },
-    "exit": {
-      "description": "Process exit status, present when ok is false",
-      "type": "integer",
-      "minimum": 0
-    },
-    "target_resolved": {
-      "description": "Absolute target the run resolved, or `-` for standard input; several subjects are joined with `,` in invocation order",
-      "type": "string"
-    },
-    "target_source": {
-      "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
-      "type": "string",
-      "enum": [
-        "argv",
-        "workspace",
-        "stdin"
+  "anyOf": [
+    {
+      "title": "ApplyPlan",
+      "description": "NDJSON dry-run plan for patch apply operations.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Event type discriminator.",
+          "type": "string"
+        },
+        "operation": {
+          "description": "Operation name.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Target file path.",
+          "type": "string"
+        },
+        "format_detected": {
+          "description": "Detected patch format.",
+          "type": "string"
+        },
+        "hunks": {
+          "description": "Number of hunks detected.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "operation",
+        "path",
+        "format_detected",
+        "hunks"
       ]
     },
-    "workspace_source": {
-      "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
-      "type": "string",
-      "enum": [
-        "argv",
-        "cwd"
+    {
+      "title": "ApplyResult",
+      "description": "NDJSON output for a patch apply operation.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Event type discriminator.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path of the patched file.",
+          "type": "string"
+        },
+        "format_detected": {
+          "description": "Detected or specified patch format.",
+          "type": "string"
+        },
+        "hunks_applied": {
+          "description": "Number of hunks or blocks applied.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "line": {
+          "description": "1-based line the first hunk landed on, when the format names one.\n\n`search-replace` and `full` report their own line, and `unified`\nreports the first hunk header. Omitted when the format cannot say.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "bytes_before": {
+          "description": "File size in bytes before patching.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "bytes_after": {
+          "description": "File size in bytes after patching.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "checksum_before": {
+          "description": "BLAKE3 checksum before patching.",
+          "type": "string"
+        },
+        "checksum_after": {
+          "description": "BLAKE3 checksum after patching.",
+          "type": "string"
+        },
+        "write_strategy": {
+          "description": "Write strategy the layer actually used: `rename`, `inplace` or\n`copyback`.\n\n`apply` rewrites a file that already exists, so a read-only directory\nmakes it write in place and keep the inode. The caller cannot tell the\ntwo apart from the checksums, and this field is where it learns which\none ran.",
+          "type": "string"
+        },
+        "backup_path": {
+          "description": "Backup file path, if a backup was created for this patch.\n\nThe patch rewrote the file through the atomic writer, which is where\nthe copy came from. A run without a backup omits the key, so a caller\nnever reads a `null` it cannot tell from a missing copy.",
+          "type": "string"
+        },
+        "backup_skipped": {
+          "description": "Why the requested backup was skipped, when the target directory\nrefused to accept a new entry. The patch itself succeeded.",
+          "type": "string"
+        },
+        "elapsed_ms": {
+          "description": "Operation duration in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "changed": {
+          "description": "Changed lines with their 1-based numbers (`--show`).\n\nPresent only when the caller asked: it is the evidence that removes the\nre-read the caller would otherwise pay to confirm the swap.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "format_detected",
+        "hunks_applied",
+        "bytes_before",
+        "bytes_after",
+        "checksum_before",
+        "checksum_after",
+        "write_strategy",
+        "elapsed_ms"
       ]
     },
-    "records_suppressed": {
-      "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
-      "type": "integer",
-      "minimum": 0
+    {
+      "title": "ApplyRollbackEvent",
+      "description": "NDJSON event emitted when a failed `apply` put the files it had written back.\n\nThe record is the terminal line of the run, published through the writer's\nfailure path, so it carries `ok: false` and the very `code` and `exit` of\nthe failure it reports. It names no single target: the run restored more\nthan one file, and `failed_paths` is where the caller reads the ones that\ndid not come back.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Event type discriminator.",
+          "type": "string"
+        },
+        "operation": {
+          "description": "Verb that performed the rollback.",
+          "type": "string"
+        },
+        "files_restored": {
+          "description": "Number of files whose content was restored to what it was before the run.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "elapsed_ms": {
+          "description": "Time the whole restoration took, in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "failed_paths": {
+          "description": "Files the rollback could not restore, in reverse commit order.\n\nOmitted when every file came back, so an empty list never reads as a\nsuccess the run cannot vouch for.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "backups_preserved": {
+          "description": "Copies the rollback left on disk, in commit order, the failed file last.\n\nA restoration rewrites content and never deletes a backup, so a run\nthat committed with `--keep-backup` still has those copies, and the\nfile whose write failed keeps the copy its own attempt had created.\nOmitted when the rollback left none.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ok": {
+          "description": "Outcome of the run, stamped by the writer",
+          "type": "boolean"
+        },
+        "code": {
+          "description": "Machine error code, present when ok is false",
+          "type": "string"
+        },
+        "exit": {
+          "description": "Process exit status, present when ok is false",
+          "type": "integer",
+          "minimum": 0
+        },
+        "target_resolved": {
+          "description": "Absolute targets the run resolved, in invocation order, and never a joined string, so a path holding `,` stays readable; a run with one target publishes a one-item array, so the shape never depends on the count",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "target_source": {
+          "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+          "type": "string",
+          "enum": [
+            "argv",
+            "workspace",
+            "stdin"
+          ]
+        },
+        "workspace_source": {
+          "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+          "type": "string",
+          "enum": [
+            "argv",
+            "cwd"
+          ]
+        },
+        "records_suppressed": {
+          "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_budget_dropped": {
+          "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_planned": {
+          "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+          "type": "boolean"
+        },
+        "truncated_records": {
+          "description": "Records the writer cut this run, counted once per record",
+          "type": "integer",
+          "minimum": 0
+        },
+        "line_end": {
+          "description": "1-based last line of that block, when the block spans more than a line.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "line": {
+          "description": "1-based line of the block that holds the syntax error (v0.1.38).\n\nPresent only for [`AtomwriteError::SyntaxError`]. Without it the caller\nhad to re-read the file to learn where the refusal points.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "pairs_applied": {
+          "description": "Pairs that were written to the target before the error (v0.1.37).\n\nAlways `0` for the all-or-nothing `EditPairFailed` abort (nothing is\nwritten) and `total - unmatched` for `edit-loop --partial`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "message": {
+          "description": "Human-readable error message.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Filesystem path related to the error, if applicable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error_class": {
+          "description": "Error class: transient, conflict, `precondition_failed`, or permanent.",
+          "type": "string"
+        },
+        "retryable": {
+          "description": "Whether a retry may resolve this error.",
+          "type": "boolean"
+        },
+        "suggestion": {
+          "description": "Optional actionable suggestion for the caller.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "suggestion_lang": {
+          "description": "Language of `suggestion` when it is not English, so a consumer knows\nwhat it is reading.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "description": "Workspace root used for jail validation, if applicable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failed_pair_index": {
+          "description": "1-based index of the failed `--old`/`--new` pair (multi-pair edit, G117).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pairs_total": {
+          "description": "Total number of `--old`/`--new` pairs in the invocation.\n\nEmitted by multi-pair edit (G117) and by a partial `edit-loop` run\n(v0.1.36) — one key, two producers.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pair_results": {
+          "description": "Per-pair diagnostics up to and including the failed pair (multi-pair edit, G117).\nPairs after the failure were never attempted and are absent.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/PairResult"
+          }
+        },
+        "best_candidate": {
+          "description": "Closest near-miss when a match cascade fails (v0.1.29 P0-2).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BestCandidate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidates": {
+          "description": "Additional near-miss candidates for `did_you_mean` (v0.1.30).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/BestCandidate"
+          }
+        },
+        "match_count": {
+          "description": "Match count when ambiguity is reported (v0.1.30).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "similar_paths": {
+          "description": "Similar basenames when path is missing (v0.1.30).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "conflict_count": {
+          "description": "Number of conflicting regions a three-way merge could not align (v0.1.36).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "missing_flag": {
+          "description": "Flag literal the operation required but did not receive (v0.1.36).\n\nPresent only for [`AtomwriteError::MissingFlag`]; the duplicate `code`\non that variant is deliberate — callers branch on `missing_flag` and\nstill see the `INVALID_INPUT` family in `code`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pairs_unmatched": {
+          "description": "Pairs that did not match in a partial `edit-loop` run (v0.1.36).\n\n`pairs_total` already exists above for the multi-pair edit family and\nis reused by this variant instead of being duplicated.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "operation",
+        "files_restored",
+        "elapsed_ms"
+      ]
     },
-    "files_budget_dropped": {
-      "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
-      "type": "integer",
-      "minimum": 0
-    },
-    "files_planned": {
-      "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
-      "type": "integer",
-      "minimum": 0
-    },
-    "truncated": {
-      "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
-      "type": "boolean"
-    },
-    "truncated_records": {
-      "description": "Records the writer cut this run, counted once per record",
-      "type": "integer",
-      "minimum": 0
+    {
+      "title": "ErrorJson",
+      "description": "Serializable error envelope emitted as a single NDJSON line.",
+      "type": "object",
+      "properties": {
+        "ok": {
+          "description": "Always false on error envelopes (GAP-2026-020 agent sentinel).\n\n`ok: false` together with `code` is the whole verdict: the redundant\n`error: true` duplicate left the envelope because every failure paid\nfor it and no caller branched on it alone.",
+          "type": "boolean"
+        },
+        "code": {
+          "description": "Machine-readable error code string.",
+          "type": "string"
+        },
+        "exit": {
+          "description": "Process exit status this failure maps to.",
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "message": {
+          "description": "Human-readable error message.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Filesystem path related to the error, if applicable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error_class": {
+          "description": "Error class: transient, conflict, `precondition_failed`, or permanent.",
+          "type": "string"
+        },
+        "retryable": {
+          "description": "Whether a retry may resolve this error.",
+          "type": "boolean"
+        },
+        "suggestion": {
+          "description": "Optional actionable suggestion for the caller.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "suggestion_lang": {
+          "description": "Language of `suggestion` when it is not English, so a consumer knows\nwhat it is reading.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "description": "Workspace root used for jail validation, if applicable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failed_pair_index": {
+          "description": "1-based index of the failed `--old`/`--new` pair (multi-pair edit, G117).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pairs_total": {
+          "description": "Total number of `--old`/`--new` pairs in the invocation.\n\nEmitted by multi-pair edit (G117) and by a partial `edit-loop` run\n(v0.1.36) — one key, two producers.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pair_results": {
+          "description": "Per-pair diagnostics up to and including the failed pair (multi-pair edit, G117).\nPairs after the failure were never attempted and are absent.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/PairResult"
+          }
+        },
+        "best_candidate": {
+          "description": "Closest near-miss when a match cascade fails (v0.1.29 P0-2).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BestCandidate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidates": {
+          "description": "Additional near-miss candidates for `did_you_mean` (v0.1.30).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/BestCandidate"
+          }
+        },
+        "match_count": {
+          "description": "Match count when ambiguity is reported (v0.1.30).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "similar_paths": {
+          "description": "Similar basenames when path is missing (v0.1.30).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "conflict_count": {
+          "description": "Number of conflicting regions a three-way merge could not align (v0.1.36).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "missing_flag": {
+          "description": "Flag literal the operation required but did not receive (v0.1.36).\n\nPresent only for [`AtomwriteError::MissingFlag`]; the duplicate `code`\non that variant is deliberate — callers branch on `missing_flag` and\nstill see the `INVALID_INPUT` family in `code`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pairs_unmatched": {
+          "description": "Pairs that did not match in a partial `edit-loop` run (v0.1.36).\n\n`pairs_total` already exists above for the multi-pair edit family and\nis reused by this variant instead of being duplicated.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pairs_applied": {
+          "description": "Pairs that were written to the target before the error (v0.1.37).\n\nAlways `0` for the all-or-nothing `EditPairFailed` abort (nothing is\nwritten) and `total - unmatched` for `edit-loop --partial`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "line": {
+          "description": "1-based line of the block that holds the syntax error (v0.1.38).\n\nPresent only for [`AtomwriteError::SyntaxError`]. Without it the caller\nhad to re-read the file to learn where the refusal points.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "line_end": {
+          "description": "1-based last line of that block, when the block spans more than a line.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "target_resolved": {
+          "description": "Absolute targets the run resolved, in invocation order, and never a joined string, so a path holding `,` stays readable; a run with one target publishes a one-item array, so the shape never depends on the count",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "target_source": {
+          "description": "Where the target came from: named in the invocation line, inherited from the workspace slot, or the standard-input stream",
+          "type": "string",
+          "enum": [
+            "argv",
+            "workspace",
+            "stdin"
+          ]
+        },
+        "workspace_source": {
+          "description": "Where the workspace root came from: the `--workspace` flag or the process working directory",
+          "type": "string",
+          "enum": [
+            "argv",
+            "cwd"
+          ]
+        },
+        "records_suppressed": {
+          "description": "Records the writer dropped before the terminal event: `--filter` rejections, `--select` projections that emptied the record, dedupe duplicates and `--limit` cuts. It counts records, never files, so it does not compare with `files_matched`: one file can contribute several records",
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_budget_dropped": {
+          "description": "Entries the `--limit` budget dropped, in the unit the verb produces: files for walking verbs, records for streaming ones; a floor, because workers may stop before producing the rest",
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_planned": {
+          "description": "Files the run would have modified in `--dry-run` or `--preview`; absent from a run that really wrote",
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "description": "The record itself was cut by `--truncate-content` or `--max-output-bytes`, so the fields are shorter than the source",
+          "type": "boolean"
+        },
+        "truncated_records": {
+          "description": "Records the writer cut this run, counted once per record",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "code",
+        "exit"
+      ]
     }
-  },
-  "required": [
-    "type",
-    "path",
-    "format_detected",
-    "hunks_applied",
-    "bytes_before",
-    "bytes_after",
-    "checksum_before",
-    "checksum_after",
-    "elapsed_ms"
-  ]
+  ],
+  "$defs": {
+    "PairResult": {
+      "description": "Outcome of matching a single `--old`/`--new` pair in multi-pair edit mode.\n\nEmitted in `pair_results` on both success and error envelopes so agents\ncan verify each pair objectively without re-running the edit (G117).\nIn the default all-or-nothing mode, pairs after the first failure are\nnever attempted and are absent from the array.",
+      "type": "object",
+      "properties": {
+        "index": {
+          "description": "1-based position of the pair in the `--old`/`--new` invocation order.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "matched": {
+          "description": "Whether the pair matched and was applied to the content.",
+          "type": "boolean"
+        },
+        "strategy": {
+          "description": "Matching strategy that succeeded (e.g. `exact`, `whitespace_normalized`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "similarity": {
+          "description": "Similarity score of the fuzzy match, 0.0-1.0 (block-anchor and context-aware only).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "source": {
+          "description": "Source of the match/replacement content: `\"arg\"` or `\"file\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "index",
+        "matched"
+      ]
+    },
+    "BestCandidate": {
+      "description": "Closest near-miss when a fuzzy/exact match fails (v0.1.29 P0-2).\n\nAgents use this to correct `old` without re-reading the full file.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "description": "Snippet of the best matching region (truncated to 500 chars).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line": {
+          "description": "1-based line of the candidate start in the file.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "column": {
+          "description": "1-based column of the candidate start.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "similarity": {
+          "description": "Similarity score 0.0–1.0 of the best attempt.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "strategy": {
+          "description": "Strategy that produced this candidate score.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diff_preview": {
+          "description": "Optional short unified-diff style preview.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
 }

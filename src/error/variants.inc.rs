@@ -4,7 +4,10 @@
 #[non_exhaustive]
 pub enum AtomwriteError {
     /// Target file does not exist.
-    #[error("file not found: {path}")]
+    // The path is not repeated in the text: the envelope already carries it in
+    // `path` and `target_resolved`, so the sentence that names it a third time
+    // costs bytes on every failure without adding a fact.
+    #[error("file not found")]
     NotFound {
         /// File path that was not found.
         path: PathBuf,
@@ -191,6 +194,13 @@ pub enum AtomwriteError {
     #[error("no matches found")]
     NoMatches,
 
+    /// Every visited file was skipped, so the pattern was never tested.
+    #[error("every visited file was skipped ({files} files)")]
+    AllSkippedBinary {
+        /// How many files the binary gate skipped.
+        files: u64,
+    },
+
     /// Downstream consumer closed the output pipe.
     #[error("broken pipe")]
     BrokenPipe,
@@ -212,12 +222,21 @@ pub enum AtomwriteError {
     },
 
     /// Post-write tree-sitter syntax check found syntax errors in the output.
+    ///
+    /// `line` and `line_end` carry the 1-based span of the block that holds
+    /// the first error. A refusal that named only the file left the caller to
+    /// re-read the whole file to find the broken block, which is exactly the
+    /// round trip this refusal exists to save.
     #[error("syntax error detected in {path} ({count} nodes with ERROR)")]
     SyntaxError {
         /// File path that failed syntax check.
         path: PathBuf,
         /// Number of nodes with ERROR.
         count: u32,
+        /// 1-based line of the block that holds the first error.
+        line: Option<usize>,
+        /// 1-based last line of that block.
+        line_end: Option<usize>,
     },
 
     /// The write cannot be a single atomic step and `--strict-atomic` was set.

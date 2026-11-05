@@ -23,17 +23,20 @@ pub fn apply_line_replacement(
     let mut out = String::with_capacity(
         before.len() + new_norm.len() + after.len() + crate::constants::FUZZY_LINES_SLACK_BYTES,
     );
-    if !before.is_empty() {
-        out.push_str(&before);
+    // The separator belongs between two surviving pieces. An empty `new`
+    // leaves no piece of its own, so joining `before` and `after` with one
+    // newline is what deletes the range instead of leaving a blank line.
+    out.push_str(&before);
+    if !before.is_empty() && (!new_norm.is_empty() || !after.is_empty()) {
         out.push_str(nl);
     }
     out.push_str(&new_norm);
-    if !after.is_empty() {
+    if !after.is_empty() && (!new_norm.is_empty() || before.is_empty()) {
         out.push_str(nl);
-        out.push_str(&after);
     }
+    out.push_str(&after);
     let ends_nl = original.ends_with('\n');
-    if ends_nl && !out.ends_with('\n') {
+    if ends_nl && !out.is_empty() && !out.ends_with('\n') {
         out.push_str(nl);
     }
     out

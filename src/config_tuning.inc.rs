@@ -218,6 +218,7 @@ pub fn validate_all(cfg: &AtomwriteConfig) -> Result<(), AtomwriteError> {
     validate_fuzzy(&cfg.fuzzy)?;
     validate_write(&cfg.write)?;
     validate_search_section(&cfg.search)?;
+    crate::config::validate_read_output(&cfg.read, &cfg.output)?;
     crate::config::validate_summary_section(&cfg.summary)?;
     validate_log(&cfg.log)?;
     validate_tuning(cfg)
@@ -243,6 +244,8 @@ pub struct Tuning {
     pub retry_max_ms: Option<u64>,
     /// `retry.max_elapsed_ms`; `None` keeps the policy of each retry site.
     pub retry_max_elapsed_ms: Option<u64>,
+    /// `search.format` says `text`, so stdout carries result lines.
+    pub search_format_is_text: bool,
     /// `search.max_inflight_bytes`.
     pub search_max_inflight_bytes: u64,
     /// `extract.max_sample_rows`.
@@ -255,6 +258,14 @@ pub struct Tuning {
     pub extract_max_slides: usize,
     /// `summary.errors_max_entries`.
     pub summary_errors_max_entries: usize,
+    /// `read.max_output_bytes`.
+    pub read_max_output_bytes: usize,
+    /// `read.number`.
+    pub read_number: bool,
+    /// `delete.backup`.
+    pub delete_backup: Option<bool>,
+    /// `output.profile` resolves to `lean`.
+    pub output_lean: bool,
 }
 
 impl Tuning {
@@ -268,12 +279,17 @@ impl Tuning {
             retry_base_ms: cfg.retry.base_ms,
             retry_max_ms: cfg.retry.max_ms,
             retry_max_elapsed_ms: cfg.retry.max_elapsed_ms,
+            search_format_is_text: cfg.search.format == "text",
             search_max_inflight_bytes: cfg.search.max_inflight_bytes,
             extract_max_sample_rows: cfg.extract.max_sample_rows,
             extract_max_text_chars: cfg.extract.max_text_chars,
             extract_max_sheets: cfg.extract.max_sheets,
             extract_max_slides: cfg.extract.max_slides,
             summary_errors_max_entries: cfg.summary.errors_max_entries,
+            read_max_output_bytes: cfg.read.max_output_bytes,
+            read_number: cfg.read.number,
+            delete_backup: cfg.delete.backup,
+            output_lean: cfg.output.profile.eq_ignore_ascii_case("lean"),
         }
     }
 }
@@ -291,6 +307,25 @@ pub fn install_tuning(cfg: &AtomwriteConfig) {
     if TUNING.set(Tuning::from_config(cfg)).is_err() {
         tracing::debug!("tuning already installed; keeping the first value");
     }
+}
+
+/// Byte ceiling of a whole-file `read`, in bytes.
+#[must_use]
+pub fn read_max_output_bytes() -> usize {
+    tuning().read_max_output_bytes
+}
+
+/// Whether raw reads number their lines by default.
+#[must_use]
+pub fn read_number_default() -> bool {
+    tuning().read_number
+}
+
+/// Whether `delete` keeps a backup when neither flag nor `defaults.backup`
+/// says otherwise.
+#[must_use]
+pub fn delete_backup() -> Option<bool> {
+    tuning().delete_backup
 }
 
 /// Effective tuning of this process (built-in defaults until installed).

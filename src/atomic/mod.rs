@@ -30,9 +30,9 @@ mod time_fmt;
 mod types;
 mod write;
 
-pub(crate) use inplace::{create_backup, create_backup_in};
-pub use time_fmt::{epoch_to_utc, rfc3339_now};
+pub(crate) use inplace::{create_backup, create_backup_in, delete_backup_quietly};
+pub use time_fmt::{epoch_to_utc, rfc3339_now, utc_to_epoch};
 pub use types::{AtomicWriteOptions, WriteResult, WriteStrategy};
-pub use write::{atomic_write, atomic_write_based};
+pub use write::{WriteFailure, atomic_write, atomic_write_based};
 
 include!("tests.inc.rs");

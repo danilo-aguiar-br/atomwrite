@@ -34,6 +34,7 @@ impl AtomwriteError {
             Self::FifoDetected { .. } => k::EXIT_FIFO_DETECTED,
             Self::DeviceFile { .. } => k::EXIT_DEVICE_FILE,
             Self::NoMatches => k::EXIT_NO_MATCHES,
+            Self::AllSkippedBinary { .. } => k::EXIT_ALL_SKIPPED_BINARY,
             Self::BrokenPipe => k::EXIT_BROKEN_PIPE,
             Self::InternalError { .. } => k::EXIT_INTERNAL_ERROR,
             Self::LockTimeout { .. } => k::EXIT_LOCK_TIMEOUT,
@@ -103,7 +104,9 @@ impl AtomwriteError {
             | Self::FifoDetected { .. }
             | Self::DeviceFile { .. }
             | Self::DoctorChecksFailed { .. } => ErrorClass::PreconditionFailed,
-            Self::NoMatches | Self::BrokenPipe => ErrorClass::Permanent,
+            Self::NoMatches | Self::AllSkippedBinary { .. } | Self::BrokenPipe => {
+                ErrorClass::Permanent
+            }
             // v0.1.36 — a merge conflict and a partial edit-loop are settled
             // domain verdicts: retrying unchanged input gives the same result.
             // `MissingFlag` is an invalid invocation, permanent like `InvalidInput`.
@@ -170,6 +173,7 @@ impl AtomwriteError {
             Self::FifoDetected { .. } => "FIFO_DETECTED",
             Self::DeviceFile { .. } => "DEVICE_FILE",
             Self::NoMatches => "NO_MATCHES",
+            Self::AllSkippedBinary { .. } => "ALL_SKIPPED_BINARY",
             Self::BrokenPipe => "BROKEN_PIPE",
             Self::InternalError { .. } => "INTERNAL_ERROR",
             Self::LockTimeout { .. } => "LOCK_TIMEOUT",
@@ -292,6 +296,7 @@ impl AtomwriteError {
             | Self::Io { .. }
             | Self::ConfigInvalid { .. }
             | Self::NoMatches
+            | Self::AllSkippedBinary { .. }
             | Self::BrokenPipe
             | Self::InternalError { .. }
             | Self::MatchFailed { .. }
